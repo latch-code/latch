@@ -227,6 +227,10 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       const screen = panel.locator('.terminal-screen:not([hidden])')
       const rows = screen.locator('.xterm-rows')
       await expect.poll(() => rows.innerText()).toContain('$')
+      // It starts no wider than the screen fits: narrowed after its first prompt, zsh's end-of-line mark would wrap
+      // and stay on a line of its own.
+      await new Promise(resolve => setTimeout(resolve, 500))
+      expect(shells[0]!.sizes.filter(([cols]) => cols < shells[0]!.spec.cols)).toEqual([])
       // That it is the person's account and not a sandbox is the foot label's tooltip, not a line of its own.
       await panel.locator('.terminal-where').waitFor()
       expect(await panel.getByRole('tooltip', { includeHidden: true }).filter({ hasText: '不是沙箱' }).count()).toBe(1)

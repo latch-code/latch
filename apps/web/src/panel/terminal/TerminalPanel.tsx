@@ -136,6 +136,14 @@ export const terminalAccountNote = () => COPY.account
 const LINE_HEIGHT = 1.2
 /** The padding around the screen (terminal.css): 8 above and below, 12 on each side. */
 const PAD = { x: 24, y: 16 }
+/**
+ * The width the fit addon keeps for xterm's scrollbar (its default, with scrollback on). A shell started wider than the
+ * screen fits pads zsh's end-of-line mark past the right edge, and the mark is left standing on a line of its own.
+ */
+const SCROLLBAR = 14
+/** Between split panes: the 1px line, and the name row that moves a split pane's screen down (terminal.css). */
+const SPLIT_LINE = 1
+const PANE_HEAD = 24
 const RESIZE_SETTLE_MS = 120
 
 export interface TerminalPanelProps {
@@ -189,7 +197,7 @@ function measuredSize(element: HTMLElement | null, box?: { width: number; height
   const { width, height } = box ?? { width: element.clientWidth, height: element.clientHeight }
   const cell = cellOf(element)
   return {
-    cols: Math.max(20, Math.min(1000, Math.floor((width - PAD.x) / cell.width))),
+    cols: Math.max(20, Math.min(1000, Math.floor((width - PAD.x - SCROLLBAR) / cell.width))),
     rows: Math.max(5, Math.min(1000, Math.floor((height - PAD.y) / cell.height))),
   }
 }
@@ -443,10 +451,11 @@ export function TerminalPanel({
     }
     const pane = screens.current?.querySelector<HTMLElement>(`.terminal-pane[data-pane="${CSS.escape(at)}"]`)
     const box = pane && pane.clientWidth > 0 ? pane : screens.current
+    // The new pane is half the box less the line between them, and a split pane's screen sits under its name row.
     const size = box
       ? measuredSize(box, {
-          width: direction === 'row' ? box.clientWidth / 2 : box.clientWidth,
-          height: direction === 'column' ? box.clientHeight / 2 : box.clientHeight,
+          width: direction === 'row' ? box.clientWidth / 2 - SPLIT_LINE : box.clientWidth,
+          height: (direction === 'column' ? box.clientHeight / 2 - SPLIT_LINE : box.clientHeight) - PANE_HEAD,
         })
       : undefined
     void terminals.open(undefined, {
