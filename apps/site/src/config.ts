@@ -3,5 +3,5 @@
 export const LINKS = {
   mac: '',
   ios: '',
-  github: '',
+  github: 'https://github.com/latch-code/latch',
 }

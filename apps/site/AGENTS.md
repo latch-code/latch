@@ -3,7 +3,8 @@
 Latch 官网：Astro 静态站。英文 `/`、`/download/`，中文 `/zh/`、`/zh/download/`，另有 404、`robots.txt` 与 `sitemap.xml`。不用 workspace 包，也不被其他项目导入。
 
 - 运行环境 `browser`：`src/scripts/site.ts` 是唯一的页面脚本；`src/` 的其余文件在 Astro 构建时运行，同样不用 Node 全局变量。`astro.config.ts` 与 `scripts/` 是 Node 工具。
-- 命令：根目录 `pnpm build:site`（输出 `apps/site/dist`；正式构建设 `SITE_URL`，否则是占位的 `https://latch.example`）、`pnpm dev:site`；本目录 `pnpm preview [端口]`（带 gzip 的本地服务，端口 0 自选）、`pnpm check:seo [目录]`、`pnpm measure <URL…>`（本机 Chrome 按 Lighthouse 的节流实测）。Astro 遥测由脚本关闭。
+- 命令：根目录 `pnpm build:site`（输出 `apps/site/dist`，地址是 `https://latch.codes`，`SITE_URL` 可另设）、`pnpm dev:site`；本目录 `pnpm preview [端口]`（带 gzip 的本地服务，端口 0 自选）、`pnpm check:seo [目录]`、`pnpm measure <URL…>`（本机 Chrome 按 Lighthouse 的节流实测）。Astro 遥测由脚本关闭。
+- 部署：构建后在根目录 `wrangler deploy -c apps/site/wrangler.jsonc`，Cloudflare Workers 只托管静态文件，自定义域 `latch.codes` 与 `www.latch.codes`；`wrangler login` 由所有者本人完成，配置里没有账户 ID 或秘密。
 - 图片与视频：`public/img`、`public/video`、`public/og`、图标、`src/pics.json` 与 `src/hero.json` 由仓库外的生成脚本，从测试 Host 跑出的演示截图与录屏生成，不手改，`.oxfmtrc.json` 也不格式化它们。文件名带内容哈希，`public/_headers` 让 `/img`、`/video` 长期缓存；换图就换名。
 
 ## 不变量

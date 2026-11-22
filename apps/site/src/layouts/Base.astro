@@ -14,7 +14,7 @@ interface Props {
 
 const { lang, path, title, description, noindex = false } = Astro.props
 const t = COPY[lang]
-const site = Astro.site ?? new URL('https://latch.example')
+const site = Astro.site ?? new URL('https://latch.codes')
 const base = import.meta.env.BASE_URL.replace(/\/?$/, '/')
 const url = (l: Lang) => new URL(href(l, path), site).href
 const canonical = url(lang)

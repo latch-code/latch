@@ -1,0 +1,20 @@
+// The website on Cloudflare Workers static assets: no Worker code, only the built pages in dist, with the headers and
+// cache rules from public/_headers. Deploy from the repository root after `pnpm build:site`:
+//   wrangler deploy -c apps/site/wrangler.jsonc
+// No account id or secrets here; wrangler takes the account from the owner's own `wrangler login`.
+{
+  "name": "latch-site",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./dist",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page",
+  },
+  "routes": [
+    { "pattern": "latch.codes", "custom_domain": true },
+    { "pattern": "www.latch.codes", "custom_domain": true },
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": false },
+}
