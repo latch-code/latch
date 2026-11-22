@@ -86,8 +86,8 @@ corepack pnpm desktop -- --demo
 
 Latch 由一个人维护，小而聚焦的改动最容易审阅。
 
-- 先读[贡献手册](AGENTS.md)：代码地图、命令，以及改动必须守住的规则都在里面。
-- 提交 PR 前运行 `corepack pnpm check:quick`。[测试](docs/TESTING.md)说明了每类改动要跑哪些用例。
+- 先读[贡献指南](CONTRIBUTING.zh-CN.md)：环境准备、怎样不碰自己的数据运行 Latch、要跑的检查与 PR 流程都在里面。
+- [AGENTS.md](AGENTS.md) 有代码地图、命令，以及改动必须守住的规则。[测试](docs/TESTING.md)说明了每类改动要跑哪些用例。
 - [架构](docs/ARCHITECTURE.md)说明 Host、各客户端和 Agent 怎样配合。
 
 ## 许可证

@@ -88,8 +88,8 @@ The detailed guides are in Chinese.
 
 Latch is maintained by one person, so small, focused changes are the easiest to review.
 
-- Read the [contributor guide](AGENTS.md) first. It has the code map, the commands, and the rules a change must keep.
-- Run `corepack pnpm check:quick` before you open a pull request. [Testing](docs/TESTING.md) explains which tests a change needs.
+- Read the [contributing guide](CONTRIBUTING.md) first. It covers the setup, how to run Latch without touching your own data, the checks, and the pull request process.
+- [AGENTS.md](AGENTS.md) has the code map, the commands, and the rules a change must keep. [Testing](docs/TESTING.md) explains which tests a change needs.
 - [Architecture](docs/ARCHITECTURE.md) explains how the Host, the clients, and the agents fit together.
 
 ## License

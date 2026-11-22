@@ -1,0 +1,45 @@
+name: Bug report
+description: Something in Latch doesn't work as expected.
+title: '[Bug] '
+body:
+  - type: markdown
+    attributes:
+      value: Report security problems by email instead (see CONTRIBUTING.md). Remove connection codes, keys and credentials from logs and screenshots. English or Chinese is fine.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options:
+        - Desktop app
+        - Web browser
+        - iPhone / iPad app
+        - Host or CLI
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Latch commit and Harness
+      placeholder: 'aae64d77, codex 0.x.y'
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      placeholder: |
+        What happened:
+
+        Steps to reproduce:
+        1.
+        2.
+
+        What you expected:
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      render: text
