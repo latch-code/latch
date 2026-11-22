@@ -395,7 +395,7 @@ describe('latch CLI', () => {
     expect(await stopped.latch('device', 'enroll', '--offline', '--code-file', 'code.txt', '--data-dir', dataDir)).toBe(0)
     expect(stopped.output.stderr).toContain('离线连接依赖本机此刻没有恶意的同用户进程')
     expect(stopped.output.stdout).toContain(
-      '从终端直接启动 Latch 桌面端（corepack pnpm desktop）后，在它的连接页面填写离线连接码。浏览器与手机不接受离线连接码。',
+      '从终端直接启动 Latch 桌面端（pnpm desktop）后，在它的连接页面填写离线连接码。浏览器与手机不接受离线连接码。',
     )
     const code = (await readFile(join(directory, 'code.txt'), 'utf8')).trim()
     expect(code).toMatch(/^lpo1-[A-Z2-7]{26}$/)

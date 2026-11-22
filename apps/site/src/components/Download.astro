@@ -109,7 +109,7 @@ const cmd = (code: string) => `<div class="cmd__row cmd__row--bare"><code class=
     </summary>
     <div class="source__body">
       <p>{t.dl.srcBody}</p>
-      <div class="cmd cmd--steps"><Fragment set:html={cmd('corepack pnpm install') + cmd('corepack pnpm build') + cmd('corepack pnpm desktop')} /></div>
+      <div class="cmd cmd--steps"><Fragment set:html={cmd('pnpm install') + cmd('pnpm build') + cmd('pnpm desktop')} /></div>
       <GitHubLink class="btn btn--quiet btn--sm source__gh" label={t.cta.github} soon={t.cta.soon} />
     </div>
   </details>

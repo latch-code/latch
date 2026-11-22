@@ -91,7 +91,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 - 只停自己启动的节点：`pnpm stop -- --data-dir <目录>` 经 `host.sock` 核对后才发 SIGTERM，有运行中或待审批的会话时拒绝（`--force` 仍停止）。不删其他节点的 `host.lock` 与 `.host-lock-*`（[文档](docs/ARCHITECTURE.md#hostjson-与数据目录锁)）。
 - 不运行 `git clean -x`、`git clean -X` 与 `git stash -a`：被忽略的目录里有用户数据，后者还会把它们写进对象库。
 - 审阅外部 PR 时，在独立 worktree 检出，每个 git 命令都带 `-c core.hooksPath=/dev/null`，因为已装的钩子执行检出的 `lefthook.yml`。该目录里不运行 `pnpm install`、任何 `pnpm` 脚本、测试、构建或 Agent：PR 能改包脚本、依赖、安装策略、构建测试配置和 Agent 指令，运行任一项都执行 PR 作者的代码。改这类文件的 PR 由所有者审阅（`.github/CODEOWNERS`）。
-- 测试与调试只用临时目录、端口 0、本地假模型服务与假 ACP Agent。不调付费模型，不向真实 Agent CLI 发提示。桌面测试用 Electron e2e。普通桌面启动入口（如 `corepack pnpm desktop`）会用钥匙串与用户数据，测试禁用。
+- 测试与调试只用临时目录、端口 0、本地假模型服务与假 ACP Agent。不调付费模型，不向真实 Agent CLI 发提示。桌面测试用 Electron e2e。普通桌面启动入口（如 `pnpm desktop`）会用钥匙串与用户数据，测试禁用。
 - `pnpm build` 会更新 `dist/web`，运行中的旧 Host 直接给新页面。上线前不为旧 Host 写降级：Host 字段变了要重启 Host 并告知用户。改 `LatchPresence.swift` 后构建会换确认组件签名，运行中 Host 的本机确认失效：告知用户停止 Host 后运行 `pnpm latch presence repin`。
 
 ## 改动前先读

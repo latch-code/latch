@@ -72,7 +72,7 @@ Latch 在你的 Mac 上运行一个 Host。Host 用你已经装好、登录好�
 > [!IMPORTANT]
 > 目前在 macOS 上从源码运行。签名安装包尚未提供，iPhone 与 iPad App 也还没有上架。见[现状](#现状)。
 
-需要 Node.js 24.22.1、pnpm 11.28.6（经 Corepack）、Go 1.26.10 和 Xcode 命令行工具。
+需要 Node.js 24.22.1、pnpm（已装较新版本即可，在仓库里会自动切换到固定的 11.28.6）、Go 1.26.10 和 Xcode 命令行工具。
 
 **1. 装好一个 Agent 并登录。** 任选一个支持的 Agent，以 Codex 为例：
 
@@ -86,9 +86,9 @@ codex login
 **2. 构建并打开 Latch。** 在本仓库根目录运行：
 
 ```sh
-corepack pnpm install
-corepack pnpm build
-corepack pnpm desktop
+pnpm install
+pnpm build
+pnpm desktop
 ```
 
 **3. 开始一个会话。** 打开「新会话」，选择 Agent，添加项目文件夹。可以先问一句：「这个项目在哪里处理错误？举一个例子。」
@@ -96,7 +96,7 @@ corepack pnpm desktop
 想先看看界面，可以跳过第 1 步，直接启动演示模式。它使用模拟模型，文件工具仍会读写你选择的文件夹。
 
 ```sh
-corepack pnpm desktop -- --demo
+pnpm desktop -- --demo
 ```
 
 ## 用手机接着做

@@ -168,12 +168,12 @@ const NATIVE_COPY = defineCopy(
 )
 const STARTUP_EN = {
   secureStorage: 'Secure storage is unavailable on this system. Latch cannot store device credentials.',
-  missingFlag: 'The --latch-host-state option is missing. Run corepack pnpm desktop directly from your terminal.',
+  missingFlag: 'The --latch-host-state option is missing. Run pnpm desktop directly from your terminal.',
   notRunning: 'The Latch service is not running, or its host.json file is invalid.',
   unverified: 'Couldn’t verify the Latch service.',
   packagedBoot: 'Latch could not start. Check the Node.js installation and reopen Latch.',
   reopen: 'Reopen the Latch app.',
-  devStart: 'Run corepack pnpm desktop directly from your terminal.',
+  devStart: 'Run pnpm desktop directly from your terminal.',
   deviceStorage: 'Couldn’t open device credential storage.',
   failed: 'Latch couldn’t start. Check the application log for details.',
 }
@@ -1374,7 +1374,7 @@ async function start() {
       return fatal(error instanceof Error ? error.message : '无法启动 Latch。', STARTUP_EN.packagedBoot)
     }
   }
-  if (!hostStatePath) return fatal('缺少 --latch-host-state 参数。请在终端中直接运行 corepack pnpm desktop。', STARTUP_EN.missingFlag)
+  if (!hostStatePath) return fatal('缺少 --latch-host-state 参数。请在终端中直接运行 pnpm desktop。', STARTUP_EN.missingFlag)
   let state = await readHostStateFile(hostStatePath)
   let checked = state ? await inspectHostState(state) : undefined
   /** @type {{ onChange: (view: object) => void, onActivity: (activity: { running: number, waiting: number }) => void }} */
@@ -1399,7 +1399,7 @@ async function start() {
     const english = state ? STARTUP_EN.unverified : STARTUP_EN.notRunning
     const next = app.isPackaged ? STARTUP_EN.reopen : STARTUP_EN.devStart
     return fatal(
-      `${state ? `无法验证 Latch Host：${checked?.reason ?? '未知原因'}。` : '找不到正在运行的 Latch Host（host.json 缺失或格式不正确）。'}${app.isPackaged ? '请重新打开 Latch 应用。' : '请在终端中直接运行 corepack pnpm desktop。'}`,
+      `${state ? `无法验证 Latch Host：${checked?.reason ?? '未知原因'}。` : '找不到正在运行的 Latch Host（host.json 缺失或格式不正确）。'}${app.isPackaged ? '请重新打开 Latch 应用。' : '请在终端中直接运行 pnpm desktop。'}`,
       `${english} ${next}`,
     )
   }

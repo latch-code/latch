@@ -10,11 +10,11 @@ Latch is maintained by one person, so review time is the bottleneck.
 
 ## Setup
 
-You need macOS with Node.js 24.22.1, pnpm 11.28.6 (through Corepack), Go 1.26.10 and the Xcode Command Line Tools. The unit tests also run on Linux.
+You need macOS with Node.js 24.22.1, pnpm (any recent version; inside this repository it switches to the pinned 11.28.6), Go 1.26.10 and the Xcode Command Line Tools. The unit tests also run on Linux.
 
 ```sh
-corepack pnpm install
-corepack pnpm exec lefthook install
+pnpm install
+pnpm exec lefthook install
 ```
 
 `pnpm install` doesn't install the Git hooks, so you need the second command. The other commands are in [AGENTS.md](AGENTS.md#命令).

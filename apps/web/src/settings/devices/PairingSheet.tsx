@@ -10,7 +10,6 @@ import { BLOCKED_COPY, NATIVE_LINK_COPY as COPY, presenceUnavailableText } from 
 import { hostView } from '../../core/permissions.ts'
 import { PairingBlocked } from '../PairingBlocked.tsx'
 import { canOpenSystemSettings, LocalNetworkHint } from '../LocalNetworkHint.tsx'
-import { SOURCE_RUN } from '../../core/commands.ts'
 import { pairingQr } from '../pairingQr.ts'
 import { WaitingDevices } from './WaitingDevices.tsx'
 import { deviceIcon } from './deviceIcon.ts'
@@ -285,7 +284,7 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
             <Icon icon={invitation?.cable ? Cable : Wifi} size={12} />
             <span>{invitation?.cable ? COPY.byCable : COPY.sameWifi}</span>
           </p>
-          <LocalNetworkHint state={localNetwork} openable={canOpenSystemSettings(true)} source={SOURCE_RUN} />
+          <LocalNetworkHint state={localNetwork} openable={canOpenSystemSettings(true)} />
           <p className="pair-foot-note">{COPY.drivesAgents}</p>
         </div>
         <WaitingDevices place="sheet" />

@@ -321,7 +321,7 @@ describe('desktop Host launch', () => {
     const environment = await ensureDesktopHost(options, { script })
     expect(environment).toMatchObject({ pid: restarted.pid, reused: true })
     expect(environment.notice).toContain('设置来自环境变量，未重启')
-    expect(environment.notice).toContain('在终端中直接运行 corepack pnpm desktop')
+    expect(environment.notice).toContain('在终端中直接运行 pnpm desktop')
     expect(alive(restarted.pid)).toBe(true)
   }, 60_000)
 

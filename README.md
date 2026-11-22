@@ -72,7 +72,7 @@ In the picture, Codex has reviewed draft storage and the built-in agent has chec
 > [!IMPORTANT]
 > Latch runs from source on macOS for now. There is no signed installer yet, and the iPhone and iPad app is not on the App Store. See [Status](#status).
 
-You’ll need Node.js 24.22.1, pnpm 11.28.6 (through Corepack), Go 1.26.10 and the Xcode Command Line Tools.
+You’ll need Node.js 24.22.1, pnpm (any recent version; inside this repository it switches to the pinned 11.28.6), Go 1.26.10 and the Xcode Command Line Tools.
 
 **1. Install an agent and sign in.** Any supported agent works. With Codex, for example:
 
@@ -86,9 +86,9 @@ codex login
 **2. Build and open Latch.** From the root of this repository:
 
 ```sh
-corepack pnpm install
-corepack pnpm build
-corepack pnpm desktop
+pnpm install
+pnpm build
+pnpm desktop
 ```
 
 **3. Start a session.** Open **New session**, choose your agent, and add a project folder. Try asking “Where does this project handle errors? Show me one example.”
@@ -96,7 +96,7 @@ corepack pnpm desktop
 To look around before you set up an agent, skip step 1 and launch the demo. It uses a simulated model, and its file tools still operate on the folder you select.
 
 ```sh
-corepack pnpm desktop -- --demo
+pnpm desktop -- --demo
 ```
 
 ## Connect a phone

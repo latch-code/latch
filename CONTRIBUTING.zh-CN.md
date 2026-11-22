@@ -10,11 +10,11 @@ Latch 由一个人维护，审阅时间是瓶颈。
 
 ## 准备环境
 
-需要 macOS，以及 Node.js 24.22.1、pnpm 11.28.6（经 Corepack）、Go 1.26.10 和 Xcode 命令行工具。单元测试也能在 Linux 上运行。
+需要 macOS，以及 Node.js 24.22.1、pnpm（已装较新版本即可，在仓库里会自动切换到固定的 11.28.6）、Go 1.26.10 和 Xcode 命令行工具。单元测试也能在 Linux 上运行。
 
 ```sh
-corepack pnpm install
-corepack pnpm exec lefthook install
+pnpm install
+pnpm exec lefthook install
 ```
 
 `pnpm install` 不会安装 Git 钩子，所以要运行第二条命令。其余命令见 [AGENTS.md](AGENTS.md#命令)。
