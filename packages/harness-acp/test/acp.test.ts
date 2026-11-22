@@ -2681,6 +2681,17 @@ describe('ACP turn mapping', () => {
     expect(simulatorInputName('latch-browser.device_list')).toBeUndefined()
   })
 
+  it('names a session by the Host’s title when given, not by the record its prompt begins with, and a retry keeps the session', async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const prompt = '以下是会话「a」到第 1 轮为止的记录\n<会话记录>…</会话记录>\n\ncount 2'
+    const created = await bridge.createTask({ prompt, requestId: 'titled', title: 'Profile slow note opening' })
+    expect((await bridge.listTasks()).find(task => task.id === created.sessionId)?.title).toBe('Profile slow note opening')
+    await settled(bridge, created.sessionId)
+    expect(await bridge.createTask({ prompt, requestId: 'titled', title: 'Renamed since' })).toEqual(created)
+    expect((await bridge.detail(created.sessionId)).summary.title).toBe('Profile slow note opening')
+  })
+
   it('streams a reply under one live message ID and settles it with that ID', async () => {
     const fixture = await setup()
     const bridge = await fixture.open()

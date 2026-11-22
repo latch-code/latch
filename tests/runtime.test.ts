@@ -173,6 +173,24 @@ describe('independent harness runtime', () => {
       activeMs: 0,
     })
   })
+  it('names a session by the Host’s title when given, not by the record its prompt begins with, and a retry keeps the session', async () => {
+    const dataDir = await directory()
+    const provider = textProvider()
+    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(provider), providerId: provider.id }))
+    const prompt = '以下是会话「a」到第 1 轮为止的记录\n<会话记录>…</会话记录>\n\nGo on'
+    const titles: string[] = []
+    bridge.subscribe(id => {
+      if (id) void bridge.listTasks().then(tasks => titles.push(...tasks.filter(task => task.id === id).map(task => task.title)))
+    })
+    const created = await bridge.createTask({ prompt, requestId: 'titled', title: 'Profile slow note opening' })
+    await waitStatus(bridge, created.sessionId, 'idle')
+    expect(titles.length).toBeGreaterThan(0)
+    expect(new Set(titles)).toEqual(new Set(['Profile slow note opening']))
+    expect(await bridge.createTask({ prompt, requestId: 'titled', title: 'Renamed since' })).toEqual(created)
+    const untitled = await bridge.createTask({ prompt: 'Plain start', requestId: 'untitled' })
+    await waitStatus(bridge, untitled.sessionId, 'idle')
+    expect((await bridge.detail(untitled.sessionId)).summary.title).toBe('Plain start')
+  })
   it('atomically persists creation receipts, rejects conflicting retries, and does not rerun after restart', async () => {
     const dataDir = await directory()
     const provider = textProvider()

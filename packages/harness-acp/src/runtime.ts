@@ -766,6 +766,11 @@ function codexMemberTurnHash(memberId: string, childTurnId: string): string {
   return sha256Hex(JSON.stringify([memberId, childTurnId]))
 }
 
+/** The Host's name for a new session, when it gives one (`CreateTaskInput.title`), at most as long as its own record keeps. */
+function hostTitle(input: { title?: unknown }): string | undefined {
+  return typeof input.title === 'string' && input.title.trim() ? input.title.slice(0, 120) : undefined
+}
+
 function forkKey(fork: unknown): { taskId: unknown; upToMessageId: unknown } {
   const { taskId, upToMessageId } = (fork ?? {}) as Record<string, unknown>
   return { taskId, upToMessageId }
@@ -2804,10 +2809,12 @@ export class AgentRuntime implements Bridge {
     const fork = input.fork ? checkedFork(input.fork, input.prompt) : undefined
     // Only this start's validated prefix identifies a textual fork's history. It is not current user input.
     const sourceText = fork ? (userText === input.prompt ? userText.slice(fork.prefixLength) : undefined) : userText
+    const title = hostTitle(input)
     const create = {
       sessionId,
       prompt: input.prompt,
       ...(sourceText === undefined ? {} : { userText: sourceText }),
+      ...(title ? { title } : {}),
       attachments,
       fileRefs,
       requestId: input.requestId,
@@ -2857,6 +2864,8 @@ export class AgentRuntime implements Bridge {
     sessionId: string
     prompt: string
     userText?: string
+    /** The Host's name for the session (`CreateTaskInput.title`), else one from the prompt. */
+    title?: string
     attachments?: AttachmentRef[]
     fileRefs?: FileMention[]
     key: string
@@ -2892,7 +2901,7 @@ export class AgentRuntime implements Bridge {
     this.state.tasks[sessionId] = {
       summary: {
         id: sessionId,
-        title: (promptTitle(prompt) || attachments?.[0]?.name || '附件').slice(0, 80),
+        title: create.title ?? (promptTitle(prompt) || attachments?.[0]?.name || '附件').slice(0, 80),
         status: 'running',
         updatedAt: at,
         createdAt: at,
@@ -2966,7 +2975,7 @@ export class AgentRuntime implements Bridge {
     this.state.tasks[sessionId] = {
       summary: {
         id: sessionId,
-        title: (promptTitle(create.seed) || this.agent.name).slice(0, 80),
+        title: create.title ?? (promptTitle(create.seed) || this.agent.name).slice(0, 80),
         status: 'idle',
         updatedAt: at,
         createdAt: at,

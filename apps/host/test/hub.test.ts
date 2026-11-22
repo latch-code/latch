@@ -1012,6 +1012,41 @@ describe('host-level session metadata', () => {
     await expect(second.updateMeta('missing', { pinned: true })).rejects.toMatchObject({ status: 404 })
   })
 
+  it('names a moved conversation by its Host title from the first time it is listed, and lists its fork once that is written', async () => {
+    const record = '以下是会话「Opening a note takes almost two seconds」到第 1 轮为止的记录\n<会话记录>…</会话记录>\n\n'
+    const prompt = `${record}Go ahead and add the cache, with a test.`
+    const tasks: TaskSummary[] = []
+    const outside = external(tasks)
+    // Like the built-in drivers: the session is reported before createTask returns, named by the Host's title if given.
+    outside.bridge.createTask.mockImplementationOnce(async input => {
+      tasks.push({ ...summary('moved-1', 'running'), title: input.title ?? input.prompt.replace(/\s+/gu, ' ').slice(0, 80) })
+      outside.notify('moved-1')
+      return { sessionId: 'moved-1' }
+    })
+    const { hub: value } = await hub(undefined, 'ext')
+    await value.attach(driver('ext'), mount(outside.bridge))
+    const listings: Array<Promise<TaskSummary | undefined>> = []
+    value.subscribe(sessionId => {
+      if (sessionId === 'moved-1') listings.push(value.listTasks().then(listed => listed.find(task => task.id === sessionId)))
+    })
+    const forkOf = {
+      taskId: 'source',
+      upToMessageId: 'a1',
+      title: 'Opening a note takes almost two seconds',
+      turn: 1,
+      prefixLength: record.length,
+      moved: { from: 'codex' },
+    }
+    await value.createTask({ prompt, requestId: randomUUID(), harnessId: 'ext', forkOf, initialTitle: 'Profile slow note opening' })
+
+    expect(outside.bridge.createTask).toHaveBeenCalledWith(expect.objectContaining({ prompt, title: 'Profile slow note opening' }))
+    expect(outside.bridge.createTask.mock.calls[0]![0]).not.toHaveProperty('forkOf')
+    const seen = (await Promise.all(listings)).filter(task => task !== undefined)
+    expect(seen.length).toBeGreaterThan(1)
+    expect(seen.map(task => task.title)).toEqual(seen.map(() => 'Profile slow note opening'))
+    expect(seen.at(-1)?.forkOf).toEqual(forkOf)
+  })
+
   it('deletes through the driver and drops the overlay, or reports what the driver cannot do', async () => {
     const dataDir = await directory()
     const remove = vi.fn(async () => {})

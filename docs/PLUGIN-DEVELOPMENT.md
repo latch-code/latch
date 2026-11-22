@@ -418,7 +418,7 @@ ACP 的 `ToolGatewayCallContext.runId` 由 Driver 在收到工具调用时取自
 | --- | --- |
 | `start` / `close` | 关闭时等待执行、取消与资源清理 |
 | `listTasks` / `detail` | 返回产品 DTO：稳定的消息 ID 与真实状态，不把 Harness 私有类型传给客户端。`detail()` 是可独立渲染的当前状态，不是增量 |
-| `createTask` / `prompt` | 按 `requestId` 持久化去重，并把它原样写入用户消息；不支持的模式报错，不把 chat 当 agent。L3 Driver 的 `createTask` 另收到 `expectedLaunchHash`。`PromptOptions.queuedAt` 保留在实际接纳的用户消息上 |
+| `createTask` / `prompt` | 按 `requestId` 持久化去重，并把它原样写入用户消息；不支持的模式报错，不把 chat 当 agent。L3 Driver 的 `createTask` 另收到 `expectedLaunchHash`。带 `title` 时（分叉、换 Harness 继续、定时运行）用它作会话的第一个标题，不从 `prompt` 取：分叉的 `prompt` 以 Host 写的原会话记录开头；`title` 不计入请求的去重。`PromptOptions.queuedAt` 保留在实际接纳的用户消息上 |
 | `cancel` | 等实际执行结算才返回，后端只回「已收到」不够。带 `runId` 时只在它仍是当前运行时取消，并在开始取消的同一步核对（之间没有 `await`）；没有可取消的运行或 `runId` 不符返回 `false` |
 | `cancelSubagent?` | 配合 `Subagent.stoppable`：停止一个子 Agent 当前的工作，会话的这一轮继续；发出停止就返回 `true`，那一行写 `stopping` 直到它报告结果 |
 | `approvals` / `decide` | 只返回当前有效的审批；并发决定只有一个成功，`optionId` 必须属于该审批，旧审批或重复决定返回 `false`。`via` 记人在哪里决定；`note` 只随拒绝出现，权限回复不能带文字的 Driver 忽略它 |

@@ -726,6 +726,9 @@ export class HarnessHub implements Bridge {
       : undefined
     const task: CreateTaskInput = {
       ...rest,
+      // The driver reports the session before the Host's own record of it is written: it starts with this name, not
+      // one from the prompt, which for a fork or a moved conversation begins with the Host's record of the source.
+      ...(initialTitle ? { title: initialTitle.slice(0, 120) } : {}),
       ...(extensionReportReady ? { extensionReportReady } : {}),
       ...((allFolders ? folders !== undefined : entry.bridge.commandCatalogue) && workspaceId !== undefined ? { workspaceId } : {}),
       ...(allFolders && workspaceId !== undefined && folders !== undefined ? { folders } : {}),
@@ -806,6 +809,8 @@ export class HarnessHub implements Bridge {
           throw new AppError(409, 'request-conflict', '同一个请求标识不能分叉自不同位置')
         return current.forkOf ? current : { ...current, forkOf, ...(initialTitle ? { title: initialTitle.slice(0, 120) } : {}) }
       })
+    // What was written above (title, fork, project) changes the session as listed since the driver last reported it.
+    this.emit(result.sessionId)
     return result
   }
 

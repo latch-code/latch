@@ -74,6 +74,12 @@ export interface CreateTaskInput {
   attachments?: AttachmentRef[]
   prompt: string
   requestId: string
+  /**
+   * Set by the Host only: what the session is called from its start (a fork, a conversation moved to another Harness, a
+   * scheduled run). A driver that names its sessions uses it instead of a name from `prompt`, which may begin with the
+   * Host's record of another session. Not part of the request's identity: a retry answers with the session it made.
+   */
+  title?: string
   mode?: TaskMode
   /** Model for drivers that run on the Host's providers. Others may ignore it. */
   model?: ModelRef

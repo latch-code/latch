@@ -382,6 +382,11 @@ function digest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
 
+/** The Host's name for a new session, when it gives one (`CreateTaskInput.title`), at most as long as its own record keeps. */
+function hostTitle(input: { title?: unknown }): string | undefined {
+  return typeof input.title === 'string' && input.title.trim() ? input.title.slice(0, 120) : undefined
+}
+
 /** Snapshot once per run, then persist it with the input before making any model call. */
 function skillContext(lease: CapabilityLease): string | undefined {
   return lease.skills?.length ? lease.skills.map(skill => `# ${skill.name} (${skill.id})\n${skill.content}`).join('\n\n') : undefined
@@ -1074,7 +1079,7 @@ class HarnessRuntime implements Bridge {
             ...(agentContext?.generalChat ? { generalChat: true as const } : {}),
             ...(agentContext && !agentContext.agent ? { agentPrivate: true as const } : {}),
             ...(agentContext?.pluginIds ? { pluginIds: [...agentContext.pluginIds] } : {}),
-            title: (promptTitle(input.prompt) || attachments[0]?.name || '附件').slice(0, 80),
+            title: hostTitle(input) ?? (promptTitle(input.prompt) || attachments[0]?.name || '附件').slice(0, 80),
             status: 'running',
             updatedAt: at,
             createdAt: at,
