@@ -181,6 +181,35 @@ describe('Popover side', () => {
     const layer = screen.container.querySelector<HTMLElement>('.ui-popover')!
     await expect.poll(() => layer.dataset.side).toBe('bottom')
   })
+
+  it('above its trigger, grows away from it in the frame its content grows, clamped from that frame', async () => {
+    const screen = await render(
+      <div style={{ position: 'fixed', top: innerHeight - 60 }}>
+        <Popover
+          label="选择"
+          side="auto"
+          maxHeight={240}
+          trigger={menu => (
+            <button type="button" ref={menu.ref} onClick={menu.onClick}>
+              打开
+            </button>
+          )}>
+          <div id="grows" style={{ height: 20 }}>
+            读取中
+          </div>
+        </Popover>
+      </div>,
+    )
+    const trigger = screen.getByRole('button', { name: '打开' }).element()
+    await screen.getByRole('button', { name: '打开' }).click()
+    const layer = screen.container.querySelector<HTMLElement>('.ui-popover')!
+    await expect.poll(() => layer.dataset.side).toBe('top')
+    // The list arrives: read the boxes in the same task, before any frame could place the layer again.
+    document.querySelector<HTMLElement>('#grows')!.style.height = '600px'
+    const box = layer.getBoundingClientRect()
+    expect(box.bottom).toBeLessThanOrEqual(trigger.getBoundingClientRect().top)
+    expect(box.height).toBeLessThanOrEqual(240)
+  })
 })
 
 describe('Modal exit', () => {

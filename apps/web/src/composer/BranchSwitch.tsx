@@ -82,6 +82,12 @@ export function canSwitchBranch(snapshot: AppSnapshot, access: DeviceAccess, con
 
 type ListState = { state: 'reading' } | { state: 'ready'; listing: BranchListing } | { state: 'failed'; message: string }
 
+/**
+ * Each project's last listing in this page, so the list opens again at its own size at once while it is read anew;
+ * without it the layer would show a short 「读取中」 and then jump to the list's height.
+ */
+const lastListings = new Map<string, BranchListing>()
+
 /** A refusal's words: the Host's, with the kind of setting named for a configuration that keeps the switch from running. */
 function refusalText(error: unknown): string {
   if (error instanceof ApiError && error.code === 'branch-switch-config') {
@@ -178,7 +184,10 @@ function BranchList({
   onLanded: (branch: string) => void
 }) {
   const close = useLayerClose()
-  const [list, setList] = useState<ListState>({ state: 'reading' })
+  const [list, setList] = useState<ListState>(() => {
+    const kept = lastListings.get(projectId)
+    return kept ? { state: 'ready', listing: kept } : { state: 'reading' }
+  })
   const [query, setQuery] = useState('')
   const [group, setGroup] = useState<BranchGroup>('local')
   const panel = useRef<HTMLDivElement>(null)
@@ -192,9 +201,12 @@ function BranchList({
     const ask = ++asked.current
     void api<BranchListing>(`workspaces/${encodeURIComponent(projectId)}/branches`).then(
       listing => {
+        lastListings.set(projectId, listing)
         if (asked.current === ask) setList({ state: 'ready', listing })
       },
       (cause: unknown) => {
+        // A folder that can no longer be read is not shown as it was.
+        lastListings.delete(projectId)
         if (asked.current === ask) setList({ state: 'failed', message: errorMessage(cause) })
       },
     )

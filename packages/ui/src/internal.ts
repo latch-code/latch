@@ -117,6 +117,12 @@ export interface AnchorOptions {
    * window's, edge to edge (the same list drawn as a sheet on a phone).
    */
   width?: 'own' | 'anchor' | 'window'
+  /**
+   * Above its trigger, the layer holds the edge next to the trigger (`bottom`) rather than its top, so content that
+   * grows after it opens (a list read once it is shown) grows away from the trigger at once instead of over it until the
+   * next placement. Off for a tooltip, whose glide animates `top`.
+   */
+  growAway?: boolean
 }
 
 /** Keeps a layer 8px inside the window. */
@@ -157,7 +163,7 @@ function visibleWindow(): { top: number; left: number; width: number; height: nu
 export function pinLayer(
   anchor: Element | PointAnchor,
   layer: HTMLElement,
-  { align, side, gap, maxHeight = Infinity, width: sizing = 'own' }: AnchorOptions,
+  { align, side, gap, maxHeight = Infinity, width: sizing = 'own', growAway = false }: AnchorOptions,
 ): () => void {
   // Once placed, the layer prefers the side it is on, so content that changes height does not make it jump across.
   const box = anchor.getBoundingClientRect()
@@ -190,9 +196,17 @@ export function pinLayer(
       : adjacentTop
     const preferred = align === 'end' ? target.right - width : align === 'center' ? target.left + (target.width - width) / 2 : target.left
     const left = Math.min(Math.max(view.left + margin, preferred), Math.max(view.left + margin, view.left + view.width - width - margin))
-    layer.style.top = `${Math.round(top)}px`
+    if (up && growAway && !atPointer) {
+      // A fixed layer's `bottom` counts from the layout viewport's bottom edge, the frame `target` is measured in.
+      layer.style.top = 'auto'
+      layer.style.bottom = `${Math.round(document.documentElement.clientHeight - (target.top - gap))}px`
+    } else {
+      layer.style.bottom = ''
+      layer.style.top = `${Math.round(top)}px`
+    }
     layer.style.left = `${Math.round(left)}px`
-    layer.style.maxHeight = height > room ? `${Math.floor(room)}px` : ''
+    // Held to the room even while the content fits, so content that grows past it is clamped from its first frame.
+    layer.style.maxHeight = growAway || height > room ? `${Math.floor(room)}px` : ''
     layer.dataset.side = up ? 'top' : 'bottom'
     layer.dataset.align = align
   }

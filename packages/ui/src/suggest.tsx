@@ -87,6 +87,7 @@ export function Suggest({
       gap: phone ? 0 : 6,
       maxHeight: phone ? 260 : 304,
       width: phone ? 'window' : 'anchor',
+      growAway: true,
     })
     const ancestors = new MutationObserver(() => {
       if (gone()) leave()

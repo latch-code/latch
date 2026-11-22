@@ -102,7 +102,7 @@ function useLayer(
     if (!open || !element || !anchor) return undefined
     if (from?.point)
       return pinLayer(pointAnchor(from.point.x, from.point.y), element, { align: 'start', side: 'bottom', gap: 2, maxHeight })
-    return pinLayer(anchor, element, { align: from ? 'start' : align, side, gap: 6, maxHeight })
+    return pinLayer(anchor, element, { align: from ? 'start' : align, side, gap: 6, maxHeight, growAway: true })
   }, [open, align, side, maxHeight, from, placeAt])
   useEffect(() => {
     const element = layer.current
