@@ -122,6 +122,9 @@ describe('bounded per-run workspace changes', () => {
       },
     })
     const handle = await f.service.start(f.input)
+    // A new file counts as created when its birth time is at or after the start, and Linux stamps files from a coarse
+    // clock that can lag the start by a few milliseconds: write it a moment later.
+    await new Promise(resolve => setTimeout(resolve, 50))
     await writeFile(join(f.root, 'new.txt'), 'new')
     const finish = handle.finish()
     changed('new.txt')

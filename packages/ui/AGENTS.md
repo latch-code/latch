@@ -24,4 +24,4 @@
 
 `test/` 在真实浏览器中跑（见 [docs/TESTING.md](../../docs/TESTING.md)「组件测试」）；`test/gallery/` 是只供测试的原语总览页。新增或改动原语时在 gallery 补上每种状态，并补聚焦的浏览器用例。
 
-改动后跑 `pnpm test --project @latch/ui --project @latch/web`、`pnpm build`、`pnpm test:e2e`，看 `e2e/visual.e2e.ts` 截图（含 `ui-gallery`）。
+改动后跑 `pnpm test --project '@latch/ui*' --project @latch/web`、`pnpm build`、`pnpm test:e2e`，看 `e2e/visual.e2e.ts` 截图（含 `ui-gallery`）。

@@ -136,10 +136,17 @@ it('acknowledges a selected text stream with a full baseline before sending only
     await expect.poll(() => frames.find(frame => frame.type === 'task-state')).toBeDefined()
     const full = frames.find(frame => frame.type === 'task-state')!
     expect(full.stream).toMatchObject({ protocol: 'delta-v1', subscriptionId: expect.any(String), stateSeq: 1 })
+    // The baseline can go out before or after the first chunk; either way the reader has the first text before the second.
+    await expect.poll(() => frames.some(frame => JSON.stringify(frame).includes('第一段🙂'))).toBe(true)
     steps[1]!.release()
-    await expect.poll(() => frames.find(frame => frame.type === 'task-delta')).toBeDefined()
-    const delta = frames.find(frame => frame.type === 'task-delta')!
-    expect(delta).toMatchObject({ sessionId, baseSeq: 1, text: { offset: Buffer.byteLength('第一段🙂'), append: '\n第二段e\u0301' } })
+    const second = () => frames.find(frame => frame.type === 'task-delta' && JSON.stringify(frame).includes('第二段'))
+    await expect.poll(second).toBeDefined()
+    const delta = second()!
+    expect(delta).toMatchObject({
+      sessionId,
+      baseSeq: expect.any(Number),
+      text: { offset: Buffer.byteLength('第一段🙂'), append: '\n第二段e\u0301' },
+    })
     expect(JSON.stringify(delta)).not.toContain('第一段')
     expect(delta.live).toMatchObject({ lastEventAt: expect.any(String), lastOutputAt: expect.any(String) })
     steps[2]!.release()

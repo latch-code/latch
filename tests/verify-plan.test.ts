@@ -48,7 +48,7 @@ describe('verification plan', () => {
     expect(plan('packages/ui/test/gallery/Gallery.tsx')).toEqual([
       'pnpm check:quick',
       'pnpm knip',
-      'pnpm test --project @latch/ui',
+      'pnpm test --project @latch/ui --project @latch/ui-touch',
       'pnpm build',
       expect.stringMatching(/^grep -rnE .* dist\/$/u),
       `${E2E_RUN} e2e/design.e2e.ts e2e/visual.e2e.ts`,
@@ -166,7 +166,7 @@ describe('verification plan', () => {
     expect(commands(['packages/ui/src/tokens.css'])).toEqual([
       'pnpm check:quick',
       'pnpm knip',
-      'pnpm test --project @latch/ui --project @latch/web',
+      'pnpm test --project @latch/ui --project @latch/ui-touch --project @latch/web',
       COPY,
       'pnpm build',
       expect.stringMatching(/^grep -rnE .* dist\/$/u),
@@ -216,6 +216,13 @@ describe('verification plan', () => {
           { test: { name: '@latch/x', include: ['apps/x/test/unit/*.test.ts', 'apps/x/test/one.test.ts'] } },
           { test: { include: ['nameless/**'] } },
           'packages/*',
+          {
+            test: {
+              name: '@latch/y',
+              include: ['packages/y/test/**/*.test.tsx'],
+              browser: { instances: [{ name: '@latch/y' }, { name: '@latch/y-touch', include: ['packages/y/test/touch.test.tsx'] }] },
+            },
+          },
         ],
       },
     }
@@ -223,6 +230,9 @@ describe('verification plan', () => {
       { name: 'root', dir: 'tests' },
       { name: '@latch/x', dir: 'apps/x/test/unit' },
       { name: '@latch/x', dir: 'apps/x/test' },
+      // A browser project's instances run as projects of their own names.
+      { name: '@latch/y', dir: 'packages/y/test' },
+      { name: '@latch/y-touch', dir: 'packages/y/test' },
     ])
     expect(testProjects(undefined)).toEqual([])
   })

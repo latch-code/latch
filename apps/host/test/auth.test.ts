@@ -1084,12 +1084,15 @@ describe('enrollment', () => {
     await expect(
       context.enrollments.complete(view.id, key.sign(enrollSigningText(hostId, view.id, view.nonce!)), loopback),
     ).rejects.toMatchObject({ status: 410 })
-    expect(
-      context
-        .auditRecords()
-        .filter(record => record.action === 'device.enroll.failed')
-        .map(record => record.detail.reason),
-    ).toEqual(['signature'])
+    // The refusal never waits for its record, so a busy machine may write it a moment later.
+    await vi.waitFor(() =>
+      expect(
+        context
+          .auditRecords()
+          .filter(record => record.action === 'device.enroll.failed')
+          .map(record => record.detail.reason),
+      ).toEqual(['signature']),
+    )
   })
 
   it('reports denials and expiry, and cancels the local dialog', async () => {

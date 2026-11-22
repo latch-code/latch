@@ -44,8 +44,34 @@ export class FakeClock {
     await settle()
   }
 }
+/**
+ * WebCrypto answers from a thread pool, after however many event-loop turns the machine needs: the platform's `subtle`
+ * records the calls still running, and settle() waits for them instead of counting on a number of turns.
+ */
+const running = new Set<Promise<unknown>>()
+export const trackedSubtle = new Proxy(webcrypto.subtle, {
+  get(target, key) {
+    const value: unknown = Reflect.get(target, key, target)
+    if (typeof value !== 'function') return value
+    return (...args: unknown[]) => {
+      const result: unknown = Reflect.apply(value, target, args)
+      if (result instanceof Promise) {
+        running.add(result)
+        result.then(
+          () => running.delete(result),
+          () => running.delete(result),
+        )
+      }
+      return result
+    }
+  },
+})
 export async function settle(): Promise<void> {
-  for (let index = 0; index < 20; index++) await new Promise(resolve => setImmediate(resolve))
+  for (let round = 0; round < 100; round++) {
+    for (let index = 0; index < 20; index++) await new Promise(resolve => setImmediate(resolve))
+    if (running.size === 0) return
+    await Promise.allSettled([...running])
+  }
 }
 
 export class FakeResponse implements EdgeResponse {
@@ -147,7 +173,7 @@ export class ServerSocket implements EdgeWebSocket {
 
 export function fakePlatform(clock: FakeClock): EdgePlatform {
   return {
-    subtle: webcrypto.subtle as unknown as EdgeSubtle,
+    subtle: trackedSubtle as unknown as EdgeSubtle,
     random: size => webcrypto.getRandomValues(new Uint8Array(size)),
     now: () => clock.now,
     respond: (status, body, headers) => new FakeResponse(status, body, headers),

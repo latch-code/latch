@@ -403,6 +403,7 @@ describe('chunked attachment uploads', () => {
     release()
     await Promise.all(both)
   })
+  // Seven MiB written and synced part by part: well under the default here, past it on a busy CI runner.
   it('writes parts that arrive out of order within four of the first missing one at their offsets, and refuses one further on', async () => {
     const { path, uploads, open: begin, put } = await local()
     const bytes = Buffer.concat(Array.from({ length: 7 }, (_, n) => text(n < 6 ? MiB : 1234, String.fromCharCode(97 + n)))),
@@ -420,7 +421,7 @@ describe('chunked attachment uploads', () => {
     expect(uploads.status('device-a', id)).toMatchObject({ received: 7, next: null, bitmap: '1111111' })
     expect(await readFile(join(path, 'attachments', '_uploads', id, 'data'))).toEqual(bytes)
     expect(await finishUpload(uploads, id, () => {})).toMatchObject({ size: bytes.length, sha256: sha(bytes) })
-  })
+  }, 60_000)
   it('keeps the received-part bitmap across a restart, so a resume sends only the missing parts', async () => {
     const { path, store, uploads, open: begin, put, clock } = await local()
     const bytes = Buffer.concat([text(MiB, 'p'), text(MiB, 'q'), text(MiB, 'r'), text(10, 's')]),

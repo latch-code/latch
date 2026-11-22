@@ -1,5 +1,5 @@
 import type { CDPSession } from '@vitest/browser-playwright'
-import { cdp, type Locator } from 'vitest/browser'
+import { cdp, server, type Locator } from 'vitest/browser'
 
 /** The DevTools protocol of the test's page, typed by the Playwright provider. */
 const protocol = (): CDPSession => cdp()
@@ -19,8 +19,14 @@ export function press(locator: Locator): void {
   html(locator).click()
 }
 
-/** Emulates a touch screen, which makes `(pointer: coarse)` match, for the duration of `run`. */
+/**
+ * Emulates a touch screen, which makes `(pointer: coarse)` match, for the duration of `run`. Only in the
+ * `@latch/ui-touch` browser: turning the emulation off leaves a headless Chrome without a pointer on Linux, and every
+ * later hover in that browser would fail (TOUCH_FILES in vitest.config.ts).
+ */
 export async function onTouchScreen(run: () => Promise<void>): Promise<void> {
+  if (server.config.name !== '@latch/ui-touch')
+    throw new Error(`onTouchScreen runs only in the @latch/ui-touch browser; list this file in TOUCH_FILES (${server.config.name})`)
   await protocol().send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })
   try {
     await run()

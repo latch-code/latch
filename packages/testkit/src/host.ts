@@ -209,9 +209,11 @@ export async function startHostFixture<H extends FixtureHost>(
   const presence = createTestPresence({ mode: options.presenceMode ?? 'approve' })
   let tls: TestTlsListener | undefined
   let tlsCa: string | undefined
+  let tlsHostname: string | undefined
   if (options.tls === true) {
     const material = await makeTestTls(join(root, 'tls'))
     const port = await freePort()
+    tlsHostname = material.hostname
     tls = {
       host: '127.0.0.1',
       port,
@@ -229,7 +231,18 @@ export async function startHostFixture<H extends FixtureHost>(
   const workspaceRoot = options.workspaceRoot ?? join(root, 'workspace')
   let host: H
   try {
-    host = await start({ dataDir, workspaceRoot, runtimeParent, presence, ...(tls ? { tls } : {}) })
+    // The HTTPS port is chosen before the Host starts, since its public origin names it; another suite can take it in
+    // between, and then the Host refuses with port-in-use: choose another.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        host = await start({ dataDir, workspaceRoot, runtimeParent, presence, ...(tls ? { tls } : {}) })
+        break
+      } catch (error) {
+        if (!tls || !tlsHostname || attempt >= 4 || (error as { code?: unknown }).code !== 'port-in-use') throw error
+        const port = await freePort()
+        tls = { ...tls, port, publicOrigin: `https://${tlsHostname}:${port}` }
+      }
+    }
   } catch (error) {
     await rm(root, { recursive: true, force: true })
     throw error

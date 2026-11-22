@@ -80,12 +80,13 @@ async function look(page: Page, selector: string): Promise<Array<Record<string, 
 export async function expectUnmovedByInjectedStyles(page: Page, selectors: readonly string[]): Promise<void> {
   // Injected styles can move the layout: keep the pointer away so the comparison does not also change hover.
   await page.mouse.move(0, 0)
-  // Colours fade between states (a theme switch, a hover); compare the settled values, not a frame of a transition.
+  // Colours fade between states (a theme switch, a hover) and cards fade in: compare the settled values, not a frame of
+  // a transition or an entrance. Endless animations (a spinner) never settle and are left running.
   await page.evaluate(() =>
     Promise.all(
       document
         .getAnimations()
-        .filter(animation => animation instanceof CSSTransition)
+        .filter(animation => animation.effect?.getComputedTiming().endTime !== Infinity)
         .map(animation => animation.finished.catch(() => undefined)),
     ),
   )
