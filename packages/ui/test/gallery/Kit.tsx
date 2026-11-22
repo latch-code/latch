@@ -407,6 +407,18 @@ function Feedback() {
           </div>
         </Cell>
       </Row>
+      <Row label="滚动条">
+        <Cell caption="静止时隐藏">
+          <div className="gallery-scroller" tabIndex={0} aria-label="静止的列表">
+            <div />
+          </div>
+        </Cell>
+        <Cell caption="滚动时显示">
+          <div className="gallery-scroller ui-scrolling" tabIndex={0} aria-label="滚动中的列表">
+            <div />
+          </div>
+        </Cell>
+      </Row>
     </Section>
   )
 }

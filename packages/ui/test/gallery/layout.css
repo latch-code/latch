@@ -492,6 +492,16 @@ ol.gallery-sheet-card > li {
   border-radius: var(--r-8);
   box-shadow: inset 0 0 0 1px var(--line);
 }
+.gallery-scroller {
+  width: 120px;
+  height: 56px;
+  overflow-y: auto;
+  border-radius: var(--r-8);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.gallery-scroller > div {
+  height: 160px;
+}
 .gallery-toast > .ui-toast {
   bottom: var(--sp-8);
   white-space: nowrap;

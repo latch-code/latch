@@ -75,6 +75,7 @@ export { StatusGlyph, StatusSlot, StatusWord, StatusWords, type SlotStatus, type
 export { EmptyState, ErrorState, Loading, ProgressBar, Skeleton } from './state.tsx'
 export { Switch, SwitchRow } from './switch.tsx'
 export { followSystemTheme, switchTheme } from './theme.ts'
+export { revealScrollbarsWhileScrolling } from './scrollbars.ts'
 export { CUSTOM_LAYER, CUSTOM_TOKENS, isCustomToken, type CustomToken } from './custom.ts'
 export { FilterPills, PanelTabs, Tabs, type PanelTab, type TabOption } from './tabs.tsx'
 export { Drawer, DrawerStack } from './drawer.tsx'
