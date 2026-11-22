@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MemoryGuard, type BufferedPeer } from '../src/memory.ts'
+import { MemoryGuard, cgroupDirectory, type BufferedPeer } from '../src/memory.ts'
 const peer = (id: number, prefix: string, bytes: number, written = 0): BufferedPeer => ({
   id,
   prefix,
@@ -49,5 +49,18 @@ describe('bounded relay memory and throughput progress', () => {
     fail = true
     await guard.sample([])
     expect(guard.status().healthy).toBe(false)
+  })
+})
+
+describe('the cgroup whose memory the relay reads', () => {
+  it("reads its own cgroup: the namespace's top inside a container, the service's directory on a host", () => {
+    expect(cgroupDirectory('0::/\n')).toBe('/sys/fs/cgroup')
+    expect(cgroupDirectory('0::/system.slice/latch-relay.service\n')).toBe('/sys/fs/cgroup/system.slice/latch-relay.service')
+    // A mixed v1 and v2 host lists the v1 controllers first.
+    expect(cgroupDirectory('12:memory:/x\n0::/system.slice/relay.service\n')).toBe('/sys/fs/cgroup/system.slice/relay.service')
+  })
+  it('refuses a membership without a v2 line or one that climbs out of the mount', () => {
+    for (const membership of ['', '12:memory:/x\n', '0::relative\n', '0::/../etc\n', '0::/a/../../b\n'])
+      expect(() => cgroupDirectory(membership)).toThrow('No cgroup v2 membership')
   })
 })

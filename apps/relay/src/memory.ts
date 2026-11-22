@@ -1,15 +1,30 @@
 import { readFile } from 'node:fs/promises'
+import { posix } from 'node:path'
 export interface MemorySample {
   used: number
   limit: number
   includesSockets: boolean
 }
+/**
+ * This process's cgroup v2 directory, from the `0::` line of /proc/self/cgroup: `/` inside a container's own cgroup
+ * namespace, `/system.slice/<unit>.service` for a service on the host. The root of the hierarchy has no memory.current,
+ * so reading the mount's top level only works inside a container.
+ */
+export function cgroupDirectory(membership: string): string {
+  const path = membership
+    .split('\n')
+    .find(line => line.startsWith('0::'))
+    ?.slice(3)
+  if (!path?.startsWith('/') || path.split('/').includes('..')) throw new Error('No cgroup v2 membership')
+  return path === '/' ? '/sys/fs/cgroup' : posix.join('/sys/fs/cgroup', path)
+}
 /** Linux cgroup v2 includes kernel socket memory; process RSS alone is not a production proxy. */
 async function readRelayMemory(configuredLimit: number): Promise<MemorySample> {
   if (process.platform !== 'linux') return { used: process.memoryUsage().rss, limit: configuredLimit, includesSockets: false }
+  const directory = cgroupDirectory(await readFile('/proc/self/cgroup', 'utf8'))
   const [current, maximum] = await Promise.all([
-    readFile('/sys/fs/cgroup/memory.current', 'utf8'),
-    readFile('/sys/fs/cgroup/memory.max', 'utf8'),
+    readFile(posix.join(directory, 'memory.current'), 'utf8'),
+    readFile(posix.join(directory, 'memory.max'), 'utf8'),
   ])
   const integer = (value: string) => {
     if (!/^\d+\n?$/u.test(value)) throw new Error('Invalid cgroup counter')
