@@ -359,6 +359,11 @@ export interface CommandDetection {
   outdated?: { need: string; upgrade: string }
   /** It has a version it must reach and nothing has read that yet (a preset is read once it is confirmed). */
   versionUnread?: true
+  /**
+   * A newer release than the one it printed is published: its version, and the command that updates it the way it was
+   * installed when its path says how. Latch never runs it. Absent with `outdated`, which names its own command.
+   */
+  update?: { current: string; latest: string; command?: string }
 }
 
 /** A preset as the agent settings list it: with what the Host found of its commands. Older Hosts send no `detected`. */

@@ -322,6 +322,19 @@ interface ProfileQuota {
   readonly command?: QuotaCommand
 }
 
+/**
+ * Where a preset's own program is published (`update-command.ts`). The install's real path picks the source: a Homebrew
+ * formula or cask named in `brew` is asked of Homebrew, a global copy of `npm` (or any other layout) of npm. `native`: path
+ * fragments of the program's own installer's layout and the command that updates such an install. `channel`: the Host
+ * reads which npm dist-tag the program follows from its own settings (`claude`: `autoUpdatesChannel`).
+ */
+export interface ReleaseSource {
+  readonly npm?: string
+  readonly brew?: readonly string[]
+  readonly native?: { readonly markers: readonly string[]; readonly command: string }
+  readonly channel?: 'claude'
+}
+
 export interface HarnessProfile {
   /** Equals `AgentPreset.id`. */
   readonly presetId: string
@@ -431,6 +444,20 @@ export interface HarnessProfile {
     readonly minimum: string
     /** The command a person runs to upgrade; Latch never runs it. */
     readonly upgrade: string
+    /**
+     * Where this very program is published, for telling a person a newer one exists (`update-command.ts`); Latch never
+     * runs the update. Absent: no update hint.
+     */
+    readonly source?: ReleaseSource
+  }
+  /**
+   * For a program with no `minimumVersion` of its own: how its version is read (by the same rules, the same cache) and
+   * where it is published, only to tell a person a newer one exists. It never blocks or refuses anything.
+   */
+  readonly releases?: {
+    readonly args: readonly string[]
+    read(output: string): string | undefined
+    readonly source: ReleaseSource
   }
   /**
    * How a draft's lists are read before a session, decided per preset (docs/HARNESSES.md「什么时候读」). A draft reads by

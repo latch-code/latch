@@ -70,6 +70,7 @@ Provider 负责模型协议转换；Tool 执行一种操作；HarnessDriver 提�
 | 审计与动作表 | `apps/host/src/audit.ts`、`audit-actions/` |
 | 安全策略、出站策略 | `apps/host/src/policy.ts`、`egress.ts` |
 | 用 Harness CLI 自己的密钥读厂商余额（只有 DeepSeek Harness，见 [HARNESSES](HARNESSES.md#deepseek-harness-的余额)） | `apps/host/src/cli-quota.ts` |
+| Harness 的新版本提示：npm 注册表的 dist-tags、Homebrew 的 formula 与 cask、Claude 的更新通道（见 [HARNESSES](HARNESSES.md#新版本提示)） | `apps/host/src/harness-updates.ts` |
 | 从 Harness CLI 自己的会话日志读 Latch 所启会话一轮的 tokens（只有 DeepSeek Harness，见 [HARNESSES](HARNESSES.md#deepseek-harness-的会话日志)） | `apps/host/src/cli-usage.ts` |
 | goose、DeepSeek Harness、Qwen Code 自己的存储：重新打开 goose 会话前的检查、goose 一轮的 tokens、删除 Latch 自己开的会话、Qwen 自更新的指纹（见 [HARNESSES](HARNESSES.md#cli-自己的存储)） | `apps/host/src/cli-stores.ts` |
 | DeepSeek Harness 自己组合出的配置（`--dump-config`），余额、日志与删除的前提 | `apps/host/src/dsh-config.ts` |
@@ -531,6 +532,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 - **工具网关。** ACP Driver 另得到 `toolGateway`：Host 运行目录里 0700 的 `tools/` 下的 Unix 套接字 `gateway.sock`（0600），转发浏览器工具的 `tools/list` 与 `tools/call`，以及 `latch-mcp` 桥的请求（[MCP.md](./MCP.md)）。
 - **浏览器工具的令牌。** Driver 每次打开、恢复、载入或分叉 Agent 的会话时换一个 `lbt1.` 令牌，写进新建的 0600 文件，`mcpServers` 只拿到文件路径，读出后即删；Host 只存哈希，令牌绑定会话与进程的生命期。它不是 API 的入口类别：持有令牌的进程不能当设备用。调用只在会话正在运行的一轮里执行，完全访问的会话里 R2 一律拒绝（见「设备与浏览器」）。
 - **远程 MCP。** 远程 MCP 服务器只由 Host 连接（`mcp-remote.ts`、`mcp-oauth.ts`）：请求只经出站策略发往本机确认时绑定的源与路径，不跟随重定向，请求头的值与令牌从不离开 Host。见 [MCP.md](./MCP.md#远程地址)。
+- **新版本提示。** Host 只向两个固定源发 GET：`https://registry.npmjs.org` 的 `/-/package/<包>/dist-tags` 与 `https://formulae.brew.sh` 的 `/api/<formula|cask>/<名称>.json`（名称取自 profile，按安装路径选源），经注入的出站 `fetch`，只带 `accept`，不跟随重定向，5 秒上限（设置的读取最多等 2 秒，晚到的结果给下次读取）；不带设备、Host 或人的标识。只在启动脚本传入 `harnessUpdates` 时开启，测试 Host 不发。见 [HARNESSES](HARNESSES.md#新版本提示)。
 - **会话元数据。** 重命名、置顶、归档、标签、优先级与看板记号保存在 `sessions-meta.json`，对所有 Harness 生效；Driver 自报的 `tags`、`priority`、`board` 被丢弃。删除调用 Driver 的可选 `remove`，不支持时返回 409 `delete-unsupported`；删除成功后一并删除该会话的元数据与回执。接入的会话只有人在这一次删除里选了（`DELETE /tasks/:id?original=1`，Driver 声明 `historyDelete`）才连 Harness 里的原会话一起删，Host 先写审计 `history.original.deleted`（[HARNESSES](HARNESSES.md#持久化与恢复)）。
 - **运行。** Driver 在每次运行开始时给会话写入新的 `TaskSummary.runId` 并持久化。`cancel(sessionId, { runId })` 只在它仍是当前运行时取消，并回答是否取消了什么。
 - **挂载与卸载。** 启停 Harness 插件或修改 Agent 定义时先卸载旧 Driver；仍有运行中或待审批的会话时返回 409 `harness-busy`。

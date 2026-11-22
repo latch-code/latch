@@ -12,6 +12,9 @@ function gooseExtensionKey(name: string): string {
 }
 
 /** A line of `goose --version` that is the version alone, with or without the program's name before it. */
+/** The Homebrew formula goose ships as; its own installer leaves a layout no lookup names. */
+const GOOSE_SOURCE = { brew: ['block-goose-cli'] } as const
+
 const readGooseVersion = (output: string) => /^\s*(?:goose\s+)?v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)\s*$/mu.exec(output)?.[1]
 
 export const gooseProfile: HarnessProfile = {
@@ -73,7 +76,7 @@ export const gooseProfile: HarnessProfile = {
     // Its `provider` option would move the session to a service the person configured in goose.
     hiddenConfig: ['provider'],
     // Read in the sources of 1.57.0 and 1.59.0, and run without a login on 1.57.0.
-    minimumVersion: { args: ['--version'], read: readGooseVersion, minimum: '1.57.0', upgrade: 'goose update' },
+    minimumVersion: { args: ['--version'], read: readGooseVersion, minimum: '1.57.0', upgrade: 'goose update', source: GOOSE_SOURCE },
     deliver(place, route) {
       const provider = route.wire === 'anthropic-messages' ? 'anthropic' : 'openai'
       // Both providers take the address without a version and add the path themselves.
@@ -103,6 +106,8 @@ export const gooseProfile: HarnessProfile = {
   },
   // Its `session/new` starts every extension the person enabled in goose, their stdio MCP programs among them, and waits
   // for each (1.57.0 `prepare_acp_session_agent`; a real run waited 20 s on one that never answered).
+  // No gate of its own: read only to tell a person a newer formula is out.
+  releases: { args: ['--version'], read: readGooseVersion, source: GOOSE_SOURCE },
   catalogueRead: { when: 'request' },
   permission: {
     approvals: 'prompts',

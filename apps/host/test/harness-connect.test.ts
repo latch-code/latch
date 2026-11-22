@@ -3,13 +3,14 @@
 // keeps running.
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createAcpAgentPlugin } from '@latch/harness-acp'
 import type { AgentPresetSettings, AgentSettings, AppSnapshot, TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, FAKE_PI_AGENT } from '@latch/testkit'
+import type { FetchLike } from '../src/egress.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 const cleanups: Array<() => Promise<unknown> | unknown> = []
@@ -192,6 +193,130 @@ describe('a DeepSeek Harness older than its preset supports', () => {
     const again = await owner.json<{ agents: AgentSettings[] }>('agents')
     expect(again.agents.find(agent => agent.id === 'dsh')?.detected.outdated).toBeUndefined()
     expect((await owner.json<AppSnapshot>('snapshot')).catalog?.harnesses.find(item => item.id === 'dsh')?.status).toBe('ready')
+  })
+})
+
+describe('a newer DeepSeek Harness on npm', () => {
+  /** A Host with a `dsh` installed as npm installs it globally, saved and read at 0.2.2. */
+  async function npmDshHost(extra: Parameters<typeof startTestHost>[0] = {}) {
+    const root = await directory()
+    const bin = join(root, 'bin')
+    const pkg = join(root, 'lib', 'node_modules', '@deepseek-ai', 'dsh', 'bin')
+    await mkdir(bin)
+    await mkdir(pkg, { recursive: true })
+    await writeFile(
+      join(pkg, 'dsh'),
+      ['#!/bin/sh', 'if [ "$1" = --version ]; then echo 0.2.2; exit 0; fi', `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`, ''].join(
+        '\n',
+      ),
+    )
+    await chmod(join(pkg, 'dsh'), 0o755)
+    await symlink(join(pkg, 'dsh'), join(bin, 'dsh'))
+    const t: TestHost = await startTestHost({
+      detectPreset: preset => (preset.id === 'dsh' ? { found: true, path: join(bin, 'dsh') } : { found: false }),
+      loginPrograms: name => (existsSync(join(bin, name)) ? join(bin, name) : undefined),
+      commandDirectories: () => [bin],
+      ...extra,
+    })
+    cleanups.push(() => t.close())
+    const owner = await t.enroll({ listener: 'unix' })
+    const body = { id: 'dsh', name: 'DeepSeek Harness', presetId: 'dsh', command: 'dsh', args: ['--profile', 'acp'], env: {} }
+    await owner.confirmedJson('agents', { method: 'POST', body })
+    return { root, owner }
+  }
+
+  it('is never asked by a Host the start script did not open it on', async () => {
+    const looked: string[] = []
+    const { owner } = await npmDshHost({
+      egressLookup: (hostname, _options, callback) => {
+        looked.push(hostname)
+        callback(Object.assign(new Error('no network in tests'), { code: 'ENOTFOUND' }), [])
+      },
+    })
+    const listed = await owner.json<{ agents: AgentSettings[] }>('agents')
+    expect(listed.agents.find(agent => agent.id === 'dsh')?.detected).toEqual({ found: true, path: expect.any(String) })
+    expect(looked).toEqual([])
+  })
+
+  it('says so in settings with the command for how it was installed, asking the registry once', async () => {
+    const asked: string[] = []
+    const fetch: FetchLike = async url => {
+      asked.push(url)
+      return new Response(JSON.stringify({ latest: '0.3.0' }), { status: 200 })
+    }
+    const claudeDir = join(await directory(), 'claude')
+    const { root, owner } = await npmDshHost({ harnessUpdates: { home: '/nonexistent', fetch, claudeDir } })
+    const listed = await owner.json<{ agents: AgentSettings[]; presets: AgentPresetSettings[] }>('agents')
+    const update = { current: '0.2.2', latest: '0.3.0', command: 'npm i -g @deepseek-ai/dsh@latest' }
+    expect(listed.agents.find(agent => agent.id === 'dsh')?.detected).toEqual({ found: true, path: join(root, 'bin', 'dsh'), update })
+    expect(listed.presets.find(preset => preset.id === 'dsh')?.detected?.update).toEqual(update)
+    await owner.json('agents')
+    expect(asked).toEqual(['https://registry.npmjs.org/-/package/@deepseek-ai%2Fdsh/dist-tags'])
+  })
+})
+
+describe('a newer goose on Homebrew', () => {
+  /** A Host with a `goose` installed as the Homebrew formula installs it, saved and read at 1.57.0. */
+  async function brewGooseHost(extra: Parameters<typeof startTestHost>[0] = {}) {
+    const root = await directory()
+    const bin = join(root, 'bin')
+    const keg = join(root, 'Cellar', 'block-goose-cli', '1.57.0', 'bin')
+    await mkdir(bin)
+    await mkdir(keg, { recursive: true })
+    await writeFile(
+      join(keg, 'goose'),
+      [
+        '#!/bin/sh',
+        'if [ "$1" = --version ]; then echo 1.57.0; exit 0; fi',
+        `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
+        '',
+      ].join('\n'),
+    )
+    await chmod(join(keg, 'goose'), 0o755)
+    await symlink(join(keg, 'goose'), join(bin, 'goose'))
+    const t: TestHost = await startTestHost({
+      detectPreset: preset => (preset.id === 'goose' ? { found: true, path: join(bin, 'goose') } : { found: false }),
+      loginPrograms: name => (existsSync(join(bin, name)) ? join(bin, name) : undefined),
+      commandDirectories: () => [bin],
+      ...extra,
+    })
+    cleanups.push(() => t.close())
+    const owner = await t.enroll({ listener: 'unix' })
+    const body = { id: 'goose', name: 'goose', presetId: 'goose', command: 'goose', args: ['acp'], env: {} }
+    await owner.confirmedJson('agents', { method: 'POST', body })
+    return { root, owner }
+  }
+
+  it('asks the formula, not npm, and names brew to update it', async () => {
+    const asked: string[] = []
+    const fetch: FetchLike = async url => {
+      asked.push(url)
+      return new Response(JSON.stringify({ versions: { stable: '1.60.2' } }), { status: 200 })
+    }
+    const claudeDir = join(await directory(), 'claude')
+    const { root, owner } = await brewGooseHost({ harnessUpdates: { home: '/nonexistent', fetch, claudeDir } })
+    const listed = await owner.json<{ agents: AgentSettings[] }>('agents')
+    expect(listed.agents.find(agent => agent.id === 'goose')?.detected).toEqual({
+      found: true,
+      path: join(root, 'bin', 'goose'),
+      update: { current: '1.57.0', latest: '1.60.2', command: 'brew upgrade block-goose-cli' },
+    })
+    expect(asked).toEqual(['https://formulae.brew.sh/api/formula/block-goose-cli.json'])
+  })
+
+  it('goes through the Host’s outbound fetch when none is given', async () => {
+    const looked: string[] = []
+    const claudeDir = join(await directory(), 'claude')
+    const { owner } = await brewGooseHost({
+      harnessUpdates: { home: '/nonexistent', claudeDir },
+      egressLookup: (hostname, _options, callback) => {
+        looked.push(hostname)
+        callback(Object.assign(new Error('no network in tests'), { code: 'ENOTFOUND' }), [])
+      },
+    })
+    const listed = await owner.json<{ agents: AgentSettings[] }>('agents')
+    expect(listed.agents.find(agent => agent.id === 'goose')?.detected.update).toBeUndefined()
+    expect(looked).toContain('formulae.brew.sh')
   })
 })
 

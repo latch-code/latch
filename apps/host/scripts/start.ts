@@ -252,6 +252,8 @@ async function main(): Promise<void> {
     // DeepSeek Harness's DeepSeek balance, read with its own key from this home (cli-quota.ts).
     cliQuota: { home: homedir() },
     cliUsage: { home: homedir() },
+    // Whether a newer release of a found Harness is out: npm or Homebrew, and Claude's update channel (harness-updates.ts).
+    harnessUpdates: { home: homedir() },
     // CLI stores read through each session's own environment: Claude Code's (claude-store.ts), pi's session files and
     // project trust (pi-store.ts), goose's, DeepSeek Harness's and Qwen Code's (cli-stores.ts): for 接入已有会话, real
     // deletion, settings, the permission panel and guarding what a session opened again would do.

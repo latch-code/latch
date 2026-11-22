@@ -165,6 +165,8 @@ import {
   forgetCommandLookups,
   onVersionChange,
   outdatedCommand,
+  updateSource,
+  claudeConfigDir,
   versionUnread,
   outdatedRefusal,
   recheckVersions,
@@ -196,6 +198,7 @@ import { HostAddressBooks } from './relay/address-book.ts'
 import { HostRelayDirectory } from './relay/directory.ts'
 import { createEgressFetch, createEgressInspector, type EgressReason, type FetchLike, type LookupFunction } from './egress.ts'
 import { DEEPSEEK_ORIGIN, DSH_KEY_PLUGINS, fetchDeepSeekBalance, readDshKey } from './cli-quota.ts'
+import { HarnessUpdates, type UpdateSource } from './harness-updates.ts'
 import { gooseChildSessions, gooseResumeState, gooseTurnUsage, qwenRunningCode, removeDshSession } from './cli-stores.ts'
 import { DSH_STORE_PLUGINS, readDshTurnUsage } from './cli-usage.ts'
 import { dshConfigCheck } from './dsh-config.ts'
@@ -901,6 +904,13 @@ export interface ServerOptions {
    */
   cliQuota?: { home: string; fetch?: FetchLike }
   /**
+   * Lets the agent settings say a newer release of a preset's own program is out (`harness-updates.ts`): asked where it
+   * was installed from, the fixed origins `registry.npmjs.org` (dist-tags) or `formulae.brew.sh` (formula, cask), and Claude Code's `autoUpdatesChannel` from its settings
+   * in this home (or `CLAUDE_CONFIG_DIR`). The start script passes the person's home; left out, as in tests, nothing is
+   * asked and nothing is read. `fetch` and `claudeDir` replace the outbound fetch and Claude's directory, for tests only.
+   */
+  harnessUpdates?: { home: string; fetch?: FetchLike; claudeDir?: string }
+  /**
    * The home directory whose DeepSeek Harness session logs the Host may read for the token counts of turns it ran
    * there (`cli-usage.ts`). The start script passes the person's home; left out, as in tests, no CLI record is read.
    */
@@ -1363,6 +1373,8 @@ const PRESET_LOOKUP_TTL_MS = 5_000
 const TURN_LOG_SETTLE_MS = 1_000
 /** How long reading the agent settings waits for commands to print their versions. */
 const VERSION_RECHECK_MS = 5_000
+/** How long reading the agent settings waits for the registry; a later answer reaches the next read, or a refresh. */
+const UPDATE_WAIT_MS = 2_000
 
 function agentSettings(agent: AgentRecord): AgentSettings {
   const verdict = validateAgentDefinition(agent)
@@ -1723,6 +1735,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       allow: () => [...policy.get().hostEgressAllow, ...egressExtra],
       ...(options.egressLookup ? { lookup: options.egressLookup } : {}),
     })
+    const harnessUpdates = options.harnessUpdates
+      ? (() => {
+          const { home, fetch, claudeDir } = options.harnessUpdates
+          return new HarnessUpdates({
+            fetch: fetch ?? egressFetch,
+            claudeDir: () => claudeDir ?? claudeConfigDir(home),
+            now,
+            // A lookup that lands after the settings answered: clients read again, as for a version found too old.
+            onChange: () => hub?.changed(),
+          })
+        })()
+      : undefined
+    /** A detection with the newer release its program has, when the lookup knows one and nothing else is wrong. */
+    const withUpdate = (record: AgentRecord | undefined, detected: CommandDetection): CommandDetection => {
+      const source = harnessUpdates && record && detected.found && !detected.outdated ? updateSource(record, detected.path) : undefined
+      const update = source && harnessUpdates!.hint(source)
+      return update ? { ...detected, update } : detected
+    }
     const inspectEgress = createEgressInspector(options.egressLookup ? { lookup: options.egressLookup } : {})
     /** The Host's sessions with remote MCP servers, through the same outbound rules (docs/MCP.md). */
     const mcpRemote = new McpRemotePool()
@@ -11360,6 +11390,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         )
         // Each preset says whether its commands are here, so an agent can be added knowing what is still missing.
         presetLookup = undefined
+        // The newest release of each program whose version is known, asked once per package and kept for hours.
+        if (harnessUpdates) {
+          const sources: UpdateSource[] = []
+          const add = (record: AgentRecord | undefined) => {
+            const source = record && updateSource(record, resolveCommand(record.command))
+            if (source) sources.push(source)
+          }
+          for (const agent of config.settings().agents) add(agent)
+          for (const preset of AGENT_PRESETS) add(presetRoute(preset.id))
+          await harnessUpdates.settle(sources, UPDATE_WAIT_MS)
+        }
         // A preset is added as a draft would save it: its adapter, when only that can run here.
         const presets: AgentPresetSettings[] = AGENT_PRESETS.map(preset => ({
           ...preset,
@@ -11369,9 +11410,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               ? { command: route.command, args: [...route.args], description: preset.fallback.description }
               : {}
           })(),
-          detected: withVersion(preset, (options.detectPreset ?? detectPresetCommands)(preset)),
+          detected: withUpdate(presetRoute(preset.id), withVersion(preset, (options.detectPreset ?? detectPresetCommands)(preset))),
         }))
-        json(res, { agents: config.settings().agents.map(agentSettings), presets })
+        const agents = config.settings().agents.map(agent => {
+          const settings = agentSettings(agent)
+          return { ...settings, detected: withUpdate(agent, settings.detected) }
+        })
+        json(res, { agents, presets })
         return true
       }
       if (path === '/link/api/agents' && method === 'POST') {

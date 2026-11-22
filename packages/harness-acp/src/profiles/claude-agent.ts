@@ -267,6 +267,13 @@ export const claudeAgentProfile: HarnessProfile = {
 /** The oldest Claude Code the direct wire runs: the one the SDK it is built on ships (`claudeCodeVersion` of 0.3.322). */
 const CLAUDE_DIRECT_MINIMUM = '2.1.322'
 const CLAUDE_UPGRADE = 'npm i -g @anthropic-ai/claude-code@latest'
+/** The direct wire's own program: published on npm, or put in place by Claude's own installer, which `claude update` updates. */
+const CLAUDE_SOURCE = {
+  npm: '@anthropic-ai/claude-code',
+  brew: ['claude-code', 'claude-code@latest'],
+  native: { markers: ['/.local/share/claude/', '/claude/versions/'], command: 'claude update' },
+  channel: 'claude',
+} as const
 
 /**
  * Claude Code itself, driven through the official Claude Agent SDK (`wires/claude.ts`): the person's own `claude`, its
@@ -279,7 +286,13 @@ export const claudeProfile: HarnessProfile = {
   gateway: {
     ...CLAUDE_GATEWAY,
     wires: [...CLAUDE_GATEWAY.wires],
-    minimumVersion: { args: ['--version'], read: readClaudeVersion, minimum: CLAUDE_DIRECT_MINIMUM, upgrade: CLAUDE_UPGRADE },
+    minimumVersion: {
+      args: ['--version'],
+      read: readClaudeVersion,
+      minimum: CLAUDE_DIRECT_MINIMUM,
+      upgrade: CLAUDE_UPGRADE,
+      source: CLAUDE_SOURCE,
+    },
   },
   catalogueRead: { when: 'request' },
   // The wire lists, replays and deletes Claude's sessions itself through the SDK Latch pins, where the Host lets it read
@@ -293,7 +306,13 @@ export const claudeProfile: HarnessProfile = {
   // Each turn's limits as it reports them, and before the first turn Claude's own answer to its experimental `get_usage`
   // on the session's process; never for someone looking, so a Claude without it changes nothing anyone sees.
   quota: { ...CLAUDE_SHARED.quota, request: { method: QUOTA_READ_METHOD, read: claudeUsageRead, openOnly: true } },
-  minimumVersion: { args: ['--version'], read: readClaudeVersion, minimum: CLAUDE_DIRECT_MINIMUM, upgrade: CLAUDE_UPGRADE },
+  minimumVersion: {
+    args: ['--version'],
+    read: readClaudeVersion,
+    minimum: CLAUDE_DIRECT_MINIMUM,
+    upgrade: CLAUDE_UPGRADE,
+    source: CLAUDE_SOURCE,
+  },
   loginStatus: {
     expires: true,
     args: ['auth', 'status', '--json'],

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useState, type FormEvent } from 'react'
-import { ShieldCheck, ShieldQuestion } from 'lucide-react'
+import { CircleArrowUp, ShieldCheck, ShieldQuestion } from 'lucide-react'
 import {
   runsPresetFallback,
   type AgentPresetSettings,
@@ -109,6 +109,8 @@ const COPY = defineCopy(
     copyUpdate: '复制升级命令',
     copyCommandPath: '复制命令路径',
     upgradeCommand: '升级命令',
+    updateAvailable: '有新版本',
+    newerThan: (latest: string, current: string) => `${latest}（当前 ${current}）`,
     definitionProblem: '定义有问题',
     listed: 'Latch 已收录',
     unverified: '未验证的定义',
@@ -199,6 +201,8 @@ const COPY = defineCopy(
     copyUpdate: 'Copy update command',
     copyCommandPath: 'Copy command path',
     upgradeCommand: 'Update command',
+    updateAvailable: 'Update available',
+    newerThan: (latest: string, current: string) => `${latest} (current ${current})`,
     definitionProblem: 'Definition has a problem',
     listed: 'Listed by Latch',
     unverified: 'Unverified definition',
@@ -864,6 +868,23 @@ function AgentPage({
         {agent.detected.outdated && (
           <SettingsRow title={COPY.upgradeCommand} description={<span className="settings-mono">{agent.detected.outdated.upgrade}</span>} />
         )}
+        {!missing && !agent.detected.outdated && agent.detected.update && (
+          <SettingsRow
+            leading={<IconTile icon={CircleArrowUp} />}
+            title={COPY.updateAvailable}
+            description={
+              <span className="settings-mono">{COPY.newerThan(agent.detected.update.latest, agent.detected.update.current)}</span>
+            }
+            trailing={
+              agent.detected.update.command ? (
+                <span className="command-actions">
+                  <CopyButton text={agent.detected.update.command} label={COPY.copyUpdate} />
+                  <TerminalFillButton command={agent.detected.update.command} detached />
+                </span>
+              ) : undefined
+            }
+          />
+        )}
         {agent.problem && (
           <SettingsRow
             leading={<IconTile icon={AlertGlyph} />}
@@ -959,7 +980,13 @@ function EngineStatus({ agent, harness }: { agent: AgentSettings; harness?: Harn
     )
   }
   if (!agent.enabled) return <span className="service-status">{COPY.disabled}</span>
-  return <span className="service-status">{COPY.available}</span>
+  return (
+    <span
+      className="service-status"
+      {...(agent.detected.update ? { title: COPY.newerThan(agent.detected.update.latest, agent.detected.update.current) } : {})}>
+      {agent.detected.update ? COPY.updateAvailable : COPY.available}
+    </span>
+  )
 }
 
 /** 已安装 holds what can run; a definition whose program is not on this Mac waits with the others that can be installed. */

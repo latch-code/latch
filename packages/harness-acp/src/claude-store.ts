@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
+import { loginShellValues } from './login-shell.ts'
 
 /** Where the runner is: next to this file in the package's sources, or `dist/harness/` beside a Host bundle. */
 function locateRunner(): string {
@@ -95,6 +96,14 @@ const settingsResult = z.object({
 })
 export type ClaudeSettings = z.infer<typeof settingsResult>
 const busyResult = z.object({ busy: z.boolean() })
+
+/**
+ * Claude's configuration directory as a session's `claude` finds it: `CLAUDE_CONFIG_DIR` from the Host or the login
+ * shell (as `agentEnvironment` passes it on), else `.claude` in `home`.
+ */
+export function claudeConfigDir(home: string): string {
+  return process.env.CLAUDE_CONFIG_DIR || loginShellValues().CLAUDE_CONFIG_DIR || join(home, '.claude')
+}
 
 /** Reads of one store: the one the environment `env` names, as the session's `claude` would find it. */
 export class ClaudeStore {

@@ -21,6 +21,7 @@ export const piProfile: HarnessProfile = {
       read: bareVersion,
       minimum: '1.5.0',
       upgrade: 'npm i -g @earendil-works/pi-coding-agent@latest',
+      source: { npm: '@earendil-works/pi-coding-agent' },
     },
     deliver: deliverPiGateway,
   },
@@ -65,5 +66,6 @@ export const piProfile: HarnessProfile = {
     read: bareVersion,
     minimum: '0.84.4',
     upgrade: 'npm i -g @earendil-works/pi-coding-agent@latest',
+    source: { npm: '@earendil-works/pi-coding-agent' },
   },
 }

@@ -9,6 +9,7 @@ import { routeCommand, selectProfile } from './permission.ts'
 import type { HarnessProfile } from './profiles/index.ts'
 import type { AgentRecord } from './types.ts'
 import { compareVersions } from './semver.ts'
+import { releaseLookup, updateCommand, type ReleaseLookup } from './update-command.ts'
 
 export { compareVersions }
 
@@ -57,10 +58,20 @@ function stampOf(path: string): string | undefined {
   }
 }
 
+/**
+ * A profile's `releases` as a gate no version fails: its program is read, by the same rules and cache, only to tell a
+ * person a newer release is out. `tooOld`, `versionRefusal` and `assertVersion` look at `minimumVersion` alone.
+ */
+export function releaseGate(profile: HarnessProfile | undefined): Gate | undefined {
+  if (profile?.minimumVersion) return profile.minimumVersion
+  const releases = profile?.releases
+  return releases && { args: releases.args, read: releases.read, minimum: '0.0.0', upgrade: '', source: releases.source }
+}
+
 /** The command's gate, when this record's command is the preset's own and the Host may run it. */
 function gateOf(record: AgentRecord, path: string, own?: Gate): Gate | undefined {
   const { preset, profile } = selectProfile(record)
-  const gate = own ?? profile?.minimumVersion
+  const gate = own ?? releaseGate(profile)
   if (!gate || !preset) return undefined
   // Only the preset's own program (its adapter's, for a definition on the adapter), the file a login check runs: its bare
   // name, or a path to that same file. Any other
@@ -162,26 +173,71 @@ export async function settleVersions(
   clearTimeout(timer)
 }
 
+/**
+ * The command that updates the program at `path` the way it was installed (`update-command.ts`), else the gate's own:
+ * the one command every line about this program names.
+ */
+export function upgradeCommand(gate: Gate, path: string | undefined): string {
+  return installedUpdate(gate, path) ?? gate.upgrade
+}
+
+/** The update command the install's layout names, by its path alone; undefined when it names none. */
+function installedUpdate(gate: Gate, path: string | undefined): string | undefined {
+  if (!gate.source || path === undefined) return undefined
+  let real: string | undefined
+  try {
+    real = realpathSync(path)
+  } catch {
+    real = undefined
+  }
+  return updateCommand(path, real, gate.source)
+}
+
+/**
+ * Where a newer release of the program at `path` is asked, and the command that updates it the way it was installed,
+ * both by its path alone (`update-command.ts`); undefined when the gate names no source or the layout no lookup.
+ */
+export function installedRelease(gate: Gate, path: string): { lookup: ReleaseLookup; command?: string } | undefined {
+  if (!gate.source) return undefined
+  let real: string | undefined
+  try {
+    real = realpathSync(path)
+  } catch {
+    real = undefined
+  }
+  const lookup = releaseLookup(path, real, gate.source)
+  if (!lookup) return undefined
+  const command = updateCommand(path, real, gate.source)
+  return { lookup, ...(command ? { command } : {}) }
+}
+
 /** What a too-old command needs, and the command that upgrades it. */
 export function tooOld(
   record: AgentRecord,
   verdict: VersionVerdict | undefined,
   own?: Gate,
+  path?: string,
 ): { need: string; upgrade: string } | undefined {
   const gate = own ?? selectProfile(record).profile?.minimumVersion
   if (!gate || !verdict?.tooOld) return undefined
-  return { need: `需要 ${gate.minimum} 或更高版本（当前 ${verdict.version ?? '未知'}）`, upgrade: gate.upgrade }
+  return { need: `需要 ${gate.minimum} 或更高版本（当前 ${verdict.version ?? '未知'}）`, upgrade: upgradeCommand(gate, path) }
 }
 
 /** The line a too-old command gets, with the command that upgrades it. */
-export function tooOldText(record: AgentRecord, verdict: VersionVerdict | undefined, own?: Gate): string | undefined {
-  const found = tooOld(record, verdict, own)
+export function tooOldText(record: AgentRecord, verdict: VersionVerdict | undefined, own?: Gate, path?: string): string | undefined {
+  const found = tooOld(record, verdict, own, path)
   return found && `${found.need}。升级：${found.upgrade}`
 }
 
 /** The refusal a too-old command gets, wherever a start is refused: the same code and words; `use` names what needs it. */
-export function versionRefusal(record: AgentRecord, verdict: VersionVerdict | undefined, own?: Gate, use?: string): AppError | undefined {
-  const text = tooOldText(record, verdict, own)
+export function versionRefusal(
+  record: AgentRecord,
+  verdict: VersionVerdict | undefined,
+  own?: Gate,
+  use?: string,
+  path?: string,
+): AppError | undefined {
+  const text = tooOldText(record, verdict, own, path)
   return text ? new AppError(409, 'harness-version-unsupported', `${record.name} ${use ? `${use}` : ''}${text}`) : undefined
 }
 
@@ -198,6 +254,8 @@ export async function assertVersion(
   use?: string,
   requireFresh = false,
 ): Promise<VersionVerdict | undefined> {
+  // A program read only for its releases has nothing to reach: a start never waits for it.
+  if (!own && !selectProfile(record).profile?.minimumVersion) return
   const reused = requireFresh ? undefined : cached(record, path, own)
   const entry = reused ?? entryFor(record, path, requireFresh, own)
   if (!entry && !requireFresh) return
@@ -209,7 +267,7 @@ export async function assertVersion(
       `${record.name} ${use ?? ''}需要 ${own!.minimum} 或更高版本；当前版本无法确认。请使用受支持的官方命令后重试。`,
     )
   if (verdict.tooOld && reused) verdict = (await entryFor(record, path, true, own)?.read) ?? verdict
-  const refused = versionRefusal(record, verdict, own, use)
+  const refused = versionRefusal(record, verdict, own, use, path)
   if (refused) throw refused
   return verdict
 }

@@ -29,6 +29,7 @@ const MINIMUM_VERSION = {
   read: bareVersion,
   minimum: '0.2.2-rc.1',
   upgrade: 'npm i -g @deepseek-ai/dsh@latest',
+  source: { npm: '@deepseek-ai/dsh' },
 }
 
 export const dshProfile: HarnessProfile = {

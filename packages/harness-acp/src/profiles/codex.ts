@@ -175,6 +175,7 @@ export const codexProfile: HarnessProfile = {
       read: readVersion,
       minimum: '0.167.0',
       upgrade: 'npm i -g @openai/codex@latest',
+      source: { npm: '@openai/codex', brew: ['codex'] },
     },
     // Codex holds a model it has no entry for to 272,000 tokens: a private catalog names the service's models with
     // their windows. Its own bundled entries stay; nothing of Codex's is written.
@@ -204,6 +205,7 @@ export const codexProfile: HarnessProfile = {
     read: readVersion,
     minimum: '0.156.0',
     upgrade: 'npm i -g @openai/codex@latest',
+    source: { npm: '@openai/codex', brew: ['codex'] },
   },
   loginStatus: {
     args: ['login', 'status'],

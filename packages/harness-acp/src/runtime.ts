@@ -157,7 +157,7 @@ import { ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } f
 import { ForkRefused, type AgentWire } from './wires/types.ts'
 import { agentEnvironment, inheritedValues, programPaths } from './environment.ts'
 import { loginShellValues } from './login-shell.ts'
-import { ClaudeStore } from './claude-store.ts'
+import { ClaudeStore, claudeConfigDir } from './claude-store.ts'
 import {
   append,
   blockText,
@@ -2373,8 +2373,7 @@ export class AgentRuntime implements Bridge {
     // Claude keeps its sessions in its configuration directory, which the adapter and the direct wire read alike: one
     // store for both routes, wherever the variable that names it comes from (as `agentEnvironment` takes it).
     if (this.selection.profile?.presetId === 'claude-agent') {
-      const named = process.env.CLAUDE_CONFIG_DIR || loginShellValues().CLAUDE_CONFIG_DIR
-      let place = named || join(homedir(), '.claude')
+      let place = claudeConfigDir(homedir())
       try {
         place = realpathSync(place)
       } catch {

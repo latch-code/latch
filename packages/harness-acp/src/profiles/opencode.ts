@@ -170,7 +170,13 @@ export const opencodeAcpProfile: HarnessProfile = {
     envNames: ['OPENCODE_CONFIG_CONTENT'],
     templates: { files: 1 },
     models: GATEWAY_MODELS,
-    minimumVersion: { args: ['--version'], read: bareVersion, minimum: '2.2.6', upgrade: 'npm i -g @opencode/cli@latest' },
+    minimumVersion: {
+      args: ['--version'],
+      read: bareVersion,
+      minimum: '2.2.6',
+      upgrade: 'npm i -g @opencode/cli@latest',
+      source: { npm: '@opencode/cli', brew: ['opencode'] },
+    },
     deliver(place, route) {
       const model = GATEWAY_MODELS.value(route.model)
       const baseURL = `${place.baseURL}${route.wire === 'anthropic-messages' ? '/v1' : ''}`
@@ -283,6 +289,7 @@ export const opencodeProfile: HarnessProfile = {
     read: opencodeVersion,
     minimum: OPENCODE_DIRECT_MINIMUM,
     upgrade: 'npm i -g @opencode/cli@latest',
+    source: { npm: '@opencode/cli', brew: ['opencode'] },
   },
   permission: {
     ...opencodeAcpProfile.permission,

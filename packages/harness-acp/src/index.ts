@@ -17,6 +17,7 @@ import { commandMoved, RETIRED_HARNESS_NOTE, resolveCommand } from './command.ts
 import { harnessLogin, presetRecord, readOwnVersion } from './login.ts'
 import { commandName, selectProfile, validateAgentDefinition } from './permission.ts'
 import type { HarnessProfile } from './profiles/index.ts'
+import type { ReleaseLookup } from './update-command.ts'
 import {
   assertVersion,
   compareVersions as versionOrder,
@@ -26,6 +27,8 @@ import {
   settleVersions,
   tooOld,
   tooOldText,
+  installedRelease,
+  releaseGate,
   versionRefusal,
   wasRead,
 } from './version.ts'
@@ -35,10 +38,12 @@ export { agentProbePreview, probeAgent } from './probe.ts'
 export { checkLogin, harnessLogin, loginCheckAddsDate, loginTerminalScript, presetRecord, setLoginPrograms } from './login.ts'
 export { loadLoginShell, loginShellValues } from './login-shell.ts'
 export { compareVersions, onVersionChange } from './version.ts'
+export { claudeConfigDir } from './claude-store.ts'
 export { personCommandDirectories, personPathDirectories, resolveCommand, setCommandSearch } from './command.ts'
 export { commandName, isRetiredAdapterDefinition, launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
 export type { AcpAgentOptions, AgentRecord, CliStoreAccess } from './types.ts'
 export type { QuotaReport } from './quota.ts'
+export type { ReleaseLookup } from './update-command.ts'
 export { withHarnessPromptSource, harnessPromptSource } from './prompt-source.ts'
 
 /** PATH lookups touch the file system; status() is polled with every catalog. */
@@ -57,7 +62,31 @@ export function forgetCommandLookups(): void {
  * unknown or not read yet. It reads nothing itself; a re-check, a start or choosing the preset does.
  */
 export function outdatedCommand(record: AgentRecord, path: string | undefined): { need: string; upgrade: string } | undefined {
-  return path ? tooOld(record, knownVersion(record, path) ?? lastVersion(record, path)) : undefined
+  return path ? tooOld(record, knownVersion(record, path) ?? lastVersion(record, path), undefined, path) : undefined
+}
+
+/**
+ * Where to ask whether a newer release of a found command that is new enough is out, the way it was installed (npm, or
+ * Homebrew for a formula or cask its profile names), the version it printed, and the command that updates such an install
+ * (undefined when its layout says nothing). Only a version already read, by `minimumVersion` or `releases`; reads nothing.
+ */
+export function updateSource(
+  record: AgentRecord,
+  path: string | undefined,
+): { lookup: ReleaseLookup; current: string; channel?: 'claude'; command?: string } | undefined {
+  const gate = releaseGate(selectProfile(record).profile)
+  if (!path || !gate?.source) return undefined
+  const verdict = knownVersion(record, path) ?? lastVersion(record, path)
+  if (!verdict?.version || verdict.tooOld) return undefined
+  const release = installedRelease(gate, path)
+  if (!release) return undefined
+  return {
+    lookup: release.lookup,
+    current: verdict.version,
+    // The channel names an npm dist-tag; Homebrew has one release per formula or cask.
+    ...(gate.source.channel && release.lookup.registry === 'npm' ? { channel: gate.source.channel } : {}),
+    ...(release.command ? { command: release.command } : {}),
+  }
 }
 
 /**
@@ -72,7 +101,7 @@ export function versionUnread(record: AgentRecord, path: string | undefined): bo
 /** The refusal a saved definition gets while its command is known to be too old. */
 export function outdatedRefusal(record: AgentRecord) {
   const path = resolveCommand(record.command)
-  return path ? versionRefusal(record, knownVersion(record, path)) : undefined
+  return path ? versionRefusal(record, knownVersion(record, path), undefined, undefined, path) : undefined
 }
 
 /**
@@ -86,7 +115,7 @@ export async function assertCommandVersion(record: AgentRecord): Promise<void> {
 
 /** The same as one line, with the upgrade command. */
 const outdatedLine = (record: AgentRecord, path: string | undefined): string | undefined =>
-  path ? tooOldText(record, knownVersion(record, path) ?? lastVersion(record, path)) : undefined
+  path ? tooOldText(record, knownVersion(record, path) ?? lastVersion(record, path), undefined, path) : undefined
 
 /**
  * A preset as a draft would save it now: its own command, or its `fallback` adapter when only the adapter is installed.

@@ -156,6 +156,22 @@ profile 的 `minimumVersion` 是它的命令支持的最低版本，用 `<命令
 - 新会话、已有会话的下一轮（已在运行的进程也不再接收）与「测试启动」都在启动进程前以 409 `harness-version-unsupported` 拒绝；这不记为「上次运行异常」。读版本发生在启动前的项目配置复查之前，复查仍是最后一步。
 - 读不出版本（命令失败、超时、没打印）不挡任何事，由握手时限兜底（见「进程与环境」）。pi 的线另用 `clear_queue` 检查读不出版本的 pi（见「pi 的 RPC 模式」）。
 
+### 新版本提示
+
+设置里 Harness 的「检测」在版本够新、但有更新的发布时多一行「有新版本」：最新版本、当前版本，能看出安装方式时附更新命令（复制或填入终端）。Latch 从不运行它。
+
+- 范围：profile 的 `minimumVersion.source` 写了来源的预设，只看它自己的程序。npm 包：Claude 直连 `@anthropic-ai/claude-code`、Codex `@openai/codex`、OpenCode 直连 `@opencode/cli`、pi `@earendil-works/pi-coding-agent`、DeepSeek Harness `@deepseek-ai/dsh`；Homebrew：Claude cask `claude-code` 与 `claude-code@latest`、Codex cask `codex`、OpenCode formula `opencode`、goose formula `block-goose-cli`。goose 没有版本门槛，profile 的 `releases` 只为此读 `goose --version`（门槛 `0.0.0`，从不拒绝，启动不等它）。Grok Build、Antigravity、Qwen Code 与适配器没有。当前版本只用版本门槛（或 `releases`）已读出的那次结果。
+- 来源随安装方式：Homebrew 的 `Cellar/<formula>/` 或 `Caskroom/<cask>/` 下、且是 profile 列出的名称，问 `https://formulae.brew.sh/api/<formula|cask>/<名称>.json`（formula 取 `versions.stable`，cask 取 `version` 逗号前的部分）；Homebrew 的构建比 npm 晚几小时，不拿 npm 比。未列出的 Homebrew 安装不问。其他布局在 profile 写了 npm 包时问 `https://registry.npmjs.org/-/package/<包>/dist-tags`，否则不问（goose 自己的安装器没有来源）。见 [ARCHITECTURE](ARCHITECTURE.md#各功能的安全规则)。结果只在内存，每个包、formula 或 cask 6 小时；失败或形状不对不提示，10 分钟内不再问。只在读取 Agent 设置（含「重新检测」）时问，不定时。只有启动脚本传入 `startServer({ harnessUpdates })` 时开启，测试 Host 不发请求。
+- Claude 的通道（只用于 npm 来源）：读 Claude 配置目录（`CLAUDE_CONFIG_DIR`，否则 `~/.claude`）里 `settings.json` 的 `autoUpdatesChannel` 这一个键（不跟随链接，最多 1 MiB）；`stable` 取 `stable` 标签，缺失或其他值取 `latest`；那个标签不存在就不提示。不读登录与凭据。
+- 比较：当前版本严格低于该标签才提示；比较不了、相同或本机预发布版更高都不提示。已有 `outdated` 时不另提示，那一行已带命令。
+- 命令只看路径（找到的路径与 `realpath`），不运行 `npm prefix`、`brew --prefix` 或版本管理器：
+  - 在 Homebrew 的 `Cellar/<formula>/` 或 `Caskroom/<cask>/` 下：`brew upgrade <名称>`（先于 npm 判断，Homebrew 从 npm 包构建的 formula 也带 `lib/node_modules`）；
+  - 含 `/lib/node_modules/<包>/`：`npm i -g <包>@latest`；
+  - Claude 自己的安装器布局（含 `/.local/share/claude/` 或 `/claude/versions/`）：`claude update`；
+  - 其他：只显示版本，不给命令。
+- 低于门槛时 `outdated.upgrade` 与拒绝文字用同一规则，看不出安装方式时才回落到 profile 的 `upgrade`。
+- 没有开关；v1 只覆盖上面这些预设。
+
 ## 预设的权限配置
 
 每个预设的 `HarnessProfile` 只在 Host 上使用；浏览器只看到复制进 `TaskDetail.permission` 与 `HarnessInfo.permission` 的展示字段。
