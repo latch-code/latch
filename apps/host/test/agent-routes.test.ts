@@ -804,8 +804,10 @@ test('editing 通用 over and over never pauses its automations, with the real c
         })
       ).id,
     )
+  // For a second and a half, and at least twelve edits; never past the 128 memories an agent keeps, which a fast
+  // machine would reach in that time.
   const deadline = Date.now() + 1500
-  for (let edit = 0; edit < 12 || Date.now() < deadline; edit++)
+  for (let edit = 0; edit < 12 || (Date.now() < deadline && edit < 100); edit++)
     await owner.json('custom-agents/general/memories', { method: 'POST', body: { requestId: randomUUID(), content: `memory ${edit}` } })
   for (const id of ids)
     expect((await owner.json<AutomationDetail>(`automations/${id}`)).automation).toMatchObject({ enabled: true, state: 'ready' })

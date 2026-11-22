@@ -183,9 +183,12 @@ describe('folders of their own for sessions outside a project', () => {
     const restarted = new SessionFolders(options)
     expect(await restarted.helperHome('general', async () => {})).toEqual(home)
     expect(await restarted.helperState('general')).toBe('ready')
-    // An entry that is there is never made again, even when asked.
+    // An entry that is there is never made again, even when asked. The other directory is made while the home still
+    // exists, so it cannot take over the home's inode as one made after the removal may on Linux.
+    const replacement = join(base, 'replacement')
+    await mkdir(replacement, { mode: 0o700 })
     await rm(home.path, { recursive: true })
-    await mkdir(home.path, { mode: 0o700 })
+    await rename(replacement, home.path)
     expect(await restarted.helperState('general')).toBe('refused')
     await expect(restarted.helperHome('general', async () => {}, { recreate: true, beforeCreate: recreate })).rejects.toMatchObject({
       code: 'helper-home-unavailable',

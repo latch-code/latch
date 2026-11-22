@@ -63,12 +63,14 @@ it.each([true, false])('settles both real Host rounds in the saved project root 
     expect(prompts).toEqual(['准备 390-light', '新增 390-light'])
     expect(await readFile(join(source, 'src/generated-390-light.txt'), 'utf8')).toBe('Observed real file change\n')
     // Settlement intentionally follows execution; the file-tree test must await this authority rather than sleep.
+    // Only macOS reports a birth time the tracker trusts, so elsewhere a new file reads as modified.
+    const created = process.platform === 'darwin' ? 'created' : 'modified'
     await expect
       .poll(
         async () =>
           (await detail()).messages.some(message =>
             message.outputs?.some(
-              file => file.root === project.folders![0]!.id && file.path === 'src/generated-390-light.txt' && file.change === 'created',
+              file => file.root === project.folders![0]!.id && file.path === 'src/generated-390-light.txt' && file.change === created,
             ),
           ),
         { timeout: 10_000 },

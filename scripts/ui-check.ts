@@ -18,7 +18,19 @@ const { values } = parseArgs({
 const root = fileURLToPath(new URL('..', import.meta.url))
 const checks = [
   ['check:quick'],
-  ['exec', 'vitest', 'run', '--config', 'vitest.config.ts', '--project', '@latch/ui', '--project', '@latch/web'],
+  [
+    'exec',
+    'vitest',
+    'run',
+    '--config',
+    'vitest.config.ts',
+    '--project',
+    '@latch/ui',
+    '--project',
+    '@latch/ui-touch',
+    '--project',
+    '@latch/web',
+  ],
   ['build'],
   ['exec', 'vitest', 'run', '--config', 'e2e/vitest.config.ts', 'e2e/design.e2e.ts', 'e2e/visual.e2e.ts'],
 ]

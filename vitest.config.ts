@@ -4,6 +4,11 @@ import { defineConfig } from 'vitest/config'
 
 const browserPath = latchEnv(process.env, 'BROWSER_PATH')
 
+// The UI files that emulate a touch screen. Turning touch emulation off gives a page back the machine's own pointer, and
+// a headless Chrome on a machine without one (Linux CI) then never matches `(hover: hover)` again; so these files get a
+// browser of their own and the rest keep the mouse Playwright starts Chrome with. `onTouchScreen` refuses elsewhere.
+const TOUCH_FILES = ['button', 'fields', 'menu', 'kit-touch'].map(name => `packages/ui/test/${name}.test.tsx`)
+
 // One project per workspace project that has unit tests; `pnpm test --project <name>` runs one. Each inline project
 // takes the shared options (`extends: true`), and they share one Vite server. Tests run with the repository root as the
 // working directory, so paths such as dist/web and node_modules/.bin resolve from it in every project.
@@ -70,7 +75,10 @@ export default defineConfig({
               contextOptions: { colorScheme: 'light' },
               launchOptions: browserPath ? { executablePath: browserPath } : {},
             }),
-            instances: [{ browser: 'chromium', name: '@latch/ui' }],
+            instances: [
+              { browser: 'chromium', name: '@latch/ui', exclude: TOUCH_FILES },
+              { browser: 'chromium', name: '@latch/ui-touch', include: TOUCH_FILES },
+            ],
             viewport: { width: 1280, height: 800 },
             screenshotFailures: false,
           },

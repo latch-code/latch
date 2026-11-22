@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { userEvent } from 'vitest/browser'
 
 import { revealScrollbarsWhileScrolling } from '../src/index.ts'
 
@@ -15,6 +16,11 @@ describe('revealScrollbarsWhileScrolling', () => {
     list.style.cssText = 'height: 40px; overflow-y: auto'
     list.append(Object.assign(document.createElement('div'), { style: 'height: 200px' }))
     document.body.append(list)
+    // The page's one mouse stays where the previous test left it, and a hovered list keeps its thumb until the pointer
+    // leaves: put the pointer in the far corner, away from the list.
+    const away = Object.assign(document.createElement('div'), { style: 'position: fixed; right: 0; bottom: 0; width: 16px; height: 16px' })
+    document.body.append(away)
+    await userEvent.hover(away)
     expect(list.classList.contains('ui-scrolling')).toBe(false)
     list.scrollTop = 60
     await expect.poll(() => list.classList.contains('ui-scrolling')).toBe(true)

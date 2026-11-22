@@ -1000,6 +1000,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.getByText(R2_PROMPT).first().click()
       await page.locator('[data-approval-id] .approval-clause').waitFor()
       const card = page.locator('[data-approval-id]')
+      // The buttons arm a moment after the card shows and then fade in: compare the armed card.
+      await page.locator('[data-approval-id]:not([data-arming])').waitFor()
       // The card keeps its look under styles added to the page.
       await expectUnmovedByInjectedStyles(page, [
         '[data-approval-id] .approval-title',
@@ -2576,7 +2578,12 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           return contents.devToolsWebContents!.session === contents.session
         }, guestId),
       ).toBe(true)
-      await app.evaluate(({ webContents }, id) => webContents.fromId(id)!.closeDevTools(), guestId)
+      // Closing the tools inside the call can race the reply: Playwright then reports its target closed. Close them
+      // just after the call returns, and wait until they are gone.
+      await app.evaluate(({ webContents }, id) => {
+        setTimeout(() => webContents.fromId(id)?.closeDevTools())
+      }, guestId)
+      await waitFor(() => app.evaluate(({ webContents }, id) => !webContents.fromId(id)!.isDevToolsOpened(), guestId))
 
       // Each project keeps its own storage, and 清除数据 empties it.
       expect(await call('navigate', tabId, `${local}/`)).toMatchObject({ ok: true })

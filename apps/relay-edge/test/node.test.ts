@@ -25,8 +25,7 @@ import { createWorkHandler } from '../src/work-handler.ts'
 import { frameBytes } from '../src/node.ts'
 import { EDGE_BUFFER_LIMITS } from '../src/buffers.ts'
 import type { EdgeEnv, EdgeService } from '../src/platform.ts'
-import { ClientSocket, FakeClock, FakeObjects, FakeResponse, fakePlatform, request, settle } from './harness.ts'
-import { webcrypto } from 'node:crypto'
+import { ClientSocket, FakeClock, FakeObjects, FakeResponse, fakePlatform, request, settle, trackedSubtle } from './harness.ts'
 
 const relayId = new Uint8Array(16).fill(7),
   relaySeed = new Uint8Array(32).fill(9)
@@ -40,7 +39,7 @@ function setup(overrides: Partial<EdgeEnv> = {}) {
   const clock = new FakeClock(),
     platform = fakePlatform(clock)
   const work = createWorkHandler(
-    webcrypto.subtle as never,
+    trackedSubtle as never,
     (status, body) => new FakeResponse(status, body ? hex(new Uint8Array(body)) : undefined),
   )
   const service: EdgeService = {

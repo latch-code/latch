@@ -11,7 +11,11 @@ export interface TestProject {
   dir: string
 }
 
-/** The fixed directory part of each include pattern of the root Vitest configuration's projects. */
+/**
+ * The fixed directory part of each include pattern of the root Vitest configuration's projects. A browser project with
+ * named instances runs as one project per instance, so `--project` takes those names, each with its own include or the
+ * project's.
+ */
 export function testProjects(config: unknown): TestProject[] {
   const projects: TestProject[] = []
   const test = field(config, 'test')
@@ -21,11 +25,20 @@ export function testProjects(config: unknown): TestProject[] {
     const name = field(options, 'name')
     const include = field(options, 'include')
     if (typeof name !== 'string' || !Array.isArray(include)) continue
-    for (const pattern of include) {
-      if (typeof pattern !== 'string') continue
-      const parts = pattern.split('/')
-      const wild = parts.findIndex(part => /[*?{[]/u.test(part))
-      projects.push({ name, dir: (wild < 0 ? parts.slice(0, -1) : parts.slice(0, wild)).join('/') })
+    const instances = field(field(options, 'browser'), 'instances')
+    const runs: Array<{ name: string; include: unknown[] }> = []
+    for (const instance of Array.isArray(instances) ? instances : []) {
+      const own = field(instance, 'name'),
+        its = field(instance, 'include')
+      if (typeof own === 'string') runs.push({ name: own, include: Array.isArray(its) ? its : include })
+    }
+    for (const run of runs.length > 0 ? runs : [{ name, include }]) {
+      for (const pattern of run.include) {
+        if (typeof pattern !== 'string') continue
+        const parts = pattern.split('/')
+        const wild = parts.findIndex(part => /[*?{[]/u.test(part))
+        projects.push({ name: run.name, dir: (wild < 0 ? parts.slice(0, -1) : parts.slice(0, wild)).join('/') })
+      }
     }
   }
   return projects
@@ -244,10 +257,11 @@ function needsOf(path: string, projects: readonly TestProject[], e2e: readonly s
     return ['knip', 'test', 'build', 'e2e', 'electron', ...(path.includes('/vectors/') ? (['encoding'] as const) : [])]
   // The gallery of the design system's primitives is also a page that the visual capture builds and captures.
   if (path.startsWith('packages/ui/test/gallery/'))
-    return ['knip', 'project:@latch/ui', ...LAYOUT_E2E.map(file => `e2e:${file}` as const), 'layout']
+    return ['knip', 'project:@latch/ui', 'project:@latch/ui-touch', ...LAYOUT_E2E.map(file => `e2e:${file}` as const), 'layout']
   if (path === 'apps/host/test/native-swift.test.ts') return ['knip', 'project:@latch/host-swift']
-  const project = projects.find(item => path.startsWith(`${item.dir}/`))
-  if (project) return ['knip', `project:${project.name}`]
+  // Every project whose tests live there: the instances of a browser project can share a directory.
+  const matching = [...new Set(projects.filter(item => path.startsWith(`${item.dir}/`)).map(item => item.name))]
+  if (matching.length > 0) return ['knip', ...matching.map(name => `project:${name}` as const)]
 
   // The terminal and simulator components' own suites run in the Host's project.
   if (path === 'native/macos/LatchTerminal.swift' || path === 'native/macos/LatchSimulator.swift') return ['build', 'project:@latch/host']
@@ -269,7 +283,7 @@ function needsOf(path: string, projects: readonly TestProject[], e2e: readonly s
       || path === 'apps/web/index.html'
     return [...needs, 'project:@latch/web', ...(page ? (['layout'] as const) : [])]
   }
-  if (path.startsWith('packages/ui/')) return [...needs, 'project:@latch/ui', 'project:@latch/web']
+  if (path.startsWith('packages/ui/')) return [...needs, 'project:@latch/ui', 'project:@latch/ui-touch', 'project:@latch/web']
   if (/^apps\/host\/scripts\/desktop[\w-]*\.ts$/u.test(path)) return [...needs, 'project:@latch/host', 'build', 'electron']
   if (/^apps\/host\/scripts\/(?:build[\w-]*|host-bundle|package-desktop)\.ts$/u.test(path))
     return [...needs, 'project:@latch/host', 'build']

@@ -31,6 +31,17 @@ afterEach(async () => {
 const SLOW = { timeout: 30_000 }
 
 /** A repository with one commit and an empty home; hooks and filters that leave a mark when they run. */
+/**
+ * A git that waits before each write, so a one-millisecond stage timeout always ends it before it writes, however late
+ * a busy machine runs the timer; the restricted runner ends its whole process group.
+ */
+async function slowGit(root: string): Promise<string> {
+  const path = join(root, 'slow-git')
+  await writeFile(path, `#!/bin/sh\ncase " $* " in *" hash-object "*|*" update-index "*) sleep 5 ;; esac\nexec '${findGit()!}' "$@"\n`)
+  await chmod(path, 0o755)
+  return path
+}
+
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'latch-git-hunks-'))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
@@ -61,9 +72,10 @@ async function fixture() {
     await chmod(join(repo, '.git', 'hooks', name), 0o755)
   }
   const store = await SessionMetaStore.open(dataDir)
-  const delivery = (options: { timeouts?: { stage?: number }; receipts?: GitDeliveryOptions['receipts'] } = {}) =>
+  const delivery = (options: { timeouts?: { stage?: number }; receipts?: GitDeliveryOptions['receipts']; git?: string } = {}) =>
     new GitDelivery({
       receipts: options.receipts ?? store,
+      ...(options.git ? { git: options.git } : {}),
       home,
       hostEnv: { HOME: home, USER: 'tester', PATH: '/usr/bin:/bin', TMPDIR: root },
       shell: async () => ({ file: '/bin/sh', argv: ['-sh'] }),
@@ -483,7 +495,7 @@ describe('staging by line in a real repository', () => {
     const diff = await read(f.delivery(), f.repo, 'unstaged', 'a.txt')
     const input = { requestId: randomUUID(), path: 'a.txt', base: diff.base, old: each([1]), new: each([1]) }
     const slow = f.caller()
-    const lost = await failure(f.delivery({ timeouts: { stage: 1 } }).stageLines(slow, 'stage', input))
+    const lost = await failure(f.delivery({ timeouts: { stage: 1 }, git: await slowGit(f.root) }).stageLines(slow, 'stage', input))
     expect(lost).toMatchObject({ status: 504, code: 'git-result-unknown', details: { retry: true } })
     expect(slow.results).toEqual([{ operation: 'stage', outcome: 'unknown' }])
     expect(f.store.git('session-1', 'dev_test', input.requestId)).toMatchObject({
@@ -578,9 +590,8 @@ describe('staging by line in a real repository', () => {
     // An attempt that timed out before it wrote: the index still holds the entry it would have replaced.
     const second = await read(f.delivery(), f.repo, 'unstaged', 'b.txt')
     const unwritten = { requestId: randomUUID(), path: 'b.txt', base: second.base, old: each([1]), new: each([1]) }
-    expect((await failure(f.delivery({ timeouts: { stage: 1 } }).stageLines(f.caller(), 'stage', unwritten))).code).toBe(
-      'git-result-unknown',
-    )
+    const timedOut = f.delivery({ timeouts: { stage: 1 }, git: await slowGit(f.root) })
+    expect((await failure(timedOut.stageLines(f.caller(), 'stage', unwritten))).code).toBe('git-result-unknown')
     await f.write('b.txt', 'ONE\ntwo\nthree\nfour\n')
     // Now the Host knows it wrote nothing, and may say the file changed; the receipt keeps that answer.
     const told = await failure((await f.restarted()).stageLines(f.caller(), 'stage', unwritten))

@@ -108,6 +108,21 @@ const userTexts = async (device: TestDevice, sessionId: string) =>
   (await detailOf(device, sessionId)).messages.flatMap(message => (message.role === 'user' ? [message.text] : []))
 const returnsIn = async (device: TestDevice, sessionId: string) =>
   (await userTexts(device, sessionId)).filter(text => text.startsWith(TEAM_RETURN_HEADING))
+/**
+ * The lead after its `count`th return has been answered: the Host records the return and starts the lead's turn on it,
+ * which on a slow machine can come after the session already looked settled, so a prompt sent then would read the
+ * return's reply instead of its own. One read sees the return, a reply after it and the session at rest.
+ */
+async function returnedTo(device: TestDevice, sessionId: string, count: number): Promise<void> {
+  await vi.waitFor(async () => {
+    const detail = await detailOf(device, sessionId)
+    const isReturn = (message: TaskDetail['messages'][number]) => message.role === 'user' && message.text.startsWith(TEAM_RETURN_HEADING)
+    expect(detail.messages.filter(isReturn)).toHaveLength(count)
+    const last = detail.messages.findLastIndex(isReturn)
+    expect(detail.messages.slice(last + 1).some(message => message.role === 'assistant')).toBe(true)
+    expect(['idle', 'failed', 'cancelled']).toContain(detail.summary.status)
+  }, WAIT)
+}
 
 async function allowAll(device: TestDevice, sessionIds: readonly string[]): Promise<void> {
   await vi.waitFor(async () => {
@@ -692,10 +707,25 @@ const round = (device: TestDevice, teamId: string, sends: Array<{ itemId: string
   device.request(`teams/${teamId}/rounds`, { method: 'POST', body: { requestId, sends } })
 const dispatchSwitch = (device: TestDevice, teamId: string, agentDispatch: boolean) =>
   device.request(`teams/${teamId}`, { method: 'PATCH', body: { agentDispatch } })
+/**
+ * The reply to `prompt`: the last assistant message before the next user message. A round the reply starts can return
+ * and get the lead's own answer before a busy machine reads the session, so the newest reply may not be this one.
+ */
 const say = async (device: TestDevice, sessionId: string, prompt: string): Promise<string> => {
   await device.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { requestId: randomUUID(), prompt } })
-  const detail = await settled(device, sessionId)
-  return detail.messages.findLast(message => message.role === 'assistant')?.text ?? ''
+  let reply = ''
+  await vi.waitFor(async () => {
+    const detail = await detailOf(device, sessionId)
+    expect(['idle', 'failed', 'cancelled']).toContain(detail.summary.status)
+    const asked = detail.messages.findLastIndex(message => message.role === 'user' && message.text === prompt)
+    expect(asked).toBeGreaterThanOrEqual(0)
+    const after = detail.messages.slice(asked + 1)
+    const next = after.findIndex(message => message.role === 'user')
+    const answer = (next < 0 ? after : after.slice(0, next)).findLast(message => message.role === 'assistant')
+    expect(answer).toBeDefined()
+    reply = answer!.text
+  }, WAIT)
+  return reply
 }
 
 describe('later rounds on an existing team', () => {
@@ -896,7 +926,7 @@ describe('later rounds on an existing team', () => {
     // Only an L3 member, past the unattended ceiling: the switch goes on all the same, and the agent's round runs.
     expect((await teamOf(owner, team.id)).dispatchRefusal).toBeUndefined()
     expect((await dispatchSwitch(owner, team.id, true)).status).toBe(200)
-    await settled(owner, lead)
+    await returnedTo(owner, lead, 1)
     expect(
       await say(owner, lead, `mcp latch-skills send_to_members ${JSON.stringify({ sends: [{ member: 'm1', prompt: 'echo agent one' }] })}`),
     ).toContain('Sent as round 2.')
@@ -911,7 +941,7 @@ describe('later rounds on an existing team', () => {
       say(owner, other, `mcp latch-skills send_to_members ${JSON.stringify({ sends: [{ member: 'm1', prompt }] })}`)
     // No cap on the agent's rounds: past the old six, it keeps sending.
     for (let index = 0; index < 7; index++) {
-      await settled(owner, other)
+      await returnedTo(owner, other, index + 1)
       expect(await send(`第 ${index} 句问候`)).toContain(`Sent as round ${index + 2}.`)
       await teamIn(owner, capped.id, 'returned')
     }

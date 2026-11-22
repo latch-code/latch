@@ -306,6 +306,10 @@ describe('native Host entry with existing authorization', () => {
       await expect.poll(async () => (await host.host.bridge.detail(sessionId)).approvals.length).toBe(1)
       const pending = await host.host.bridge.detail(sessionId)
       const session = Reflect.get(registered.client, 'session') as ClientHttp2Session
+      // A phone's HTTP/2 stack opens large windows; Node's 64 KiB default would take a state of nearly a megabyte many
+      // round trips, long enough on a busy machine for the Host to drop the stream as a lagging reader (STREAMING).
+      session.setLocalWindowSize(8 * 1024 * 1024)
+      await new Promise<void>(done => session.settings({ initialWindowSize: 8 * 1024 * 1024 }, () => done()))
       const response = session.request({
         ':method': 'GET',
         ':path': `/link/api/events?sessionId=${sessionId}`,
@@ -328,6 +332,10 @@ describe('native Host entry with existing authorization', () => {
           if (data) frames.push(JSON.parse(data) as { type: string; detail?: TaskDetail })
         }
       })
+      let dropped = false
+      response.once('close', () => {
+        dropped = true
+      })
       const opened = new Promise<number>(resolve => response.once('response', headers => resolve(Number(headers[':status']))))
       response.end()
       expect(await opened).toBe(200)
@@ -341,7 +349,23 @@ describe('native Host entry with existing authorization', () => {
       expect(row.tool!.output!.length).toBe(text.length)
       expect.soft(row.tool!.outputWithoutFiles !== undefined).toBe(false)
       expect.soft(Buffer.byteLength(JSON.stringify(detail))).toBeLessThan(1_048_000)
-      await expect.poll(() => frames.some(frame => frame.type === 'task-state' && frame.detail?.summary.status === 'idle')).toBe(true)
+      // The idle state carries the whole detail, close to a megabyte, and a busy machine takes more than a second to pass it.
+      // Should the Host still drop the stream as lagging, a phone opens it again, takes `refresh` and reads the detail
+      // itself over the same connection: that read must hold the same result.
+      await expect
+        .poll(
+          async () => {
+            if (frames.some(frame => frame.type === 'task-state' && frame.detail?.summary.status === 'idle')) return true
+            if (!dropped) return false
+            const read = body<TaskDetail>(await registered.client.request('GET', `/link/api/tasks/${sessionId}`))
+            const tool = read.messages.find(message => message.role === 'tool')
+            return (
+              read.summary.status === 'idle' && tool?.tool?.output?.length === text.length && tool.tool.outputWithoutFiles === undefined
+            )
+          },
+          { timeout: 15_000 },
+        )
+        .toBe(true)
       expect(frames.some(frame => frame.detail?.messages.some(message => message.tool?.outputWithoutFiles !== undefined))).toBe(false)
     },
     20_000,

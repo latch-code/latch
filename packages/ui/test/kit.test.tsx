@@ -20,7 +20,7 @@ import {
   CheckGlyph,
   FileGlyph,
 } from '../src/index.ts'
-import { onTouchScreen, press } from './helpers.ts'
+import { press } from './helpers.ts'
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -355,16 +355,6 @@ describe('StatusSlot with actions', () => {
     await expect.poll(() => getComputedStyle(actions).opacity).toBe('1')
     // The actions are readable even though the status beside them is decorative.
     expect(actions.closest('[aria-hidden]')).toBeNull()
-  })
-
-  it('keeps the status on a touch screen', async () => {
-    await onTouchScreen(async () => {
-      const screen = await render(sample)
-      const slot = screen.container.querySelector('.ui-status-slot')!
-      const actions = screen.container.querySelector('.ui-status-swap-actions')!
-      expect(getComputedStyle(slot).opacity).toBe('1')
-      expect(getComputedStyle(actions).display).toBe('none')
-    })
   })
 })
 

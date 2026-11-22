@@ -84,6 +84,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | `@latch/harness-acp` | `packages/harness-acp/test/` | ACP Driver |
 | `@latch/app-sdk` | `packages/app-sdk/test/` | 插件页面的桥 |
 | `@latch/ui` | `packages/ui/test/` | 在真实浏览器中运行，见下 |
+| `@latch/ui-touch` | `packages/ui/test/` 中模拟触屏的文件 | 同上，另一个浏览器，见下 |
 | `@latch/site` | `apps/site/test/` | 官网：真实 Astro 构建到临时目录，检查 SEO 与链接；`apps/site/` 的改动只运行它 |
 | `@latch/link-wire`、`@latch/link-client`、`@latch/relay` | `packages/link-wire/test/`、`packages/link-client/test/`、`apps/relay/test/` | 原生连接；共用 `packages/testkit/vectors/link-v1.json`，只连本地端口 0 |
 
@@ -94,6 +95,8 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 ### 组件测试（浏览器模式）
 
 `@latch/ui` 的用例用 Vitest 浏览器模式在无头浏览器中运行：`LATCH_BROWSER_PATH` 指定的 Chrome，否则是 Playwright 安装的 Chromium。它们属于 `pnpm test`，所以 `pnpm test` 与 pre-push 钩子需要其中之一。
+
+模拟触屏的文件（`vitest.config.ts` 的 `TOUCH_FILES`）在单独的浏览器 `@latch/ui-touch` 里运行，`onTouchScreen` 在别处直接报错：关掉触屏模拟后，页面回到这台机器自己的指点设备，没有指点设备的无头 Chrome（Linux CI）从此不再匹配 `(hover: hover)`，同一浏览器里之后的悬停用例都会失败。两个一起跑用 `--project '@latch/ui*'`。
 
 - 组件用 `vitest-browser-react` 的 `render` 渲染，交互用 `vitest/browser` 的 `userEvent`，断言用会等待的 `expect.element(定位器)`。
 - Playwright 不点击 `aria-disabled` 的控件；要验证它拦下点击时用 `test/helpers.ts` 的 `press`。
