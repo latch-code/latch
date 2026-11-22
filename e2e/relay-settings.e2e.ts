@@ -420,7 +420,7 @@ describe('设置 › 连接转发', () => {
             expect(await page.getByRole('link', { name: '打开系统设置' }).count()).toBe(0)
           }
           await hint.getByText('corepack pnpm desktop', { exact: true }).waitFor({ state: 'visible' })
-          await hint.getByText(/先停止同一数据目录的 Host。关窗口后它仍会运行。/u).waitFor({ state: 'visible' })
+          await hint.getByText(/先停止同一数据目录的 Latch 服务。关窗口后它仍会运行。/u).waitFor({ state: 'visible' })
           expect(await page.getByTestId('relay-direct').count()).toBe(0)
           for (const colorScheme of ['light', 'dark'] as const) {
             await page.emulateMedia({ colorScheme })

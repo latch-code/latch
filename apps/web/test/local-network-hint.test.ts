@@ -49,13 +49,13 @@ it('offers the Local Network settings page in the desktop app and its path elsew
 
 it('gives source users the relaunch steps in both languages', () => {
   const denied = render({ state: 'denied', openable: true, source: true })
-  expect(denied).toContain('先停止同一数据目录的 Host。关窗口后它仍会运行。')
+  expect(denied).toContain('先停止同一数据目录的 Latch 服务。关窗口后它仍会运行。')
   expect(denied).toContain('corepack pnpm desktop')
 
   setLocale('en')
   const unreadable = render({ state: 'unreadable', openable: true, source: true })
   expect(unreadable).toContain('Can’t read local network information')
-  expect(unreadable).toContain('Stop the Host for this data directory before switching. Closing the window leaves it running.')
+  expect(unreadable).toContain('Stop the Latch service for this data directory before switching. Closing the window leaves it running.')
   expect(unreadable).toContain('corepack pnpm desktop')
 })
 

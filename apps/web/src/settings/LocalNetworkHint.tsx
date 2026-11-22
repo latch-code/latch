@@ -15,7 +15,7 @@ const COPY = defineCopy(
     open: '打开系统设置',
     path: '系统设置 › 隐私与安全性 › 本地网络',
     detail: '检查这台 Mac 的「本地网络」权限。安装版找 Latch，终端直接启动时找终端应用。',
-    sourceDetail: '换启动方式前，先停止同一数据目录的 Host。关窗口后它仍会运行。然后在终端进入 Latch 源码目录，运行',
+    sourceDetail: '换启动方式前，先停止同一数据目录的 Latch 服务。关窗口后它仍会运行。然后在终端进入 Latch 源码目录，运行',
   },
   {
     denied: 'Local Network not allowed',
@@ -25,7 +25,7 @@ const COPY = defineCopy(
     detail:
       'Check Local Network access on this Mac. Look for Latch if installed, or your terminal app if launched directly from a terminal.',
     sourceDetail:
-      'Stop the Host for this data directory before switching. Closing the window leaves it running. In a terminal, go to the Latch checkout and run',
+      'Stop the Latch service for this data directory before switching. Closing the window leaves it running. In a terminal, go to the Latch checkout and run',
   },
 )
 
