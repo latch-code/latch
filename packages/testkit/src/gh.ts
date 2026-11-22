@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -69,7 +69,10 @@ export interface FakeGh {
   violations(): Promise<string[]>
   /** The pull request bodies `pr create` read from its `--body-file`. */
   bodies(): Promise<string[]>
-  /** Takes `gh` off the PATH (as on a computer without it), or puts it back. */
+  /**
+   * Makes `gh` missing (as on a computer without it), or puts it back. Its place on the PATH answers as a shell does for
+   * an unknown command, so a `gh` the system keeps in `/usr/bin` (as Linux packages do) is never reached instead.
+   */
   setMissing(missing: boolean): Promise<void>
 }
 
@@ -126,8 +129,15 @@ export async function installFakeGh(
     bodies: async () => (await lines('bodies.log')).map(line => JSON.parse(line) as string),
     async setMissing(missing) {
       const off = join(bin, 'gh.off')
-      if (missing && existsSync(gh)) await rename(gh, off)
-      if (!missing && existsSync(off)) await rename(off, gh)
+      if (missing && !existsSync(off)) {
+        await rename(gh, off)
+        await writeFile(gh, '#!/bin/sh\necho "sh: gh: not found" >&2\nexit 127\n')
+        await chmod(gh, 0o755)
+      }
+      if (!missing && existsSync(off)) {
+        await rm(gh, { force: true })
+        await rename(off, gh)
+      }
     },
   }
 }

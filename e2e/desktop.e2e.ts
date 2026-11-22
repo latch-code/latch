@@ -21,6 +21,9 @@ import { closeSettings, layersInWindow, openSection, openSettings, reachable, se
 const MARK_TOOL = 'mark_release'
 const R2_PROMPT = '标记发布版本'
 const SECRET_MARKERS = ['ldc1.', 'PRIVATE KEY']
+// The suite reads the Chinese copy. macOS takes -AppleLanguages from the arguments before its own settings, so the
+// shell and its page start in Chinese whatever language the machine running the suite uses.
+const SYSTEM_LANGUAGE = ['-AppleLanguages', '(zh-CN)']
 
 /** What the test records in main instead of showing the open panel or Finder, and anything handed to openPath. */
 interface FolderRecord {
@@ -303,6 +306,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           `--latch-host-state=${join(testHost.dataDir, 'host.json')}`,
           `--latch-user-data=${join(root, 'electron')}`,
           '--use-mock-keychain',
+          ...SYSTEM_LANGUAGE,
         ],
         cwd: process.cwd(),
         env: shellEnvironment(),
@@ -366,6 +370,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           `--latch-host-state=${join(testHost.dataDir, 'host.json')}`,
           `--latch-user-data=${join(root, 'electron')}`,
           '--use-mock-keychain',
+          ...SYSTEM_LANGUAGE,
         ],
         cwd: process.cwd(),
         env: shellEnvironment(),
@@ -555,6 +560,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           `--latch-host-state=${join(testHost.dataDir, 'host.json')}`,
           `--latch-user-data=${userData}`,
           '--use-mock-keychain',
+          ...SYSTEM_LANGUAGE,
         ],
         cwd: process.cwd(),
         env: shellEnvironment(),
@@ -1742,6 +1748,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           `--latch-host-state=${join(testHost.dataDir, 'host.json')}`,
           `--latch-user-data=${join(root, 'electron')}`,
           '--use-mock-keychain',
+          ...SYSTEM_LANGUAGE,
         ],
         cwd: process.cwd(),
         env: shellEnvironment(),
@@ -1914,6 +1921,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           `--latch-host-state=${join(testHost.dataDir, 'host.json')}`,
           `--latch-user-data=${join(root, 'electron')}`,
           '--use-mock-keychain',
+          ...SYSTEM_LANGUAGE,
         ],
         cwd: process.cwd(),
         env: shellEnvironment(),
@@ -2010,6 +2018,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           `--latch-host-state=${join(testHost.dataDir, 'host.json')}`,
           `--latch-user-data=${join(root, 'electron')}`,
           '--use-mock-keychain',
+          ...SYSTEM_LANGUAGE,
         ],
         cwd: process.cwd(),
         env: shellEnvironment(),
@@ -2078,6 +2087,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           `--latch-host-state=${join(testHost.dataDir, 'host.json')}`,
           `--latch-user-data=${join(root, 'electron')}`,
           '--use-mock-keychain',
+          ...SYSTEM_LANGUAGE,
           // An internet name for the local site, so a page "on the internet" can try to reach this Mac.
           '--host-resolver-rules=MAP site.test 127.0.0.1',
         ],
@@ -2194,8 +2204,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await settled(guestId, `${local}/`)
       // Hidden until the page places it over its panel, then exactly there.
       expect(await viewOf(guestId)).toEqual([{ bounds: expect.any(Object), visible: false }])
-      expect(await call('setBounds', tabId, { x: 640, y: 60, width: 560, height: 700 })).toEqual({ ok: true })
-      expect(await viewOf(guestId)).toEqual([{ bounds: { x: 640, y: 60, width: 560, height: 700 }, visible: true }])
+      // Inside the smallest window a CI screen gives (1024 × 675 of content); main clips a panel to the window.
+      expect(await call('setBounds', tabId, { x: 400, y: 60, width: 560, height: 560 })).toEqual({ ok: true })
+      expect(await viewOf(guestId)).toEqual([{ bounds: { x: 400, y: 60, width: 560, height: 560 }, visible: true }])
       await waitFor(async () => {
         const answer = await call('state', tabId)
         return answer.ok && answer.state.title === '预览夹具'

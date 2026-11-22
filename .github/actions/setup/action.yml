@@ -17,6 +17,16 @@ runs:
         check-latest: false
         cache: false
 
+    # Runner images set up Git LFS for every repository (the git-lfs package writes filter.lfs to the system config).
+    # Latch refuses a branch switch, pull or delivery while any scope names a filter driver, so the tests start from a
+    # Git without one, as on a Mac without Git LFS. The last line shows what is left.
+    - name: Remove Git filter drivers from the runner's configuration
+      shell: bash
+      run: |
+        sudo git config --system --remove-section filter.lfs 2>/dev/null || true
+        git config --global --remove-section filter.lfs 2>/dev/null || true
+        git config --show-scope --get-regexp '^filter\.' || echo 'No filter drivers configured.'
+
     # Corepack, bundled with Node.js 24, downloads the pnpm named in packageManager and refuses it
     # unless its sha512 matches the one pinned there.
     - name: Enable pnpm

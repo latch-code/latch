@@ -2,8 +2,8 @@
 node_modules/
 /dist/
 # The website's build output and Astro's generated types.
-/apps/site/dist/
-/apps/site/.astro/
+/apps/site/dist
+/apps/site/.astro
 /release/
 /out/
 /.runtime*/

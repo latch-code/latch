@@ -62,7 +62,8 @@ describe('error copy coverage', () => {
     expect(report.missing).toEqual([{ code: 'note-secret', where: ['a:4'] }])
   })
 
-  it('has an entry for every security-class code the Host throws, and names every code site', async () => {
+  // It parses every source file of the repository: seconds here, more on a shared CI runner.
+  it('has an entry for every security-class code the Host throws, and names every code site', { timeout: 60_000 }, async () => {
     const report = await scanErrorCopy(ROOT)
     expect(report.missing).toEqual([])
     expect(report.unresolved).toEqual([])

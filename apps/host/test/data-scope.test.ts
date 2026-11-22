@@ -71,7 +71,8 @@ describe('the data scope of a newly connected browser', () => {
     const changes = `tasks/${sessionId}/changes?scope=turn`
     const listing = `tasks/${sessionId}/files/list`
     expect((await browser.request(changes)).status).toBe(200)
-    expect((await browser.request(listing)).status).toBe(200)
+    // Listing needs this Mac's directory reader; on other systems it gets past the scope and stops at 503.
+    expect((await browser.request(listing)).status).toBe(process.platform === 'darwin' ? 200 : 503)
     expect(await status(await work.request(changes))).toEqual([403, 'file-scope'])
     expect(await status(await work.request(listing))).toEqual([403, 'file-scope'])
     // A terminal is a shell of this account, other CLIs' sessions and 我的 Agent are private: none of them.
