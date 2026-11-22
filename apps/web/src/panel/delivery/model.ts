@@ -322,10 +322,17 @@ export function nothingToMerge(state: Pick<GitDeliveryState, 'base'>): boolean {
 
 /**
  * The line beside the remote: 新分支, 领先 and 落后, or 已是最新. Behind is counted from the last fetch (获取), so it
- * shows only with that time, which goes with it; without one nothing says the branch is up to date.
+ * shows only with that time, which goes with it; without one nothing says the branch is up to date. A branch with no
+ * upstream that the remote already has (pushed without `-u`) is not new: it is ahead of that, or 已推送.
  */
-export function aheadBehind(state: Pick<GitDeliveryState, 'upstream' | 'ahead' | 'behind' | 'fetchedAt'>, now = new Date()): string {
-  if (!state.upstream) return COPY.newBranch
+export function aheadBehind(
+  state: Pick<GitDeliveryState, 'upstream' | 'ahead' | 'behind' | 'fetchedAt' | 'remoteBranch'>,
+  now = new Date(),
+): string {
+  if (!state.upstream) {
+    if (!state.remoteBranch) return COPY.newBranch
+    return state.remoteBranch.ahead ? COPY.ahead(state.remoteBranch.ahead) : COPY.pushed
+  }
   const ahead = state.ahead ? COPY.ahead(state.ahead) : ''
   if (state.fetchedAt === undefined) return ahead || COPY.pushed
   const fetched = COPY.fetched(state.fetchedAt, now)
@@ -344,7 +351,10 @@ export function stageAllPaths(state: GitDeliveryState): string[] {
   return [...new Set([...state.unstaged.map(file => file.path), ...state.untracked, ...state.conflicted])]
 }
 
-/** A push has somewhere to go and something to take there. Without an upstream the branch itself is new on the remote. */
+/**
+ * A push has somewhere to go and something to take there. Without an upstream a push also sets one: the branch is new on
+ * the remote, or already there by the same name (`remoteBranch`).
+ */
 export function canPush(state: GitDeliveryState): boolean {
   if (!state.branch || !state.head || !state.remote) return false
   return !state.upstream || state.ahead > 0
@@ -356,8 +366,9 @@ export type PrimaryAction =
   | { kind: 'push'; label: string }
   | { kind: 'pr'; label: string }
 
-export function pushLabel(state: Pick<GitDeliveryState, 'upstream' | 'ahead'>): string {
-  return state.upstream && state.ahead > 0 ? COPY.pushCount(state.ahead) : COPY.push
+export function pushLabel(state: Pick<GitDeliveryState, 'upstream' | 'ahead' | 'remoteBranch'>): string {
+  const ahead = state.upstream ? state.ahead : (state.remoteBranch?.ahead ?? 0)
+  return ahead > 0 ? COPY.pushCount(ahead) : COPY.push
 }
 
 /**

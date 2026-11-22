@@ -55,6 +55,15 @@ describe('the delivery tab', () => {
     expect(aheadBehind(state({ fetchedAt: '2026-10-01T08:00:00.000Z' }), now)).toBe('已是最新 · 10/01 获取')
     expect(aheadBehind(state({ upstream: undefined }))).toBe('新分支')
   })
+  it('does not call a branch new when the remote has it already without an upstream, as after a push without -u', () => {
+    const pushed = state({ branch: 'feature/offline-drafts', upstream: undefined })
+    const remoteBranch = (ahead: number) => ({ remoteBranch: { name: 'origin/feature/offline-drafts', ahead } })
+    expect(aheadBehind({ ...pushed, ...remoteBranch(0) })).toBe('已推送')
+    expect(aheadBehind({ ...pushed, ...remoteBranch(2) })).toBe('领先 2')
+    // A push still goes there and sets the upstream, counting what it takes.
+    expect(primaryAction({ ...pushed, ...remoteBranch(2) })).toEqual({ kind: 'push', label: '推送 2 个提交' })
+    expect(primaryAction({ ...pushed, ...remoteBranch(0) })).toEqual({ kind: 'push', label: '推送' })
+  })
   it('moves the one blue button from 暂存全部 to 提交 N 个文件 to 推送', () => {
     const changed = state({ unstaged: [{ path: 'a.ts', status: 'M' }], untracked: ['b.ts'], conflicted: ['c.ts'] })
     expect(deliveryStep(changed)).toBe('stage')

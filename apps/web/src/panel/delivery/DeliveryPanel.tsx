@@ -151,6 +151,7 @@ const COPY = defineCopy(
     unstagedWarning: (count: number) => `未暂存的 ${formatNumber(count)} 个文件不提交。`,
     aheadUpstream: (value1: string, count: number) => `领先 ${value1} ${formatNumber(count)} 个提交`,
     notRemote: '这个分支还不在远端',
+    setsUpstream: (value1: string) => `推送后以 ${value1} 为上游`,
     notPushedYet: '已提交，未推送',
     sync: '同步',
     fetching: '获取中…',
@@ -256,6 +257,7 @@ const COPY = defineCopy(
     unstagedWarning: (count: number) => `The ${formatNumber(count)} unstaged files will stay out of the commit.`,
     aheadUpstream: (value1: string, count: number) => `${plural(count, { one: '{n} commit', other: '{n} commits' })} ahead of ${value1}`,
     notRemote: 'This branch isn’t on the remote yet',
+    setsUpstream: (value1: string) => `Push sets ${value1} as upstream`,
     notPushedYet: 'Committed · Not pushed',
     sync: 'Sync',
     fetching: 'Fetching…',
@@ -1032,8 +1034,17 @@ function FootNote({ state, step }: { state: GitDeliveryState; step: DeliveryStep
       <span className="delivery-foot-note">{COPY.staged(state.staged.length)}</span>
     )
   }
-  if (step === 'push')
-    return <span className="delivery-foot-note">{state.upstream ? COPY.aheadUpstream(state.upstream, state.ahead) : COPY.notRemote}</span>
+  if (step === 'push') {
+    // Pushed without `-u`: the remote has the branch, and a push with nothing new there only sets the upstream.
+    const note = state.upstream
+      ? COPY.aheadUpstream(state.upstream, state.ahead)
+      : state.remoteBranch
+        ? state.remoteBranch.ahead
+          ? COPY.aheadUpstream(state.remoteBranch.name, state.remoteBranch.ahead)
+          : COPY.setsUpstream(state.remoteBranch.name)
+        : COPY.notRemote
+    return <span className="delivery-foot-note">{note}</span>
+  }
   if (state.head && !state.remote) return <span className="delivery-foot-note">{COPY.notPushedYet}</span>
   return null
 }

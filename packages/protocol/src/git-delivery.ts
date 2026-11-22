@@ -36,6 +36,12 @@ export interface GitDeliveryState {
   /** Commits ahead of and behind the upstream, from local refs only (nothing is fetched); 0 without one. */
   ahead: number
   behind: number
+  /**
+   * Without an upstream: the remote a push goes to already has a branch of this name as this repository last saw it
+   * (`refs/remotes/<remote>/<branch>`, say after a push without `-u`), shown as `<remote>/<branch>`, and HEAD's commits it
+   * lacks. A push goes there and sets it as the upstream.
+   */
+  remoteBranch?: { name: string; ahead: number }
   /** When this repository last fetched (FETCH_HEAD's time): `behind` is as of then, and says nothing without it. */
   fetchedAt?: string
   /** The branch a pull request goes into (main or master) and HEAD's commits it lacks, from local refs; 0 on it. */

@@ -38,7 +38,15 @@ import { canonicalJson, redactKnownSecrets, sha256Hex } from '@latch/core/node-k
 import type { RESULT_CODES } from './audit-actions/git.ts'
 import { readGitLayout, type GitLayout } from './branch-reader.ts'
 import { GitError, GitReader, configHookArgs, findGit, gitOperation } from './changes/git.ts'
-import { aheadOfBase, baseOfBranch, reachableCommit, readHistory, readTreeDiff, readTreeFile } from './changes/git-history.ts'
+import {
+  aheadOfBase,
+  aheadOfRemoteBranch,
+  baseOfBranch,
+  reachableCommit,
+  readHistory,
+  readTreeDiff,
+  readTreeFile,
+} from './changes/git-history.ts'
 import {
   SelectionError,
   baseOf,
@@ -644,9 +652,14 @@ export class GitDelivery {
       } catch {
         remote = undefined
       }
-      const [base, fetchedAt] = await Promise.all([
+      const shownRemote = remote && REMOTE_NAME.test(remote) ? remote : undefined
+      const [base, fetchedAt, remoteAhead] = await Promise.all([
         status.head ? aheadOfBase(git, layout, status.head, remote) : undefined,
         lastFetch(layout.gitdir, common),
+        // Without an upstream the branch may still be there already, pushed without `-u`: not a new branch.
+        !status.upstream && shownRemote && status.branch && status.head
+          ? aheadOfRemoteBranch(git, layout, status.head, shownRemote)
+          : undefined,
       ])
       return {
         ...(status.branch ? { branch: status.branch } : {}),
@@ -654,6 +667,9 @@ export class GitDelivery {
         ...(status.upstream ? { upstream: status.upstream } : {}),
         ahead: status.ahead,
         behind: status.behind,
+        ...(remoteAhead !== undefined && status.branch
+          ? { remoteBranch: { name: `${shownRemote}/${status.branch}`, ahead: remoteAhead } }
+          : {}),
         ...(fetchedAt ? { fetchedAt } : {}),
         ...(base ? { base } : {}),
         staged: status.staged,
@@ -674,7 +690,7 @@ export class GitDelivery {
           : {}),
         hooks,
         filters: config.drivers.length > 0,
-        ...(remote && REMOTE_NAME.test(remote) ? { remote } : {}),
+        ...(shownRemote ? { remote: shownRemote } : {}),
         ...(config.fetchUnsafe ? { repoConfig: config.fetchUnsafe } : {}),
       }
     } catch (error) {

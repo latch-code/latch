@@ -203,6 +203,37 @@ describe('git delivery', () => {
     expect(Date.parse(fetched.fetchedAt ?? '')).toBeGreaterThan(Date.now() - 60_000)
   })
 
+  it(
+    'tells a branch pushed without -u from a new one: the remote has it, HEAD is ahead of it, and a push sets the upstream',
+    SLOW,
+    async () => {
+      const f = await fixture()
+      const remote = join(f.root, 'remote.git')
+      f.gitIn(f.root, 'init', '-q', '--bare', '-b', 'main', remote)
+      f.git('remote', 'add', 'origin', remote)
+      f.git('checkout', '-q', '-b', 'feature/offline-drafts')
+      const delivery = await f.delivery()
+      const fresh = await delivery.state(f.repo)
+      expect(fresh).toMatchObject({ branch: 'feature/offline-drafts', remote: 'origin', ahead: 0 })
+      expect(fresh.upstream).toBeUndefined()
+      expect(fresh.remoteBranch).toBeUndefined()
+
+      f.git('push', '-q', 'origin', 'feature/offline-drafts')
+      expect((await delivery.state(f.repo)).remoteBranch).toEqual({ name: 'origin/feature/offline-drafts', ahead: 0 })
+      await writeFile(join(f.repo, 'draft.txt'), 'draft\n')
+      f.git('add', 'draft.txt')
+      f.git('commit', '-q', '-m', 'draft')
+      const ahead = await delivery.state(f.repo)
+      expect(ahead.upstream).toBeUndefined()
+      expect(ahead.remoteBranch).toEqual({ name: 'origin/feature/offline-drafts', ahead: 1 })
+
+      expect(await delivery.push(f.caller(), { requestId: id(1) })).toMatchObject({ remote: 'origin', setUpstream: true })
+      const tracked = await delivery.state(f.repo)
+      expect(tracked).toMatchObject({ upstream: 'origin/feature/offline-drafts', ahead: 0 })
+      expect(tracked.remoteBranch).toBeUndefined()
+    },
+  )
+
   it('runs no hook, fsmonitor or filter to read, stage without filters and unstage; a commit runs hooks unless skipped', SLOW, async () => {
     const f = await fixture()
     for (const name of ['pre-commit', 'commit-msg', 'post-commit', 'post-index-change', 'reference-transaction', 'post-checkout'])

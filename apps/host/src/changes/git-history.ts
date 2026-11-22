@@ -73,6 +73,19 @@ export async function aheadOfBase(
   return undefined
 }
 
+/**
+ * A branch with no upstream that the remote a push goes to already has by the same name (pushed without `-u`, or by
+ * another tool), as this repository last saw it: the commits HEAD has that `refs/remotes/<remote>/<branch>` lacks.
+ * Undefined when there is no such ref.
+ */
+export async function aheadOfRemoteBranch(git: GitReader, layout: GitLayout, head: string, remote: string): Promise<number | undefined> {
+  if (!('branch' in layout.head)) return undefined
+  // HEAD is read as written: a name with revision syntax in it is no branch Git made, and names no remote branch.
+  if (/[~^:?*[\\]|\.\.|@\{/u.test(layout.head.branch)) return undefined
+  const tip = await git.commit(layout, `refs/remotes/${remote}/${layout.head.branch}`)
+  return tip ? git.ahead(layout, tip, head) : undefined
+}
+
 async function listCommits(
   git: GitReader,
   layout: GitLayout,
