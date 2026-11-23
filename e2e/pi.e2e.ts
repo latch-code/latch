@@ -1,6 +1,6 @@
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -20,6 +20,8 @@ describe('pi over its own RPC mode', () => {
   let host: TestHost
   let owner: TestDevice
   let browser: Browser
+  const savePi = (device: TestDevice) =>
+    device.confirmed('agents', { body: { id: 'pi', name: 'pi', presetId: 'pi', command: 'pi', args: [], env: {} } })
 
   /** The pi the Host finds: the fake, as itself or as a pi older than 0.84.4. */
   const fakePi = async (bin: string, old = false) => {
@@ -50,7 +52,7 @@ describe('pi over its own RPC mode', () => {
     })
     owner = await host.enroll({ listener: 'unix' })
     // Saved on this Mac with its confirmation: a page elsewhere is offered no preset, only saved definitions.
-    const saved = await owner.confirmed('agents', { body: { id: 'pi', name: 'pi', presetId: 'pi', command: 'pi', args: [], env: {} } })
+    const saved = await savePi(owner)
     expect(saved.status).toBe(201)
     browser = await chromium.launch(browserLaunchOptions())
     await mkdir(OUTPUT, { recursive: true })
@@ -93,7 +95,7 @@ describe('pi over its own RPC mode', () => {
     }
   })
 
-  const open = async (width: number, theme: 'light' | 'dark'): Promise<Page> => {
+  const open = async (width: number, theme: 'light' | 'dark', testHost = host): Promise<Page> => {
     const context = await browser.newContext({
       viewport: { width, height: 900 },
       colorScheme: theme,
@@ -102,7 +104,7 @@ describe('pi over its own RPC mode', () => {
     })
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
-    await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
+    await enrollBrowser(page, testHost, { scopes: ['view', 'run', 'admin'] })
     await connected(page)
     return page
   }
@@ -389,7 +391,7 @@ describe('pi over its own RPC mode', () => {
       await noHorizontalOverflow(page)
       await shot(page, 'too-old-1440-dark')
 
-      const saved = await owner.confirmed('agents', { body: { id: 'pi', name: 'pi', presetId: 'pi', command: 'pi', args: [], env: {} } })
+      const saved = await savePi(owner)
       expect([201, 409]).toContain(saved.status)
       const settings = await openSettings(page)
       await openSection(settings, 'Harness')
@@ -437,6 +439,49 @@ describe('pi over its own RPC mode', () => {
       await noHorizontalOverflow(page)
       await shot(page, `services-${width}-dark`)
       await page.context().close()
+    }
+  })
+
+  it('keeps the first message until a safe project is chosen when pi cannot use the start folder', async () => {
+    const bin = join(directory, 'bin')
+    const guarded = await startTestHost({
+      demo: false,
+      codeRoot: directory,
+      workspaceRoot: join(directory, 'workspace'),
+      commandDirectories: () => [bin],
+    })
+    try {
+      const local = await guarded.enroll({ listener: 'unix' })
+      expect((await savePi(local)).status).toBe(201)
+      const path = join(guarded.root, 'notes')
+      await mkdir(path)
+      expect((await local.addFolders({ paths: [path] })).status).toBe(201)
+
+      const page = await open(1440, 'dark', guarded)
+      await newDraft(page)
+      await page.getByRole('button', { name: /^Harness：pi/u }).waitFor()
+      let starts = 0
+      page.on('request', request => {
+        if (request.method() === 'POST' && new URL(request.url()).pathname === '/link/api/tasks') starts++
+      })
+      await draft(page).fill('你好')
+      const send = page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true })
+      await send.click()
+      const menu = page.getByRole('menu', { name: '项目', exact: true })
+      const noProject = menu.getByRole('menuitemradio', { name: /^不选项目/u })
+      await noProject.waitFor()
+      expect(await noProject.isDisabled()).toBe(true)
+      expect(await promptValue(draft(page))).toBe('你好')
+      await shot(page, 'protected-start-1440-dark')
+      await menu.getByRole('menuitemradio', { name: /^notes/u }).click()
+      expect(starts).toBe(0)
+      await send.click()
+      await reply(page, 'echo: 你好').waitFor()
+      expect(starts).toBe(1)
+      expect((await local.json<AppSnapshot>('snapshot')).tasks).toMatchObject([{ harnessId: 'pi', cwd: await realpath(path) }])
+      await page.context().close()
+    } finally {
+      await guarded.close()
     }
   })
 })

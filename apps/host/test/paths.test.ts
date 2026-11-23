@@ -191,6 +191,30 @@ describe('resolveLatchPaths', () => {
       { workspaceRoot: '/d/workspace', workspaceSource: 'legacy-data' },
     )
   })
+
+  it('starts outside the program when the usual default folder overlaps it', () => {
+    const home = temp()
+    const codeRoot = join(home, 'checkout')
+    mkdirSync(codeRoot)
+    const usualParent = join(home, 'Latch')
+    const usual = join(usualParent, 'workspace')
+    const fallback = join(home, 'Latch Files', 'workspace')
+    const base = { home, codeRoot, cwd: home, env: {}, legacyRuntime: false }
+    const checkout = process.platform === 'darwin' ? join(home, 'latch') : usualParent
+    expect(resolveLatchPaths({ ...base, codeRoot: checkout }).workspaceRoot).toBe(fallback)
+    symlinkSync(codeRoot, usualParent, 'dir')
+    // No workspace exists yet. Its parent already resolves into the program.
+    expect(resolveLatchPaths(base)).toMatchObject({
+      workspaceRoot: fallback,
+      workspaceSource: 'default',
+      worktreesDir: join(home, 'Latch Files', 'worktrees'),
+    })
+    expect(resolveLatchPaths({ ...base, workspace: usual })).toMatchObject({ workspaceRoot: usual, workspaceSource: 'flag' })
+    expect(resolveLatchPaths({ ...base, env: { LATCH_WORKSPACE: usual } })).toMatchObject({ workspaceRoot: usual, workspaceSource: 'env' })
+    symlinkSync(codeRoot, join(home, 'Latch Files'), 'dir')
+    // Data-only callers can still locate the Host. Starting it requires an explicit usable folder.
+    expect(resolveLatchPaths(base)).toMatchObject({ dataDir: expect.any(String), workspaceError: expect.stringContaining('--workspace') })
+  })
 })
 
 describe('prepareRuntimeDir', () => {

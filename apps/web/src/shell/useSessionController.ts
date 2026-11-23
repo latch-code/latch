@@ -29,6 +29,7 @@ import { detailOwnsSummary } from '../core/projection.ts'
 import { setPreference } from '../preferences.ts'
 import { requestLeave } from '../preview/editDrafts.ts'
 import {
+  CODE_ROOT_COPY,
   NOTICE_COPY,
   describeFailure,
   isSessionStopCode,
@@ -552,7 +553,9 @@ export function useSessionController({
     refs: fileMentions.filter(ref => hasFileMention(submission.draft, ref)),
     onRefs: setFileMentions,
   }
-  /** The project list opens with a notice: a folder the Host just refused. A draft without a project starts as 不选项目. */
+  const noProjectRefusal =
+    draftHarness?.level === 'L3' && codeRootWorkspace(catalog?.workspaces, { id: 'default' }) ? CODE_ROOT_COPY.chooseProject : undefined
+  /** The project list also opens when the selected Harness cannot run in the default folder. */
   const [projectRequest, setProjectRequest] = useState(0)
   const [projectNotice, setProjectNotice] = useState<string>()
   const askProject = (notice?: string) => {
@@ -564,6 +567,10 @@ export function useSessionController({
     if (inputId !== null) await configFlights.current.get(inputId)
   }
   const sendDraft = async () => {
+    if (inputId === null && !submission.fork && (choice.workspaceId ?? 'default') === 'default' && noProjectRefusal) {
+      askProject()
+      return
+    }
     if (inputId !== null && active && (attachmentDraft.items.length > 0 || mentionChoice.refs.length > 0)) {
       submission.setError(steer ? COPY.attachmentsInSteer : COPY.attachmentsInQueue)
       return
@@ -1831,6 +1838,7 @@ export function useSessionController({
     abandoning,
     pendingQueued,
     askProject,
+    noProjectRefusal,
     projectAsk: {
       request: projectRequest,
       notice: projectNotice,

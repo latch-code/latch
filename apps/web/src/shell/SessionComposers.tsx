@@ -148,6 +148,7 @@ function HomeHeadline({ shell }: { shell: ShellState }) {
       onChange={chooseProject}
       openRequest={projectAsk.request}
       notice={projectAsk.notice}
+      noProjectRefusal={shell.noProjectRefusal}
       onClosed={projectAsk.clearNotice}
       {...(face !== undefined ? { face } : {})}
       {...(name && name.length > LONG_PROJECT ? { hint: name } : {})}
@@ -166,15 +167,17 @@ function HomeHeadline({ shell }: { shell: ShellState }) {
           COMPOSER_COPY.ask
         )}
       </h2>
-      <p className="home-headline-sub">
-        {name ? (
-          <button type="button" className="home-headline-skip" disabled={newChoicesLocked} onClick={() => chooseProject('default')}>
-            {COMPOSER_COPY.skipProject}
-          </button>
-        ) : (
-          <span className="home-headline-pick">{picker(COMPOSER_COPY.pickProject)}</span>
-        )}
-      </p>
+      {(!name || !shell.noProjectRefusal) && (
+        <p className="home-headline-sub">
+          {name ? (
+            <button type="button" className="home-headline-skip" disabled={newChoicesLocked} onClick={() => chooseProject('default')}>
+              {COMPOSER_COPY.skipProject}
+            </button>
+          ) : (
+            <span className="home-headline-pick">{picker(COMPOSER_COPY.pickProject)}</span>
+          )}
+        </p>
+      )}
     </div>
   )
 }

@@ -392,7 +392,7 @@ MermaidKit 由 Xcode 的 Package.resolved 精确锁定，只链接到 App 和模
   - 移动本身不写审计：审计日志在被移动的目录里。
 - 数据目录必须是当前用户拥有的目录（不是符号链接），否则拒绝启动（500 `data-dir-insecure`）；权限收紧到 0700。启动目录不存在时以 0700 创建。
 - 运行目录及其父目录必须是当前用户拥有的真实目录，运行目录与其中的 `tmp/` 不带组与其他人的权限位（500 `runtime-dir-insecure`）；`host.sock` 路径超过 103 字节时 500 `runtime-dir-too-long`；Windows 上 500 `runtime-dir-unsupported`。`host.sock` 只靠这个目录的属主与权限保护。
-- Host 从不自己选一个位于 Latch 程序目录内的启动目录：数据目录内的 `workspace` 与程序目录重叠时改用 `~/Latch/workspace`，原目录中的文件不移动。`--workspace` 与 `LATCH_WORKSPACE` 是所有者自己的选择，照样使用。
+- Host 自动选启动目录时会跳过与 Latch 程序目录重叠的位置。它依次检查数据目录里已有的 `workspace`、`~/Latch/workspace` 和备用的 `~/Latch Files/workspace`，按已有父目录的真实路径判断。备用目录也重叠时，启动报错并提示用 `--workspace` 指定目录。已有文件留在原处。显式指定的启动目录仍按下文「启动目录」的规则使用。
 - 路径比较用真实路径，去掉 macOS 的别名前缀（`/System/Volumes/Data`、`/.nofollow`、`/.resolve/<n>`，只在两种写法是同一个目录时去掉），在 macOS 与 Windows 上按 NFC 与小写比较；重叠同时按写法和文件系统身份（`dev:ino`）判断。
 
 ### 项目与文件夹

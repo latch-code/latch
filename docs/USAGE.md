@@ -226,7 +226,7 @@ pnpm desktop -- --tailnet \
 2. 当前目录下已存在的 `.runtime`（旧位置，继续使用并打印迁移提示）；
 3. 平台默认：macOS `~/.latch/host`，Linux `${XDG_DATA_HOME:-~/.local/share}/latch/host`。macOS 上原先在 `~/Library/Application Support/Latch/Host` 的数据，由 Host 在下一次启动时整体移到新位置（一次改名，不复制），原位置留下一个说明文件。
 
-**启动目录**：`--workspace` → `LATCH_WORKSPACE` → 数据目录内已存在的 `workspace`（旧布局）→ `~/Latch/workspace`（需要时创建）。
+**启动目录**优先用 `--workspace` 或 `LATCH_WORKSPACE` 指定的位置。自动选择时，先用数据目录内已有的 `workspace`（旧布局），再用 `~/Latch/workspace`。与 Latch 程序目录重叠的位置会跳过。如果 `~/Latch/workspace` 也与程序目录重叠，Host 会尝试 `~/Latch Files/workspace`。启动时会显示选中的目录。原有文件留在原处。
 
 - 没有用 `--workspace` 或 `LATCH_WORKSPACE` 指定时，每个不在项目中的新 Agent 会话在启动目录中得到一个自己的新文件夹（权限 0700）；删除会话不删除它的文件夹。指定了启动目录时，会话直接在其中工作。
 - **项目**在桌面端「设置 → 项目」或用 `pnpm latch project` 添加，每个项目最多 8 个文件夹。项目与文件夹只能在 Host 所在的电脑上添加。

@@ -17,7 +17,7 @@
 - 出站经注入的 `fetch` 和策略，限预置、已确认或固定的地址；密钥限绑定的源和路径，更新前与锁内复核所见目标（`test/providers.test.ts`）。
 - Standard 由 `classifyStandardCall` 分级；`requiresApproval` 不能降级，未列工具（含插件工具）、异常或未知值均按 R2（`test/risk.test.ts`）。
 - 插件目录只用 `@latch/sdk`、`@latch/protocol`、本目录与种类目录下的共用文件，不导入 Host 或其他插件目录；只有 `standard` 用 `@latch/core`（`.oxlintrc.json`）。
-- `latchCodeRoot()` 固定代码根，不随项目。
+- `latchCodeRoot()` 固定，自动工作区避开。
 - 同项目的变更与启动串行、跨项目不等，撤销和收紧仍可并行；旧会话保留冻结目录（`test/project-regressions.test.ts`）。
 - 确认只经 `PresenceService`，无设备签名批准。开发固定 CDHash，发布固定身份与审计，缺一须离线重新固定，运行前核验子进程（ARCHITECTURE）。
 - 终端限 `host.sock`、`run` 与 `all`，复核目录身份，环境用 `terminalEnvironment`。

@@ -15,6 +15,8 @@ export interface LatchPaths {
   dataDirSource: 'flag' | 'env' | 'legacy-runtime' | 'legacy-default' | 'default'
   workspaceRoot: string
   workspaceSource: 'flag' | 'env' | 'legacy-data' | 'default'
+  /** Starting with the automatic workspace is impossible. Data-only commands can still locate their Host. */
+  workspaceError?: string
   agentsDir: string
   /** Where the Host makes Git worktrees for sessions: beside the start directory, as `~/Latch/worktrees` by default. */
   worktreesDir: string
@@ -59,12 +61,13 @@ function isDirectoryNow(path: string): boolean {
   }
 }
 
-/** Realpath when the path exists, else the path itself. */
-function realOrSelf(path: string): string {
+/** Resolve existing parents too: the Host is about to create a workspace that may not exist yet. */
+function workspacePath(path: string): string {
   try {
-    return realpathSync.native(path)
+    return withoutAliasesSync(realpathSync.native(path))
   } catch {
-    return path
+    const parent = dirname(path)
+    return parent === path || !isAbsolute(path) ? path : join(workspacePath(parent), basename(path))
   }
 }
 
@@ -145,22 +148,35 @@ export function resolveLatchPaths(input: {
   const legacyWorkspace = path.join(dataDir, 'workspace')
   const workspaceEnv = input.workspace ? undefined : latchEnv(input.env, 'WORKSPACE')
   const legacyExists = !input.workspace && !workspaceEnv && exists(legacyWorkspace)
-  const codeRoot = legacyExists ? (input.codeRoot ?? codeRootOrUndefined()) : undefined
-  const legacyInCode =
-    codeRoot !== undefined && (isInsidePath(realOrSelf(legacyWorkspace), codeRoot) || isInsidePath(codeRoot, realOrSelf(legacyWorkspace)))
+  const codeRoot = input.workspace || workspaceEnv ? undefined : (input.codeRoot ?? codeRootOrUndefined())
+  const overlapsCode = (directory: string) => {
+    if (codeRoot === undefined) return false
+    const real = workspacePath(directory)
+    return isInsidePath(real, codeRoot) || isInsidePath(codeRoot, real)
+  }
+  let workspaceError: string | undefined
   if (input.workspace) {
     workspaceRoot = path.resolve(input.cwd, input.workspace)
     workspaceSource = 'flag'
   } else if (workspaceEnv) {
     workspaceRoot = path.resolve(input.cwd, workspaceEnv)
     workspaceSource = 'env'
-  } else if (legacyExists && !legacyInCode) {
+  } else if (legacyExists && !overlapsCode(legacyWorkspace)) {
     workspaceRoot = legacyWorkspace
     workspaceSource = 'legacy-data'
     warnings.push(`工作区位于数据目录内（${workspaceRoot}）。迁出之前只能使用内置 Harness。`)
   } else {
     workspaceRoot = path.join(home, 'Latch', 'workspace')
     workspaceSource = 'default'
+    if (overlapsCode(workspaceRoot)) {
+      const fallback = path.join(home, 'Latch Files', 'workspace')
+      if (overlapsCode(fallback)) {
+        workspaceError = '默认文件夹和备用文件夹均与 Latch 程序目录重叠。请用 --workspace 指定其他文件夹。'
+      } else {
+        warnings.push(`默认文件夹 ${workspaceRoot} 与 Latch 程序目录重叠，改用 ${fallback}。原目录中的文件没有移动。`)
+        workspaceRoot = fallback
+      }
+    }
     if (legacyExists)
       warnings.push(
         `数据目录内的旧工作区 ${legacyWorkspace} 位于 Latch 程序目录中，不再作为默认文件夹；默认文件夹改为 ${workspaceRoot}。原目录中的文件没有移动。`,
@@ -171,7 +187,16 @@ export function resolveLatchPaths(input: {
   const agentsDir = agentsDirEnv ? path.resolve(input.cwd, agentsDirEnv) : platformData(platform, home, input.env, 'Agents')
   const worktreesDirEnv = latchEnv(input.env, 'WORKTREES_DIR')
   const worktreesDir = worktreesDirEnv ? path.resolve(input.cwd, worktreesDirEnv) : path.join(path.dirname(workspaceRoot), 'worktrees')
-  return { dataDir, dataDirSource, workspaceRoot, workspaceSource, agentsDir, worktreesDir, warnings }
+  return {
+    dataDir,
+    dataDirSource,
+    workspaceRoot,
+    workspaceSource,
+    ...(workspaceError ? { workspaceError } : {}),
+    agentsDir,
+    worktreesDir,
+    warnings,
+  }
 }
 
 function insecureRuntime(path: string): AppError {

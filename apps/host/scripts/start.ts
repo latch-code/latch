@@ -188,6 +188,7 @@ async function refuseHostWithoutLock(dataDir: string): Promise<void> {
 
 async function main(): Promise<void> {
   const resolved = resolveLatchPaths({ dataDir: option('--data-dir'), workspace: option('--workspace'), env, cwd: process.cwd() })
+  if (resolved.workspaceError) throw new StartupError(resolved.workspaceError)
   // The default data location moved to ~/.latch/host: a start moves the old directory there once, before the lock and
   // before anything is created at either place.
   const dataHome = await settleDataHome({

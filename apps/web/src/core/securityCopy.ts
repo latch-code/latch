@@ -923,12 +923,14 @@ export const CODE_ROOT_COPY = defineCopy(
     badge: '程序目录内',
     notice: '在程序目录里，每次写入都问你',
     startDir: 'Latch 启动时的文件夹',
+    chooseProject: '默认文件夹与 Latch 程序目录重叠，请选择其他项目。',
     newProject: '添加项目…',
   },
   {
     badge: 'In program folder',
     notice: 'In the program folder, every write asks you',
     startDir: 'Folder Latch started in',
+    chooseProject: 'The default folder overlaps the Latch program folder. Choose another project.',
     newProject: 'Add project…',
   },
 )

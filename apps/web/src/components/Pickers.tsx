@@ -297,6 +297,7 @@ export function ProjectPicker({
   notice,
   onClosed,
   defaultLocation,
+  noProjectRefusal,
   face,
   hint,
 }: {
@@ -319,6 +320,7 @@ export function ProjectPicker({
   onClosed?: (() => void) | undefined
   /** Agent forms use the same default ID for the Host-allocated home, never for the public start folder. */
   defaultLocation?: { label: string; description: string }
+  noProjectRefusal?: string | undefined
   /** The words the trigger shows instead of the chosen project's name (「选一个项目」 under the start page's headline). */
   face?: string
   /** The trigger's hover: a long name in full. */
@@ -363,10 +365,12 @@ export function ProjectPicker({
             options: [
               {
                 ...option(start, defaultLocation?.label ?? COPY.noProject),
+                ...(noProjectRefusal ? { disabledReason: noProjectRefusal } : {}),
                 tag: undefined,
                 // The Host's own start directory gives each session a new folder; one the owner set is used as it is.
-                description:
-                  defaultLocation?.description ?? (catalog.sessionFolders ? noProjectLine(harness) : middleEllipsis(start.path, 44)),
+                description: noProjectRefusal
+                  ? undefined
+                  : (defaultLocation?.description ?? (catalog.sessionFolders ? noProjectLine(harness) : middleEllipsis(start.path, 44))),
               },
             ],
           },
