@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { AgentRecord, AgentSettings } from '@latch/protocol'
+import type { AgentRecord, AgentSettings, HarnessInfo } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { createAcpAgentPlugin, forgetCommandLookups } from '@latch/harness-acp'
 import { startTestHost, type TestHost } from './helpers/host.ts'
@@ -59,6 +59,10 @@ async function presetHost(directories: () => readonly string[], dataDir?: string
   const desktop = await t.enroll({ listener: 'unix' })
   const browser = await t.enroll({ scopes: [...ADMIN] })
   return { t, desktop, browser, asked: t.presence.requests.length }
+}
+
+async function harnessOn(device: Awaited<ReturnType<TestHost['enroll']>>, id: string): Promise<HarnessInfo | undefined> {
+  return (await device.json<{ catalog: { harnesses: HarnessInfo[] } }>('snapshot')).catalog.harnesses.find(item => item.id === id)
 }
 
 async function startOn(t: TestHost, device: Awaited<ReturnType<TestHost['enroll']>>, harnessId: string, prompt = 'echo hi') {
@@ -126,7 +130,7 @@ describe("a preset's own command", () => {
     expect((await audit(t)).some(item => item.action === 'agent.defined')).toBe(false)
   })
 
-  it('does not run another program found earlier on the lookup path; saving it again asks', async () => {
+  it('does not run another program found earlier on the lookup path, says so, and runs it once this Mac confirms it', async () => {
     const root = await folder('latch-preset-')
     const first = join(root, 'first')
     const earlier = join(root, 'earlier')
@@ -144,9 +148,22 @@ describe("a preset's own command", () => {
       // Refused before it starts: as moved, or as unavailable while the catalog says so.
       expect.soft(['harness-command-moved', 'harness-unavailable']).toContain(result.error)
     }
+    // Every device is told why, so a page can offer the confirmation where it can be given.
+    for (const device of [desktop, browser])
+      expect.soft(await harnessOn(device, 'goose')).toMatchObject({ status: 'unavailable', statusReason: 'moved' })
+    expect((await harnessOn(desktop, 'goose'))?.bound?.path).toBe(join(first, 'goose'))
+    // Saving it as it is: refused from another device, asked on this Mac with the program it now finds.
+    expect(await body(await browser.request('agents/goose', { method: 'PUT', body: { command: 'goose' } }))).toMatchObject({
+      error: 'local-only',
+    })
     const again = await desktop.request('agents/goose', { method: 'PUT', body: { command: 'goose' } })
     expect(await body(again)).toMatchObject({ error: 'stepup-required', confirmation: { action: 'harness.command.apply' } })
     expect(t.presence.requests.at(-1)?.preview.lines).toContainEqual({ label: '命令', value: shadow })
+    await desktop.confirmedJson('agents/goose', { method: 'PUT', body: { command: 'goose' } })
+    await expect.poll(async () => (await harnessOn(desktop, 'goose'))?.status).toBe('ready')
+    const bound = await harnessOn(desktop, 'goose')
+    expect(bound?.statusReason).toBeUndefined()
+    expect(bound?.bound?.path).toBe(shadow)
   })
 
   it('is refused while a full-access session runs or waits, as a confirmation would be', async () => {

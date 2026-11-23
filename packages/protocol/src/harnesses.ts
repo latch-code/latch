@@ -235,9 +235,11 @@ export interface HarnessInfo {
   statusMessage?: string
   /**
    * Why it is `unavailable`, when a client says it differently: `outdated`, its command is known to be older than Latch
-   * supports (from a read of its version), so it is listed greyed with 需要升级 and `statusMessage` names the upgrade.
+   * supports (from a read of its version), so it is listed greyed with 需要升级 and `statusMessage` names the upgrade;
+   * `moved`, its command now finds another program than the one this Mac confirmed, which saving the definition again on
+   * this Mac confirms (`AgentSettings.detected.path` is the new one, `bound.path` the confirmed one).
    */
-  statusReason?: 'outdated'
+  statusReason?: 'outdated' | 'moved'
   /** Session modes the harness accepts. */
   modes: TaskMode[]
   /** L1: Latch decides each risky call. L3: unsandboxed. Always the Host's derivation, never a driver's word. */

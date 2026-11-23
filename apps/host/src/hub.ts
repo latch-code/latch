@@ -1672,7 +1672,8 @@ export class HarnessHub implements Bridge {
         if (reported) {
           status = reported.status
           statusMessage = reported.statusMessage
-          if (reported.status === 'unavailable' && reported.statusReason === 'outdated') statusReason = 'outdated'
+          if (reported.status === 'unavailable' && (reported.statusReason === 'outdated' || reported.statusReason === 'moved'))
+            statusReason = reported.statusReason
         }
       } catch (error) {
         status = 'unavailable'

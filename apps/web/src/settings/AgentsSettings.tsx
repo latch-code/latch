@@ -121,6 +121,11 @@ const COPY = defineCopy(
     renameHarness: '重命名 Harness',
     notInstalled: '未安装',
     needsAttention: '需要处理',
+    needsConfirm: '需要确认',
+    programMoved: '命令找到了另一个程序',
+    confirmedBefore: '原先确认的',
+    confirmProgram: '确认新程序',
+    confirmProgramName: (name: string) => `确认 ${name} 的新程序`,
     disabled: '已停用',
     available: '可用',
     versionUnread: '版本未读：添加并在这台 Mac 上确认后读取',
@@ -213,6 +218,11 @@ const COPY = defineCopy(
     renameHarness: 'Rename Harness',
     notInstalled: 'Not installed',
     needsAttention: 'Needs attention',
+    needsConfirm: 'Needs confirming',
+    programMoved: 'The command finds another program',
+    confirmedBefore: 'Confirmed before',
+    confirmProgram: 'Confirm new program',
+    confirmProgramName: (name: string) => `Confirm ${name}’s new program`,
     disabled: 'Off',
     available: 'Available',
     versionUnread: 'Version unread. Add and confirm on this Mac to read it.',
@@ -261,6 +271,12 @@ const lines = (text: string) =>
     .split('\n')
     .map(item => item.trim())
     .filter(Boolean)
+
+/**
+ * Its command now finds another program than the one this Mac confirmed: saving the definition again on this Mac shows
+ * the new one on the confirmation sheet, and binds it.
+ */
+const commandMoved = (harness?: HarnessInfo): boolean => harness?.status === 'unavailable' && harness.statusReason === 'moved'
 
 /** What the Host found for an agent's command, in one line; ready is the default state and stays quiet. */
 function Detection({ agent, preset, harness }: { agent: AgentSettings; preset?: AgentPreset; harness?: HarnessInfo }) {
@@ -739,6 +755,12 @@ function AgentPage({
     }
   }
   const missing = missingText(agent) !== undefined
+  const moved = !missing && !agent.detected.outdated && commandMoved(harness)
+  const confirmMoved = () => {
+    void update({ command: agent.command }).then(text => {
+      if (text) setError(text)
+    })
+  }
   return (
     <>
       <SectionHeading
@@ -844,27 +866,52 @@ function AgentPage({
             {COPY.checkAgain}
           </Button>
         }>
-        <SettingsRow
-          leading={<IconTile icon={missing || agent.detected.outdated ? AlertGlyph : CircleCheckGlyph} />}
-          title={missing ? COPY.notLaunchable : agent.detected.outdated ? COPY.updateNeeded : COPY.commandFound}
-          description={
-            missing || agent.detected.outdated || harness?.status === 'unavailable' ? (
-              <Detection agent={agent} preset={preset} harness={harness} />
-            ) : (
-              <MiddleEllipsis text={agent.detected.path ?? agent.command} className="settings-mono" />
-            )
-          }
-          trailing={
-            missing ? undefined : agent.detected.outdated ? (
-              <span className="command-actions">
-                <CopyButton text={agent.detected.outdated.upgrade} label={COPY.copyUpdate} />
-                <TerminalFillButton command={agent.detected.outdated.upgrade} detached />
-              </span>
-            ) : agent.detected.path ? (
-              <CopyButton text={agent.detected.path} label={COPY.copyCommandPath} />
-            ) : undefined
-          }
-        />
+        {moved ? (
+          <SettingsRow
+            leading={<IconTile icon={AlertGlyph} />}
+            title={COPY.programMoved}
+            description={
+              // Elsewhere the Host's reason says where it is confirmed.
+              local ? (
+                <MiddleEllipsis text={agent.detected.path ?? agent.command} className="settings-mono" />
+              ) : (
+                <Detection agent={agent} preset={preset} harness={harness} />
+              )
+            }
+            trailing={
+              local ? (
+                <Button variant="secondary" disabled={busy} onClick={confirmMoved}>
+                  {COPY.confirmProgram}
+                </Button>
+              ) : undefined
+            }
+          />
+        ) : (
+          <SettingsRow
+            leading={<IconTile icon={missing || agent.detected.outdated ? AlertGlyph : CircleCheckGlyph} />}
+            title={missing ? COPY.notLaunchable : agent.detected.outdated ? COPY.updateNeeded : COPY.commandFound}
+            description={
+              missing || agent.detected.outdated || harness?.status === 'unavailable' ? (
+                <Detection agent={agent} preset={preset} harness={harness} />
+              ) : (
+                <MiddleEllipsis text={agent.detected.path ?? agent.command} className="settings-mono" />
+              )
+            }
+            trailing={
+              missing ? undefined : agent.detected.outdated ? (
+                <span className="command-actions">
+                  <CopyButton text={agent.detected.outdated.upgrade} label={COPY.copyUpdate} />
+                  <TerminalFillButton command={agent.detected.outdated.upgrade} detached />
+                </span>
+              ) : agent.detected.path ? (
+                <CopyButton text={agent.detected.path} label={COPY.copyCommandPath} />
+              ) : undefined
+            }
+          />
+        )}
+        {moved && harness?.bound?.path && (
+          <SettingsRow title={COPY.confirmedBefore} description={<MiddleEllipsis text={harness.bound.path} className="settings-mono" />} />
+        )}
         {agent.detected.outdated && (
           <SettingsRow title={COPY.upgradeCommand} description={<span className="settings-mono">{agent.detected.outdated.upgrade}</span>} />
         )}
@@ -975,7 +1022,13 @@ function EngineStatus({ agent, harness }: { agent: AgentSettings; harness?: Harn
     const reason = missing ?? agent.problem ?? harness?.statusMessage
     return (
       <span className="service-status" data-tone="warn" title={reason}>
-        {missing !== undefined ? COPY.notInstalled : agent.detected.outdated ? COPY.updateNeeded : COPY.needsAttention}
+        {missing !== undefined
+          ? COPY.notInstalled
+          : agent.detected.outdated
+            ? COPY.updateNeeded
+            : commandMoved(harness)
+              ? COPY.needsConfirm
+              : COPY.needsAttention}
       </span>
     )
   }
@@ -1020,6 +1073,8 @@ export function AgentRow({
   busy,
   onOpen,
   onToggle,
+  local = false,
+  onConfirm,
 }: {
   agent: AgentSettings
   preset?: AgentPreset
@@ -1027,10 +1082,15 @@ export function AgentRow({
   busy: boolean
   onOpen: () => void
   onToggle: () => void
+  /** The desktop app on this Mac, where a moved command is confirmed. */
+  local?: boolean
+  /** Saves the definition as it is, which confirms the program its command now finds. */
+  onConfirm?: () => void
 }) {
   // Saved on the preset's adapter rather than its own program: said, with what the direct route needs.
   const viaAdapter = preset?.fallback !== undefined && runsPresetFallback(preset, commandBase(agent.command), agent.args)
   const words = preset && harnessPresetCopy(preset)
+  const moved = missingText(agent) === undefined && !agent.detected.outdated && commandMoved(harness)
   return (
     <ObjectRow
       className="agent-row"
@@ -1044,8 +1104,11 @@ export function AgentRow({
         </span>
       }
       description={
-        // A preset says which program it is bound to; anything else says what it runs.
-        agent.verified && preset && harness?.bound?.path ? (
+        // A moved command shows the program it now finds, the one a confirmation would bind; a preset says which program
+        // it is bound to; anything else says what it runs.
+        moved && agent.detected.path ? (
+          <MiddleEllipsis text={agent.detected.path} className="settings-mono" />
+        ) : agent.verified && preset && harness?.bound?.path ? (
           <MiddleEllipsis text={harness.bound.path} className="settings-mono" />
         ) : agent.verified && words ? (
           ((viaAdapter ? words.adapterDescription : undefined) ?? words.description)
@@ -1059,7 +1122,13 @@ export function AgentRow({
           {viaAdapter && preset?.fallback && (
             <Hint label={COPY.via([preset.fallback.command, ...preset.fallback.args].join(' '))}>{words?.direct}</Hint>
           )}
-          <EngineStatus agent={agent} harness={harness} />
+          {moved && local && onConfirm ? (
+            <Button variant="secondary" disabled={busy} aria-label={COPY.confirmProgramName(agent.name)} onClick={onConfirm}>
+              {COPY.confirmProgram}
+            </Button>
+          ) : (
+            <EngineStatus agent={agent} harness={harness} />
+          )}
           <Switch label={COPY.enableName(agent.name)} checked={agent.enabled} disabled={busy} onCheckedChange={onToggle} />
         </>
       }
@@ -1250,10 +1319,31 @@ export function AgentsSettings({
       setBusy(null)
     }
   }
+  /** Saves a moved definition as it is: the Host asks for Touch ID with the program its command now finds. */
+  const confirmMoved = async (agent: AgentSettings) => {
+    setBusy(agent.id)
+    setError('')
+    try {
+      await withConfirmation(confirmation =>
+        api(`agents/${encodeURIComponent(agent.id)}`, {
+          method: 'PUT',
+          body: { command: agent.command },
+          ...(confirmation ? { confirmation } : {}),
+        }),
+      )
+      onChanged()
+      await load()
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
   if (data === null) return error ? <InlineNotice tone="error">{error}</InlineNotice> : <Loading />
 
   const builtin = builtinHarness(snapshot.catalog)
-  const on = onComputer(deviceAccess(snapshot, currentShell()).local, snapshot.hostName)
+  const local = deviceAccess(snapshot, currentShell()).local
+  const on = onComputer(local, snapshot.hostName)
   const { found, installable } = presetGroups(data.presets, data.agents)
   const { installed, missing } = engineGroups(data.agents)
   const custom = (preset: AgentPreset) => {
@@ -1271,6 +1361,10 @@ export function AgentsSettings({
       }}
       onToggle={() => {
         void toggle(agent)
+      }}
+      local={local}
+      onConfirm={() => {
+        void confirmMoved(agent)
       }}
     />
   )
@@ -1374,7 +1468,7 @@ export function AgentsSettings({
           onSaved={refreshed}
           onDeleted={done}
           on={on}
-          local={deviceAccess(snapshot, currentShell()).local}
+          local={local}
         />
       ),
     })

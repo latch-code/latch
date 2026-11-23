@@ -63,7 +63,7 @@ ACP Agent 是本机可信代码，Latch 不给它加操作系统沙箱，也不�
 - **不再使用的适配器。** pi 曾经经 `pi-acp` 适配器运行，现在直接说它自己程序的 RPC。那时预设存下的定义（`presetId: pi`，命令是 `pi-acp`，没有参数与变量）在 Host 启动时移除并写审计（`agent.deleted`，`via: startup`），不替它绑定别的程序；pi 随后作为这台电脑上已安装的预设重新出现，第一次使用时照常绑定。带参数或变量的同名定义是人自己的，保留（`isRetiredAdapterDefinition`）。
 - 每个预设上次绑定的路径记在 `settings.json` 的 `presetBindings`，保存与删除定义时都写入；预设与它、与同一预设其他定义的路径都一致才不确认。客户端只收到这个路径以 Host 自己的密钥（`boundKey`）算出的摘要。绑定比较的是路径，不是文件内容：同一路径上的程序被替换时它不会发现。
 - 其他都要本机确认 `harness.command.apply`：自定义命令、绝对路径、多出或改过的参数、任何环境变量（新增、修改、移除都算），确认绑定名称与命令解析出的路径。
-- 保存时记下解析出的路径 `confirmedCommand`。之后同一命令解析到别的程序时会话不启动（409 `harness-command-moved`），在这台 Mac 上再保存一次即确认新路径，预设也一样。
+- 保存时记下解析出的路径 `confirmedCommand`。之后同一命令解析到别的程序时会话不启动（409 `harness-command-moved`），在这台 Mac 上再保存一次即确认新路径，预设也一样。这时 Harness 带 `statusReason: 'moved'`：「设置 → Harness」里这一行显示命令现在找到的程序，这台 Mac 的桌面端给出「确认新程序」（原样保存一次，经本机确认），其他设备只标「需要确认」。
 - 没有 `confirmedCommand` 的定义：在这台 Mac 上第一次用它开始会话时绑定（预设不确认）；此前其他设备开始它被拒（409 `harness-unconfirmed`），版本也不读。
 - 改名、开关、删除、模型与权限预设，有 `admin` 的设备都能改。每次改动写 `agent.defined`（确认过的带 `lpc-local`，预设带 `preset`），变量的值不返回。
 - Host 只为确认过、且仍解析到同一路径的定义运行 `--version`。

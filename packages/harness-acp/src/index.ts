@@ -427,7 +427,7 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
           if (outdated) return { status: 'unavailable', statusMessage: `${record.name} ${outdated}`, statusReason: 'outdated' }
           const path = located()
           if (record.confirmedCommand !== undefined && path !== undefined && path !== record.confirmedCommand)
-            return { status: 'unavailable', statusMessage: commandMoved(record.name).message }
+            return { status: 'unavailable', statusMessage: commandMoved(record.name).message, statusReason: 'moved' }
           if (health.pausedUntil())
             return { status: 'unavailable', statusMessage: `${record.name} 在一分钟内连续崩溃 3 次，已暂停自动重启，请稍后再试` }
           return health.lastError ? { status: 'ready', statusMessage: `上次运行异常：${health.lastError}` } : { status: 'ready' }

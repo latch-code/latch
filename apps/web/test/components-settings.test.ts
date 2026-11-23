@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DeviceAccess } from '../src/core/permissions.ts'
 import { DEVICES_COPY, ENROLLMENT_COPY, NATIVE_LINK_COPY } from '../src/core/securityCopy.ts'
-import { PROVIDER_PRESETS, type AgentPreset, type AgentSettings, type AppSnapshot } from '@latch/protocol'
+import { PROVIDER_PRESETS, type AgentPreset, type AgentSettings, type AppSnapshot, type HarnessInfo } from '@latch/protocol'
 import { AboutSettings } from '../src/settings/AboutSettings.tsx'
 import { AgentRow, engineGroups, missingText } from '../src/settings/AgentsSettings.tsx'
 import { PresetGrid, protocolChoices, ProviderAddForm } from '../src/settings/ProvidersSettings.tsx'
@@ -45,7 +45,7 @@ describe('engine rows', () => {
       detected: { found: true },
       ...overrides,
     }) as AgentSettings
-  const row = (value: AgentSettings) =>
+  const row = (value: AgentSettings, extra: { harness?: HarnessInfo; local?: boolean } = {}) =>
     renderToStaticMarkup(
       createElement(AgentRow, {
         agent: value,
@@ -53,6 +53,8 @@ describe('engine rows', () => {
         busy: false,
         onOpen: noop,
         onToggle: noop,
+        onConfirm: noop,
+        ...extra,
       }),
     )
 
@@ -62,6 +64,26 @@ describe('engine rows', () => {
     expect(altered).toContain('未验证的定义')
     expect(altered).toContain('/tmp/other --flag')
     expect(altered).not.toContain('预设的说明')
+  })
+
+  it('shows the program a moved command now finds, with the confirmation on this Mac and a word elsewhere', () => {
+    const moved = agent({ detected: { found: true, path: '/Users/me/.local/bin/pi' } })
+    const harness = {
+      id: 'a',
+      status: 'unavailable',
+      statusReason: 'moved',
+      statusMessage: 'pi 的命令现在指向另一个程序',
+      bound: { id: 'x', path: '/Users/me/.npm-global/bin/pi' },
+    } as HarnessInfo
+    const here = row(moved, { harness, local: true })
+    expect(here).toContain('/Users/me/.local/bin/pi')
+    expect(here).not.toContain('.npm-global')
+    expect(here).toContain('确认新程序')
+    const elsewhere = row(moved, { harness })
+    expect(elsewhere).toContain('需要确认')
+    expect(elsewhere).not.toContain('确认新程序')
+    // Any other reason it cannot start keeps its own word.
+    expect(row(moved, { harness: { ...harness, statusReason: undefined }, local: true })).toContain('需要处理')
   })
 
   it('keeps a definition whose program is missing out of 已安装', () => {
