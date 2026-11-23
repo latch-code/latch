@@ -36,6 +36,7 @@
 @import './handoffs.css' layer(app);
 @import './workflows.css' layer(app);
 @import './documents.css' layer(app);
+@import './diagram-canvas.css' layer(app);
 @import './questions.css' layer(app);
 @import './attachments.css' layer(app);
 @import './history.css' layer(app);

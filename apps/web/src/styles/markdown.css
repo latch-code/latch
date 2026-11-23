@@ -84,21 +84,25 @@
   border: 0;
   border-top: 1px solid var(--line);
 }
-/* A link is blue words, underlined under the pointer; a file is a chip, never a link (file-chip.css). */
+/* Web and email links keep a fine underline even on devices without hover. */
 .message-content a {
   color: var(--accent-ink);
-  text-decoration: none;
-  text-underline-offset: 2px;
-}
-.message-content a:hover {
   text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
+  text-underline-offset: 0.16em;
 }
-/* Images are never loaded; a web image is an ordinary link the reader opens. */
-.message-content .message-image {
+.message-content a:is(:hover, :focus-visible, :active) {
+  text-decoration-color: currentColor;
+}
+.message-content a:focus-visible {
+  outline-offset: 2px;
+}
+.message-content a strong {
+  color: inherit;
+}
+.message-content span.message-image {
   color: var(--muted);
-}
-.message-content a.message-image {
-  color: var(--accent-ink);
 }
 /* Text too deeply nested for Markdown, shown as written. */
 .message-content .message-plain-note {
@@ -113,16 +117,21 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-/* Inline code is a chip in the content palette: mono in the code ink on its tint. */
+/* The code surface follows a wrapped identifier onto its next line. */
 .message-content :not(pre) > code {
   padding: 1px var(--sp-4);
-  border-radius: var(--r-4);
+  border-radius: var(--r-6);
   background: var(--content-code-tint);
-  color: var(--content-code-ink);
-  font-size: var(--fs-mono);
-  white-space: break-spaces;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  color: inherit;
+  white-space: break-spaces;
+}
+.message-content :is(a, button) code {
+  padding: 0;
+  background: transparent;
 }
 
 .message-content .message-code {

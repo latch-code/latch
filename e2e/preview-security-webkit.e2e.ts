@@ -177,7 +177,7 @@ describe('WebKit actual document frames and product sandbox boundary', () => {
       await image.waitFor()
       await expect.poll(() => image.evaluate(node => (node as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
       expect(await image.getAttribute('src')).toMatch(/^blob:/u)
-      expect(await page.locator('.message-diagram svg, .message-diagram foreignObject').count()).toBe(0)
+      expect(await page.locator('.message-diagram :is(svg:not(button .ui-icon), foreignObject)').count()).toBe(0)
       await page.screenshot({ path: `test-results/preview-webkit/mermaid-${width}-${theme}.png`, animations: 'disabled' })
       await open(
         page,

@@ -30,7 +30,7 @@ enum PhoneTheme {
     /** Links in a reply: blue words, as the web's --accent-ink. */
     static let accentInk = uiDynamic(0x1D52C4, 0x6B9BFA)
     /** Inline code's chip, the web's --content-code-tint. */
-    static let codeTint = uiDynamic(0x2F4F8F, 0x96B2F0, alpha: (0.08, 0.12))
+    static let codeTint = uiDynamic(0xE2E5E8, 0x2C3135)
     /** Code colours by role, the web's --syn-* tokens. */
     enum Syntax: CaseIterable { case plain, keyword, string, comment, number, function, punctuation }
     static func syntax(_ role: Syntax) -> UIColor {

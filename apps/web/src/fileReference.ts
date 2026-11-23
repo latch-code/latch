@@ -158,11 +158,11 @@ const ICONS: Array<[RegExp, IconComponent]> = [
   ],
 ]
 
-/** A small glyph for the kind of file a path names, by its extension; a folder for a path ending in `/`. */
-export function referenceIcon(path: string): IconComponent {
+/** Folders keep their glyph; the caller may give particular file formats a more specific mark. */
+export function referenceIcon(path: string, formats?: ReadonlyMap<string, IconComponent>): IconComponent {
   if (path.trim().endsWith('/')) return FolderGlyph
   const name = referenceName(path)
   const dot = name.lastIndexOf('.')
   const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
-  return ICONS.find(([pattern]) => pattern.test(ext))?.[1] ?? PageGlyph
+  return formats?.get(ext) ?? ICONS.find(([pattern]) => pattern.test(ext))?.[1] ?? PageGlyph
 }

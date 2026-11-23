@@ -94,6 +94,23 @@ describe('link targets in replies', () => {
 })
 
 describe('path chips', () => {
+  it.each([
+    ['src/main.GO#L7', 'latch-glyph-file-go'],
+    ['view.tsx:42:3', 'latch-glyph-file-ts'],
+    ['bundle.mjs', 'latch-glyph-file-js'],
+    ['run.py', 'latch-glyph-file-py'],
+    ['README.markdown', 'latch-glyph-file-md'],
+    ['config.json', 'lucide-braces'],
+    ['src/kept.go/', 'latch-glyph-folder'],
+    ['notes.unknown', 'latch-glyph-page'],
+  ])('marks the actual type of %s while keeping the authored label and accessible path', (path, glyph) => {
+    const html = render(`[入口](${path})`, 'task-1')
+    const icon = html.match(/<svg\b[^>]*>/gu)?.find(tag => tag.includes(glyph))
+    expect(icon).toContain('aria-hidden="true"')
+    expect(html).toContain(`aria-label="${path}"`)
+    expect(html).toContain('>入口</span>')
+  })
+
   it('render a file name with a line number as a chip, never as text or a link', () => {
     const html = render('见 [main.py:42](main.py:42) 与 [report.md:12](report.md:12)，参考 [example.com](www.example.com)', 'task-1')
     expect(html).not.toContain('href=')

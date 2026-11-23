@@ -29,7 +29,8 @@ import { FileOpenContext } from './preview/fileContext.ts'
 import { FileSandbox } from './preview/FileSandbox.tsx'
 import { drawableMedia, mediaTypeOf, resolveFileMedia, type ResolvedMedia } from './preview/fileImages.ts'
 import { InlineMedia } from './components/InlineMedia.tsx'
-import { useKnownFiles } from './components/FileReferences.tsx'
+import { KnownFilesContext, useKnownFiles } from './components/FileReferences.tsx'
+import { ReplyFileIcon } from './components/ReplyFileIcon.tsx'
 import { hasHiddenCharacters, VisibleText } from './components/VisibleText.tsx'
 import { codePathCandidate, linkTarget, namesPath, referenceName, referenceText, urlScheme } from './fileReference.ts'
 import { exceedsMarkdownNesting, MAX_TREE_DEPTH, treeDepth } from './markdownNesting.ts'
@@ -523,6 +524,7 @@ function MarkdownFileLink({
   if (path && files.onOpenFile)
     return (
       <button type="button" className="message-local-link" onClick={() => files.onOpenFile?.(path)}>
+        <ReplyFileIcon path={path} />
         {children ?? alt ?? reference}
       </button>
     )
@@ -614,8 +616,11 @@ export const MessageContent = memo(function MessageContent({
       a({ node, children, href, 'aria-describedby': describedBy, ...props }) {
         if (!href) return <span>{children}</span>
         const target = linkTarget(href, `${id}-`)
+        if (target.kind === 'text') return <span>{children}</span>
+        // An explicit link owns the click, including when its label contains a known filename in backticks.
+        const label = children == null ? children : <KnownFilesContext.Provider value={null}>{children}</KnownFilesContext.Provider>
         if (target.kind === 'path') {
-          if (onOpenFile) return <MarkdownFile reference={target.path}>{children}</MarkdownFile>
+          if (onOpenFile) return <MarkdownFile reference={target.path}>{label}</MarkdownFile>
           const linkText = textOf(node).trim()
           // A label that is the path itself is drawn from its text, so its folders can give way to the file name.
           const chip = !linkText ? (
@@ -623,7 +628,7 @@ export const MessageContent = memo(function MessageContent({
           ) : namesPath(linkText, target.path) ? (
             <FileChip path={target.path} label={linkText} />
           ) : (
-            <FileChip path={target.path} label={children} mono={false} />
+            <FileChip path={target.path} label={label} mono={false} />
           )
           // A picture, video or sound the reply links to is drawn above its chip once the Host authorizes it.
           return mediaTypeOf(target.path) ? (
@@ -632,7 +637,6 @@ export const MessageContent = memo(function MessageContent({
             chip
           )
         }
-        if (target.kind === 'text') return <span>{children}</span>
         const external = target.kind === 'web'
         return (
           <a
@@ -641,7 +645,7 @@ export const MessageContent = memo(function MessageContent({
             aria-describedby={describedBy === 'footnote-label' ? `${id}-footnote-label` : describedBy}
             target={external ? '_blank' : undefined}
             rel={external ? 'noopener noreferrer' : undefined}>
-            {children}
+            {label}
           </a>
         )
       },

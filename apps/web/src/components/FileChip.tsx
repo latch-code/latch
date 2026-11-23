@@ -32,6 +32,7 @@ const CHIP_COPY = defineCopy(
 import { currentShell, revealLabel, shellFiles, type FileActionResult, type FileInspection, type ShellFiles } from '../core/shell.ts'
 import { absoluteReference, referenceIcon, referenceName, splitPath } from '../fileReference.ts'
 import { editorLabel, openInEditor, useEditors } from './OpenInEditor.tsx'
+import { ReplyFileIcon } from './ReplyFileIcon.tsx'
 
 /** The session whose replies are shown and its folder: the desktop app asks about a file of that session. */
 export interface FileSessionInfo {
@@ -248,7 +249,11 @@ function ChipMenu({ name, checking = false, sections, note, copied, onOpen, trig
                 {...props}
                 icon={
                   <Swap value={copied} className={props.prompt ? 'file-chip-icon prompt-chip-icon' : 'file-chip-icon'}>
-                    <Icon icon={copied ? CheckGlyph : referenceIcon(props.path)} size={props.prompt ? 14 : 12} />
+                    {copied || props.prompt ? (
+                      <Icon icon={copied ? CheckGlyph : referenceIcon(props.path)} size={14} />
+                    ) : (
+                      <ReplyFileIcon path={props.path} />
+                    )}
                   </Swap>
                 }
               />

@@ -256,7 +256,7 @@
      * state colours, because a test runner's red and green mean failed and passed. */
     --syn-flag: #9c3f6a;
     --content-code-ink: #2f4f8f;
-    --content-code-tint: rgba(47, 79, 143, 0.08);
+    --content-code-tint: #e2e5e8;
     --content-path-ink: #1d52c4;
     --content-path-tint: rgba(36, 97, 224, 0.07);
     --content-chip-wash: rgba(36, 97, 224, 0.05);
@@ -679,7 +679,7 @@
       --syn-constant: #f2a072;
       --syn-flag: #e899bd;
       --content-code-ink: #a9c1f5;
-      --content-code-tint: rgba(150, 178, 240, 0.12);
+      --content-code-tint: #2c3135;
       --content-path-ink: #80aafb;
       --content-path-tint: rgba(107, 155, 250, 0.12);
       --content-chip-wash: rgba(107, 155, 250, 0.09);
@@ -818,7 +818,7 @@
     --syn-constant: #f2a072;
     --syn-flag: #e899bd;
     --content-code-ink: #a9c1f5;
-    --content-code-tint: rgba(150, 178, 240, 0.12);
+    --content-code-tint: #2c3135;
     --content-path-ink: #80aafb;
     --content-path-tint: rgba(107, 155, 250, 0.12);
     --content-chip-wash: rgba(107, 155, 250, 0.09);
@@ -1105,7 +1105,7 @@
     --syn-punctuation: var(--ink-2) !important;
     --syn-flag: #9c3f6a !important;
     --content-code-ink: #2f4f8f !important;
-    --content-code-tint: rgba(47, 79, 143, 0.08) !important;
+    --content-code-tint: #e2e5e8 !important;
     --content-path-ink: #1d52c4 !important;
     --content-path-tint: rgba(36, 97, 224, 0.07) !important;
     --content-chip-wash: rgba(36, 97, 224, 0.05) !important;
@@ -1323,7 +1323,7 @@
       --syn-constant: #f2a072 !important;
       --syn-flag: #e899bd !important;
       --content-code-ink: #a9c1f5 !important;
-      --content-code-tint: rgba(150, 178, 240, 0.12) !important;
+      --content-code-tint: #2c3135 !important;
       --content-path-ink: #80aafb !important;
       --content-path-tint: rgba(107, 155, 250, 0.12) !important;
       --content-chip-wash: rgba(107, 155, 250, 0.09) !important;
@@ -1462,7 +1462,7 @@
     --syn-constant: #f2a072 !important;
     --syn-flag: #e899bd !important;
     --content-code-ink: #a9c1f5 !important;
-    --content-code-tint: rgba(150, 178, 240, 0.12) !important;
+    --content-code-tint: #2c3135 !important;
     --content-path-ink: #80aafb !important;
     --content-path-tint: rgba(107, 155, 250, 0.12) !important;
     --content-chip-wash: rgba(107, 155, 250, 0.09) !important;

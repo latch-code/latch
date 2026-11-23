@@ -1,0 +1,113 @@
+.diagram-canvas {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.diagram-surface {
+  position: relative;
+  box-sizing: content-box;
+  padding: var(--sp-12);
+  min-height: var(--sp-40);
+}
+.diagram-viewport {
+  position: absolute;
+  inset: var(--sp-12);
+  overflow: auto;
+  user-select: none;
+}
+.diagram-viewport:focus-visible {
+  outline-offset: 2px;
+}
+.diagram-viewport[data-pannable] {
+  cursor: grab;
+}
+.diagram-viewport[data-pannable]:active {
+  cursor: grabbing;
+}
+.diagram-sheet {
+  width: max-content;
+  height: max-content;
+  min-width: 100%;
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+}
+.diagram-sheet img {
+  display: block;
+  max-width: none;
+}
+.diagram-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  border-radius: var(--r-8);
+  background: var(--raised);
+  box-shadow: var(--sh-pop);
+}
+.diagram-zoom-controls [role='status'] {
+  min-width: 4ch;
+  text-align: center;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.diagram-zoom-controls .diagram-step {
+  min-width: var(--sp-28);
+  padding-inline: var(--sp-4);
+  font-size: var(--fs-work-section);
+}
+.diagram-fit {
+  margin-inline-start: var(--sp-4);
+}
+.diagram-canvas:not(.expanded) .diagram-zoom-controls {
+  position: absolute;
+  inset-inline-end: var(--sp-8);
+  inset-block-end: var(--sp-8);
+  opacity: 0;
+  pointer-events: none;
+}
+.diagram-canvas[data-compact] .diagram-zoom-controls {
+  position: static;
+  align-self: flex-end;
+  margin: 0 var(--sp-8) var(--sp-8);
+}
+.message-diagram:focus-within .diagram-zoom-controls,
+.diagram-canvas:focus-within .diagram-zoom-controls {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: hover) {
+  .message-diagram:hover .diagram-zoom-controls {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.message-diagram:has(.message-diagram-controls [aria-expanded='true']) .diagram-zoom-controls {
+  visibility: hidden;
+}
+.diagram-canvas.expanded {
+  height: 100%;
+  min-height: 0;
+  flex: 1;
+}
+.diagram-canvas.expanded .diagram-surface {
+  flex: 1;
+  min-height: 0;
+}
+.diagram-canvas.expanded .diagram-viewport {
+  touch-action: pan-x pan-y;
+  overscroll-behavior: contain;
+}
+.diagram-canvas.expanded .diagram-zoom-controls {
+  align-self: center;
+  margin: var(--sp-4) 0 var(--sp-12);
+}
+@media (pointer: coarse) {
+  .diagram-zoom-controls .ui-button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

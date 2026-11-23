@@ -8,6 +8,17 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { openSession, closeActiveFile, openFileFind } from './helpers/layout.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import { visualContext, VISUAL_VIEWPORTS } from './helpers/visual.ts'
+
+const TECHNICAL_REPLY = [
+  '### 接入与协议层',
+  '服务从 [main.go](main.go) 启动，[router.go](router.go) 负责注册路由。[idl/](idl/) 保存协议定义，请求和响应的例子见 [API.md](docs/API.md)。',
+  '',
+  '- **请求入口**：`POST /chat` 接收消息，[router.go](router.go) 把请求交给 `HandleChat`。',
+  '- **流式返回**：处理器通过 `SSE` 逐段发送结果。客户端按 `event_id` 记录位置，重连后继续接收。',
+  '',
+  '事件格式和浏览器的重连规则见 [SSE 协议说明](https://example.invalid/events)。',
+].join('\n')
 
 describe('authenticated file column', () => {
   let host: TestHost, browser: Browser, sessionId: string
@@ -22,7 +33,16 @@ describe('authenticated file column', () => {
           id: 'files',
           name: 'Files',
           model: 'fixture',
-          async *stream() {
+          async *stream({ messages }) {
+            if (messages.some(message => message.role === 'user' && message.content === '梳理请求入口')) {
+              yield {
+                type: 'reasoning',
+                text: '先读 [main.go](main.go)，再核对 `HandleChat` 和[协议说明](https://example.invalid/events)。',
+              }
+              yield { type: 'text', text: TECHNICAL_REPLY }
+              yield { type: 'finish', reason: 'stop' }
+              return
+            }
             yield {
               type: 'text',
               text: '文件：[report.txt](report.txt)、[letter.docx](letter.docx)、[table.csv](table.csv)、[.env](.env)、[picture.svg](picture.svg)、[tone.wav](tone.wav)、[guide.md](docs/guide.md)、[pixel.png](pixel.png)。',
@@ -92,6 +112,101 @@ describe('authenticated file column', () => {
   afterAll(async () => {
     await browser?.close()
     await host?.close()
+  })
+  it('keeps files, code and links distinct in a technical reply at three widths in both themes', async () => {
+    await mkdir(join(host.workspaceRoot, 'idl'), { recursive: true })
+    await writeFile(join(host.workspaceRoot, 'main.go'), 'package main\nfunc main() {}')
+    await writeFile(join(host.workspaceRoot, 'router.go'), 'package main\nfunc HandleChat() {}')
+    await writeFile(
+      join(host.workspaceRoot, 'docs/API.md'),
+      '## 请求示例\n\n路由注册[见 `router.go`](../router.go)，另见 [`main.go` 的协议示例](https://example.invalid/events)。',
+    )
+    const { sessionId: technicalId } = await host.host.bridge.createTask({
+      prompt: '梳理请求入口',
+      requestId: randomUUID(),
+      mode: 'chat',
+      model: { providerId: 'files', model: 'fixture' },
+    })
+    await mkdir('test-results/file-chips', { recursive: true })
+    for (const viewport of VISUAL_VIEWPORTS) {
+      for (const theme of ['light', 'dark'] as const) {
+        const context = await visualContext(browser, viewport)
+        try {
+          const page = await context.newPage()
+          await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+          await enrollBrowser(page, host, { name: '技术回复', scopes: ['admin'] })
+          await openSession(page, technicalId)
+          const reply = page.locator('.message-content').filter({ hasText: '接入与协议层' })
+          const file = reply.getByRole('button', { name: '预览文件：main.go', exact: true })
+          await file.waitFor()
+          expect(await reply.getByRole('button', { name: '预览文件：router.go', exact: true }).count()).toBe(2)
+          expect(await reply.getByRole('button', { name: '预览文件：idl/', exact: true }).count()).toBe(1)
+          expect(await reply.locator('code').allTextContents()).toEqual(['POST /chat', 'HandleChat', 'SSE', 'event_id'])
+          expect(await reply.locator('code :is(a,button), :is(a,button) code, code[tabindex]').count()).toBe(0)
+          const external = reply.getByRole('link', { name: 'SSE 协议说明', exact: true })
+          expect(await external.getAttribute('target')).toBe('_blank')
+          expect(await external.getAttribute('rel')).toContain('noopener')
+          expect(await reply.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+          await page.mouse.move(0, 0)
+          const fills = (selector: string) =>
+            reply.locator(selector).evaluateAll(nodes => [...new Set(nodes.map(node => getComputedStyle(node).backgroundColor))])
+          const codeFill = await reply.evaluate(node => {
+            const swatch = document.createElement('span').style
+            swatch.backgroundColor = getComputedStyle(node).getPropertyValue('--content-code-tint')
+            return swatch.backgroundColor
+          })
+          expect(codeFill).not.toBe('rgba(0, 0, 0, 0)')
+          expect(await fills('code')).toEqual([codeFill])
+          expect(await fills('[data-file-chip]')).toEqual(['rgba(0, 0, 0, 0)'])
+          expect(await external.evaluate(node => getComputedStyle(node).textDecorationLine)).toContain('underline')
+          if (viewport.touch)
+            expect(await file.locator('.file-chip-text').evaluate(node => getComputedStyle(node).textDecorationLine)).toContain('underline')
+          await reply.screenshot({ path: `test-results/file-chips/prose-${viewport.name}-${theme}.png`, animations: 'disabled' })
+          if (viewport.name === 'desktop' && theme === 'light') {
+            await file.hover()
+            expect(await file.evaluate(node => getComputedStyle(node).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+            expect(await file.locator('.file-chip-text').evaluate(node => getComputedStyle(node).textDecorationLine)).toBe('underline')
+            const thought = page.locator('.thinking-toggle').last()
+            await thought.click()
+            const body = page.locator('.reasoning-content').filter({ hasText: '先读' })
+            await body.getByText('HandleChat', { exact: true }).waitFor()
+            expect(await body.locator('a,button,[tabindex]').count()).toBe(0)
+            await thought.click()
+            await context.route('https://example.invalid/events', route => route.fulfill({ body: 'SSE' }))
+            const [popup] = await Promise.all([page.waitForEvent('popup'), external.click()])
+            await popup.waitForURL('https://example.invalid/events')
+            expect(await popup.evaluate(() => window.opener)).toBe(null)
+            await popup.close()
+            await file.focus()
+            await page.keyboard.press('Tab')
+            await page.keyboard.press('Shift+Tab')
+            expect(
+              await file.evaluate(node => {
+                const style = getComputedStyle(node)
+                return node.matches(':focus-visible') && style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0
+              }),
+            ).toBe(true)
+            await page.keyboard.press('Enter')
+            const preview = page.getByRole('region', { name: '文件预览', exact: true })
+            await preview.getByText('func main() {}', { exact: true }).waitFor()
+            await closeActiveFile(page)
+            await reply.getByRole('button', { name: '预览文件：docs/API.md', exact: true }).click()
+            await preview.getByRole('heading', { name: '请求示例', exact: true }).waitFor()
+            const docFile = preview.getByRole('button', { name: '见 router.go', exact: true })
+            const docLink = preview.getByRole('link', { name: 'main.go 的协议示例', exact: true })
+            expect(await docLink.getAttribute('href')).toBe('https://example.invalid/events')
+            for (const link of [docFile, docLink]) {
+              expect(await link.locator('a,button,[tabindex]').count()).toBe(0)
+              expect(await link.locator('code').evaluate(node => getComputedStyle(node).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+            }
+            await docFile.press('Enter')
+            await preview.getByText('func HandleChat() {}', { exact: true }).waitFor()
+          }
+        } finally {
+          await context.close()
+        }
+      }
+    }
   })
   it('keeps the chosen line input when deferred find focus runs', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN' })

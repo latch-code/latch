@@ -74,6 +74,54 @@
   font-family: var(--mono);
   overflow-wrap: anywhere;
 }
+/* In prose the type mark identifies a file before the reader points at it. */
+.message-content :is(.file-chip:not(.prompt-chip), .message-local-link) {
+  padding: 0 var(--sp-2);
+  border: 0;
+  border-radius: var(--r-4);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 500;
+  text-align: start;
+  cursor: pointer;
+}
+.message-content .file-chip:not(.prompt-chip) {
+  line-height: var(--lh-code);
+}
+.message-content .file-chip-text[data-mono] {
+  font-family: inherit;
+}
+.message-content .file-chip-folders {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+/* Align the mark with the filename's lowercase letters without moving its line box. */
+.message-content .file-chip:not(.prompt-chip) .file-chip-icon,
+.message-local-link > .ui-icon {
+  color: var(--kind-read);
+  translate: 0 var(--sp-2);
+}
+.message-local-link > .ui-icon {
+  margin-inline-end: var(--sp-4);
+  vertical-align: -0.12em;
+}
+.message-content .file-chip:is(:hover, :focus-visible, :active, [aria-expanded='true']) .file-chip-text,
+.message-content .message-local-link:is(:hover, :focus-visible, :active) {
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
+}
+.message-content :is(.file-chip, .message-local-link):focus-visible {
+  outline-offset: 1px;
+}
+@media (hover: none) {
+  .message-content :is(.file-chip-text, .message-local-link) {
+    text-decoration: underline dotted;
+    text-decoration-color: var(--muted);
+    text-underline-offset: 0.14em;
+  }
+}
+
 /* The files a finished tool read or wrote, at the top of its opened card. */
 .tool-files {
   display: flex;

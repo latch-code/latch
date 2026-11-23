@@ -142,6 +142,10 @@ describe('asking main which references are files', () => {
     expect(html).toContain('<span class="file-chip-folders">out/</span><span class="file-chip-name">deck.pptx</span>')
     expect(html).toContain('<code>missing.ts</code>')
     expect(html).toContain('<code>npm run build</code>')
+    const linked = within(known, createElement(MessageContent, { text: '[见 `out/deck.pptx`](https://example.com/docs)' }))
+    expect(linked).toContain('href="https://example.com/docs"')
+    expect(linked).toContain('<code>out/deck.pptx</code>')
+    expect(linked).not.toContain('data-file-chip')
     // Fenced code is never a chip.
     expect(within(known, createElement(MessageContent, { text: '```\nout/deck.pptx\n```' }))).not.toContain('data-file-chip')
     // Without the desktop app's answers every reference stays code.

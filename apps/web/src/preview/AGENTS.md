@@ -14,7 +14,7 @@ The UI in this directory is browser code. `office-frame.ts` is a separate IIFE e
 - Terminate workers, cancel loads/renders, close ports and revoke renderer resources on file/version changes and unmount. Product chrome uses UI tokens; PDF selection geometry and Office content preserve document-space typography.
 - Session and workspace file contexts have separate tabs; workspace requests always name the selected Harness. Tree reads are lazy, cancellable and paged; never follow a symlink or save bytes/handles in browser storage.
 - File history uses recorded tool diffs and frozen root IDs. Keep both sides' line numbers and unknown previous-content warnings; split review expands the desktop pane, while phones stay unified.
-- Markdown keeps the message URL/depth rules. Math DOM must pass the namespace/tag/attribute allowlist; diagram SVG is checked by the bounded lexer and displayed only as an image. Never use an HTML string sink or a default Trusted Types policy.
+- Keep Markdown URL/depth rules and the math DOM allowlist. Render, zoom and download only lexer-validated diagram images; touch and WebKit render on demand. Never use HTML string sinks or a default Trusted Types policy.
 - HTML DOMParser stays in `html-frame.ts`. Static mode strips document scripts; `html-script` is only offered by a desktop shell that declares network restrictions. Never pass a secret, session state or another file to either variant. `html-canvas.ts`: frame-only.
 - Dependency versions live in the catalog. Preserve distributed licenses and corresponding-source links in `public/licenses/` and its `README.txt`.
 

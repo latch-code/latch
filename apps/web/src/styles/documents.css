@@ -691,30 +691,52 @@
 }
 
 .message-diagram {
-  border: 1px solid var(--line);
-  border-radius: var(--r-8);
-  overflow: hidden;
+  position: relative;
+  min-width: 0;
   margin-block: var(--sp-12);
+}
+.message-diagram:has(> pre) {
+  border-radius: var(--r-8);
+  background: var(--sunken);
 }
 .message-diagram-controls {
   display: flex;
+  align-items: center;
   gap: var(--sp-4);
-  padding: var(--sp-4);
+  padding: var(--sp-4) var(--sp-8);
+  color: var(--muted);
 }
-.message-diagram-image {
-  overflow: auto;
-  max-height: 480px;
-  padding: var(--sp-8);
+.diagram-copy-status {
+  margin-inline-start: auto;
 }
-.message-diagram-image img {
-  display: block;
-  max-width: 100%;
-  margin-inline: auto;
-  cursor: zoom-in;
+.diagram-render-status,
+.diagram-copy-status {
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
-.message-diagram-image.is-enlarged img {
-  max-width: none;
-  cursor: zoom-out;
+.diagram-render-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+}
+.diagram-viewer.ui-modal-dialog {
+  width: calc(100% - 2 * var(--sp-24));
+  max-height: calc(100dvh - 2 * var(--sp-24));
+}
+.diagram-viewer > .ui-modal-surface {
+  height: calc(100dvh - 2 * var(--sp-24));
+}
+@media (max-width: 767.98px) {
+  .diagram-viewer.ui-modal-dialog,
+  .diagram-viewer > .ui-modal-surface {
+    width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+  .diagram-viewer > .ui-modal-surface {
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
 }
 
 /* A picture, video or sound a reply names or an agent made, drawn at its own shape within the reply column. */
@@ -912,18 +934,6 @@
   padding: var(--sp-16);
   overflow-wrap: anywhere;
 }
-.message-local-link {
-  border: 0;
-  padding: 0;
-  background: transparent;
-  font: inherit;
-  color: var(--accent-ink);
-  text-decoration: underline;
-  text-underline-offset: var(--sp-2);
-  text-align: start;
-  cursor: pointer;
-}
-
 @container (max-width: 479px) {
   .document-paged-controls {
     display: none;

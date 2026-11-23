@@ -2,14 +2,62 @@ import { documentFixtures } from '@latch/testkit'
 import { mkdir, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { createServer, type ViteDevServer } from 'vite'
-import { chromium, type Browser, type Page } from '@playwright/test'
+import { chromium, type Browser, type Locator, type Page } from '@playwright/test'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { strToU8, unzipSync, zipSync } from 'fflate'
 import { browserLaunchOptions } from './helpers/browser.ts'
 import { recordClipboardWrites } from './helpers/clipboard.ts'
+import { noHorizontalOverflow } from './helpers/layout.ts'
+import { visualContext, VISUAL_VIEWPORTS } from './helpers/visual.ts'
 const { word, workbook, presentation, pdf } = documentFixtures(files =>
   Array.from(zipSync(Object.fromEntries(Object.entries(files).map(([key, value]) => [key, strToU8(value)])))),
 )
+const architecture = [
+  '## 一次请求如何流转',
+  '',
+  '```mermaid',
+  'flowchart TD',
+  'subgraph Entry[接入层]',
+  'Desktop[桌面客户端] --> Router[请求路由]',
+  'Mobile[手机浏览器] --> Router',
+  'end',
+  'subgraph Work[会话与执行]',
+  'Router --> Session[会话管理]',
+  'Session --> Queue[任务队列]',
+  'Queue --> Agent[执行任务]',
+  'end',
+  'subgraph Output[结果与通知]',
+  'Agent --> History[保存会话记录]',
+  'Agent --> Stream[推送增量消息]',
+  'end',
+  '```',
+  '',
+  '请求从接入层进入，执行结果写入会话并推送给客户端。',
+].join('\n')
+
+async function expectFittedDiagram(viewport: Locator) {
+  await expect
+    .poll(() =>
+      viewport.evaluate(element => {
+        const image = element.querySelector('img')
+        if (!image?.complete || !image.naturalWidth) return false
+        const box = element.getBoundingClientRect(),
+          rect = image.getBoundingClientRect()
+        const fit = Math.min(1, element.clientWidth / image.naturalWidth, element.clientHeight / image.naturalHeight)
+        return (
+          fit > 0
+          && Math.abs(rect.width - image.naturalWidth * fit) < 1
+          && Math.abs(rect.height - image.naturalHeight * fit) < 1
+          && rect.left >= box.left - 1
+          && rect.top >= box.top - 1
+          && rect.right <= box.right + 1
+          && rect.bottom <= box.bottom + 1
+        )
+      }),
+    )
+    .toBe(true)
+}
+
 describe('isolated document renderers', () => {
   let server: ViteDevServer, browser: Browser, page: Page, origin: string
   async function openPage() {
@@ -367,18 +415,176 @@ describe('isolated document renderers', () => {
     page.on('request', request => {
       if (request.url().includes('example.invalid')) external.push(request.url())
     })
-    await page.evaluate(() => window.startRichPreview('```mermaid\ngraph TD\n A[Start] --> B[Finish]\n```'))
+    const source = [
+      'graph LR',
+      'Desktop[桌面端] --> Host[Host]',
+      'Browser[浏览器] --> Host',
+      'Host --> Harness[Harness]',
+      'Host --> History[会话记录]',
+      'Harness --> Model[模型服务]',
+      'Harness --> Tools[项目工具]',
+      '',
+    ].join('\n')
+    await page.evaluate(text => window.startRichPreview(text), `## 请求如何到达模型\n\n\`\`\`mermaid\n${source}\`\`\``)
     const image = page.getByRole('img', { name: 'Mermaid 图表', exact: true })
     await image.waitFor()
     expect(await image.getAttribute('src')).toMatch(/^blob:/u)
-    expect(await page.locator('.message-content svg').count()).toBe(0)
+    expect(await page.locator('.message-content :is(svg:not(button .ui-icon), foreignObject)').count()).toBe(0)
     expect(external).toEqual([])
-    await page.getByRole('button', { name: '查看源码', exact: true }).click()
-    await page.getByText('graph TD', { exact: false }).waitFor()
+    const actions = page.getByRole('button', { name: '图表操作', exact: true })
+    const copied = await recordClipboardWrites(page)
+    await actions.click()
+    await page.getByRole('menuitem', { name: '复制为代码', exact: true }).waitFor()
+    await mkdir('test-results/diagrams', { recursive: true })
+    await page.locator('.message-content').screenshot({ path: 'test-results/diagrams/actions-desktop-light.png', animations: 'disabled' })
+    await page.getByRole('menuitem', { name: '复制为代码', exact: true }).click()
+    await expect.poll(copied).toEqual([source])
+    await actions.click()
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByRole('menuitem', { name: '下载图像', exact: true }).click(),
+    ])
+    expect(download.suggestedFilename()).toMatch(/\.svg$/u)
+    expect(await readFile(await download.path(), 'utf8')).toBe(
+      await image.evaluate(async (element: HTMLImageElement) => (await fetch(element.src)).text()),
+    )
+    await actions.click()
+    await page.getByRole('menuitem', { name: '查看源码', exact: true }).click()
+    await page.getByText('graph LR', { exact: false }).waitFor()
+    await page.getByRole('button', { name: '显示图表', exact: true }).click()
+    await image.waitFor()
     await page.evaluate(() => window.startRichPreview('```mermaid\n%%{init:{"securityLevel":"loose"}}%%\ngraph TD;A-->B\n```'))
     await page.getByText('securityLevel', { exact: false }).waitFor()
     expect(await page.locator('iframe').count()).toBe(0)
     expect(await page.locator('.message-content').textContent()).toContain('securityLevel')
+  })
+  it('zooms and pans a large Mermaid diagram, fits it again, and restores focus after closing the expanded view', async ({
+    onTestFinished,
+  }) => {
+    const page = await openPage()
+    onTestFinished(() => page.close())
+    await page.evaluate(text => window.startRichPreview(text), architecture)
+    const viewport = page.getByRole('region', { name: '图表画布', exact: true })
+    await expectFittedDiagram(viewport)
+    await viewport.hover()
+    const image = viewport.getByRole('img', { name: 'Mermaid 图表', exact: true })
+    const readScale = () => page.getByRole('status', { name: '缩放比例', exact: true }).innerText().then(parseFloat)
+    const fit = await readScale()
+    const imageHeight = () => image.evaluate(node => node.getBoundingClientRect().height)
+    const fittedHeight = await imageHeight()
+    const zoomIn = page.getByRole('button', { name: '放大', exact: true })
+    await zoomIn.click()
+    await expect.poll(imageHeight).toBeGreaterThan(fittedHeight)
+    const enlarged = await readScale()
+    expect(enlarged).toBeGreaterThan(fit)
+    await page.getByRole('button', { name: '缩小', exact: true }).click()
+    expect(await readScale()).toBeLessThan(enlarged)
+    await zoomIn.click()
+    await zoomIn.click()
+    await expect.poll(() => viewport.evaluate(node => node.scrollHeight - node.clientHeight)).toBeGreaterThan(60)
+    const before = await viewport.evaluate(node => node.scrollTop)
+    const bounds = (await viewport.boundingBox())!
+    const x = bounds.x + bounds.width / 2,
+      y = bounds.y + bounds.height / 2
+    await page.mouse.move(x, y)
+    await page.mouse.down()
+    await page.mouse.move(x, y - 50, { steps: 6 })
+    await page.mouse.up()
+    await expect.poll(() => viewport.evaluate(node => node.scrollTop)).toBeGreaterThan(before)
+    await page.getByRole('button', { name: '适应全图', exact: true }).click()
+    await expectFittedDiagram(viewport)
+    expect(await readScale()).toBe(fit)
+    const expand = page.getByRole('button', { name: '展开图表', exact: true })
+    const inlineSource = await image.getAttribute('src')
+    await expand.click()
+    const dialog = page.getByRole('dialog')
+    const expandedViewport = dialog.getByRole('region', { name: '图表画布', exact: true })
+    const expandedScale = () => dialog.getByRole('status', { name: '缩放比例', exact: true }).innerText().then(parseFloat)
+    // The controls occupy part of the modal once the image loads. Wait for that viewport's fitted size.
+    await dialog.getByRole('button', { name: '放大', exact: true }).waitFor()
+    await expectFittedDiagram(expandedViewport)
+    expect(await expandedViewport.getByRole('img').getAttribute('src')).toBe(inlineSource)
+    await expandedViewport.press('0')
+    await expect.poll(expandedScale).toBe(100)
+    await expandedViewport.press('=')
+    await expect.poll(expandedScale).toBeGreaterThan(100)
+    await expandedViewport.press('f')
+    await expectFittedDiagram(expandedViewport)
+    await page.keyboard.press('Escape')
+    await dialog.waitFor({ state: 'hidden' })
+    expect(await expand.evaluate(node => node === document.activeElement)).toBe(true)
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.evaluate(() => window.startRichPreview('```mermaid\ngraph LR\n A((读)) --> B((写))\n```'))
+    await expectFittedDiagram(viewport)
+    await viewport.hover()
+    const natural = await image.evaluate((element: HTMLImageElement) => element.naturalWidth)
+    expect(await viewport.evaluate(element => element.clientWidth)).toBeGreaterThanOrEqual(natural)
+    const picture = (await image.boundingBox())!
+    expect(picture.width).toBeCloseTo(natural, 0)
+    const controls = page.locator('.diagram-zoom-controls')
+    expect(await controls.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
+    expect((await controls.boundingBox())!.y).toBeGreaterThanOrEqual(picture.y + picture.height - 1)
+  })
+  it.each(VISUAL_VIEWPORTS)('fits the inline and expanded diagram on $name in both themes', async viewport => {
+    const context = await visualContext(browser, viewport)
+    try {
+      await mkdir('test-results/diagrams', { recursive: true })
+      for (const theme of ['light', 'dark'] as const) {
+        const page = await context.newPage()
+        await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+        await page.goto(origin + '/test/preview-harness.html')
+        await page.waitForFunction(() => typeof window.startRichPreview === 'function')
+        await page.evaluate(
+          ({ theme, text }) => {
+            document.documentElement.dataset.theme = theme
+            window.startRichPreview(text)
+          },
+          { theme, text: architecture },
+        )
+        if (viewport.touch) await page.getByRole('button', { name: '显示图表', exact: true }).click()
+        await expectFittedDiagram(page.getByRole('region', { name: '图表画布', exact: true }))
+        await noHorizontalOverflow(page)
+        await page.mouse.move(0, 0)
+        await page
+          .locator('.message-content')
+          .screenshot({ path: `test-results/diagrams/inline-${viewport.name}-${theme}.png`, animations: 'disabled' })
+        await page.getByRole('button', { name: '展开图表', exact: true }).click()
+        const dialog = page.getByRole('dialog')
+        await expectFittedDiagram(dialog.getByRole('region', { name: '图表画布', exact: true }))
+        await noHorizontalOverflow(page, dialog)
+        await page.mouse.move(0, 0)
+        await page.screenshot({ path: `test-results/diagrams/expanded-${viewport.name}-${theme}.png`, animations: 'disabled' })
+        if (viewport.name === 'phone' && theme === 'light') {
+          const scale = dialog.getByRole('status', { name: '缩放比例', exact: true })
+          const fit = parseFloat(await scale.innerText())
+          const box = (await dialog.getByRole('region', { name: '图表画布' }).boundingBox())!
+          const x = box.x + box.width / 2,
+            y = box.y + box.height / 2
+          const cdp = await context.newCDPSession(page)
+          await cdp.send('Input.dispatchTouchEvent', {
+            type: 'touchStart',
+            touchPoints: [
+              { x: x - 20, y },
+              { x: x + 20, y },
+            ],
+          })
+          await cdp.send('Input.dispatchTouchEvent', {
+            type: 'touchMove',
+            touchPoints: [
+              { x: x - 45, y },
+              { x: x + 45, y },
+            ],
+          })
+          await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+          await expect.poll(() => scale.innerText().then(parseFloat)).toBeGreaterThan(fit)
+          await page.screenshot({ path: 'test-results/diagrams/expanded-phone-zoomed.png', animations: 'disabled' })
+        }
+        await page.close()
+      }
+    } finally {
+      await context.close()
+    }
   })
   it('resolves local Markdown images and relative file links without requesting network images', async () => {
     const requests: string[] = []

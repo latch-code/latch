@@ -48,6 +48,15 @@ const initialize = (event: MessageEvent) => {
     .render('latch-diagram', source, document.getElementById('diagram')!)
     .then(result => {
       const parsed = new DOMParser().parseFromString(result.svg, 'image/svg+xml')
+      // A standalone SVG image needs intrinsic dimensions for 100% zoom and for download.
+      const root = parsed.documentElement
+      if (root instanceof SVGSVGElement) {
+        const { width, height } = root.viewBox.baseVal
+        if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+          root.setAttribute('width', String(width))
+          root.setAttribute('height', String(height))
+        }
+      }
       for (const filter of parsed.querySelectorAll('filter')) filter.remove()
       for (const element of parsed.querySelectorAll('*'))
         for (const attr of [...element.attributes]) if (attr.name.startsWith('data-')) element.removeAttribute(attr.name)
