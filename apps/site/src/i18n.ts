@@ -409,8 +409,8 @@ export const AGENTS: Agent[] = [
     id: 'claude',
     name: 'Claude Code',
     src: 'claude.svg',
-    install: 'npm i -g @agentclientprotocol/claude-agent-acp',
-    runs: 'claude-agent-acp',
+    install: 'curl -fsSL https://claude.ai/install.sh | bash',
+    runs: 'claude',
   },
   {
     id: 'opencode',

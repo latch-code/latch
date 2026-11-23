@@ -122,7 +122,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     license: 'Claude Code 专有；Claude Agent SDK 按 Anthropic 商业条款',
     homepage: 'https://code.claude.com/docs/en/agent-sdk/overview',
     description: '直接连接你安装的 Claude Code，用它已有的登录与设置；Latch 不读取凭据。',
-    install: 'npm i -g @anthropic-ai/claude-code',
+    install: 'curl -fsSL https://claude.ai/install.sh | bash',
     installNote: '2.1.322 或更高版本；还要在 Claude Code 中登录',
     signIn: '在终端里按 Claude Code 自己的方式登录（或在它的设置里使用你自己的 API key）后重试。',
     fallback: {
@@ -132,7 +132,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
       homepage: 'https://github.com/agentclientprotocol/claude-agent-acp',
       license: 'Apache-2.0 适配器；Claude Code 专有',
       description: '经适配器 claude-agent-acp 运行它自带的 Claude Code，用你在 Claude Code 中已有的登录；Latch 不读取凭据。',
-      direct: '直接连接需要 Claude Code 2.1.322 或更高版本：npm i -g @anthropic-ai/claude-code',
+      direct: '直接连接需要 Claude Code 2.1.322 或更高版本：curl -fsSL https://claude.ai/install.sh | bash',
     },
     helperCard: {
       face: { bracket: 'round', eyes: 'arc' },

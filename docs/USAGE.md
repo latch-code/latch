@@ -40,7 +40,7 @@ Latch 不下载、不安装 Agent，也不代为登录。在运行 Host 的电�
 | Harness | 安装 | Latch 运行的命令 | 许可证 |
 | --- | --- | --- | --- |
 | [Codex](https://github.com/openai/codex) | `npm i -g @openai/codex` | `codex app-server`（只装了 `codex-acp` 时经它） | Apache-2.0 |
-| [Claude Agent](https://github.com/agentclientprotocol/claude-agent-acp) | `npm i -g @agentclientprotocol/claude-agent-acp` | `claude-agent-acp`（运行 Claude Code，用它已有的登录） | Apache-2.0 适配器；Claude Code 专有 |
+| [Claude Agent](https://code.claude.com/docs/en/setup) | `curl -fsSL https://claude.ai/install.sh \| bash`（或 `brew install --cask claude-code`） | `claude`，经官方 Claude Agent SDK，用它已有的登录（2.1.322 起；只装了 `claude-agent-acp` 时经它） | Claude Code 专有；SDK 按 Anthropic 商业条款 |
 | [pi](https://github.com/earendil-works/pi) | `npm i -g @earendil-works/pi-coding-agent` | `pi --mode rpc` | MIT |
 | [OpenCode](https://github.com/anomalyco/opencode) | `npm i -g @opencode/cli` | `opencode serve`（2.2.6 起，只听本机回环；更早的版本经 `opencode acp`） | MIT |
 | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | `npm i -g @deepseek-ai/dsh` | `dsh --profile acp` | MIT |

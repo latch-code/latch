@@ -17,7 +17,7 @@ const ENGLISH: Readonly<
     installNote: 'Version 2.1.322 or later. Sign in to Claude Code as well',
     adapterDescription:
       'Uses the Claude Code bundled with claude-agent-acp, with your existing Claude Code login. Latch doesn’t read your credentials.',
-    direct: 'Direct connections require Claude Code 2.1.322 or later: npm i -g @anthropic-ai/claude-code',
+    direct: 'Direct connections require Claude Code 2.1.322 or later: curl -fsSL https://claude.ai/install.sh | bash',
   },
   pi: {
     description: 'pi manages models and login. The Latch extension configures permissions.',

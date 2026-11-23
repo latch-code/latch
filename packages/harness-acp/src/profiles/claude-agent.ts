@@ -266,7 +266,8 @@ export const claudeAgentProfile: HarnessProfile = {
 
 /** The oldest Claude Code the direct wire runs: the one the SDK it is built on ships (`claudeCodeVersion` of 0.3.322). */
 const CLAUDE_DIRECT_MINIMUM = '2.1.322'
-const CLAUDE_UPGRADE = 'npm i -g @anthropic-ai/claude-code@latest'
+// Claude's own updater, for whichever way it was installed; a recognised Homebrew install gets `brew upgrade` instead.
+const CLAUDE_UPGRADE = 'claude update'
 /** The direct wire's own program: published on npm, or put in place by Claude's own installer, which `claude update` updates. */
 const CLAUDE_SOURCE = {
   npm: '@anthropic-ai/claude-code',
