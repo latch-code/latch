@@ -199,46 +199,144 @@ struct QuestionDrawer: View {
     }
 }
 
-/** What waits behind the running turn; each can be edited or taken back until it is sent. */
+/** The Host owns the queue; a move submits the complete order the person saw. */
 struct QueueChips: View {
     @EnvironmentObject private var model: PhoneModel
     let items: [NativeJSON]
     let sessionId: String
+    let canSend: Bool
+    @ScaledMetric(relativeTo: .caption) private var rowHeight: CGFloat = 48
     @State private var editing: String?
     @State private var text = ""
+    private var order: [String] { items.compactMap { $0["id"].string } }
+    private var control: Bool { model.snapshot["catalog"]["features"]["queueControl"].bool }
+    private var canAct: Bool { model.canRun && model.hasContentWindow && model.transportReady }
+    private var canOrder: Bool {
+        canAct && canSend && control && items.count > 1 && items.allSatisfy { $0["delivery"] == .null }
+    }
+    private var heading: String {
+        if items.contains(where: { ["steer-unknown", "uncertain"].contains($0["delivery"].string ?? "") }) { return "发送结果待确认" }
+        if items.contains(where: { $0["state"].string == "parked" }) { return "已暂停 · 请确认后发送" }
+        if items.contains(where: { $0["state"].string == "dropped" }) { return "未发送 · 请检查排队内容" }
+        return "接下来 · \(items.count)"
+    }
+    private var writing: Bool { model.busy || !model.pending.isEmpty }
+    private func editable(_ item: NativeJSON) -> Bool { canAct && canSend && item["state"].string != "dropped" && item["delivery"] == .null }
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(items, id: \.id) { item in
-                if let id = item["id"].string {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
-                            Text("排队 · " + (item["text"].string ?? "")).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2).lineLimit(2)
-                            Spacer(minLength: 4)
-                            Button("编辑") { editing = id; text = item["text"].string ?? "" }
-                            Button("移除") { Task { await model.mutate(.delete, path: "/link/api/tasks/\(sessionId)/queue/\(id)", fields: [:]) } }
-                            if item["state"].string == "parked" { Button("继续") { Task { await model.mutate(.post, path: "/link/api/tasks/\(sessionId)/queue/\(id)/send", fields: [:]) } } }
-                        }
-                        if item["state"].string != "waiting" { Text(item["reason"].string ?? "已暂停，确认后继续").font(.system(size: 12)).foregroundStyle(PhoneTheme.amber) }
+        let base = order, revision = items.first?["orderRevision"].integer ?? 0
+        VStack(alignment: .leading, spacing: 0) {
+            Text(heading).font(PhoneTheme.caption.weight(.medium)).foregroundStyle(PhoneTheme.muted)
+                .padding(.horizontal, 12).padding(.top, 8)
+            List {
+                ForEach(items, id: \.id) { item in
+                    if let id = item["id"].string {
+                        row(item, id: id, base: base, revision: revision)
+                            .frame(minHeight: rowHeight)
+                            .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 8))
+                            .listRowBackground(Color.clear)
+                            .moveDisabled(!canOrder || writing)
                     }
-                    .font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 14)).disabled(model.busy || !model.connected)
+                }.onMove { source, destination in
+                    var next = base
+                    next.move(fromOffsets: source, toOffset: destination)
+                    move(base: base, next: next, revision: revision)
                 }
             }
+            .id(base)
+            .id(revision)
+            .listStyle(.plain).scrollContentBackground(.hidden)
+            .environment(\.editMode, .constant(canOrder ? .active : .inactive))
+            .environment(\.defaultMinListRowHeight, 0)
+            .frame(height: rowHeight * CGFloat(min(items.count, 3)))
         }
-        .padding(.horizontal, 12)
+        .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 14)).padding(.horizontal, 12)
         .sheet(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
             NavigationStack {
                 LocalTextEditor(text: $text, placeholder: "编辑待发送内容", maximumLines: nil).padding().navigationTitle("编辑待发送内容").navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) { Button("取消") { editing = nil } }
                         ToolbarItem(placement: .confirmationAction) { Button("保存") {
-                            if let id = editing { Task { await model.mutate(.patch, path: "/link/api/tasks/\(sessionId)/queue/\(id)", fields: ["text": .string(text)]) } }
+                            if let id = editing { change(.patch, id: id, fields: ["text": .string(text)]) }
                             editing = nil
-                        }.disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+                        }.disabled(writing || !items.contains { $0["id"].string == editing && editable($0) } || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
                     }
             }.presentationDetents([.medium, .large])
         }
         .onChange(of: model.contentGeneration) { _, _ in editing = nil; text = "" }
         .onChange(of: model.selectedHost?.id) { _, _ in editing = nil; text = "" }
+    }
+
+    @ViewBuilder private func row(_ item: NativeJSON, id: String, base: [String], revision: UInt64) -> some View {
+        let delivery = item["delivery"].string, state = item["state"].string
+        let run = model.detail["summary"]["runId"].string
+        let running = PhoneSessionMenu.active(model.detail["summary"])
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(PhoneConversation.visible(item["text"].string ?? "")).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2).lineLimit(2)
+                if let reason = item["reason"].string {
+                    Text(PhoneConversation.visible(reason)).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).lineLimit(1)
+                } else if state == "parked" || state == "dropped" {
+                    Text(state == "parked" ? "已暂停" : "未发送").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
+                }
+            }
+            Spacer(minLength: 0)
+            if canAct {
+                if canSend, control, running, model.detail["steer"].bool, item["canSteer"].bool, delivery == nil, let run {
+                    Button("追加") {
+                        submit { try PhoneQueueControl.steer(session: sessionId, item: id, run: run, contentRevision: item["contentRevision"].integer ?? 0) }
+                    }.accessibilityLabel("追加到本轮")
+                } else if canSend, !running, id == base.first, state == "parked", delivery == nil || delivery == "uncertain" {
+                    Button("发送") { change(.post, id: id, suffix: "/send") }
+                }
+                Menu {
+                    if canOrder, let index = base.firstIndex(of: id) {
+                        if index > 0 { Button("上移", systemImage: "arrow.up") { shift(index, by: -1, base: base, revision: revision) } }
+                        if index + 1 < base.count { Button("下移", systemImage: "arrow.down") { shift(index, by: 1, base: base, revision: revision) } }
+                    }
+                    if editable(item) {
+                        Button("编辑", systemImage: "pencil") { editing = id; text = item["text"].string ?? "" }
+                    }
+                    Button("移除", systemImage: "trash", role: .destructive) { change(.delete, id: id) }
+                } label: {
+                    Image(systemName: "ellipsis").frame(minWidth: 32, minHeight: 40)
+                }.accessibilityLabel("排队消息操作")
+            }
+        }.buttonStyle(.borderless).font(PhoneTheme.caption.weight(.medium)).tint(PhoneTheme.ink).disabled(writing)
+    }
+
+    private func shift(_ index: Int, by offset: Int, base: [String], revision: UInt64) {
+        var next = base
+        next.swapAt(index, index + offset)
+        move(base: base, next: next, revision: revision)
+    }
+    private func move(base: [String], next: [String], revision: UInt64) {
+        guard canOrder, !writing, next != base else { return }
+        submit { try PhoneQueueControl.reorder(session: sessionId, revision: revision, base: base, order: next) }
+    }
+    private func change(_ method: NativeHTTPMethod, id: String, suffix: String = "", fields: [String: NativeJSON] = [:]) {
+        submit { try NativePendingWrite(method: method, path: "/link/api/tasks/\(sessionId)/queue/\(id)" + suffix, fields: fields) }
+    }
+    private func submit(_ make: @escaping () throws -> NativePendingWrite) {
+        let generation = model.contentGeneration
+        Task {
+            guard model.contentGeneration == generation, model.sessionId == sessionId, canAct else { return }
+            let done = await model.perform(make)
+            // A conflicting order or a turn that just finished may have changed the available actions.
+            if !done, model.contentGeneration == generation, model.sessionId == sessionId { await model.refresh() }
+        }
+    }
+}
+
+struct AbandonQueueChange: View {
+    @EnvironmentObject private var model: PhoneModel
+    let pending: NativePendingWrite
+    @State private var confirming = false
+    var body: some View {
+        Button("放弃重试") { confirming = true }
+            .font(PhoneTheme.caption).disabled(model.busy || !model.hasContentWindow)
+            .confirmationDialog("放弃重试这次队列操作？", isPresented: $confirming) {
+                Button("放弃重试", role: .destructive) { Task { await model.abandonQueueChange(pending) } }
+                Button("取消", role: .cancel) {}
+            } message: { Text("电脑可能已经处理。请核对队列和会话记录，已完成的操作不会撤回。") }
     }
 }

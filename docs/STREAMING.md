@@ -504,8 +504,9 @@ Harness 的进程级换档在空闲时结束旧进程并恢复同一外部会话
 
 ### 排队状态与实际发送
 
-- 详情与 SSE 的 `TaskDetail.queue` 是 `{ id, text, queuedAt, state, reason? }`，`state` 为 `waiting`、`parked` 或 `dropped`；设备身份与请求回执不下发。
+- 详情与 SSE 的 `TaskDetail.queue` 按 Host 的派发顺序给出每项的 `id`、`text`、`queuedAt`、`state` 和可选原因。`state` 为 `waiting`、`parked` 或 `dropped`。支持队列操作时，`orderRevision` 表示所见顺序的修订（省略时为 0），`canSteer` 标出具备追加条件的项。`delivery` 在派发中、普通发送结果未知或追加结果未知时分别为 `sending`、`uncertain`、`steer-unknown`。设备身份与请求回执留在 Host。
 - 入队回执不生成用户消息；实际派发才生成带 `requestId` 与 `queuedAt` 的正常消息。编辑会换派发标识，原提交的重试仍命中同一项。
+- 从队列追加还需本轮有 `TaskDetail.steer`。客户端带上所见 `runId` 与该项的 `contentRevision`（未编辑时为 0），Host 确认后，在这一轮保存一条带 `steered` 和原 `queuedAt` 的用户消息。迟到的操作不能追加到随后的轮次。
 - 两种 Driver 的 zod 快照保留 `queuedAt` 与 `TaskSummary.runOutcome`。新运行清除旧 outcome，真实结算后才写完成、失败、取消或中断。队列不从网络状态、`idle` 或文字猜测完成。
 
 ### 追加到运行中的一轮

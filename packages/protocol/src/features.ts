@@ -31,6 +31,8 @@ export interface HostFeatures {
   sessionBatch?: true
   fork?: true
   queue?: true
+  /** An item can be steered into a specific running turn; queue order is compared and changed on the Host. */
+  queueControl?: true
   questions?: true
   /** User messages retain the prompt's requestId, so a client may replace a pending bubble by identity. */
   messageIdentity?: true
@@ -147,4 +149,11 @@ export interface PromptQueueItem {
   queuedAt: string
   state: 'waiting' | 'parked' | 'dropped'
   reason?: string
+  /** Also requires the live session to report steer and a run ID. */
+  canSteer?: true
+  delivery?: 'sending' | 'uncertain' | 'steer-unknown'
+  /** Same for every item in this order. An existing queue starts at zero. */
+  orderRevision?: number
+  /** Changes only when the item is edited. Its original text has revision zero. */
+  contentRevision?: number
 }

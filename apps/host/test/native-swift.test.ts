@@ -3990,6 +3990,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         window: true,
         subagent: true,
         steer: true,
+        queueControl: true,
         retry: true,
         fork: true,
         config: true,

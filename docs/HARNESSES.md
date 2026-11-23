@@ -932,12 +932,13 @@ Agent 在 `initialize` 的 `_meta.steering = { supported: true }` 声明后，�
 | --- | --- |
 | `injected` | 记为这一轮里的用户消息；Host 读到回答的那一刻把之前的回复结算成一条 |
 | `promptRequired` | 交回 Host 排队 |
-| 其他结果或错误 | 不发出，报错 |
+| `failed` 或 Agent 明确返回错误 | 报告追加失败 |
+| 无法识别的回答 | 从队列追加时保留为结果未知。输入框的普通追加仍沿用原错误行为 |
 | 30 秒没有回答 | 结果未知，不重发 |
 
 停止开始后不再追加。没有声明的 Agent 照常排队。语义见 [STREAMING.md](./STREAMING.md#追加到运行中的一轮)。
 
-模拟器工具按当前运行 ID 检查发起设备。Driver 在真正发出较窄范围的追加前暂停这一轮的设备工具授权，追加送达或结果未知时撤掉授权。旧回执的重放不会触发这一步。设备工具的规则见 [ARCHITECTURE.md](ARCHITECTURE.md#设备与浏览器)。
+模拟器工具按当前运行 ID 检查发起设备。Driver 在真正发出较窄范围的追加前暂停这一轮的设备工具授权，追加送达或结果未知时撤掉授权。从队列追加时，写过文字的设备与点击追加的设备都计入本轮输入权限。旧回执的重放不会触发这一步。设备工具的规则见 [ARCHITECTURE.md](ARCHITECTURE.md#设备与浏览器)。
 
 ## 清空上下文
 
@@ -1053,7 +1054,7 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 
 **分叉。** 由 Host 以一条背景文本加新输入开启新会话，仍是新的启动；ACP 不需要私有分叉方法。pi、Codex 与 Claude 的直连线（`cliStore` 打开时）用它们自己的记录分叉，见各自的小节。
 
-**排队。** Host 队列只在明确的 `runOutcome=completed` 后自动派发。ACP 只有 `session/prompt` 的 `end_turn` 算 completed；取消、输出上限、拒绝、未知 stopReason 与断连都暂停。`PromptOptions.queuedAt` 只作为用户消息的排队时间，不改变输入的幂等哈希与权限。
+**排队。** Host 队列只在明确的 `runOutcome=completed` 后自动派发。ACP 只有 `session/prompt` 的 `end_turn` 算 completed；取消、输出上限、拒绝、未知 stopReason 与断连都暂停。`PromptOptions.queuedAt` 只作为用户消息的排队时间，不改变输入的幂等哈希与权限。用户从队列追加时，ACP 在写入回执、复核设备授权后核对目标 `runId`。只要轮次换了、停止了或已无法追加，内容就留在队列里。
 
 **附件与文件引用。**
 

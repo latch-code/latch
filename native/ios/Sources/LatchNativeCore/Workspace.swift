@@ -54,7 +54,7 @@ public struct NativePendingWrite: Codable, Sendable {
               path.hasPrefix("/link/api/"), path.utf8.count <= 1024, !path.contains("?"), !path.contains("#"),
               path.utf8.allSatisfy({ $0 >= 33 && $0 < 127 }), !path.contains("..") else { throw NativeFailure.invalidRecord }
         var input = fields
-        if PhoneWorkChange.isCompletion(method, path, fields)
+        if PhoneWorkChange.isCompletion(method, path, fields) || PhoneQueueControl.action(method, path) != nil
             || (method == .patch && LinkBytes.matches(path, "/link/api/tasks/[A-Za-z0-9_-]{1,160}/queue/[A-Za-z0-9_-]{1,160}")) { input.removeValue(forKey: "requestId") }
         else { input["requestId"] = .string(requestId) }
         self.requestId = requestId; self.method = method.rawValue; self.path = path
@@ -1094,7 +1094,8 @@ public actor NativeWorkspace {
         try lease.requireValid()
         let decoded = try NativeJSON.decode(pending.body)
         let queueEdit = method == .patch && LinkBytes.matches(pending.path, "/link/api/tasks/[A-Za-z0-9_-]{1,160}/queue/[A-Za-z0-9_-]{1,160}")
-        guard queueEdit || PhoneWorkChange.isCompletion(method, pending.path, decoded.object) || decoded["requestId"].string == pending.requestId else { throw NativeFailure.invalidRecord }
+        let queueControl = PhoneQueueControl.action(method, pending.path)
+        guard queueEdit || queueControl != nil || PhoneWorkChange.isCompletion(method, pending.path, decoded.object) || decoded["requestId"].string == pending.requestId else { throw NativeFailure.invalidRecord }
         let work = PhoneWorkChange(pending)
         func sameWorkAccess() -> Bool {
             work == nil || (revocation == nil && installedTransport?.valid == true && accessEpoch == access
@@ -1155,6 +1156,7 @@ public actor NativeWorkspace {
         guard epoch == current else { throw NativeFailure.resultUnknown }
         if (200..<300).contains(response.status) {
             guard let value = try? NativeJSON.decode(response.body) else { throw NativeFailure.resultUnknown }
+            if let queueControl, !queueControl.confirmed(by: value) { throw NativeFailure.resultUnknown }
             if PhoneHelperCreate.isCreation(pending), (try? PhoneHelperCreate.createdId(value, for: pending)) == nil {
                 throw NativeFailure.resultUnknown
             }
@@ -1171,6 +1173,7 @@ public actor NativeWorkspace {
         // A 5xx whose code says the Host accepted nothing (a Harness that could not start) is a refusal, not unknown.
         if NativeHostRefusal.leavesUnknown(status: response.status, body: response.body) { throw NativeFailure.resultUnknown }
         let refusal = NativeHostRefusal.parse(status: response.status, body: response.body)
+        if queueControl == .steer, refusal?.code == "steer-unknown" { throw NativeFailure.resultUnknown }
         if work != nil, [401, 403, 404].contains(response.status) {
             // Work routes recheck access when presenting the result, after the change or delivery may have happened.
             _ = await responseFailure(response, lease: lease)
@@ -1813,7 +1816,7 @@ public actor NativeWorkspace {
             return .expired
         }
         if ["workspace-changed", "workspace-disabled", "permission-drift"].contains(code ?? "") { return .contextChanged }
-        if ["agent-changed", "agent-memory-deleted", "automation-changed"].contains(code ?? "") { return .changedElsewhere }
+        if ["agent-changed", "agent-memory-deleted", "automation-changed", "queue-order", "queue-steer-unavailable", "queue-content-changed"].contains(code ?? "") { return .changedElsewhere }
         if code == "terminal-running" { return .terminalOpen }
         if response.status == 429 { return .busy }
         if code == "subagent-not-stoppable" { return .notStoppable }

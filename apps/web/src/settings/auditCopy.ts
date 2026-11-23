@@ -62,6 +62,7 @@ const actionLabels: Readonly<Record<string, string>> = {
   'task.prompt.queued': 'Queued input',
   'task.prompt.sent': 'Sent queued input',
   'task.prompt.edited': 'Edited queued input',
+  'task.prompt.reordered': 'Reordered queued inputs',
   'task.prompt.removed': 'Removed queued input',
   'attachment.add': 'Added attachment',
   'attachment.view': 'Viewed attachment',

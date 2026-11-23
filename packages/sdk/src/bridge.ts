@@ -215,6 +215,13 @@ export type ConfigChangeClass = 'neutral' | 'stricter' | 'wider'
  */
 export type SteerOutcome = 'injected' | 'prompt-required'
 
+export interface QueuedSteerOptions {
+  runId: string
+  queuedAt: string
+  /** Recheck the queue's writers and the device requesting delivery immediately before sending. */
+  authorize(): Promise<void>
+}
+
 /** What an L3 session would launch, for the audit and its start. */
 export interface LaunchPreview {
   launchHash: string
@@ -347,6 +354,8 @@ export interface Bridge {
    * retry answers what the first request got, and one whose answer was lost is never sent again (409 `steer-unknown`).
    */
   steer?(sessionId: string, prompt: string, requestId: string): Promise<SteerOutcome>
+  /** As steer, targeting only the named run. A run that ended or stopped taking input leaves the item queued. */
+  steerQueued?(sessionId: string, prompt: string, requestId: string, options: QueuedSteerOptions): Promise<SteerOutcome>
   /**
    * Optional. Delete a settled session's data; reject with 409 `task-running` while it runs. `original`: the person chose
    * to delete an imported session's original in the harness's own record too (`HarnessDriver.historyDelete`), and the

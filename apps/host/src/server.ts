@@ -2212,6 +2212,25 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     function withSimulatorPrompt<T>(deviceIds: readonly string[], restricted: boolean, start: () => T): T {
       return simulatorPromptDevices.run(!restricted && deviceIds.every(simulatorDeviceAllowed) ? deviceIds : undefined, start)
     }
+    function simulatorSteerGuard(sessionId: string, deviceIds: readonly string[], restricted: boolean) {
+      const maySeeAll = !restricted && deviceIds.every(simulatorDeviceAllowed)
+      return (runId: string) => {
+        const grant = simulatorRuns.get(sessionId)
+        if (grant?.runId !== runId) return
+        if (maySeeAll && deviceIds.every(id => grant.deviceIds.includes(id) && simulatorDeviceAllowed(id))) return
+        // While new writers' words may be in flight, no new simulator input can start.
+        grant.pendingSteers++
+        let settled = false
+        return (couldBeInjected: boolean) => {
+          if (settled) return
+          settled = true
+          grant.pendingSteers--
+          if (!couldBeInjected) return
+          if (maySeeAll && deviceIds.every(simulatorDeviceAllowed)) grant.deviceIds = [...new Set([...grant.deviceIds, ...deviceIds])]
+          else removeSimulatorRun(sessionId, runId)
+        }
+      }
+    }
     function removeSimulatorRun(sessionId: string, runId?: string): void {
       const current = simulatorRuns.get(sessionId)
       if (!current || (runId !== undefined && current.runId !== runId)) return
@@ -3184,6 +3203,47 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           input.text,
           input.requestId,
         )
+      },
+      canSteer: id => harnessHub.supportsQueuedSteer(id),
+      async steer(actor, sessionId, input) {
+        await assertQueueable(sessionId, input.text)
+        const writers = [actor, input.sender, ...(input.editor ? [input.editor] : [])]
+        const authorize = async () => {
+          await input.authorize()
+          // An earlier writer's grant or native window can expire while a later writer's session checks await I/O.
+          assertWritable(sessionId)
+          for (const writer of writers) checkPrivateSession(queuedCaller(writer), sessionId, true)
+        }
+        const beforeSteer = simulatorSteerGuard(
+          sessionId,
+          [...writers.map(writer => writer.deviceId), ...(input.coauthors ?? [])],
+          writers.some(writer => writer.dataScope !== 'all'),
+        )
+        const sender: AuditActor = { deviceId: input.sender.deviceId, listener: input.sender.listener, via: 'http' }
+        const seq = await audited({ action: 'task.prompt.sent', actor: sender, detail: { sessionId, itemId: input.itemId } })
+        let outcome
+        try {
+          await authorize()
+          outcome = await harnessHub.steer(sessionId, input.text, input.requestId, beforeSteer, {
+            runId: input.runId,
+            queuedAt: input.queuedAt,
+            authorize,
+          })
+        } catch (error) {
+          if (error instanceof AppError && error.code !== 'steer-unknown' && refusedBeforeAccepting(error.status, error.code))
+            noteFailedAction(seq, sender)
+          throw error
+        }
+        if (outcome === 'injected') {
+          queueAudits.delete(input.itemId)
+          await rememberFromPerson(
+            { deviceId: actor.deviceId, actor: { deviceId: actor.deviceId, listener: actor.listener, via: 'http' } },
+            sessionId,
+            input.text,
+            input.requestId,
+          )
+        } else noteFailedAction(seq, sender)
+        return outcome
       },
       changed: id => refresh(id),
     })
@@ -4476,9 +4536,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     /** Best effort: marks an audited intent whose commit then failed. */
     function auditFailed(refSeq: number | undefined, caller: Caller): void {
+      noteFailedAction(refSeq, actorOf(caller))
+    }
+    function noteFailedAction(refSeq: number | undefined, actor: AuditActor): void {
       if (refSeq === undefined) return
       void audit
-        .append({ action: 'action.failed', actor: actorOf(caller), detail: { refSeq } })
+        .append({ action: 'action.failed', actor, detail: { refSeq } })
         .catch(error => logNoted('audit-write-failed', { error: error }, `审计记录写入失败：${errorText(error)}`))
     }
 
@@ -8077,6 +8140,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         features: {
           agentProbe: true,
           queue: true,
+          queueControl: true,
           questions: true,
           messageIdentity: true,
           fork: true,
@@ -10263,22 +10327,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (input.queue || input.steer) await assertQueueable(id, input.prompt)
       if (input.steer && !input.model && input.prompt) {
         recheck(caller, 'run')
-        const allowed = () => !writers.narrower && simulatorDeviceAllowed(caller.device.id) && coauthors.every(simulatorDeviceAllowed)
-        const maySeeAll = !withoutPrivateContext && caller.device.dataScope === 'all' && allowed()
-        const steered = await hub!.steer(id, input.prompt, input.requestId, runId => {
-          if (maySeeAll && allowed()) return
-          const grant = simulatorRuns.get(id)
-          if (grant?.runId !== runId) return
-          // A lower-scope steer blocks new device calls while its actual send is unsettled.
-          grant.pendingSteers++
-          let settled = false
-          return couldBeInjected => {
-            if (settled) return
-            settled = true
-            grant.pendingSteers--
-            if (couldBeInjected) removeSimulatorRun(id, runId)
-          }
-        })
+        const steered = await hub!.steer(
+          id,
+          input.prompt,
+          input.requestId,
+          simulatorSteerGuard(
+            id,
+            [caller.device.id, ...coauthors],
+            withoutPrivateContext || caller.device.dataScope !== 'all' || writers.narrower === true,
+          ),
+        )
         if (steered === 'injected') return 'steered'
       }
       if (input.queue || input.steer) return { queued: await promptQueues.submit(queueActor(caller), id, queued) }
@@ -10470,13 +10528,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
 
-    async function checkQueuedPrompt(
-      actor: QueueActor,
-      sessionId: string,
-      model?: ModelRef,
-      binding?: string,
-      preparing = false,
-    ): Promise<void> {
+    function queueWindowClosed(): AppError {
+      return new AppError(409, 'queue-paused', '原手机验证窗口已结束；请移除此项后重新排队')
+    }
+
+    function queuedCaller(actor: QueueActor): DeviceCaller {
       if (closing) throw new AppError(503, 'host-closing', 'Host 正在停止，队列已暂停')
       const native = isNativeListener(actor.listener)
       const authenticated = native ? devices.authenticateNative(actor.deviceId) : undefined
@@ -10487,7 +10543,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         || device.dataScope !== actor.dataScope
       )
         throw authFailure('device-revoked')
-      const paused = () => new AppError(409, 'queue-paused', '原手机验证窗口已结束；请移除此项后重新排队')
       const opening: NativeOpening | undefined = native
         ? {
             deviceId: actor.deviceId,
@@ -10497,14 +10552,25 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ...(actor.nativeWindowHash ? { windowHash: actor.nativeWindowHash } : {}),
           }
         : undefined
-      if (native && nativeRoutes.verifiedUntil(opening) <= now()) throw paused()
+      if (native && nativeRoutes.verifiedUntil(opening) <= now()) throw queueWindowClosed()
       const caller: DeviceCaller = {
         device,
         connection: { listener: actor.listener, origin: '', remoteAddress: '' },
         ...(opening ? { nativeOpening: opening } : {}),
       }
+      requireScope(caller, 'run')
+      return caller
+    }
+
+    async function checkQueuedPrompt(
+      actor: QueueActor,
+      sessionId: string,
+      model?: ModelRef,
+      binding?: string,
+      preparing = false,
+    ): Promise<void> {
+      const caller = queuedCaller(actor)
       try {
-        requireScope(caller, 'run')
         await assertSessionAccess(caller, sessionId)
         assertWritable(sessionId)
         await assertSessionWorkspace(sessionId)
@@ -10519,7 +10585,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (!preparing && turn?.binding !== binding) throw queueContextChanged()
         recheck(caller, 'run')
       } catch (error) {
-        if (native && codeOf(error) === 'native-verification-required') throw paused()
+        if (isNativeListener(actor.listener) && codeOf(error) === 'native-verification-required') throw queueWindowClosed()
         throw error
       }
     }
@@ -10532,19 +10598,31 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     async function handleQueue(req: IncomingMessage, res: ServerResponse, caller: Caller, path: string, method: string): Promise<boolean> {
-      const match = path.match(/^\/link\/api\/tasks\/([^/]+)\/queue\/([^/]+)(\/send)?$/u)
-      if (!match) return false
+      const match = path.match(/^\/link\/api\/tasks\/([^/]+)\/queue(?:\/([^/]+)(\/send|\/steer)?)?$/u)
+      if (!match || (!match[2] && method !== 'PUT')) return false
       requireScope(caller, 'run')
-      const sessionId = safeDecode(match[1]!),
-        itemId = safeDecode(match[2]!)
-      if (sessionId.length > 256 || itemId.length > 256) throw new AppError(400, 'invalid-input', '排队标识过长')
+      const sessionId = safeDecode(match[1]!)
+      const itemId = match[2] && safeDecode(match[2])
+      if (sessionId.length > 256 || (itemId && itemId.length > 256)) throw new AppError(400, 'invalid-input', '排队标识过长')
+      const authorize = () => checkQueuedPrompt(queueActor(caller), sessionId, undefined, undefined, true)
+      if (!itemId) {
+        await authorize()
+        const ids = z.array(z.string().min(1).max(256)).min(1).max(5)
+        const input = z
+          .strictObject({ baseOrder: ids, order: ids, baseRevision: z.number().int().nonnegative() })
+          .parse(await jsonBody(req, TASK_BODY_LIMIT))
+        await promptQueues.reorder(sessionId, input, authorize, async () => {
+          await audited({ action: 'task.prompt.reordered', actor: actorOf(caller), detail: { sessionId, count: input.order.length } })
+        })
+        json(res, { ordered: true })
+        return true
+      }
       if (method === 'DELETE' && !match[3]) {
         recheck(caller, 'run')
         await audited({ action: 'task.prompt.removed', actor: actorOf(caller), detail: { sessionId, itemId } }, res)
         json(res, await promptQueues.remove(sessionId, itemId, () => recheck(caller, 'run')))
         return true
       }
-      const authorize = () => checkQueuedPrompt(queueActor(caller), sessionId, undefined, undefined, true)
       await authorize()
       if (method === 'PATCH' && !match[3]) {
         const input = z.strictObject({ text: z.string().trim().min(1).max(16_000) }).parse(await jsonBody(req, TASK_BODY_LIMIT))
@@ -10554,7 +10632,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { edited: true })
         return true
       }
-      if (method === 'POST' && match[3]) {
+      if (method === 'POST' && match[3] === '/steer') {
+        const input = z
+          .strictObject({ runId: z.string().min(1).max(128), contentRevision: z.number().int().nonnegative() })
+          .parse(await jsonBody(req, TASK_BODY_LIMIT))
+        await promptQueues.steer(sessionId, itemId, input, queueActor(caller), authorize)
+        json(res, { steered: true })
+        return true
+      }
+      if (method === 'POST' && match[3] === '/send') {
         // 立即发送 starts a turn: not inside the install window, while the item is still waiting to be sent.
         if (updateWindow.isOpen() && promptQueues.view(sessionId).some(item => item.id === itemId)) refuseWhileUpdating('turn')
         await promptQueues.send(sessionId, itemId, authorize)

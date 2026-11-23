@@ -151,12 +151,16 @@ extension PhoneModel {
         let attached = PhoneAttachments.count(request) > 0, retried = pending.contains { $0.requestId == request.requestId }
         do {
             if !retried { pending.append(request) }
-            let value = attached ? try await workspace.submit(request, explain: true, retryAnswered: { $0.code == "attachment-released" }) : try await workspace.submit(request)
+            let value = try await workspace.submit(request, explain: attached || PhoneQueueControl(request) != nil,
+                retryAnswered: { attached && $0.code == "attachment-released" })
             guard generation == current else { return false }
             pending.removeAll { $0.requestId == request.requestId }
             if attached, let key = Self.trayKey(request) { attachmentsSent(key) }
             guard contentGeneration == reading else { return false }
             if sessionId == selected, contentGeneration == reading, let id = value["sessionId"].string { sessionId = id }
+            if request.method == "DELETE", value["removed"].bool, value["deliveryUnknown"].bool {
+                error = "排队项已移除。先前的发送结果仍待确认，请核对会话记录。"
+            }
             await refresh()
             return true
         } catch let unsettled as NativeUnsettledRefusal {
@@ -198,6 +202,19 @@ extension PhoneModel {
             return
         }
         error = refusal.message.isEmpty ? "暂时无法完成，请稍后重试。" : refusal.message
+    }
+    /** A person releases this phone's pending queue write. The Host keeps its own delivery record. */
+    func abandonQueueChange(_ request: NativePendingWrite) async {
+        guard let workspace, !busy, hasContentWindow, PhoneQueueControl(request) != nil,
+              pending.contains(where: { $0.requestId == request.requestId }) else { return }
+        let current = generation
+        busy = true; defer { if generation == current { busy = false } }
+        do {
+            try await workspace.settlePending(request.requestId)
+            guard generation == current else { return }
+            pending.removeAll { $0.requestId == request.requestId }
+            await refresh()
+        } catch { if current == generation { report(error) } }
     }
     /**
      * 放弃这次提交: this phone stops waiting for a message's answer. When the open session already lists it by its

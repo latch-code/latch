@@ -56,6 +56,7 @@ export const AUDIT_LABELS: Readonly<Record<AuditAction, readonly [AuditKind, str
   'task.prompt.queued': ['sessions', '排队输入'],
   'task.prompt.sent': ['sessions', '发出排队的输入'],
   'task.prompt.edited': ['sessions', '修改排队的输入'],
+  'task.prompt.reordered': ['sessions', '调整排队顺序'],
   'task.prompt.removed': ['sessions', '撤回排队的输入'],
   'attachment.add': ['sessions', '添加附件'],
   'attachment.view': ['sessions', '查看附件'],

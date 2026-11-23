@@ -107,6 +107,7 @@ const SCENES = [
   'conversation-actions',
   'subagents',
   'steer',
+  'prompt-queue',
   'clearing',
   'approval-more',
   'approval-hidden',
@@ -265,7 +266,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
         { timeout: 300_000, maxBuffer: 16_777_216 },
       )
       const textReader = join(derived, 'read-screen-text')
-      if (chosen.includes('inbox-first-rows') || chosen.includes('usage-empty'))
+      if (chosen.some(scene => ['inbox-first-rows', 'usage-empty', 'prompt-queue'].includes(scene)))
         await run('/usr/bin/xcrun', ['swiftc', 'native/ios/Tools/InboxScreenshotRows.swift', '-o', textReader])
       const application = join(derived, 'Build/Products/Debug-iphonesimulator/LatchScreens.app')
       // The marker the product check looks for is really in this target, so its absence there means something.
@@ -351,10 +352,15 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
                 { timeout: 20_000, interval: 500 },
               )
               await copyFile(frame, shot)
-            } else if (scene === 'usage-empty') {
+            } else if (scene === 'usage-empty' || scene === 'prompt-queue') {
               await vi.waitFor(
                 async () => {
                   await simctl('io', udid, 'screenshot', shot)
+                  if (scene === 'prompt-queue') {
+                    const positions = JSON.parse((await run(textReader, [shot, '追加'])).stdout) as { 追加: number[] }
+                    expect(positions.追加).toHaveLength(3)
+                    return
+                  }
                   // The last word of the empty message starts to the right of centre when the sheet shrinks to fit it.
                   const positions = JSON.parse((await run(textReader, [shot, 'Harness'])).stdout) as { Harness: number[] }
                   expect(positions.Harness).toHaveLength(1)

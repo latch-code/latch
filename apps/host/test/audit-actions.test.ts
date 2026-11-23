@@ -213,6 +213,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'task.prompt.queued': { sessionId, itemId: 'item-1' },
   'task.prompt.sent': { sessionId, itemId: 'item-1' },
   'task.prompt.edited': { sessionId, itemId: 'item-1' },
+  'task.prompt.reordered': { sessionId, count: 2 },
   'task.prompt.removed': { sessionId, itemId: 'item-1' },
   'attachment.add': { attachmentId: 'F'.repeat(22), contentHash: hex, bytes: 512, type: 'image' },
   'attachment.view': { attachmentId: 'F'.repeat(22), contentHash: hex, bytes: 512, type: 'text' },

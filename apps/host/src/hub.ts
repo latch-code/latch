@@ -36,6 +36,7 @@ import {
   type ModelRoute,
   type ProjectFolder,
   type PromptOptions,
+  type QueuedSteerOptions,
   type ServiceDeclaration,
   type SetConfigOptions,
   type SteerOutcome,
@@ -1181,21 +1182,29 @@ export class HarnessHub implements Bridge {
     }
   }
 
-  /** Adds text to the session's running turn; `prompt-required` from a driver that cannot. */
+  supportsQueuedSteer(sessionId: string): boolean {
+    return typeof this.owner(sessionId)?.bridge?.steerQueued === 'function'
+  }
+
+  /** Adds text to the running turn. A queued item can target only the run the person saw. */
   async steer(
     sessionId: string,
     prompt: string,
     requestId: string,
     beforeSteer?: (runId: string) => ((couldBeInjected: boolean) => void) | undefined,
+    queued?: QueuedSteerOptions,
   ): Promise<SteerOutcome> {
     const member = await this.route(sessionId)
     const bridge = member.bridge
-    if (!bridge.steer) return 'prompt-required'
-    return await this.accept(member, () =>
+    if (queued ? !bridge.steerQueued : !bridge.steer) return 'prompt-required'
+    const outcome = await this.accept(member, () =>
       withHarnessPromptSource({ method: 'steer', sessionId, requestId, text: prompt, ...(beforeSteer ? { beforeSteer } : {}) }, () =>
-        bridge.steer!(sessionId, prompt, requestId),
+        queued ? bridge.steerQueued!(sessionId, prompt, requestId, queued) : bridge.steer!(sessionId, prompt, requestId),
       ),
     )
+    if (queued && outcome !== 'injected' && outcome !== 'prompt-required')
+      throw new AppError(409, 'steer-unknown', 'Harness 未确认追加结果，请核对会话记录。')
+    return outcome
   }
 
   async cancel(sessionId: string, options?: CancelOptions): Promise<boolean | void> {

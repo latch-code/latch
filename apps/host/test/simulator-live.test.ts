@@ -678,11 +678,12 @@ describe('agent input tools', () => {
     expect((await audit(t)).filter(record => record.action === 'simulator.call').map(record => record.detail.tool)).toEqual(['device_list'])
   })
 
-  it.each(['replay', 'queued', 'reduced source', 'revoked source', 'narrow steer'])(
+  it.each(['replay', 'queued', 'reduced source', 'revoked source', 'narrow steer', 'narrow queue sender', 'revoked queue writer'])(
     'keeps the active turn bound to its effective scope after %s',
     async change => {
-      const { t, desktop, idb } = await agentHost(fakeIdbCompanion(), change === 'narrow steer')
-      const initiallyAll = change === 'reduced source' || change === 'revoked source'
+      const queueSteer = change === 'narrow queue sender' || change === 'revoked queue writer'
+      const { t, desktop, idb } = await agentHost(fakeIdbCompanion(), change === 'narrow steer' || queueSteer)
+      const initiallyAll = change === 'reduced source' || change === 'revoked source' || change === 'revoked queue writer'
       const source = await t.enroll({ listener: 'unix', dataScope: initiallyAll ? 'all' : 'work', scopes: ['view', 'run'] })
       const { sessionId } = await desktop.confirmedJson<{ sessionId: string }>('tasks', {
         body: { requestId: randomUUID(), harnessId: 'device-agent', prompt: 'echo init' },
@@ -691,7 +692,7 @@ describe('agent input tools', () => {
       const prior = { requestId: randomUUID(), prompt: 'echo prior' }
       await desktop.json(`tasks/${sessionId}/prompt`, { body: prior })
       await settled(desktop, sessionId)
-      const sender = change === 'narrow steer' ? desktop : source
+      const sender = change === 'narrow steer' || queueSteer ? desktop : source
       await sender.json(`tasks/${sessionId}/prompt`, { body: { requestId: randomUUID(), prompt: tapWithApproval } })
       const approval = await waitingApproval(desktop, sessionId)
       if (change === 'replay') await desktop.json(`tasks/${sessionId}/prompt`, { body: prior })
@@ -702,7 +703,21 @@ describe('agent input tools', () => {
       else if (change === 'reduced source')
         expect((await desktop.request(`devices/${source.id}`, { method: 'PATCH', body: { dataScope: 'work' } })).status).toBe(200)
       else if (change === 'revoked source') expect((await desktop.request(`devices/${source.id}`, { method: 'DELETE' })).status).toBe(200)
-      else
+      else if (queueSteer) {
+        const writer = change === 'revoked queue writer' ? source : desktop
+        const actor = change === 'narrow queue sender' ? source : desktop
+        const { queued } = await writer.json<{ queued: { id: string } }>(`tasks/${sessionId}/prompt`, {
+          body: { requestId: randomUUID(), prompt: '继续', queue: true },
+        })
+        const detail = await desktop.json<TaskDetail>(`tasks/${sessionId}`)
+        expect(
+          await actor.json(`tasks/${sessionId}/queue/${queued.id}/steer`, { body: { runId: detail.summary.runId, contentRevision: 0 } }),
+        ).toEqual({
+          steered: true,
+        })
+        if (change === 'revoked queue writer')
+          expect((await desktop.request(`devices/${source.id}`, { method: 'DELETE' })).status).toBe(200)
+      } else
         expect(
           await source.json(`tasks/${sessionId}/prompt`, { body: { requestId: randomUUID(), prompt: '继续', steer: true } }),
         ).toMatchObject({

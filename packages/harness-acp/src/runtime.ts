@@ -108,6 +108,7 @@ import {
   type ModelRoute,
   type ProjectFolder,
   type PromptOptions,
+  type QueuedSteerOptions,
   type ServiceDeclaration,
   type SetConfigOptions,
   type SteerOutcome,
@@ -3283,13 +3284,17 @@ export class AgentRuntime implements Bridge {
    * retry after a lost answer is refused instead of sending the text twice; the agent mints its own message for each
    * request and cannot tell a resend from a new one.
    */
-  async steer(sessionId: string, prompt: string, requestId: string): Promise<SteerOutcome> {
+  steerQueued(sessionId: string, prompt: string, requestId: string, options: QueuedSteerOptions): Promise<SteerOutcome> {
+    return this.steer(sessionId, prompt, requestId, options)
+  }
+
+  async steer(sessionId: string, prompt: string, requestId: string, queued?: QueuedSteerOptions): Promise<SteerOutcome> {
     await this.ready()
     assertPrompt(prompt, requestId)
     this.assertNoModeCommand(prompt)
     const userText = harnessPromptSource({ method: 'steer', sessionId, requestId }, prompt)
     const key = digest(['steer', sessionId, requestId])
-    const payloadHash = digest(prompt)
+    const payloadHash = queued ? digest([prompt, queued.runId, queued.queuedAt]) : digest(prompt)
     const receipt = this.state.receipts[key]
     const pending = this.steering.get(key)
     if (receipt || pending) {
@@ -3302,14 +3307,14 @@ export class AgentRuntime implements Bridge {
     this.assertUsable(task)
     this.assertNotChecking(sessionId)
     const run = this.runs.get(sessionId)
-    if (!run || !this.steerable(run)) {
+    if (!run || !this.steerable(run) || (queued && run.id !== queued.runId)) {
       // The caller now sends or queues the text as a turn; a retry must get that answer, not steer it into the turn.
       this.state.receipts[key] = { taskId: sessionId, payloadHash, kind: 'steer', steer: 'prompt-required' }
       this.mark()
       await this.flush()
       return 'prompt-required'
     }
-    const promise = this.steerOnce(run, key, payloadHash, prompt, requestId, userText).finally(() => this.steering.delete(key))
+    const promise = this.steerOnce(run, key, payloadHash, prompt, requestId, userText, queued).finally(() => this.steering.delete(key))
     this.steering.set(key, { payloadHash, promise })
     return promise
   }
@@ -3325,23 +3330,33 @@ export class AgentRuntime implements Bridge {
     prompt: string,
     requestId: string,
     userText?: string,
+    queued?: QueuedSteerOptions,
   ): Promise<SteerOutcome> {
     const live = run.live!
     this.state.receipts[key] = { taskId: run.taskId, payloadHash, kind: 'steer', steer: 'sending' }
-    run.steers = (run.steers ?? 0) + 1
-    run.steeredAt = this.clock()
     this.mark()
     await this.flush()
-    // The turn may have ended, or been stopped, while the receipt was written.
+    if (queued) {
+      try {
+        await queued.authorize()
+      } catch (error) {
+        delete this.state.receipts[key]
+        this.mark()
+        await this.flush()
+        throw error
+      }
+    }
+    // Writing the receipt and rechecking the devices may outlast the turn the person saw.
     if (this.runs.get(run.taskId) !== run || !this.steerable(run)) {
       this.state.receipts[key] = { taskId: run.taskId, payloadHash, kind: 'steer', steer: 'prompt-required' }
-      run.steers--
       this.mark()
       await this.flush()
       return 'prompt-required'
     }
     let outcome = 'invalid'
     let added = false
+    run.steers = (run.steers ?? 0) + 1
+    run.steeredAt = this.clock()
     const finishAuthority = beginHarnessSteer(run.taskId, requestId, run.id)
     // The agent may stream its reply to the text right behind its answer, in the same read: the turn splits before it.
     const add = (result: unknown): void => {
@@ -3351,7 +3366,15 @@ export class AgentRuntime implements Bridge {
       const task = this.state.tasks[run.taskId]
       if (!task) return
       if (this.runs.get(run.taskId) === run && run.segment) this.settleSegment(run, task, 'completed')
-      task.messages.push({ id: randomUUID(), role: 'user', text: prompt, requestId, steered: true, createdAt: this.now() })
+      task.messages.push({
+        id: randomUUID(),
+        role: 'user',
+        text: prompt,
+        requestId,
+        steered: true,
+        createdAt: this.now(),
+        ...(queued ? { queuedAt: queued.queuedAt } : {}),
+      })
       this.state.receipts[key] = { taskId: run.taskId, payloadHash, kind: 'steer', steer: 'injected' }
       this.touch(task)
       this.mark()
@@ -3380,6 +3403,8 @@ export class AgentRuntime implements Bridge {
     } finally {
       finishAuthority?.(added || outcome === 'invalid')
     }
+    // An unrecognizable acknowledgment is insufficient evidence to put a queued message back on automatic delivery.
+    if (queued && outcome === 'invalid') throw steerUnknown()
     if (outcome !== 'injected') {
       run.steers--
       if (outcome === 'promptRequired')

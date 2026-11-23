@@ -57,11 +57,15 @@ const recordSchema = z.strictObject({
     .optional(),
   requestId: z.string().uuid(),
   sendRequestId: z.string().uuid(),
+  /** Distinguishes a steer into this turn from a new prompt, including after a crash. */
+  steerRunId: z.string().min(1).max(128).optional(),
   hash: z.string().regex(/^[a-f0-9]{64}$/u),
   text: text.optional(),
   queuedAt: z.string().datetime(),
   state: z.enum(['waiting', 'parked', 'dropped', 'sending', 'uncertain', 'sent', 'removed']),
   waitRunId: z.string().max(128),
+  orderRevision: z.number().int().nonnegative().optional(),
+  contentRevision: z.number().int().nonnegative().optional(),
   reason: z.string().max(200).optional(),
   model: z
     .strictObject({ providerId: z.string().min(1).max(64), model: z.string().min(1).max(200), effort: modelEffort.optional() })
@@ -69,6 +73,9 @@ const recordSchema = z.strictObject({
 })
 const fileSchema = z.strictObject({ version: z.literal(1), items: z.array(recordSchema).max(MAX_RECEIPTS) })
 type Record = z.infer<typeof recordSchema>
+function receivedSteer(item: Record, detail: TaskDetail): boolean {
+  return detail.messages.some(message => message.role === 'user' && message.steered && message.requestId === item.sendRequestId)
+}
 /**
  * Every new item must read back: the file is checked whole when the Host starts, so one item it would refuse there (too
  * long, a malformed request ID) would keep the Host from starting. Such an item is refused here and never written.
@@ -97,6 +104,22 @@ export interface QueueOptions {
    * (queued, sent) is marked as never committed.
    */
   dropped?(actor: QueueActor, sessionId: string, itemId: string): void
+  canSteer?(sessionId: string): boolean
+  steer?(
+    actor: QueueActor,
+    sessionId: string,
+    input: {
+      sender: QueueActor
+      text: string
+      itemId: string
+      requestId: string
+      runId: string
+      queuedAt: string
+      editor?: QueueActor
+      coauthors?: readonly string[]
+      authorize(): Promise<void>
+    },
+  ): Promise<'injected' | 'prompt-required'>
   send(
     actor: QueueActor,
     sessionId: string,
@@ -136,17 +159,32 @@ export class PromptQueues {
     }
     const entries = new Map<string, Record>()
     const identities = new Set<string>()
+    const unconfirmed = new Map<string, Record[]>()
     for (const item of items) {
       const identity = JSON.stringify([item.sessionId, item.deviceId, item.requestId])
       if (entries.has(item.id) || identities.has(identity)) throw new AppError(500, 'queue-corrupt', '排队记录有重复标识，原文件已保留')
+      if (item.steerRunId && (item.state === 'parked' || item.state === 'waiting' || item.state === 'dropped'))
+        throw new AppError(500, 'queue-corrupt', '追加记录状态无效，原文件已保留')
       identities.add(identity)
       if (item.state === 'sending') item.state = 'uncertain'
+      if (item.state === 'uncertain' && item.steerRunId) {
+        const session = unconfirmed.get(item.sessionId) ?? []
+        session.push(item)
+        unconfirmed.set(item.sessionId, session)
+      }
       if (item.state === 'waiting') {
         item.state = 'parked'
         item.reason = 'Host 已重启，请确认后发送'
       }
       if (VISIBLE.has(item.state) && !item.text) throw new AppError(500, 'queue-corrupt', '排队内容缺失，原文件已保留')
       entries.set(item.id, item)
+    }
+    // The driver may already have recorded acceptance when the Host stopped. A quiet session need not emit another event.
+    for (const [sessionId, pending] of unconfirmed) {
+      const detail = await options.detail(sessionId).catch(() => undefined)
+      if (!detail) continue
+      for (const item of pending)
+        if (receivedSteer(item, detail)) entries.set(item.id, { ...item, state: 'sent', text: undefined, reason: undefined })
     }
     const queue = new PromptQueues(options, entries)
     if (items.length) await queue.commit(new Map(entries))
@@ -200,10 +238,15 @@ export class PromptQueues {
       text: item.text!,
       queuedAt: item.queuedAt,
       state: item.state === 'sending' ? 'waiting' : item.state === 'uncertain' ? 'parked' : (item.state as PromptQueueItem['state']),
+      ...(item.orderRevision !== undefined ? { orderRevision: item.orderRevision } : {}),
+      ...(item.contentRevision !== undefined ? { contentRevision: item.contentRevision } : {}),
+      ...(this.canSteer(item) ? { canSteer: true as const } : {}),
       ...(item.state === 'sending'
-        ? { reason: '正在发送' }
+        ? { reason: '正在发送', delivery: 'sending' as const }
         : item.state === 'uncertain'
-          ? { reason: '发送结果未确认，请重试这一项' }
+          ? item.steerRunId
+            ? { reason: '追加结果未确认，请核对会话记录', delivery: 'steer-unknown' as const }
+            : { reason: '发送结果未确认，请重试这一项', delivery: 'uncertain' as const }
           : item.reason
             ? { reason: item.reason }
             : {}),
@@ -233,7 +276,8 @@ export class PromptQueues {
         binding = prepared?.binding
       await this.options.check(actor, sessionId, model, binding)
       const detail = await this.options.detail(sessionId)
-      if (!ACTIVE.has(detail.summary.status) && !this.items(sessionId).length) {
+      const items = this.items(sessionId)
+      if (!ACTIVE.has(detail.summary.status) && !items.length) {
         const next = new Map(this.entries)
         if (next.size >= MAX_RECEIPTS || [...next.values()].filter(item => item.deviceId === actor.deviceId).length >= RECEIPTS_PER_DEVICE)
           throw new AppError(409, 'queue-full', '排队回执已满，请删除不需要的旧会话后重试')
@@ -292,7 +336,7 @@ export class PromptQueues {
         }
         return { accepted: true }
       }
-      if (this.items(sessionId).length >= 5) throw new AppError(409, 'queue-full', '最多排队 5 条，请先移除一条')
+      if (items.length >= 5) throw new AppError(409, 'queue-full', '最多排队 5 条，请先移除一条')
       if ([...this.entries.values()].filter(item => VISIBLE.has(item.state)).length >= 1000)
         throw new AppError(409, 'queue-full', 'Host 的排队内容已满，请先移除不需要的内容')
       const next = new Map(this.entries)
@@ -309,13 +353,14 @@ export class PromptQueues {
         queuedAt: new Date(this.now()).toISOString(),
         waitRunId: detail.summary.runId ?? '',
         state:
-          ACTIVE.has(detail.summary.status) && !!detail.summary.runId && !this.items(sessionId).some(item => item.state !== 'waiting')
+          ACTIVE.has(detail.summary.status) && !!detail.summary.runId && !items.some(item => item.state !== 'waiting')
             ? 'waiting'
             : 'parked',
         ...(model ? { model } : {}),
         ...(binding ? { binding } : {}),
         ...(coauthors ? { coauthors } : {}),
       }
+      if (items[0]?.orderRevision !== undefined) item.orderRevision = items[0].orderRevision
       if (item.state === 'parked') item.reason = '队列已暂停，请确认后发送'
       valid(item)
       await this.options.beforeEnqueue(actor, sessionId, item.id)
@@ -343,7 +388,15 @@ export class PromptQueues {
         previous !== undefined && previous !== actor.deviceId && previous !== item.deviceId && !item.coauthors?.includes(previous)
           ? checkedCoauthors([...(item.coauthors ?? []), previous])
           : item.coauthors
-      await this.patch(item, { text: value, sendRequestId: randomUUID(), editor: actor, ...(kept ? { coauthors: kept } : {}) })
+      const contentRevision = (item.contentRevision ?? 0) + 1
+      if (!Number.isSafeInteger(contentRevision)) throw new AppError(409, 'queue-item-invalid', '这条排队内容无法再修改。')
+      await this.patch(item, {
+        text: value,
+        contentRevision,
+        sendRequestId: randomUUID(),
+        editor: actor,
+        ...(kept ? { coauthors: kept } : {}),
+      })
     })
   }
 
@@ -363,6 +416,7 @@ export class PromptQueues {
       const item = this.find(sessionId, itemId)
       if (item.state === 'sent') return
       if (!VISIBLE.has(item.state) || item.state === 'dropped') throw new AppError(409, 'queue-settled', '这一项已移除或已失去发送权限')
+      if (item.steerRunId) throw new AppError(409, 'steer-unknown', '追加结果未确认，请核对会话记录')
       if (this.items(sessionId)[0]?.id !== itemId) throw new AppError(409, 'queue-order', '请先发送或移除前面的内容')
       const detail = await this.options.detail(sessionId)
       if (ACTIVE.has(detail.summary.status) || detail.approvals.length) throw new AppError(409, 'task-running', '请等当前轮次结束')
@@ -371,18 +425,148 @@ export class PromptQueues {
     })
   }
 
+  reorder(
+    sessionId: string,
+    input: { baseOrder: string[]; order: string[]; baseRevision: number },
+    authorize: () => Promise<void>,
+    beforeChange?: () => Promise<void>,
+  ): Promise<void> {
+    return this.lock(async () => {
+      this.assertOpen()
+      await authorize()
+      const items = this.items(sessionId)
+      const { baseOrder, order, baseRevision } = input
+      if (
+        order.length !== baseOrder.length
+        || new Set(baseOrder).size !== baseOrder.length
+        || new Set(order).size !== order.length
+        || !order.every(id => baseOrder.includes(id))
+      )
+        throw new AppError(400, 'invalid-input', '请提供同一组排队内容的完整顺序。')
+      if (items.length === order.length && items.every((item, i) => item.id === order[i])) return
+      if (
+        (items[0]?.orderRevision ?? 0) !== baseRevision
+        || !Number.isSafeInteger(baseRevision + 1)
+        || items.length !== baseOrder.length
+        || items.some((item, i) => item.id !== baseOrder[i] || item.state === 'sending' || item.state === 'uncertain')
+      )
+        throw new AppError(409, 'queue-order', '队列已变化，请重新查看后调整顺序。')
+      if (beforeChange) {
+        await beforeChange()
+        await authorize()
+      }
+      // Map insertion order is the order written to disk and consumed by the automatic dispatcher.
+      const next = new Map(this.entries)
+      for (const id of order) next.delete(id)
+      for (const id of order) next.set(id, { ...this.find(sessionId, id), orderRevision: baseRevision + 1 })
+      await this.commit(next)
+      this.options.changed(sessionId)
+    })
+  }
+
+  private canSteer(item: Record): boolean {
+    return (
+      (item.state === 'parked' || item.state === 'waiting')
+      && !item.model
+      && !item.binding
+      && !!this.options.steer
+      && (this.options.canSteer?.(item.sessionId) ?? true)
+    )
+  }
+
+  steer(
+    sessionId: string,
+    itemId: string,
+    input: { runId: string; contentRevision: number },
+    sender: QueueActor,
+    authorize: () => Promise<void>,
+  ): Promise<void> {
+    return this.lock(async () => {
+      this.assertOpen()
+      await authorize()
+      const item = this.find(sessionId, itemId)
+      const { runId, contentRevision } = input
+      if ((item.contentRevision ?? 0) !== contentRevision)
+        throw new AppError(409, 'queue-content-changed', '这条排队内容已被修改，请核对后重新追加。')
+      if (item.state === 'sent' && item.steerRunId === runId) return
+      const detail = await this.options.detail(sessionId)
+      if ((item.state === 'sending' || item.state === 'uncertain') && item.steerRunId) {
+        if (item.steerRunId === runId && (await this.confirmSteer(item, detail))) return
+        throw new AppError(409, 'steer-unknown', '追加结果未确认，请核对会话记录')
+      }
+      if (!this.canSteer(item) || !this.options.steer || !detail.steer || detail.summary.runId !== runId)
+        throw new AppError(409, 'queue-steer-unavailable', '该项目前不能追加到这一轮，请查看队列。')
+
+      if (!(await this.checkWriters(item))) throw new AppError(409, 'queue-paused', '排队内容的原授权已变化，请重新查看。')
+      // The original request may already have tried to steer and received prompt-required before it was queued.
+      const requestId = randomUUID()
+      const sending: Record = { ...item, state: 'sending', steerRunId: runId, sendRequestId: requestId }
+      await this.save(sending)
+      let outcome: 'injected' | 'prompt-required'
+      try {
+        outcome = await this.options.steer(item, sessionId, {
+          sender,
+          runId,
+          requestId,
+          itemId,
+          text: item.text!,
+          queuedAt: item.queuedAt,
+          ...(item.editor ? { editor: item.editor } : {}),
+          ...(item.coauthors ? { coauthors: item.coauthors } : {}),
+          authorize: async () => {
+            await this.options.check(item, sessionId, item.model, item.binding)
+            if (item.editor) await this.options.check(item.editor, sessionId, item.model, item.binding)
+            await authorize()
+          },
+        })
+      } catch (error) {
+        if (error instanceof AppError && error.code !== 'steer-unknown' && refusedBeforeAccepting(error.status, error.code)) {
+          await this.save(item)
+          throw error
+        }
+        await this.patch(sending, { state: 'uncertain' })
+        await this.park(sessionId, '上一条追加尚未确认，请检查队列')
+        throw new AppError(409, 'steer-unknown', '追加结果未确认，请核对会话记录')
+      }
+      if (outcome !== 'injected') {
+        await this.save(item)
+        throw new AppError(409, 'queue-steer-unavailable', '当前轮次没有接受追加，队列会按原顺序处理。')
+      }
+      await this.patch(sending, { state: 'sent', text: undefined, reason: undefined })
+    })
+  }
+
+  private async confirmSteer(item: Record, detail: TaskDetail): Promise<boolean> {
+    if (!receivedSteer(item, detail)) {
+      // The lock is ours again. A surviving sending record means its final write did not settle.
+      if (item.state === 'sending') await this.patch(item, { state: 'uncertain' })
+      return false
+    }
+    await this.patch(item, { state: 'sent', text: undefined, reason: undefined })
+    return true
+  }
+
   changed(sessionId: string): Promise<void> {
     return this.lock(async () => {
       if (this.closed) return
-      const item = this.items(sessionId)[0]
-      if (!item || item.state !== 'waiting') return
+      const items = this.items(sessionId)
+      const item = items[0]
+      const unconfirmed = items.filter(entry => entry.steerRunId && (entry.state === 'uncertain' || entry.state === 'sending'))
+      if (!unconfirmed.length && item?.state !== 'waiting') return
       let detail: TaskDetail
       try {
         detail = await this.options.detail(sessionId)
       } catch {
-        await this.park(sessionId, '会话已不可用，请重新检查')
+        if (items.some(entry => entry.state === 'waiting')) await this.park(sessionId, '会话已不可用，请重新检查')
         return
       }
+      let unresolved = false
+      for (const entry of unconfirmed) if (!(await this.confirmSteer(entry, detail))) unresolved = true
+      if (unresolved) {
+        if (items.some(pending => pending.state === 'waiting')) await this.park(sessionId, '上一条追加尚未确认，请检查队列')
+        return
+      }
+      if (item?.state !== 'waiting') return
       if (ACTIVE.has(detail.summary.status)) return
       if (
         detail.summary.runOutcome !== 'completed'
@@ -423,10 +607,11 @@ export class PromptQueues {
     })
   }
 
-  private async dispatch(item: Record, resume: boolean, authorize?: () => Promise<void>): Promise<void> {
+  private async checkWriters(item: Record): Promise<boolean> {
     try {
       await this.options.check(item, item.sessionId, item.model, item.binding)
       if (item.editor) await this.options.check(item.editor, item.sessionId, item.model, item.binding)
+      return true
     } catch (error) {
       if (error instanceof AppError && (error.code === 'queue-paused' || error.code === 'queue-context-changed')) {
         await this.patch(item, {
@@ -437,12 +622,16 @@ export class PromptQueues {
               : '验证窗口已变化，请检查后重新加入队列',
         })
         await this.park(item.sessionId, '原授权已变化，队列已暂停')
-        return
+        return false
       }
       await this.patch(item, { state: 'dropped', reason: '设备权限或会话配置已变化，未发送' })
       await this.park(item.sessionId, '上一条未发送，请检查队列')
-      return
+      return false
     }
+  }
+
+  private async dispatch(item: Record, resume: boolean, authorize?: () => Promise<void>): Promise<void> {
+    if (!(await this.checkWriters(item))) return
     this.assertOpen()
     await this.patch(item, { state: 'sending', reason: undefined })
     const beforeSend =
@@ -513,8 +702,11 @@ export class PromptQueues {
     this.options.changed(sessionId)
   }
   private async patch(item: Record, patch: Partial<Record>): Promise<void> {
+    await this.save({ ...item, ...patch })
+  }
+  private async save(item: Record): Promise<void> {
     const next = new Map(this.entries)
-    next.set(item.id, { ...item, ...patch })
+    next.set(item.id, item)
     await this.commit(next)
     this.options.changed(item.sessionId)
   }

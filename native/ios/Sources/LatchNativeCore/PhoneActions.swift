@@ -146,6 +146,40 @@ public struct PhoneTurnActions: Equatable, Sendable {
     }
 }
 
+/** Queue writes are bound to the order and running turn shown by the Host. */
+public enum PhoneQueueControl {
+    case reorder, steer
+
+    public init?(_ write: NativePendingWrite) {
+        guard let method = NativeHTTPMethod(rawValue: write.method), let action = Self.action(method, write.path) else { return nil }
+        self = action
+    }
+    static func action(_ method: NativeHTTPMethod, _ path: String) -> Self? {
+        let id = "[A-Za-z0-9_-]{1,160}"
+        let queue = "/link/api/tasks/" + id + "/queue"
+        if method == .put, LinkBytes.matches(path, queue) { return .reorder }
+        if method == .post, LinkBytes.matches(path, queue + "/" + id + "/steer") { return .steer }
+        return nil
+    }
+
+    public static func reorder(session: String, revision: UInt64, base: [String], order: [String]) throws -> NativePendingWrite {
+        let path = "/link/api/tasks/\(session)/queue"
+        guard action(.put, path) == .reorder, revision <= LinkBytes.maximumInteger, (1...5).contains(base.count), base.count == order.count, Set(base).count == base.count,
+              Set(base) == Set(order), base.allSatisfy({ LinkBytes.matches($0, "[A-Za-z0-9_-]{1,160}") }) else { throw NativeFailure.invalidRecord }
+        return try NativePendingWrite(method: .put, path: path, fields: [
+            "baseRevision": .number(Double(revision)), "baseOrder": .array(base.map(NativeJSON.string)), "order": .array(order.map(NativeJSON.string)),
+        ])
+    }
+
+    public static func steer(session: String, item: String, run: String, contentRevision: UInt64) throws -> NativePendingWrite {
+        let path = "/link/api/tasks/\(session)/queue/\(item)/steer"
+        guard action(.post, path) == .steer, contentRevision <= LinkBytes.maximumInteger, LinkBytes.matches(run, "[A-Za-z0-9_-]{1,128}") else { throw NativeFailure.invalidRecord }
+        return try NativePendingWrite(method: .post, path: path, fields: ["runId": .string(run), "contentRevision": .number(Double(contentRevision))])
+    }
+
+    func confirmed(by answer: NativeJSON) -> Bool { answer[self == .steer ? "steered" : "ordered"] == .bool(true) }
+}
+
 /** What the send key does while a turn runs: 追加 into it where the Harness takes that now, else 排队 where the Host queues. */
 public enum PhoneFollowUp: Equatable, Sendable {
     case send, steer, queue, none

@@ -295,6 +295,39 @@ func phoneActionsFixture(_ input: [String: Any]) throws -> [String: Any] {
 
         // 重试 sends the person's words again as a new turn; 复制 takes the turn's prose.
         stage = "retry"
+        stage = "queued steering and order"
+        let queuedSession = try await start("steerable")
+        let active = try await poll(queuedSession) { $0["steer"].bool }
+        guard let run = active["summary"]["runId"].string else { throw FixtureStage(name: "queue run") }
+        let inputs = ["echo queue first", "echo queue second", "check the running turn"]
+        for input in inputs {
+            _ = try await workspace.submit(NativePendingWrite(method: .post, path: "/link/api/tasks/\(queuedSession)/prompt",
+                fields: ["prompt": .string(input), "queue": .bool(true)]))
+        }
+        let initial = try await poll(queuedSession) { $0["queue"].array.count == inputs.count }
+        let rows = initial["queue"].array, ids = rows.compactMap { $0["id"].string }
+        try check(ids.count == 3 && rows.allSatisfy { $0["canSteer"].bool }, "queue eligibility")
+        let order = [ids[1], ids[0], ids[2]]
+        let sort = try PhoneQueueControl.reorder(session: queuedSession, revision: rows.first?["orderRevision"].integer ?? 0, base: ids, order: order)
+        try check(try await workspace.submit(sort)["ordered"].bool, "reorder")
+        try check(try await workspace.submit(sort)["ordered"].bool, "same order")
+        _ = try await poll(queuedSession) { $0["queue"].array.compactMap { $0["id"].string } == order }
+        let oldText = try PhoneQueueControl.steer(session: queuedSession, item: ids[2], run: run, contentRevision: rows[2]["contentRevision"].integer ?? 0)
+        let edited = "also check the fixtures"
+        _ = try await workspace.submit(NativePendingWrite(method: .patch, path: "/link/api/tasks/\(queuedSession)/queue/\(ids[2])", fields: ["text": .string(edited)]))
+        let revised = try await poll(queuedSession) { $0["queue"].array.last?["text"].string == edited }
+        var stale = false
+        do { _ = try await workspace.submit(oldText) } catch NativeFailure.changedElsewhere { stale = true }
+        try check(stale, "changed queued text")
+        guard let revision = revised["queue"].array.last?["contentRevision"].integer, revision > 0 else { throw FixtureStage(name: "queue content revision") }
+        let take = try PhoneQueueControl.steer(session: queuedSession, item: ids[2], run: run, contentRevision: revision)
+        try check(try await workspace.submit(take)["steered"].bool, "steer selected")
+        try check(try await workspace.submit(take)["steered"].bool, "steer selected once")
+        let drained = try await poll(queuedSession) { $0["summary"]["status"].string == "idle" && $0["messages"].array.last?["text"].string == "echo: echo queue first" }
+        try check(drained["queue"].array.isEmpty && drained["messages"].array.filter { $0["role"].string == "user" }.compactMap { $0["text"].string } ==
+            ["steerable", edited, inputs[1], inputs[0]], "queue dispatch order")
+        try check(drained["messages"].array.filter { $0["steered"].bool }.compactMap { $0["text"].string } == [edited], "one selected steer")
+        _ = try await workspace.sessionAction(PhoneSessionWrite.remove(queuedSession))
         let turns = PhoneConversation.turns(steered["messages"].array)
         guard let last = turns.last else { throw FixtureStage(name: "turns") }
         let offered = PhoneTurnActions.of(last, latest: true, running: false, canSend: true, canFork: true)
@@ -372,7 +405,7 @@ func phoneActionsFixture(_ input: [String: Any]) throws -> [String: Any] {
         try check(refusedAction && !listed["tasks"].array.contains { $0["id"].string == forked } && left.isEmpty, "refused action")
         for id in [delegating, steering] { _ = try await workspace.sessionAction(PhoneSessionWrite.remove(id)) }
         await workspace.closeOpening(); await vault.lock()
-        return ["window": true, "subagent": true, "steer": true, "retry": true, "fork": true, "config": true, "clear": true, "search": true, "menu": true]
+        return ["window": true, "subagent": true, "steer": true, "queueControl": true, "retry": true, "fork": true, "config": true, "clear": true, "search": true, "menu": true]
     } catch {
         await workspace.closeOpening(); await vault.lock()
         if let failed = error as? FixtureStage { throw failed }

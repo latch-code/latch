@@ -141,6 +141,215 @@ describe('persistent Host prompt queues', () => {
     expect(await queue.submit(actor, 'task', first)).toEqual({ accepted: true })
     expect(options.send).toHaveBeenCalledTimes(2)
   })
+  it('changes the observed order exactly once and restores the same order after a restart', async () => {
+    const { queue, options } = await fixture()
+    for (const words of ['A', 'B', 'C']) await queue.submit(actor, 'task', input(words))
+    const before = queue.view('task').map(item => item.id)
+    const after = before.toReversed()
+    const authorize = vi.fn(async () => {})
+    const audit = vi.fn(async () => {})
+    const change = { baseOrder: before, order: after, baseRevision: 0 }
+    await queue.reorder('task', change, authorize, audit)
+    await queue.reorder('task', change, authorize, audit)
+    expect(audit).toHaveBeenCalledTimes(1)
+    await expect(queue.reorder('task', { ...change, order: [before[1]!, before[0]!, before[2]!] }, authorize)).rejects.toMatchObject({
+      code: 'queue-order',
+    })
+    await expect(queue.reorder('task', { ...change, order: [before[1]!, before[1]!, before[0]!] }, authorize)).rejects.toMatchObject({
+      status: 400,
+    })
+    const reopened = await PromptQueues.open(options)
+    expect(reopened.view('task').map(item => item.text)).toEqual(['C', 'B', 'A'])
+    await reopened.reorder('task', { order: before, baseOrder: after, baseRevision: 1 }, authorize)
+    await expect(reopened.reorder('task', change, authorize)).rejects.toMatchObject({ code: 'queue-order' })
+    await reopened.submit(actor, 'task', input('D'))
+    await reopened.remove('task', before[0]!)
+    expect(reopened.view('task').map(item => item.orderRevision)).toEqual([2, 2, 2])
+    for (const item of reopened.view('task')) await reopened.remove('task', item.id)
+    await reopened.submit(actor, 'task', input('E'))
+    expect(reopened.view('task')[0]!.orderRevision ?? 0).toBe(0)
+    await expect(reopened.reorder('task', change, authorize)).rejects.toMatchObject({ code: 'queue-order' })
+  })
+
+  it('authorizes after taking the lock even to acknowledge an unchanged order or report a conflict', async () => {
+    const { queue } = await fixture()
+    for (const words of ['A', 'B', 'C']) await queue.submit(actor, 'task', input(words))
+    const baseOrder = queue.view('task').map(item => item.id)
+    const change = { baseOrder, order: baseOrder.toReversed(), baseRevision: 0 }
+    let release!: () => void
+    const audit = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          release = resolve
+        }),
+    )
+    const writing = queue.reorder('task', change, async () => {}, audit)
+    await vi.waitFor(() => expect(audit).toHaveBeenCalledOnce())
+    let allowed = true
+    const authorize = async () => {
+      if (!allowed) throw new AppError(403, 'scope-required', 'No run')
+    }
+    const repeat = queue.reorder('task', change, authorize, audit)
+    const stale = queue.reorder('task', { ...change, order: [baseOrder[1]!, baseOrder[0]!, baseOrder[2]!] }, authorize, audit)
+    allowed = false
+    release()
+    await writing
+    const answers = await Promise.allSettled([repeat, stale])
+    for (const answer of answers) expect(answer).toMatchObject({ status: 'rejected', reason: { code: 'scope-required' } })
+    expect(audit).toHaveBeenCalledTimes(1)
+    allowed = true
+    await expect(
+      queue.reorder('task', { baseOrder: change.order, order: baseOrder, baseRevision: 1 }, authorize, async () => {
+        allowed = false
+      }),
+    ).rejects.toMatchObject({ code: 'scope-required' })
+    expect(queue.view('task').map(item => item.id)).toEqual(change.order)
+  })
+
+  it('steers the selected item once even when automatic FIFO delivery and a duplicate request arrive during the steer', async () => {
+    const { queue, detail, options } = await fixture()
+    let accept!: () => void
+    options.steer = vi.fn(
+      () =>
+        new Promise<'injected'>(resolve => {
+          accept = () => resolve('injected')
+        }),
+    )
+    detail.steer = true
+    await queue.submit(actor, 'task', input('After the turn'))
+    const original = input('During the turn')
+    await queue.submit(actor, 'task', original)
+    const second = queue.view('task')[1]!
+    const send = () => queue.steer('task', second.id, { runId: 'run-1', contentRevision: 0 }, actor, async () => {})
+    const first = send()
+    await vi.waitFor(() => expect(options.steer).toHaveBeenCalledOnce())
+    completed(detail)
+    delete detail.steer
+    const drain = queue.changed('task')
+    const retry = send()
+    accept()
+    await Promise.all([first, drain, retry])
+    const delivery = vi.mocked(options.steer).mock.calls[0]![2]
+    expect(delivery).toMatchObject({ text: original.prompt, runId: 'run-1', queuedAt: second.queuedAt })
+    expect(delivery.requestId).not.toBe(original.requestId)
+    expect(queue.lookup('task', { requestId: original.requestId })).toMatchObject({ state: 'sent', sendRequestId: delivery.requestId })
+    expect(options.steer).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(options.send).mock.calls.map(call => call[2].text)).toEqual(['After the turn'])
+    expect(queue.view('task')).toEqual([])
+  })
+
+  it('keeps the original order and delivery IDs on a stale turn, an unsupported item or a definite refusal', async () => {
+    const { queue, detail, options } = await fixture()
+    options.steer = vi.fn(async () => 'prompt-required' as const)
+    detail.steer = true
+    const a = input('With this model'),
+      b = input('During the turn')
+    await queue.submit(actor, 'task', { ...a, model: { providerId: 'p', model: 'm' } })
+    await queue.submit(actor, 'task', b)
+    const [first, second] = queue.view('task')
+    const steer = (id: string, runId = 'run-1') => queue.steer('task', id, { runId, contentRevision: 0 }, actor, async () => {})
+    expect(first!.canSteer).toBeUndefined()
+    expect(second!.canSteer).toBe(true)
+    await expect(steer(first!.id)).rejects.toMatchObject({ code: 'queue-steer-unavailable' })
+    await expect(steer(second!.id, 'old-run')).rejects.toMatchObject({ code: 'queue-steer-unavailable' })
+    options.canSteer = () => false
+    expect(queue.view('task')[1]!.canSteer).toBeUndefined()
+    await expect(steer(second!.id)).rejects.toMatchObject({ code: 'queue-steer-unavailable' })
+    expect(options.steer).not.toHaveBeenCalled()
+    options.canSteer = () => true
+    await expect(steer(second!.id)).rejects.toMatchObject({ code: 'queue-steer-unavailable' })
+    vi.mocked(options.steer).mockRejectedValueOnce(new AppError(409, 'steer-failed', 'Refused'))
+    await expect(steer(second!.id)).rejects.toMatchObject({ code: 'steer-failed' })
+    expect(queue.view('task')).toEqual([first, second])
+    expect(queue.lookup('task', { id: second!.id })?.sendRequestId).toBe(b.requestId)
+    expect(options.send).not.toHaveBeenCalled()
+  })
+
+  it('keeps an unknown steer out of fresh turns across restart and settles only from its own user message', async () => {
+    const { queue, detail, options } = await fixture()
+    options.steer = vi.fn(async () => {
+      throw new AppError(409, 'steer-unknown', 'Lost reply')
+    })
+    detail.steer = true
+    await queue.submit(actor, 'task', input('May have arrived'))
+    await queue.submit(actor, 'task', input('Later'))
+    const [first, second] = queue.view('task').map(item => item.id) as [string, string]
+    const authorize = async () => {}
+    await expect(queue.steer('task', first, { runId: 'run-1', contentRevision: 0 }, actor, authorize)).rejects.toMatchObject({
+      code: 'steer-unknown',
+    })
+    const reopened = await PromptQueues.open(options)
+    expect(reopened.view('task')).toMatchObject([{ state: 'parked', delivery: 'steer-unknown' }, { state: 'parked' }])
+    await expect(reopened.steer('task', first, { runId: 'run-1', contentRevision: 1 }, actor, authorize)).rejects.toMatchObject({
+      code: 'queue-content-changed',
+    })
+    completed(detail)
+    delete detail.steer
+    await expect(
+      reopened.reorder('task', { baseOrder: [first, second], order: [second, first], baseRevision: 0 }, authorize),
+    ).rejects.toMatchObject({ code: 'queue-order' })
+    await expect(reopened.send('task', first)).rejects.toMatchObject({ code: 'steer-unknown' })
+    await expect(reopened.steer('task', first, { runId: 'run-1', contentRevision: 0 }, actor, authorize)).rejects.toMatchObject({
+      code: 'steer-unknown',
+    })
+    const requestId = vi.mocked(options.steer).mock.calls[0]![2].requestId
+    detail.messages.push({ id: 'other', role: 'user', text: 'May have arrived', requestId: randomUUID(), steered: true, createdAt: '' })
+    await reopened.changed('task')
+    expect(reopened.view('task')).toHaveLength(2)
+    detail.messages.push({ id: 'steer', role: 'user', text: 'May have arrived', requestId, steered: true, createdAt: '' })
+    expect((await PromptQueues.open(options)).view('task').map(item => item.id)).toEqual([second])
+    await reopened.changed('task')
+    await reopened.steer('task', first, { runId: 'run-1', contentRevision: 0 }, actor, authorize)
+    expect(reopened.view('task')).toMatchObject([{ id: second, state: 'parked' }])
+    expect(options.steer).toHaveBeenCalledTimes(1)
+    expect(options.send).not.toHaveBeenCalled()
+  })
+
+  it('steers only the version the person read, including on replay after restart', async () => {
+    const { queue, detail, options } = await fixture()
+    options.steer = vi.fn(async () => 'injected' as const)
+    detail.steer = true
+    await queue.submit(actor, 'task', input('A'))
+    const first = queue.view('task')[0]!
+    await queue.edit('task', first.id, 'B', actor)
+    const edited = queue.view('task')[0]!
+    expect(edited.contentRevision).toBe(1)
+    const stale = { runId: 'run-1', contentRevision: first.contentRevision ?? 0 },
+      seen = { runId: 'run-1', contentRevision: edited.contentRevision! }
+    const steer = (q: PromptQueues, input: typeof stale) => q.steer('task', first.id, input, actor, async () => {})
+    await expect(steer(queue, stale)).rejects.toMatchObject({ code: 'queue-content-changed' })
+    expect(options.steer).not.toHaveBeenCalled()
+    await steer(queue, seen)
+    const reopened = await PromptQueues.open(options)
+    await expect(steer(reopened, stale)).rejects.toMatchObject({ code: 'queue-content-changed' })
+    await steer(reopened, seen)
+    expect(options.steer).toHaveBeenCalledOnce()
+    expect(vi.mocked(options.steer).mock.calls[0]![2].text).toBe('B')
+  })
+
+  it('requires the operator and all queue writer checks before steering edited text', async () => {
+    const { queue, detail, options } = await fixture()
+    detail.steer = true
+    options.steer = vi.fn(async () => 'injected' as const)
+    await queue.submit(actor, 'task', input('Before'))
+    const id = queue.view('task')[0]!.id
+    const editor = { ...actor, deviceId: 'editor' },
+      operator = { ...actor, deviceId: 'operator' }
+    await queue.edit('task', id, 'After', editor)
+    const allowed = vi.fn(async () => {})
+    const revoked = new AppError(403, 'scope-required', 'No run')
+    allowed.mockRejectedValueOnce(revoked)
+    await expect(queue.steer('task', id, { runId: 'run-1', contentRevision: 1 }, operator, allowed)).rejects.toBe(revoked)
+    expect(queue.view('task')[0]!.state).toBe('waiting')
+    vi.mocked(options.check).mockImplementation(async writer => {
+      if (writer.deviceId === editor.deviceId) throw revoked
+    })
+    await expect(queue.steer('task', id, { runId: 'run-1', contentRevision: 1 }, operator, allowed)).rejects.toMatchObject({
+      code: 'queue-paused',
+    })
+    expect(queue.view('task')[0]!.state).toBe('dropped')
+    expect(options.steer).not.toHaveBeenCalled()
+  })
   it.each(['failed', 'cancelled', 'interrupted'] as const)(
     'parks after %s and resumes only after a person sends the first item',
     async status => {

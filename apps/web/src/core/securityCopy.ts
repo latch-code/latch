@@ -2018,6 +2018,10 @@ const HOST_REFUSALS: Readonly<Record<string, string>> = defineCopy<Record<string
     'harness-busy': 'Harness 正忙，请稍后再试。',
     'task-running': '请等这一轮结束。',
     'queue-full': '排队已满。请删除不需要的旧会话后再试。',
+    'queue-order': '请核对最新的队列顺序后重试。',
+    'queue-content-changed': '这条排队消息已被编辑。请核对文字后再追加。',
+    'queue-steer-unavailable': '这条消息现在无法追加到本轮，请查看队列。',
+    'steer-unknown': '追加结果未确认，请核对会话记录。',
     'port-in-use': '端口已被占用，Latch 没有启动。',
     // A session's folder, and an Agent's work folder (its home), which the Host sets up itself.
     'workspace-changed': '这个会话的文件夹已不在项目中或找不到了，不能继续。',
@@ -2104,6 +2108,10 @@ const HOST_REFUSALS: Readonly<Record<string, string>> = defineCopy<Record<string
     'harness-busy': 'The Harness is busy. Try again shortly.',
     'task-running': 'Wait for this turn to end.',
     'queue-full': 'The queue is full. Delete old sessions you no longer need, then try again.',
+    'queue-order': 'Check the current queue order, then try again.',
+    'queue-content-changed': 'This queued message was edited. Review its text before adding it to the turn.',
+    'queue-steer-unavailable': 'This message cannot be added to the current turn. Check the queue.',
+    'steer-unknown': 'Delivery to the current turn is unconfirmed. Check the conversation.',
     'port-in-use': 'The port is in use, so Latch did not start.',
     'workspace-changed': 'This session’s folder is no longer in the project or cannot be found, so it cannot continue.',
     'helper-home-unavailable':

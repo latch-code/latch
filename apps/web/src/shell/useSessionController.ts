@@ -566,7 +566,7 @@ export function useSessionController({
   const settingsLanded = async () => {
     if (inputId !== null) await configFlights.current.get(inputId)
   }
-  const sendDraft = async () => {
+  const sendDraft = async (queueForLater = false) => {
     if (inputId === null && !submission.fork && (choice.workspaceId ?? 'default') === 'default' && noProjectRefusal) {
       askProject()
       return
@@ -578,7 +578,7 @@ export function useSessionController({
     await settingsLanded()
     const ids = await attachmentDraft.wait()
     if (ids && inputId !== null) clearUnverified(inputId)
-    const followUp = inputId === null || !active ? undefined : steer ? 'steer' : canQueue ? 'queue' : undefined
+    const followUp = inputId === null || !active ? undefined : steer && !queueForLater ? 'steer' : canQueue ? 'queue' : undefined
     if (ids && (await submission.submit(undefined, undefined, followUp, ids, mentionChoice.refs))) {
       attachmentDraft.clear()
       setFileMentions([])

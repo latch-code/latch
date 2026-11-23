@@ -43,6 +43,7 @@ const COPY = defineCopy(
     steer: '追加',
     queue: '排队',
     queueSend: '排队发送',
+    queueNext: '排到下一轮',
     runAction: '运行动作',
     send: '发送',
     otherPending: '另一个会话有消息未确认送达',
@@ -80,6 +81,7 @@ const COPY = defineCopy(
     steer: 'Add',
     queue: 'Queue',
     queueSend: 'Queue message',
+    queueNext: 'Queue for a later turn',
     runAction: 'Run action',
     send: 'Send',
     otherPending: 'Another session has an unconfirmed message',
@@ -177,6 +179,7 @@ export function Composer({
   canSend,
   blockReason,
   onSubmit,
+  onQueue,
   sendKey,
   coarse,
   controls,
@@ -266,6 +269,7 @@ export function Composer({
   canSend: boolean
   blockReason?: string
   onSubmit: () => void
+  onQueue?: () => void
   sendKey: SendKey
   coarse: boolean
   /**
@@ -648,7 +652,23 @@ export function Composer({
     </div>
   )
 
-  const add = attachments && <AttachmentButton controller={attachments} disabled={locked} sections={attachmentMenu} />
+  const queueNext = queueDraft && steerable && queueable ? onQueue : undefined
+  const add = attachments ? (
+    <AttachmentButton
+      controller={attachments}
+      disabled={locked}
+      sections={
+        queueNext
+          ? [
+              ...(attachmentMenu ?? []),
+              { id: 'queue', items: [{ id: 'queue', label: COPY.queueNext, disabled: !sendable, onSelect: queueNext }] },
+            ]
+          : attachmentMenu
+      }
+    />
+  ) : queueNext ? (
+    <IconButton icon={ListPlus} label={COPY.queueNext} disabled={!sendable} onClick={queueNext} />
+  ) : null
   const fields = (
     <>
       <RunBar run={run} />

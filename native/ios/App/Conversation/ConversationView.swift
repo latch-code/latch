@@ -268,7 +268,10 @@ struct ConversationView: View {
                 } else if let approval = model.detail["approvals"].array.first {
                     ApprovalDrawer(approval: approval, total: model.detail["approvals"].array.count)
                 }
-                if !model.detail["queue"].array.isEmpty { QueueChips(items: model.detail["queue"].array, sessionId: id) }
+                if model.hasContentWindow, !model.detail["queue"].array.isEmpty {
+                    QueueChips(items: model.detail["queue"].array, sessionId: id, canSend: inputReason == nil && !model.lostSessions.contains(id)
+                        && PhoneHistory.rebuiltFrom(model.snapshot["tasks"].array, taskId: id) == nil)
+                }
                 ClearingDrawer(sessionId: id, engine: engine)
                 if let handoff = PhoneHandoffs.returnable(model.openHandoffs, sessionId: id, status: summary["status"].string) { HandBackDrawer(handoff: handoff) }
             }

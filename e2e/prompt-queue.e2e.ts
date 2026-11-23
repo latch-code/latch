@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { resolve } from 'node:path'
 import { chromium } from '@playwright/test'
 import { describe, expect, it } from 'vitest'
 import type { TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin, ModelProvider } from '@latch/sdk'
+import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
+import { openSession } from './helpers/layout.ts'
 import { promptValue } from './helpers/prompt.ts'
 
 describe('queued follow-ups', () => {
@@ -44,7 +45,7 @@ describe('queued follow-ups', () => {
         ctx.registerProvider(provider)
       },
     }
-    const host = await startTestHost({ uiDir: resolve('dist/web'), plugins: [plugin], providerId: provider.id }),
+    const host = await startTestHost({ plugins: [plugin], providerId: provider.id }),
       browser = await chromium.launch(browserLaunchOptions())
     try {
       const owner = await host.enroll({ listener: 'unix' })
@@ -60,6 +61,7 @@ describe('queued follow-ups', () => {
         await expect.poll(() => calls.includes(first)).toBe(true)
         const context = await browser.newContext({
             viewport: { width, height: 960 },
+            hasTouch: width === 390,
             reducedMotion: width === 768 ? 'no-preference' : 'reduce',
             colorScheme: width === 390 ? 'dark' : 'light',
           }),
@@ -97,28 +99,41 @@ describe('queued follow-ups', () => {
         await dialog.getByRole('button', { name: '保存', exact: true }).click()
         await dialog.waitFor({ state: 'detached' })
         await tray.getByText(edited, { exact: true }).waitFor()
+        const rows = tray.getByRole('listitem')
+        const grip = rows.nth(1).getByRole('button', { name: '调整顺序', exact: true })
+        if (width === 1440) {
+          await grip.dragTo(rows.first())
+        } else {
+          if (width === 768) await grip.press('Enter')
+          else await grip.tap()
+          const up = page.getByRole('menuitem', { name: '上移', exact: true })
+          if (width === 768) await up.press('Enter')
+          else await up.tap()
+        }
+        await expect.poll(() => rows.locator('.prompt-queue-text').allTextContents()).toEqual([second, edited])
         expect(await promptValue(input)).toBe(`仍在输入的草稿 ${width}`)
-        expect((await owner.json<TaskDetail>(path)).queue).toHaveLength(2)
+        expect((await owner.json<TaskDetail>(path)).queue?.map(item => item.text)).toEqual([second, edited])
+        expect(await tray.getByRole('button', { name: '追加到本轮' }).count()).toBe(0)
         await input.fill('')
         await page.screenshot({ path: `test-results/queue-waiting-${width}.png`, fullPage: true })
         await page.emulateMedia({ colorScheme: width === 390 ? 'light' : 'dark' })
         await page.screenshot({ path: `test-results/queue-waiting-${width}-alternate.png`, fullPage: true })
         await page.emulateMedia({ colorScheme: width === 390 ? 'dark' : 'light' })
         releases.get(first)!()
-        await expect.poll(() => calls.includes(edited)).toBe(true)
-        await expect.poll(async () => (await owner.json<TaskDetail>(path)).queue?.map(item => item.text)).toEqual([second])
+        await expect.poll(() => calls.includes(second)).toBe(true)
+        await expect.poll(async () => (await owner.json<TaskDetail>(path)).queue?.map(item => item.text)).toEqual([edited])
         await page.getByRole('button', { name: '停止', exact: true }).click()
         await tray.getByText('已暂停 · 请确认后发送', { exact: true }).waitFor()
         await page.screenshot({ path: `test-results/queue-parked-${width}.png`, fullPage: true })
         await tray.getByRole('button', { name: '发送', exact: true }).click()
-        await expect.poll(() => calls.includes(second)).toBe(true)
+        await expect.poll(() => calls.includes(edited)).toBe(true)
         await enqueue(`暂时不用 ${width}`)
         await tray.getByRole('button', { name: '移除', exact: true }).click()
         await expect.poll(async () => (await owner.json<TaskDetail>(path)).queue).toEqual([])
         await enqueue(`权限改变后不发送 ${width}`)
         await tray.getByText(`权限改变后不发送 ${width}`, { exact: true }).waitFor()
         await owner.json(`devices/${deviceId}`, { method: 'PATCH', body: { scopes: ['view'] } })
-        releases.get(second)!()
+        releases.get(edited)!()
         await tray.getByText('未发送 · 请检查排队内容', { exact: true }).waitFor()
         await page.screenshot({ path: `test-results/queue-dropped-${width}.png`, fullPage: true })
         expect(calls).not.toContain(`权限改变后不发送 ${width}`)
@@ -127,6 +142,71 @@ describe('queued follow-ups', () => {
         await owner.json(`${path}/queue/${final.queue![0]!.id}`, { method: 'DELETE' })
         await context.close()
       }
+    } finally {
+      await browser.close()
+      await host.close()
+    }
+  })
+  it('adds a selected queued message to the same live turn without consuming the earlier item or the draft', async () => {
+    const host = await startTestHost()
+    const browser = await chromium.launch(browserLaunchOptions())
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      await owner.confirmedJson('agents', {
+        method: 'POST',
+        body: {
+          id: 'steer-agent',
+          name: 'Steer fixture',
+          command: process.execPath,
+          args: [FAKE_ACP_AGENT],
+          env: { FAKE_ACP_CAPS: 'steer' },
+        },
+      })
+      const page = await browser.newPage({
+        viewport: { width: 390, height: 844 },
+        hasTouch: true,
+        colorScheme: 'dark',
+        reducedMotion: 'reduce',
+      })
+      await enrollBrowser(page, host, { name: '队列追加' })
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { harnessId: 'steer-agent', prompt: 'steerable hold', requestId: randomUUID() },
+      })
+      const path = `tasks/${sessionId}`
+      const detail = () => owner.json<TaskDetail>(path)
+      await expect.poll(async () => (await detail()).steer).toBe(true)
+      const runId = (await detail()).summary.runId
+      const earlier = '下一轮再看',
+        now = '先看这个问题'
+      await openSession(page, sessionId)
+      const input = page.getByRole('textbox', { name: '继续对话', exact: true })
+      const tray = page.getByRole('region', { name: '排队发送', exact: true })
+      for (const text of [earlier, now]) {
+        await input.fill(text)
+        await page.locator('form.composer:visible').getByRole('button', { name: '更多', exact: true }).tap()
+        await page.getByRole('menuitem', { name: '排到下一轮', exact: true }).tap()
+        await tray.getByText(text, { exact: true }).waitFor()
+      }
+      const row = tray.getByRole('listitem').filter({ hasText: now })
+      await input.fill('还在写的草稿')
+      await row.getByRole('button', { name: '追加到本轮' }).waitFor()
+      await page.screenshot({ path: 'test-results/queue-steer-390.png' })
+      const [steered] = await Promise.all([
+        page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/steer')),
+        row.getByRole('button', { name: '追加到本轮' }).tap(),
+      ])
+      expect(steered.status()).toBe(200)
+      expect(steered.request().postDataJSON()).toEqual({ runId, contentRevision: 0 })
+      await expect
+        .poll(async () => (await detail()).messages.filter(message => message.steered).map(message => message.text))
+        .toEqual([now])
+      const after = await detail()
+      expect(after.summary).toMatchObject({ status: 'running', runId })
+      expect(after.queue?.map(item => item.text)).toEqual([earlier])
+      expect(await promptValue(input)).toBe('还在写的草稿')
+      await input.fill('')
+      await page.getByRole('button', { name: '停止', exact: true }).click()
     } finally {
       await browser.close()
       await host.close()

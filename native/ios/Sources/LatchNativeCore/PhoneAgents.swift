@@ -421,6 +421,7 @@ public enum PhonePending {
         return .other
     }
     public static func words(_ write: NativePendingWrite) -> String {
+        if let action = PhoneQueueControl(write) { return action == .steer ? "追加结果待确认" : "队列顺序待确认" }
         if let words = PhoneHistory.pendingWords(write) { return words }
         switch kind(write) {
         case .topic: return "第一条消息结果待确认"

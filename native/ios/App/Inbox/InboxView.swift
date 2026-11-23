@@ -640,6 +640,7 @@ struct PendingWritesBar: View {
                         } else { await model.retryPending(pending) }
                     }
                 }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                if PhoneQueueControl(pending) != nil { AbandonQueueChange(pending: pending) }
                 if PhonePending.prompt(pending) != nil, case let .session(id) = PhonePending.kind(pending) {
                     Button("放弃这次提交") {
                         Task {

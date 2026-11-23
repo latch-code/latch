@@ -6120,6 +6120,61 @@ describe('reading what a Harness offers without a turn, and model IDs a person t
 })
 
 describe('ACP steering', () => {
+  it('keeps an unrecognized queued-steer reply unknown on retry', async () => {
+    const bridge = await (await setup({ FAKE_ACP_CAPS: 'steer' })).open()
+    const { sessionId } = await bridge.createTask({ prompt: 'steerable', requestId: rid() })
+    const detail = await until(bridge, sessionId, state => state.steer === true)
+    const request = vi.spyOn(AcpWire.prototype, 'request').mockResolvedValueOnce({ outcome: 'unrecognized' })
+    try {
+      const requestId = rid()
+      const options = { runId: detail.summary.runId!, queuedAt: new Date().toISOString(), authorize: async () => {} }
+      for (let attempt = 0; attempt < 2; attempt++)
+        await expect(bridge.steerQueued!(sessionId, 'queued text', requestId, options)).rejects.toMatchObject({ code: 'steer-unknown' })
+      expect(request).toHaveBeenCalledTimes(1)
+    } finally {
+      request.mockRestore()
+    }
+  })
+
+  it('adds a queued message only to its chosen run, even if authorization outlasts that run', async () => {
+    const fixture = await setup({ FAKE_ACP_CAPS: 'steer' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'steerable', requestId: rid() })
+    const first = await until(bridge, sessionId, detail => detail.steer === true)
+    const queuedAt = new Date(0).toISOString()
+    const checking = deferred()
+    const release = deferred()
+    const pending = bridge.steerQueued!(sessionId, 'queued text', rid(), {
+      queuedAt,
+      runId: first.summary.runId!,
+      authorize() {
+        checking.resolve()
+        return release.promise
+      },
+    })
+    await checking.promise
+    await bridge.cancel(sessionId)
+    await bridge.prompt(sessionId, 'steerable', rid())
+    const next = await until(bridge, sessionId, detail => detail.steer === true)
+    release.resolve()
+    expect(await pending).toBe('prompt-required')
+    expect(received(await fixture.log(), '_session/steering')).toHaveLength(0)
+
+    const requestId = rid()
+    const options = { runId: next.summary.runId!, queuedAt, authorize: async () => {} }
+    const refused = () => Promise.reject(new AppError(403, 'scope-required', '没有运行权限'))
+    await expect(bridge.steerQueued!(sessionId, 'queued text', requestId, { ...options, authorize: refused })).rejects.toMatchObject({
+      code: 'scope-required',
+    })
+    expect(received(await fixture.log(), '_session/steering')).toHaveLength(0)
+    expect(await bridge.steerQueued!(sessionId, 'queued text', requestId, options)).toBe('injected')
+    expect(await bridge.steerQueued!(sessionId, 'queued text', requestId, options)).toBe('injected')
+    expect((await settled(bridge, sessionId)).messages.filter(message => message.steered)).toMatchObject([
+      { text: 'queued text', requestId, queuedAt },
+    ])
+    expect(received(await fixture.log(), '_session/steering')).toHaveLength(1)
+  })
+
   it('adds text to a running turn only when the agent says it takes it, and never starts a turn with it', async () => {
     const plain = await (await setup()).open()
     const first = await plain.createTask({ prompt: 'steerable', requestId: rid() })

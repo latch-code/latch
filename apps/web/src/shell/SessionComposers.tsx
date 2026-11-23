@@ -649,13 +649,17 @@ export function SessionComposer({
         )}
       </Drawer>
     ),
-    selectedId !== null && current?.queue && current.queue.length > 0 && (
+    selectedId !== null && selectedId === current?.summary.id && current.queue && current.queue.length > 0 && (
       <QueueDrawer
         key={`queue:${selectedId}`}
         sessionId={selectedId}
         items={current.queue}
-        canSend={gate.kind === 'open' && sessionBlock === undefined && !submission.pending && shell.connection !== 'offline'}
-        canRemove={access.scopes.has('run')}
+        canSend={gate.kind === 'open' && sessionBlock === undefined && !submission.pending && shell.connection === 'connected'}
+        canRemove={access.scopes.has('run') && shell.connection === 'connected'}
+        queueControl={catalog?.features?.queueControl === true}
+        steerRunId={steer && !cancelling.has(selectedId) ? current.summary.runId : undefined}
+        running={shell.active || current.approvals.length > 0}
+        onRemovedUnknown={text => setToast({ text, tone: 'error' })}
         onChanged={refresh}
       />
     ),
@@ -1006,6 +1010,9 @@ export function SessionComposer({
         // Members named in it: a round to them, never a message to this session.
         if (roundDraft) void sendRound()
         else void sendDraft()
+      }}
+      onQueue={() => {
+        void sendDraft(true)
       }}
       sendKey={preferences.sendKey}
       coarse={coarse}

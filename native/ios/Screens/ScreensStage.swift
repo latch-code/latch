@@ -155,6 +155,19 @@ import UIKit
                 .replacingOccurrences(of: "\"clearContext\":true", with: "\"runStartedAt\":\"{{-80}}\""))
         case "steer":
             model.tab = .code; model.sessionId = "ses_run"; model.detail = json(steerText); model.draftInserts["ses_run"] = "顺便看一下测试有没有覆盖粘贴"
+        case "prompt-queue":
+            model.tab = .code; model.sessionId = "ses_run"
+            model.snapshot = patched(value) { root in
+                root["catalog"] = patched(value["catalog"]) { catalog in
+                    catalog["features"] = patched(value["catalog"]["features"]) { $0["queueControl"] = .bool(true) }
+                }
+            }
+            model.detail = patched(json(steerText)) { detail in
+                detail["summary"] = patched(detail["summary"]!) { $0["runId"] = .string("run_fixture") }
+                detail["queue"] = .array(["检查粘贴后的焦点", "再看一下无障碍标签", "补上回归测试"].enumerated().map { index, text in
+                    .object(["id": .string("queue_\(index)"), "text": .string(text), "state": .string("waiting"), "canSteer": .bool(true)])
+                })
+            }
         case "clearing":
             model.tab = .code; model.sessionId = "ses_review"; model.detail = conversation(); model.clearing = ["ses_review"]
         case "approval-more":

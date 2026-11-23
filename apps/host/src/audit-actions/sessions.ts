@@ -112,6 +112,7 @@ export const SESSION_ACTIONS = {
   'task.prompt.queued': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
   'task.prompt.sent': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
   'task.prompt.edited': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
+  'task.prompt.reordered': z.strictObject({ sessionId: opaqueId, count }),
   'task.prompt.removed': z.strictObject({ sessionId: opaqueId, itemId: opaqueId }),
   'attachment.add': attachmentEvent,
   'attachment.view': attachmentEvent,

@@ -355,6 +355,7 @@ export const AUDIT_FIELDS: AuditFieldTable = {
   'task.permission-drift': { sessionId: 'short', observedHash: 'short' },
   'task.prompt.edited': { sessionId: 'short', itemId: 'short' },
   'task.prompt.queued': { sessionId: 'short', itemId: 'short' },
+  'task.prompt.reordered': { sessionId: 'short', count: 'show' },
   'task.prompt.removed': { sessionId: 'short', itemId: 'short' },
   'task.prompt.sent': { sessionId: 'short', itemId: 'short' },
   'task.question.answered': { sessionId: 'short', questionId: 'short' },

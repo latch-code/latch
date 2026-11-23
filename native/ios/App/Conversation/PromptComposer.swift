@@ -112,6 +112,9 @@ struct PromptComposer: View {
                     if PhonePending.retried(pending, at: draftId.map { .session($0) } ?? .list) {
                         Button("重试这次提交") { Task { if PhoneHistory.isImport(pending) { await model.retryPending(pending) } else { await model.submit(pending) } } }.font(PhoneTheme.caption).disabled(model.busy || !model.transportReady)
                     }
+                    if PhoneQueueControl(pending) != nil, let draftId, PhonePending.kind(pending) == .session(id: draftId) {
+                        AbandonQueueChange(pending: pending)
+                    }
                     if PhonePending.prompt(pending) != nil, let draftId, PhonePending.kind(pending) == .session(id: draftId) {
                         Button("放弃这次提交") { Task { await abandon(pending) } }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).disabled(model.busy)
                         InfoHint(text: PromptComposer.abandonHint)
@@ -187,6 +190,9 @@ struct PromptComposer: View {
     static let closedWindow = "查看内容后可以回复"
     private var inputMenu: some View {
         ComposerMenu(key: attachKey, harness: harness, selection: attachKey.flatMap { model.attachSelection($0) }, source: $attachSource) {
+            if canQueueInstead {
+                Button("排到下一轮", systemImage: "text.badge.plus") { send(queueInstead: true) }.disabled(!canSend)
+            }
             SlashMenuItem(slash: slash, text: draftText, focused: $focused, context: slashContext)
         }
     }
@@ -245,7 +251,12 @@ struct PromptComposer: View {
                 .frame(width: 44, height: 44).contentShape(Rectangle())
         }.buttonStyle(.plain).disabled(model.stoppingCurrent || !model.transportReady).accessibilityLabel(model.stoppingCurrent ? "正在停止" : "停止")
     }
-    private func send() {
+    private var canQueueInstead: Bool {
+        followUp == .steer && model.canQueueCurrent && !trimmed.isEmpty && rejecting == nil && PhoneSlash.actionOf(text) == nil
+    }
+    private func send() { send(queueInstead: false) }
+    private func send(queueInstead: Bool) {
+        guard !queueInstead || canQueueInstead else { return }
         guard let target = draftId, model.sessionId == target, gate == nil, canSend else { return }
         if rejecting == nil {
             switch PhoneSlash.action(text, context: slashContext) {
@@ -254,7 +265,7 @@ struct PromptComposer: View {
             case let .open(action, argument): runSlash(action, argument: argument); return
             }
         }
-        let input = text, reject = rejecting, next = followUp
+        let input = text, reject = rejecting, next: PhoneFollowUp = queueInstead ? .queue : followUp
         let queue = running && reject == nil && next == .queue, steer = running && reject == nil && next == .steer
         // The send's target is fixed now: after waiting for uploads it goes to this session or nowhere.
         let chosen = nextModel, key = attachKey

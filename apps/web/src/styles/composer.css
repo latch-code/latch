@@ -965,7 +965,7 @@
 @media (pointer: coarse) {
   .send-button {
     position: relative;
-    width: 36px;
+    min-width: 36px;
     height: 36px;
   }
   .send-button::after {
@@ -976,6 +976,12 @@
 }
 
 @media (max-width: 767.98px) {
+  .composer-slot[data-queue-draft] .queue-button {
+    padding-inline: var(--sp-8);
+  }
+  .composer-slot[data-queue-draft] .queue-button > svg {
+    display: none;
+  }
   .composer-dock .composer-stack {
     --stack-gap: var(--sp-6);
   }
@@ -1228,10 +1234,23 @@
   display: block;
 }
 .prompt-queue-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--sp-8);
   min-height: 32px;
+}
+.prompt-queue-row[data-drop='before'] {
+  box-shadow: inset 0 2px var(--ink);
+}
+.prompt-queue-row[data-drop='after'] {
+  box-shadow: inset 0 -2px var(--ink);
+}
+.prompt-queue-grip {
+  cursor: grab;
+}
+.prompt-queue-grip:active {
+  cursor: grabbing;
 }
 .prompt-queue-text {
   flex: 1;
