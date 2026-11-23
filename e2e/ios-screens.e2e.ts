@@ -88,6 +88,7 @@ const SCENES = [
   'session-team',
   'team-results',
   'team-graph',
+  'usage-empty',
   'usage-quota',
   'usage-spend',
   'question-reminder',
@@ -263,9 +264,9 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
         ],
         { timeout: 300_000, maxBuffer: 16_777_216 },
       )
-      const inboxReader = join(derived, 'read-inbox-rows')
-      if (chosen.includes('inbox-first-rows'))
-        await run('/usr/bin/xcrun', ['swiftc', 'native/ios/Tools/InboxScreenshotRows.swift', '-o', inboxReader])
+      const textReader = join(derived, 'read-screen-text')
+      if (chosen.includes('inbox-first-rows') || chosen.includes('usage-empty'))
+        await run('/usr/bin/xcrun', ['swiftc', 'native/ios/Tools/InboxScreenshotRows.swift', '-o', textReader])
       const application = join(derived, 'Build/Products/Debug-iphonesimulator/LatchScreens.app')
       // The marker the product check looks for is really in this target, so its absence there means something.
       const libraries = (await readdir(application)).filter(name => name.endsWith('.dylib'))
@@ -322,7 +323,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
             )
             const shot = join(output, `${scene}--${theme}--${device.name}.png`)
             if (inboxProbe) {
-              await captureFirstRows(udid, inboxProbe, shot, inboxReader, started)
+              await captureFirstRows(udid, inboxProbe, shot, textReader, started)
               continue
             }
             await pause(2500)
@@ -350,6 +351,17 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
                 { timeout: 20_000, interval: 500 },
               )
               await copyFile(frame, shot)
+            } else if (scene === 'usage-empty') {
+              await vi.waitFor(
+                async () => {
+                  await simctl('io', udid, 'screenshot', shot)
+                  // The last word of the empty message starts to the right of centre when the sheet shrinks to fit it.
+                  const positions = JSON.parse((await run(textReader, [shot, 'Harness'])).stdout) as { Harness: number[] }
+                  expect(positions.Harness).toHaveLength(1)
+                  expect(positions.Harness[0]).toBeLessThan(0.5)
+                },
+                { timeout: 20_000, interval: 500 },
+              )
             } else await simctl('io', udid, 'screenshot', shot)
           }
         }

@@ -50,6 +50,15 @@ import UIKit
             stageTeamResults(model, base: value)
         case "team-graph":
             stageTeamGraph(model, base: value)
+        case "usage-empty":
+            model.tab = .settings
+            usageTab = .quota
+            model.snapshot = patched(value) { root in
+                root["catalog"] = patched(value["catalog"]) { catalog in
+                    catalog["features"] = patched(value["catalog"]["features"]) { $0["modelUsage"] = nil }
+                    catalog["harnesses"] = .array(value["catalog"]["harnesses"].array.filter { $0["id"].string == "standard" })
+                }
+            }
         case "usage-quota", "usage-spend":
             stageUsage(model, base: value, tab: name == "usage-quota" ? .quota : .usage)
         case "usage-widgets":

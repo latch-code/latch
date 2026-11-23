@@ -48,6 +48,7 @@ struct UsageSheet: View {
                     }
                     if tab == .quota || !model.usageOffered { QuotaTab() } else { SpendTab(reload: reload) }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 32)
             }
             .refreshable {
