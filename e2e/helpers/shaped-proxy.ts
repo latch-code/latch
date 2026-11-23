@@ -1,9 +1,11 @@
-import { connect, createServer, type AddressInfo, type Socket } from 'node:net'
+import { createServer, type AddressInfo, Socket } from 'node:net'
 import { once } from 'node:events'
 
 export interface ShapedLink {
   /** Round trip added across the proxy: half on each direction. */
   rttMs: number
+  /** Extra delay before opening the upstream socket, charged once per connection. */
+  connectMs?: number
   /** Bottleneck rate of each direction. */
   mbps: number
 }
@@ -66,13 +68,21 @@ export async function startShapedProxy(target: { host: string; port: number }, l
   let up = 0,
     down = 0
   const server = createServer(client => {
-    const upstream = connect(target.port, target.host)
+    const upstream = new Socket()
+    client.pause()
     client.setNoDelay(true)
     upstream.setNoDelay(true)
     const entry = { up: new ShapedPipe(client, upstream, link), down: new ShapedPipe(upstream, client, link), sockets: [client, upstream] }
     pipes.add(entry)
+    const open = () => {
+      upstream.connect(target.port, target.host)
+      client.resume()
+    }
+    const timer = link.connectMs ? setTimeout(open, link.connectMs) : undefined
+    if (!timer) open()
     const close = () => {
       if (!pipes.delete(entry)) return
+      clearTimeout(timer)
       up += entry.up.bytes
       down += entry.down.bytes
       entry.up.close()

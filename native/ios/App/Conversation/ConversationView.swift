@@ -299,8 +299,11 @@ struct ConversationView: View {
             } else {
                 QuotaLimitLine(harnessId: summary["harnessId"].string ?? "")
                 // A stop needs no window, so it stays in reach while the content is closed.
-                PromptComposer(draftId: id, placeholder: frame.map { PhoneAgentChat.placeholder($0.entry.name) }, gate: rebuiltInto != nil ? "已按文字重建为新会话 · 这个会话只能查看"
-                    : hasContent || !model.connected ? inputReason : PromptComposer.closedWindow, engine: engine, person: frame != nil,
+                PromptComposer(drafts: model.heldDrafts, draftId: id, placeholder: frame.map { PhoneAgentChat.placeholder($0.entry.name) }, gate: rebuiltInto != nil ? "已按文字重建为新会话 · 这个会话只能查看"
+                    : hasContent || !model.connected ? inputReason : PromptComposer.closedWindow,
+                    editsOffline: !model.connected && rebuiltInto == nil && frame == nil && model.tab == .code && !model.workItemsShown
+                        && PhoneConversation.keepsOfflineEditor(summary: summary, permission: model.detail["permission"], device: model.snapshot["device"], bodyOpen: hasContent && model.hasContentWindow),
+                    engine: engine, person: frame != nil,
                     newTopic: nil)
             }
         }.frame(maxWidth: 760).frame(maxWidth: .infinity)

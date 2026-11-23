@@ -1190,6 +1190,13 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(await verifyProof(nodeCrypto, Buffer.from(vectors.relayId, 'hex'), proof, vectors.timeMs, relayNonce)).not.toBeNull()
     expect(await verifyProof(nodeCrypto, Buffer.from(vectors.relayId, 'hex'), proof, vectors.timeMs)).toBeNull()
   })
+  it('bounds each relay handshake step and the full dial even while verified steps advance', async () => {
+    expect(await invoke({ operation: 'relayHandshakeDeadline' })).toEqual({
+      progressing: [8, 15, 22, 24, 24],
+      stalled: 8,
+      joinedOriginKept: true,
+    })
+  })
   it('races the origins of one edge node to a single claimant at a time, returning the first and leaking none', async () => {
     const result = await invoke({
       operation: 'edgeRace',
@@ -1220,7 +1227,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           { delay: 0, valid: true, stall: 300 },
           { delay: 0, valid: true },
         ],
-        // The claimant never finishes (say, a relay-supplied SPLICED and no inner handshake): the race's deadline ends it.
+        // The relay never supplies SPLICED: release its claim and let another origin dial.
         [
           { delay: 0, valid: true, hang: true },
           { delay: 0, valid: true },
@@ -1991,6 +1998,34 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       ['c', ''],
       ['self', ''],
     ])
+  })
+  it('keeps team sessions out of the temporary flat list until the first authorized layout', async () => {
+    const tasks = [
+      { id: 'approval', status: 'waiting-approval' },
+      { id: 'run', status: 'running' },
+      { id: 'lead', workspaceId: 'p' },
+      { id: 'member', workspaceId: 'p', teamOf: { teamId: 'team', leadSessionId: 'lead' } },
+    ]
+    const snapshot = { tasks, teams: [{ id: 'team', members: [{ sessionId: 'member' }] }] }
+    const result = await invoke({
+      operation: 'phoneProjection',
+      workspaces: [{ id: 'p', name: 'project' }],
+      teamShelfCases: [
+        { snapshot, closed: true, presentation: { expected: true } },
+        { snapshot, closed: true, presentation: { open: true, expected: true } },
+        { snapshot, presentation: { open: true, confirmed: true, expected: true } },
+        { snapshot, closed: true, presentation: { faceID: true, expected: true } },
+        { snapshot, closed: true, presentation: { expected: true, expired: true } },
+        { snapshot, offline: true, presentation: { expected: false } },
+      ],
+    })
+    const { answers } = result as { answers: { rows: { id: string; parent: string }[] }[] }
+    for (const frame of answers.slice(0, 2)) expect(frame.rows.map(row => row.id)).toEqual(['approval', 'run'])
+    expect(answers[2]?.rows.find(row => row.id === 'member')?.parent).toBe('lead')
+    for (const frame of answers.slice(3)) {
+      expect(frame.rows).toHaveLength(4)
+      expect(frame.rows.every(row => row.parent === '')).toBe(true)
+    }
   })
   it('reveals folded projects during search and restores the folds for each computer and shelf identity', async () => {
     const shelf = 'project:shared'
@@ -2812,7 +2847,15 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       holdExpires: true,
       holdLockTearsDown: true,
       holdResumes: true,
+      drafts: {
+        windowHidesText: true,
+        recreatedFieldKeepsDraft: true,
+        editingCanClear: true,
+        resetRejectsOldWriter: true,
+        onlyPermittedCodeEditsOffline: true,
+      },
       presentation: {
+        boundedRelayRetry: true,
         graceBlocksRequests: true,
         failedOrExpiredShowsOffline: true,
         replacementIgnoresOldCallbacks: true,
@@ -2864,6 +2907,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         lateDirectWins: true,
         emptyBrowseLeavesNoMemory: true,
         relayStartsAtOnce: true,
+        relayCooldown: { ordinaryDialSkipsCooling: true, readyRelayPreferred: true, onlyRelayRetried: true, directStillCools: true },
         upgrade: {
           relayOnlyRefused: true,
           installedDirect: true,

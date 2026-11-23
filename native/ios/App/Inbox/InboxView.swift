@@ -10,6 +10,7 @@ struct InboxView: View {
     @State private var creating = false
     @State private var creatingWorkItem: PhoneWorkReadStamp?
     @State private var showConnecting = false
+    @State private var revealedTeamShelves: UUID?
     @State private var disclosure = PhoneShelfDisclosure()
     @State private var column = NavigationSplitViewColumn.sidebar
     private var connecting: Bool { model.selectedHost != nil && !model.connected && !model.offline && model.hostNotice == nil }
@@ -17,6 +18,10 @@ struct InboxView: View {
     private var frozen: Bool { !model.connected }
     private var filtering: Bool { !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     private var computer: String { model.selectedHost?.id ?? "" }
+    private var teamShelfWait: UUID? {
+        guard model.sessionId == nil, model.expectsAutomaticTeamList, model.teamListReadMode(faceID: faceID) == .automatic else { return nil }
+        return model.generation
+    }
     private var selection: Binding<String?> {
         Binding(get: { model.sessionId }, set: { id in
             if let id { Task { await model.openSession(id) } } else if model.sessionId != nil { model.closeSession() }
@@ -95,6 +100,12 @@ struct InboxView: View {
         .onChange(of: model.teamListReadKey(faceID: faceID), initial: true) { _, key in
             if key != nil { Task { await model.loadTeamList() } }
         }
+        .task(id: teamShelfWait) {
+            guard let waiting = teamShelfWait else { revealedTeamShelves = nil; return }
+            do { try await Task.sleep(for: PhoneTeamListRead.shelfWaitLimit) } catch { return }
+            guard !Task.isCancelled, teamShelfWait == waiting else { return }
+            revealedTeamShelves = waiting
+        }
         .onChange(of: model.privateSnapshot.epoch) { _, _ in query = "" }
         .onChange(of: model.reviewTarget?.sessionId) { _, id in if id != nil { column = .detail } else if model.sessionId == nil { column = .sidebar } }
         // Back to the list from the review leaves it.
@@ -133,7 +144,12 @@ struct InboxView: View {
         let workspaces = model.snapshot["catalog"]["workspaces"].array
         // Code lists its own sessions; 我的 Agent's topics are in their conversations, as on the web.
         let tasks = PhoneSpaces.tasks(model.snapshot, in: .code)
-        let shelves = model.shelves(query: query, archived: model.showArchived)
+        let allShelves = model.shelves(query: query, archived: model.showArchived)
+        let waiting = teamShelfWait
+        let waitsForTeams = !filtering && model.teamListReadMode(faceID: faceID).waitsForShelves(
+            automaticReadExpected: waiting != nil, waitExpired: revealedTeamShelves == waiting)
+        let shelves = waitsForTeams ? PhoneSessions.shelvesWhileReadingTeams(allShelves) : allShelves
+        let deferringShelves = shelves.count < allShelves.count
         let searching = PhoneSearch.query(query) != nil && model.canSearchContent && !model.showArchived
         return List(selection: selection) {
             InboxSearchField(query: $query, prompt: model.showArchived ? "搜索已归档的会话" : "搜索会话或项目", identifier: "inbox.search").plainRow()
@@ -190,7 +206,16 @@ struct InboxView: View {
                 }
                 if shelf.id == "waiting", !others.isEmpty { OtherComputersSection(groups: others) }
             }
-            if shelves.isEmpty && !searching { emptyState.plainRow() }
+            if deferringShelves, let waiting {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small).tint(PhoneTheme.muted).accessibilityHidden(true)
+                    Text("正在读取团队关系").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+                    Spacer(minLength: 4)
+                    Button("先显示会话") { revealedTeamShelves = waiting }
+                        .font(PhoneTheme.caption).buttonStyle(.borderless)
+                }.plainRow()
+            }
+            if shelves.isEmpty && !searching && !deferringShelves { emptyState.plainRow() }
             if searching { ContentSearchSection(query: query) }
             if !model.showArchived, !filtering, case let count = PhoneSessions.archived(tasks).count, count > 0 {
                 Button { model.showArchived = true } label: { ArchivedLine(back: false, count: count) }.buttonStyle(.plain).plainRow()

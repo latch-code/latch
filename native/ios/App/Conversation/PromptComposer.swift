@@ -5,16 +5,29 @@ import UIKit
 /** A pill that grows into a card on focus. Where this phone cannot send, a plain line takes its place, with stop still in reach. */
 struct PromptComposer: View {
     @EnvironmentObject private var model: PhoneModel
+    @ObservedObject var drafts: PhoneConversationDrafts
     /** Where unsent text waits while the window is closed; nil where nothing is kept. */
     let draftId: String?
     /** 「给 <名字> 发消息…」 in a topic of 我的 Agent; the engine's own words elsewhere. */
     var placeholder: String? = nil
     /** Why this phone cannot type here; nil when it can. */
     let gate: String?
+    let editsOffline: Bool
     let engine: String
     var person: Bool = false
     var newTopic: ((String) -> Void)? = nil
-    @State private var text = ""
+    private var draftText: Binding<String> {
+        let opening = drafts.opening, window = model.privateSnapshot.epoch, id = draftId
+        func visible() -> Bool {
+            drafts.opening == opening && model.sessionId == id && model.hasContentWindow && model.privateSnapshot.accepts(window)
+        }
+        return Binding(get: { drafts.text(for: id, visible: visible()) },
+            set: { drafts.set($0, for: id, opening: opening, permitted: visible()) })
+    }
+    private var text: String {
+        get { draftText.wrappedValue }
+        nonmutating set { draftText.wrappedValue = newValue }
+    }
     @State private var focused = false
     @State private var nextModel: PhoneModelChoice?
     /** 「已送达」 for a moment, after 放弃这次提交 found the message already in its session. */
@@ -81,10 +94,10 @@ struct PromptComposer: View {
         return PhoneSessionConfig.controls(model.detail, harness: model.engineInfo(model.currentSummary["harnessId"].string))
     }
     private var canSend: Bool {
+        guard model.transportReady else { return false }
         if rejecting == nil, PhoneSlash.actionOf(text) != nil {
             if case .open = PhoneSlash.action(text, context: slashContext) { return !slash.composing }; return false
         }
-        guard model.transportReady else { return false }
         let attached = !attachments.isEmpty && rejecting == nil
         return (!trimmed.isEmpty || attached) && model.canRun && !model.busy && !sending && !slash.composing && model.pending.isEmpty && !noteTooLong
             && (!running || rejecting != nil || followUp != .none) && heldBack == nil
@@ -122,21 +135,24 @@ struct PromptComposer: View {
             if let menu = slashMenu {
                 SlashSuggestions(menu: menu, active: slash.active(menu, text: text), engine: engine,
                     mark: model.engineMark(model.currentSummary["harnessId"].string), reportedCommands: slashCommands.count, loading: slash.loading, failure: slash.failure,
-                    maximumHeight: slashSpace, retry: { slash.retry += 1 }, choose: { slash.complete(menu, option: $0, text: $text, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending) })
+                    maximumHeight: slashSpace, retry: { slash.retry += 1 }, choose: { slash.complete(menu, option: $0, text: draftText, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending) })
                     .padding(.horizontal, 12)
             }
             if let draftId {
-                CodexTeamView(sessionId: draftId, draft: $text,
+                CodexTeamView(sessionId: draftId, draft: draftText,
                     canPrepare: gate == nil && model.canRun && model.connected && !running && !drawerOpen && !sending && !model.busy && model.pending.isEmpty)
             }
-            if let gate { gateLine(gate) } else { field }
+            if editsOffline && model.offline {
+                Label("Mac 不在线，连上后可发送", systemImage: "wifi.slash")
+                    .font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
+            }
+            if let gate, !editsOffline { gateLine(gate) } else { field }
             if !person && gate == nil && model.sessionId != nil && (focused || !controls.isEmpty) { chips }
         }
         .padding(.bottom, 8).padding(.top, 4)
-        .onAppear { if let held = model.takeDraft(for: draftId) { text = held }; insert() }
+        .onAppear { insert() }
         // 加入对话 and 带入输入框 put text after what is written, never send it.
         .onChange(of: draftId.flatMap { model.draftInserts[$0] }) { _, value in if value != nil { insert() } }
-        .onDisappear { model.holdDraft(text, for: draftId) }
         .onDisappear { slash.clear() }
         .onChange(of: text) { _, value in slash.changed(value) }
         .onChange(of: model.privateSnapshot.epoch) { _, _ in slash.clear(); slashControl = nil; slashStart = nil }
@@ -144,17 +160,13 @@ struct PromptComposer: View {
         .sheet(item: $slashControl) { SlashControlSheet(request: $0, nextModel: $nextModel) }
         .sheet(item: $slashStart) { NewSessionSheet(fork: $0.fork, initialChoice: $0.choice, initialPrompt: $0.prompt).presentationCornerRadius(28) }
         // An iPad keeps this composer while the session beside the list changes.
-        .onChange(of: draftId) { old, new in
-            model.holdDraft(text, for: old); text = model.takeDraft(for: new) ?? ""; nextModel = nil
+        .onChange(of: draftId) { _, _ in
+            nextModel = nil
             slash.clear(); slashControl = nil; slashStart = nil
         }
-        .onChange(of: model.selectedHost?.id) { _, _ in text = ""; nextModel = nil }
+        .onChange(of: model.selectedHost?.id) { _, _ in nextModel = nil }
         // A turn that starts takes back 清空上下文, as the web's composer does.
         .onChange(of: running) { _, now in if now, let id = draftId { model.clearing.remove(id) } }
-        .onChange(of: model.verifiedUntil) { old, value in
-            if value == nil { model.holdDraft(text, for: draftId); text = "" }
-            else if old == nil, let held = model.takeDraft(for: draftId) { text = held }
-        }
         .modifier(AttachSupport(key: attachKey, selection: attachKey.flatMap { model.attachSelection($0) }, harness: harness, source: $attachSource))
     }
     private func insert() {
@@ -175,12 +187,12 @@ struct PromptComposer: View {
     static let closedWindow = "查看内容后可以回复"
     private var inputMenu: some View {
         ComposerMenu(key: attachKey, harness: harness, selection: attachKey.flatMap { model.attachSelection($0) }, source: $attachSource) {
-            SlashMenuItem(slash: slash, text: $text, focused: $focused, context: slashContext)
+            SlashMenuItem(slash: slash, text: draftText, focused: $focused, context: slashContext)
         }
     }
     private var field: some View {
         ConversationInputBar(focused: $focused) {
-            if rejecting == nil { inputMenu }
+            if rejecting == nil { inputMenu.disabled(!model.transportReady) }
         } editor: {
             editor.padding(.leading, rejecting == nil ? 0 : 10)
         } action: {
@@ -191,7 +203,7 @@ struct PromptComposer: View {
         })
     }
     private var editor: some View {
-        LocalTextEditor(text: $text, placeholder: hint, maximumLines: slashMenu == nil ? 6 : 3, focused: $focused,
+        LocalTextEditor(text: draftText, placeholder: hint, maximumLines: slashMenu == nil ? 6 : 3, focused: $focused,
             selection: $slash.selection, composing: $slash.composing, selectionRequest: $slash.selectionRequest,
             commandKeys: slashKeys, onCommand: slashKey,
             suffixHint: slash.hint(text, commands: slashCommands, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending))
@@ -283,7 +295,7 @@ struct PromptComposer: View {
         if key == UIKeyCommand.inputUpArrow || key == UIKeyCommand.inputDownArrow { slash.move(menu, text: text, down: key == UIKeyCommand.inputDownArrow); return }
         guard let selected = slash.active(menu, text: text), menu.options.indices.contains(selected) else { return }
         let option = menu.options[selected]
-        guard slash.complete(menu, option: option, text: $text, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending) else { return }
+        guard slash.complete(menu, option: option, text: draftText, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending) else { return }
         if key == "\r", option.kind == .action { send() }
         else if key == "\r", option.kind == .command, option.inputHint == nil, !running { send() }
     }
@@ -371,11 +383,13 @@ extension PromptComposer {
     static let abandonStartHint = "重试沿用同一请求，电脑已经收到的不会再开一个会话。放弃这次提交只在这台设备上放下它，文字回到输入框；电脑如果其实已经收到，那个会话会出现在列表里，再发送会开始另一个会话，可能另建一个工作树。"
     /** The text goes back after whatever was written meanwhile. */
     fileprivate func abandon(_ pending: NativePendingWrite) async {
+        guard case let .session(id) = PhonePending.kind(pending), id == draftId else { return }
+        let opening = drafts.opening
         switch await model.abandonPrompt(pending) {
-        case .delivered: settled = "已送达"
+        case .delivered: if model.sessionId == id, drafts.opening == opening { settled = "已送达" }
         case let .text(back, twin):
-            text = PhonePending.joined(text, back)
-            if twin { settled = PhoneAbandoned.queuedTwinWords }
+            drafts.restore(back, for: id, opening: opening)
+            if twin, model.sessionId == id, drafts.opening == opening { settled = PhoneAbandoned.queuedTwinWords }
         case nil: break
         }
     }

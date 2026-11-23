@@ -92,7 +92,7 @@ extension PhoneModel {
         guard transportReady, let id = task["id"].string else { return }
         // Off the session first: a read of what is being deleted would only fail.
         if sessionId == id { closeSession() }
-        if await sessionAction({ try PhoneSessionWrite.remove(id) }) { clearing.remove(id); heldDrafts.removeValue(forKey: id) }
+        if await sessionAction({ try PhoneSessionWrite.remove(id) }) { clearing.remove(id); _ = heldDrafts.take(for: id) }
     }
     /**
      * Rename, pin, archive and delete as the web does them: one plain request, no receipt kept. Whatever the answer, the

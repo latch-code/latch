@@ -127,11 +127,15 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
       return Reflect.apply(originalEnd, this, args) as Http2ServerResponse
     })
     let host: Awaited<ReturnType<typeof startTestHost>> | undefined
-    // A read the other opening must interrupt is held to about 5 s on a slow phone link; at network speed it would win the race.
-    const slow =
+    // A slow download holds the reauthentication read open. A cold origin followed by normal WAN round trips
+    // keeps failover's individual handshakes moving while their total exceeds eight seconds.
+    const shaping =
       operation === 'nativeRelayBulkReauthenticate'
-        ? await startShapedProxy({ host: '127.0.0.1', port: relay.port }, { rttMs: 0, mbps: 1.5 })
-        : undefined
+        ? { rttMs: 0, mbps: 1.5 }
+        : operation === 'nativeRelayFailover'
+          ? { connectMs: 5500, rttMs: 650, mbps: 100 }
+          : undefined
+    const slow = shaping && (await startShapedProxy({ host: '127.0.0.1', port: relay.port }, shaping))
     try {
       const dataDir = join(directory, 'data'),
         nativeDir = join(dataDir, 'native')
@@ -198,7 +202,9 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
             ? 10_000 + 16 * (250 + Math.ceil(65_536 / 1021) * 40)
             : operation === 'nativeRelayUpload'
               ? 90_000
-              : 20_000,
+              : operation === 'nativeRelayFailover'
+                ? 45_000
+                : 20_000,
         )
         child.stdout.on('data', (data: Buffer) => {
           output += data.toString()

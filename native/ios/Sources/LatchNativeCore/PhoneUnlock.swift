@@ -11,7 +11,15 @@ public enum PhoneContentReopen: Sendable {
     case agents(sessionId: String?), session(String), none
 }
 
-public enum PhoneTeamListRead: Sendable { case ready, automatic, onRequest }
+public enum PhoneTeamListRead: Sendable {
+    case ready, automatic, onRequest
+
+    public static let shelfWaitLimit: Duration = .seconds(24)
+
+    public func waitsForShelves(automaticReadExpected: Bool, waitExpired: Bool) -> Bool {
+        self == .automatic && automaticReadExpected && !waitExpired
+    }
+}
 
 /**
  * A connected phone opens its content without asking. Face ID is the person's own choice in 设置, off by default; when it

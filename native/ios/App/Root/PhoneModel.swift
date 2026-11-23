@@ -95,7 +95,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     @Published var agentPath: [String] = []
     /** Covers both verification and the subsequent private list read for this computer. */
     @Published var openingAgentsFor: UUID?
-    @Published var teamListRead: NativeTransportEpoch?
+    @Published var teamListRead: (transport: NativeTransportEpoch, automatic: Bool)?
     @Published var teamListRetry: NativeTransportEpoch?
     var teamListOpening: (transport: NativeTransportEpoch, task: Task<Void, Error>)?
     /** Memory proposals by owner, read inside a content window and dropped with it. */
@@ -166,7 +166,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     /** A start's text the Host proved was not delivered (its attachments were released), by the place that takes it back. */
     @Published var returnedText: [String: String] = [:]
     /** Unsent text the composer took off the screen with a closed window, back when the next window opens. In memory only. */
-    var heldDrafts: [String: String] = [:]
+    let heldDrafts = PhoneConversationDrafts()
     /** Text put into a session's draft from the commit page or a returned result, not yet in its composer. In memory only. */
     @Published var draftInserts: [String: String] = [:]
     /** Where a pending file save's text was meant to go, for 核对并放下. In memory only. */
@@ -424,7 +424,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         cancelPreview()
         sessionId = nil; detail = .null; snapshot = .null; verifiedUntil = nil; pairing = nil; pending = []; controlPending = .null; hosts = []; draft = nil; selectedHost = nil
         agentPath = []; appPath = []; resetWorkItems(); proposals.clear(); agentResults.clear(); resetSessionActions(); resetReview()
-        connected = false; offline = false; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; draftInserts = [:]; storeState = .opening; busy = false; verifying = false; status = "正在连接…"
+        connected = false; offline = false; controlsInFlight = []; controlTail = nil; heldDrafts.clear(); draftInserts = [:]; storeState = .opening; busy = false; verifying = false; status = "正在连接…"
         PreviewFiles.clear(); clearAttachments()
     }
     private func closeConnection(_ previous: NativeWorkspace?, hostId: String?) async {
@@ -444,7 +444,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         let previous = workspace, previousHost = selectedHost?.id
         storageOpening.close { await self.closeConnection(previous, hostId: previousHost) }
         workspace = nil; installedTransport = nil
-        clearPrivateContent(); resetWorkItems(); resetSessionActions(); resetReview(); snapshot = .null; sessionId = nil; agentPath = []; appPath = []; controlPending = .null; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; draftInserts = [:]; verifiedUntil = nil; connected = false; offline = false
+        clearPrivateContent(); resetWorkItems(); resetSessionActions(); resetReview(); snapshot = .null; sessionId = nil; agentPath = []; appPath = []; controlPending = .null; controlsInFlight = []; controlTail = nil; heldDrafts.clear(); draftInserts = [:]; verifiedUntil = nil; connected = false; offline = false
         let resume = resumeSession; resumeSession = nil
         QuotaWidgetWriter.connecting(to: host.id, computers: hosts.count)
         selectedHost = host; lastHostId = host.id; lastConfirmed = nil; hostNotice = nil; status = "正在连接…"; error = nil
@@ -1038,10 +1038,14 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         let current = generation
         // Give a replacement time to pass the connection checks before changing the page's connection state.
         offlineTask = Task { [weak self] in
-            do { try await Task.sleep(until: interruption.deadline, clock: .continuous) } catch { return }
-            guard let self, self.generation == current, self.installedTransport === transport,
-                  self.reconnectPresentation.shouldShowOffline(for: interruption) else { return }
-            self.publishOffline()
+            while let deadline = self?.reconnectPresentation.offlineDeadline(for: interruption) {
+                do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
+                guard let self, self.generation == current, self.installedTransport === transport else { return }
+                if self.reconnectPresentation.shouldShowOffline(for: interruption) {
+                    self.publishOffline()
+                    return
+                }
+            }
         }
         startReconnect(immediately: true)
     }
@@ -1216,7 +1220,11 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         let known = available.contains { $0.kind == .direct }, gateway = currentGateway(), network = networkGeneration
         let later = known || !discovery.browsing ? nil : discovery.lateCandidates(device: latest.device, keys: PhoneKeys.provider(latest.keys))
         let delay = recovering ? .zero : NativeReconnectPolicy.relayDelay(directKnown: known, lastWinner: winners.winner(gateway: gateway))
-        _ = try await paths.migrate(available, later: later, relayDelay: delay, workspace: workspace)
+        let replacing = recovering && restoringTransport
+        if replacing {
+            reconnectPresentation.beginRound(withRelay: available.contains { $0.kind == .relay } && currentNetworkPath?.status != .unsatisfied)
+        }
+        _ = try await paths.migrate(available, later: later, relayDelay: delay, recovering: replacing, workspace: workspace)
         let kind = await workspace.installedPathKind()
         guard generation == current else { return }
         if networkGeneration == network { winners.record(kind, gateway: gateway) }
@@ -1327,7 +1335,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             hold.release(); transportWatch?.cancel(); transportWatch = nil; cancelUpgrade()
             clearPrivateContent(); resetWorkItems(); resetSessionActions(); resetReview()
             controlPending = .null; snapshot = .null; verifiedUntil = nil; selectedHost = nil; connected = false; offline = false
-            sessionId = nil; resumeSession = nil; lastHostId = nil; agentPath = []; appPath = []; heldDrafts = [:]
+            sessionId = nil; resumeSession = nil; lastHostId = nil; agentPath = []; appPath = []; heldDrafts.clear()
             returnedText = [:]; openAfterDismiss = nil
             controlsInFlight = []; controlTail = nil; discovery.stop()
             workspace = nil; installedTransport = nil; busy = false
@@ -1410,7 +1418,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         let withdraw = changedScope || changedInstance
         if withdraw {
             if waitingForSessionList { sessionId = nil }
-            clearPrivateContent(); heldDrafts = [:]
+            clearPrivateContent(); heldDrafts.clear()
         }
         guard let projected = privateSnapshot.adopt(value, captured: withdraw ? privateSnapshot.epoch : captured ?? privateSnapshot.epoch,
             windowOpen: windowOpen && !withdraw) else { return false }

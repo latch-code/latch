@@ -1865,7 +1865,7 @@ public actor NativeWorkspace {
             // Enough to draw the shelves, the tabs and the engine's name offline; paths, models and settings stay out.
             "catalog": .object(["workspaces": .array(value["catalog"]["workspaces"].array.map { select($0, keys: ["id", "name"]) }),
                 "harnesses": .array(value["catalog"]["harnesses"].array.map { .object(["id": $0["id"], "level": $0["level"], "capabilities": .object(["display": $0["capabilities"]["display"]])]) }),
-                "features": select(value["catalog"]["features"], keys: ["customAgents", "automations", "appPages", "workItems", "workItemTurns"])]),
+                "features": select(value["catalog"]["features"], keys: ["customAgents", "automations", "appPages", "workItems", "workItemTurns", "teams"])]),
             "apps": .array(value["apps"].array.map { select($0, keys: ["pluginId", "appId", "title", "icon", "pluginName", "status"]) }),
             "hostTime": value["hostTime"]]
         if PhoneWorkItems.supported(value) { result["items"] = PhoneWorkItems.withoutBody(value)["items"] }

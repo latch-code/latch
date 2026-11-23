@@ -340,7 +340,12 @@ do {
             await lan.close()
             guard await workspace.transportEnded(on: original) else { throw NativeFailure.invalidRecord }
             stage = "relay-failover"
-            let relay = try NativePathCandidate(id: "relay", kind: .relay, connect: dial)
+            let relay = try NativePathCandidate(id: "relay", kind: .relay) {
+                let start = ContinuousClock.now
+                let connection = try await dial()
+                guard start.duration(to: .now) > .seconds(8) else { await connection.close(); throw NativeFailure.invalidRecord }
+                return connection
+            }
             let next = try await paths.migrate([relay], workspace: workspace)
             let confirmed = try await workspace.snapshot()
             guard await workspace.installedPathKind() == .relay, !original.valid,
@@ -1105,6 +1110,7 @@ do {
         result = ["matches": value == Data((input["expected"] as? String ?? "").utf8),
             "backupExcluded": try directory.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true]
         await vault.lock()
+    case "relayHandshakeDeadline": result = await relayHandshakeDeadlineFixture()
     case "edgeRace":
         // Fake attempts: per origin a delay (ms), whether its signature checks out, and whether it hangs past the test.
         actor Closed { var count = 0; func add() { count += 1 } }

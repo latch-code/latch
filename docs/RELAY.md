@@ -74,6 +74,7 @@ sources:
 签名文本、证明文本与消息格式写在 [relay-identity.ts](../packages/link-wire/src/relay-identity.ts) 与 [pass.ts](../packages/link-wire/src/pass.ts)，共享向量在 `packages/testkit/vectors/link-v1.json`（`edgeRelay`、`addressBookV4`）。
 
 - 一个 edge 节点可以有多个地址（`workers.dev` 与自定义域名），因为绑定连接与节点的是签名，不是主机名：一个地址答出别的密钥，只会在竞速中输掉。
+- iOS 拨中继时，从外层连接到验证 Mac 的根证明最多 24 秒。每个握手步骤最多等 8 秒，只有完成一个步骤才给下一步计时。
 - iOS 的路径轮次取消时，每个来源停止拨号或准入，并等待 NIOTS 通道结束。换网或替换轮次等待上一轮退出。
 - iPhone 上同一节点的几个地址同时只有一个发送准入证明。它 4 秒内没有接合就关闭连接、放弃这次准入，其间被拒的地址再拨一次，所以一个卡住的地址不会拖到整轮超时。
 - edge 的签名不绑定 TLS 会话：能为这个域名终止 TLS 的一方可以把它实时转发。它保证节点的密钥参与了这条连接，并让每个准入证明只能用一次；再在 WebSocket 里加一层对节点密钥的加密尚未实现。

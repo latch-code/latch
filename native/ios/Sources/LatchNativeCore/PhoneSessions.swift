@@ -364,6 +364,11 @@ public enum PhoneSessions {
         return result
     }
 
+    /** These shelves are always flat, so an imminent private team projection cannot rearrange their rows. */
+    public static func shelvesWhileReadingTeams(_ shelves: [PhoneShelf]) -> [PhoneShelf] {
+        shelves.filter { $0.id == "waiting" || $0.id == "running" }
+    }
+
     public static func withoutTeams(_ snapshot: NativeJSON) -> NativeJSON {
         guard case var .object(value) = snapshot else { return snapshot }
         value.removeValue(forKey: "teams")

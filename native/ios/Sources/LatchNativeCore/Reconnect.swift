@@ -102,12 +102,14 @@ public enum NativeReconnectPolicy {
 public struct PhoneReconnectPresentation: Sendable {
     public struct Interruption: Sendable, Equatable {
         private let id = UUID()
-        public let deadline: ContinuousClock.Instant
+        fileprivate let startedAt: ContinuousClock.Instant
+        public var deadline: ContinuousClock.Instant { startedAt.advanced(by: .seconds(6)) }
 
-        fileprivate init(startedAt: ContinuousClock.Instant) { deadline = startedAt.advanced(by: .seconds(6)) }
+        fileprivate init(startedAt: ContinuousClock.Instant) { self.startedAt = startedAt }
     }
 
     public private(set) var interruption: Interruption?
+    private var relayRounds = 0
     public init() {}
 
     public func permitsRequests(connected: Bool, transportValid: Bool) -> Bool {
@@ -122,14 +124,28 @@ public struct PhoneReconnectPresentation: Sendable {
     }
 
     public func shouldShowOffline(afterFailedRound startedWith: Interruption?, connected: Bool) -> Bool {
-        startedWith == interruption && (interruption != nil || !connected)
+        guard startedWith == interruption else { return false }
+        guard interruption != nil else { return !connected }
+        return relayRounds != 1
+    }
+
+    /** Allow one automatic retry of an eligible relay. The deadline stays anchored to the first lost connection. */
+    public mutating func beginRound(withRelay: Bool) {
+        guard interruption != nil else { return }
+        relayRounds = withRelay ? min(2, relayRounds + 1) : 0
+    }
+
+    public func offlineDeadline(for expected: Interruption) -> ContinuousClock.Instant? {
+        guard interruption == expected else { return nil }
+        return relayRounds > 0 ? expected.startedAt.advanced(by: .seconds(24)) : expected.deadline
     }
 
     public func shouldShowOffline(at now: ContinuousClock.Instant = .now, for expected: Interruption) -> Bool {
-        interruption == expected && now >= expected.deadline
+        guard let deadline = offlineDeadline(for: expected) else { return false }
+        return now >= deadline
     }
 
-    public mutating func reset() { interruption = nil }
+    public mutating func reset() { interruption = nil; relayRounds = 0 }
 }
 
 /** The last winning path kind per gateway hash, in memory only. It never holds an address and is never dialed. */

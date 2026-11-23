@@ -128,8 +128,12 @@ import UIKit
                         "text": .string(notes.map { "**\($0.0)**\n\n\($0.1)" }.joined(separator: "\n\n") + "\n\n以上八项都可以在测试项目里检查。")]),
                 ])
             }
-        case "conversation-actions":
+        case "conversation-actions", "offline-draft":
             model.tab = .code; model.sessionId = "ses_actions"; model.detail = json(actionsText)
+            if name == "offline-draft" {
+                model.draftInserts["ses_actions"] = "请再看一下相关测试。"
+                stageDisconnected(model)
+            }
         case "subagents":
             model.tab = .code; model.sessionId = "ses_actions"; _ = model.subagentStops.begin("m3")
             model.snapshot = patched(model.snapshot) { object in
@@ -138,7 +142,7 @@ import UIKit
             model.detail = json(actionsText.replacingOccurrences(of: "\"status\":\"idle\",\"harnessId\"", with: "\"status\":\"running\",\"harnessId\"")
                 .replacingOccurrences(of: "\"clearContext\":true", with: "\"runStartedAt\":\"{{-80}}\""))
         case "steer":
-            model.tab = .code; model.sessionId = "ses_run"; model.detail = json(steerText); model.heldDrafts["ses_run"] = "顺便看一下测试有没有覆盖粘贴"
+            model.tab = .code; model.sessionId = "ses_run"; model.detail = json(steerText); model.draftInserts["ses_run"] = "顺便看一下测试有没有覆盖粘贴"
         case "clearing":
             model.tab = .code; model.sessionId = "ses_review"; model.detail = conversation(); model.clearing = ["ses_review"]
         case "approval-more":
@@ -268,7 +272,7 @@ import UIKit
             model.attachStates["ses_review"] = PhoneAttachState(revision: "staged", caps: both)
             model.attachTrays["ses_review"] = tray([("IMG_0412.jpg", .image, .ready), ("spec.pdf", .file, .uploading(0.6)),
                 ("IMG_0413.jpg", .image, .unknown), ("demo.mov", .file, .refused("每个文件最多 50 MB。")), ("build.log", .text, .ready)])
-            model.heldDrafts["ses_review"] = "这两张截图里按钮的间距不一样，看看是哪里的样式"
+            model.draftInserts["ses_review"] = "这两张截图里按钮的间距不一样，看看是哪里的样式"
         case "attach-unavailable":
             model.sessionId = "ses_review"; model.detail = conversation()
             model.attachStates["ses_review"] = PhoneAttachState(revision: "staged",
@@ -278,7 +282,7 @@ import UIKit
             model.sessionId = "ses_run"; model.detail = json(steerText)
             model.attachStates["ses_run"] = PhoneAttachState(revision: "staged", caps: both)
             model.attachTrays["ses_run"] = tray([("IMG_0420.jpg", .image, .ready)])
-            model.heldDrafts["ses_run"] = "顺便看一下这张截图"
+            model.draftInserts["ses_run"] = "顺便看一下这张截图"
         case "attach-new":
             creating = true
             model.attachStates[PhoneModel.newSessionTray] = PhoneAttachState(revision: "staged", caps: both)

@@ -93,7 +93,9 @@ public actor NativeHTTPConnection {
         let group = NIOTSEventLoopGroup(loopCount: 1)
         let completion = group.next().makePromise(of: Void.self), gate = HostProofGate(state: state, completion: completion)
         do {
-            let opening = NIOTSConnectionBootstrap(group: group).connectTimeout(.seconds(8))
+            // NIOTS resolves only after the entire Network.framework stack, including relay splice and inner TLS, is ready.
+            let timeout: TimeAmount = state.relayDeadline == nil ? .seconds(8) : NativeRelayHandshakeDeadline.total
+            let opening = NIOTSConnectionBootstrap(group: group).connectTimeout(timeout)
                 .channelOption(ChannelOptions.writeBufferWaterMark, value: .init(low: 16_384, high: 32_768))
                 .channelInitializer { channel in channel.pipeline.addHandler(gate).map { cancellation.bind(channel) } }
                 .withExistingNWConnection(connection)

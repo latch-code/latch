@@ -88,11 +88,11 @@ extension PhoneModel {
     /** Keeps unsent text out of sight with the window it was written beside. */
     func holdDraft(_ text: String, for id: String?) {
         guard store != nil, let id else { return }
-        heldDrafts[id] = text.isEmpty ? nil : text
+        heldDrafts.set(text, for: id, opening: heldDrafts.opening, permitted: true)
     }
     func takeDraft(for id: String?) -> String? {
         guard verifiedUntil != nil, let id else { return nil }
-        return heldDrafts.removeValue(forKey: id)
+        return heldDrafts.take(for: id)
     }
     /** Back to the list; the window stays open for the next conversation. */
     func closeSession() { sessionId = nil; detail = .null; contentGeneration = UUID(); PreviewFiles.clear(); startEvents() }

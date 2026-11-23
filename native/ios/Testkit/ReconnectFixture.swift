@@ -155,7 +155,42 @@ private func fixtureFailure(_ name: String) -> FixtureStage { FixtureStage(name:
     guard resumed, !again, log == ["withdraw", "finish"] else { throw fixtureFailure("hold-resume") }
     guard NativeBackgroundHold.limit == .seconds(30) else { throw fixtureFailure("hold-limit") }
     return ["initialListRecovers": true, "backoff": true, "relayDelay": true, "winners": true, "filter": true, "ring": true, "holdWithdrawsAtOnce": true,
-        "holdExpires": true, "holdLockTearsDown": true, "holdResumes": true, "presentation": try reconnectPresentationRules(), "liveness": try livenessRules()]
+        "holdExpires": true, "holdLockTearsDown": true, "holdResumes": true, "drafts": try reconnectDraftRules(), "presentation": try reconnectPresentationRules(), "liveness": try livenessRules()]
+}
+
+/** Recreating a composer's field only reads the live session's draft; it never commits the locked field's empty display. */
+@MainActor private func reconnectDraftRules() throws -> [String: Bool] {
+    let drafts = PhoneConversationDrafts(), old = drafts.opening
+    let note = "未发送的草稿"
+    drafts.set(note, for: "first", opening: old, permitted: true)
+    guard drafts.text(for: "first", visible: false).isEmpty else { throw fixtureFailure("draft-hidden") }
+    drafts.set("", for: "first", opening: old, permitted: false)
+    drafts.set("another", for: "second", opening: old, permitted: true)
+    guard drafts.text(for: "first", visible: true) == note,
+          drafts.text(for: "second", visible: true) == "another" else { throw fixtureFailure("draft-recreated") }
+    drafts.set("é", for: "second", opening: old, permitted: true)
+    drafts.set("e\u{301}", for: "second", opening: old, permitted: true)
+    guard drafts.text(for: "second", visible: true).utf8.elementsEqual("e\u{301}".utf8) else { throw fixtureFailure("draft-exact-text") }
+    drafts.set("", for: "second", opening: old, permitted: true)
+    guard drafts.text(for: "second", visible: true).isEmpty else { throw fixtureFailure("draft-deleted") }
+    drafts.restore("returned", for: "first", opening: old)
+    guard drafts.text(for: "first", visible: true) == PhonePending.joined(note, "returned"),
+          drafts.text(for: "second", visible: true).isEmpty else { throw fixtureFailure("draft-returned-to-original") }
+    drafts.clear()
+    drafts.restore("late return", for: "first", opening: old)
+    drafts.set(note, for: "first", opening: old, permitted: true)
+    guard drafts.text(for: "first", visible: true).isEmpty else { throw fixtureFailure("draft-old-writer") }
+    func editor(_ fields: [String: NativeJSON] = [:], permission: NativeJSON = .null, scopes: [String] = ["view", "run"], active: Bool = true, bodyOpen: Bool = true) -> Bool {
+        var summary = fields
+        summary["id"] = .string("first")
+        let device: NativeJSON = .object(["status": .string(active ? "active" : "revoked"), "scopes": .array(scopes.map(NativeJSON.string))])
+        return PhoneConversation.keepsOfflineEditor(summary: .object(summary), permission: permission, device: device, bodyOpen: bodyOpen)
+    }
+    guard editor(), !editor(bodyOpen: false), !editor(active: false), !editor(scopes: ["view"]), !editor(scopes: ["run"]),
+          !editor(["agentPrivate": .bool(true)]), !editor(["agent": .object([:])]), !editor(["personal": .object([:])]),
+          !editor(["generalChat": .bool(true)]), !editor(["automationId": .string("auto")]), !editor(["imported": .object([:])]),
+          !editor(["permissionDrift": .bool(true)]), !editor(permission: .object(["drift": .object([:])])) else { throw fixtureFailure("draft-offline-editor") }
+    return ["windowHidesText": true, "recreatedFieldKeepsDraft": true, "editingCanClear": true, "resetRejectsOldWriter": true, "onlyPermittedCodeEditsOffline": true]
 }
 
 private func reconnectPresentationRules() throws -> [String: Bool] {
@@ -171,6 +206,17 @@ private func reconnectPresentationRules() throws -> [String: Bool] {
     guard ui.shouldShowOffline(afterFailedRound: lost, connected: true),
           ui.shouldShowOffline(at: start.advanced(by: .seconds(6)), for: lost) else { throw fixtureFailure("presentation-offline") }
 
+    ui.beginRound(withRelay: true)
+    let bound = start.advanced(by: .seconds(24))
+    guard ui.offlineDeadline(for: lost) == bound,
+          !ui.shouldShowOffline(at: start.advanced(by: .seconds(8)), for: lost),
+          !ui.shouldShowOffline(afterFailedRound: lost, connected: true),
+          !ui.permitsRequests(connected: true, transportValid: true) else { throw fixtureFailure("presentation-relay-handshake") }
+    ui.beginRound(withRelay: true)
+    guard ui.shouldShowOffline(afterFailedRound: lost, connected: true),
+          !ui.shouldShowOffline(at: start.advanced(by: .milliseconds(23_999)), for: lost),
+          ui.shouldShowOffline(at: bound, for: lost) else { throw fixtureFailure("presentation-relay-bound") }
+
     ui.reset()
     guard ui.permitsRequests(connected: true, transportValid: true),
           !ui.shouldShowOffline(at: lost.deadline, for: lost),
@@ -184,7 +230,7 @@ private func reconnectPresentationRules() throws -> [String: Bool] {
     guard !ui.permitsRequests(connected: false, transportValid: false),
           !ui.shouldShowOffline(at: next.deadline, for: next),
           !ui.shouldShowOffline(afterFailedRound: next, connected: false) else { throw fixtureFailure("presentation-withdrawn") }
-    return ["graceBlocksRequests": true, "failedOrExpiredShowsOffline": true, "replacementIgnoresOldCallbacks": true, "clearedOpeningIgnoresOldCallbacks": true]
+    return ["boundedRelayRetry": true, "graceBlocksRequests": true, "failedOrExpiredShowsOffline": true, "replacementIgnoresOldCallbacks": true, "clearedOpeningIgnoresOldCallbacks": true]
 }
 
 /** The PING rule on a virtual clock: about 20 s for a silent peer, never while acknowledgements come. */
@@ -336,6 +382,34 @@ func livenessRules() throws -> [String: Any] {
         let behindWinner = try await relayStart([], delay: NativeReconnectPolicy.relayDelay(directKnown: false, lastWinner: .direct))
         timings["relayStartAloneMs"] = alone; timings["relayStartBehindDirectMs"] = behindDirect; timings["relayStartBehindWinnerMs"] = behindWinner
         result["relayStartsAtOnce"] = alone >= 0 && alone < 100 && behindDirect >= 250 && behindWinner >= 600
+        await workspace.closeOpening()
+    }
+    do {
+        let workspace = try paired.workspace(prefetch: false), paths = NativePathOwner()
+        let direct = ReconnectBox(), relay = ReconnectBox(), ready = ReconnectBox()
+        let failedDirect = try NativePathCandidate(id: "cooled-direct", kind: .direct) {
+            await direct.started(1); throw NativeFailure.unavailable
+        }
+        let failedRelay = try NativePathCandidate(id: "cooled-relay", kind: .relay) {
+            await relay.started(1); throw NativeFailure.unavailable
+        }
+        let retryRelay = try NativePathCandidate(id: failedRelay.id, kind: .relay) {
+            await relay.started(2); return try await paired.open()
+        }
+        let readyRelay = try NativePathCandidate(id: "ready-relay", kind: .relay) {
+            let connection = try await paired.open(); await ready.keep(connection); return connection
+        }
+        let failed = try? await paths.migrate([failedDirect, failedRelay], relayDelay: .zero, workspace: workspace)
+        let ordinary = try? await paths.migrate([failedDirect, retryRelay], workspace: workspace)
+        let skippedOnOrdinaryDial = await relay.starts == [1] && ordinary == nil && failed == nil
+        _ = try await paths.migrate([failedDirect, retryRelay, readyRelay], recovering: true, workspace: workspace)
+        guard let readyConnection = await ready.connection else { throw fixtureFailure("relay-cooldown-ready") }
+        let preferredReady = await relay.starts == [1]
+        await readyConnection.close()
+        _ = try await paths.migrate([failedDirect, retryRelay], recovering: true, workspace: workspace)
+        let retriedOnlyRelay = await relay.starts == [1, 2]
+        result["relayCooldown"] = ["ordinaryDialSkipsCooling": skippedOnOrdinaryDial, "readyRelayPreferred": preferredReady,
+                                   "onlyRelayRetried": retriedOnlyRelay, "directStillCools": await direct.starts == [1]]
         await workspace.closeOpening()
     }
     // Test the real workspace liveness settings with a proxy that drops traffic without sending FIN or changing the path.

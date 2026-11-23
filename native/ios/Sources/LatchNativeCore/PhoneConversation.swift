@@ -554,6 +554,16 @@ public enum PhoneConversation {
         // Latch no longer runs an assistant's private context, so nothing can continue its session.
         if summary["personal"] != .null { return "这个会话来自已移除的 Agent，只能查看" }
         if !connected { return "Mac 不在线" }
+        return permissionGate(summary: summary, permission: permission, canRun: canRun)
+    }
+    /** An already-open, ordinary Code conversation can still edit local text until its content window closes. */
+    public static func keepsOfflineEditor(summary: NativeJSON, permission: NativeJSON, device: NativeJSON, bodyOpen: Bool) -> Bool {
+        guard bodyOpen, summary["id"].string != nil, summary["personal"] == .null, summary["agent"] == .null,
+              !summary["agentPrivate"].bool, !summary["generalChat"].bool, summary["automationId"] == .null, summary["imported"] == .null,
+              device["status"].string == "active", device["scopes"].array.contains(.string("view")) else { return false }
+        return permissionGate(summary: summary, permission: permission, canRun: device["scopes"].array.contains(.string("run"))) == nil
+    }
+    private static func permissionGate(summary: NativeJSON, permission: NativeJSON, canRun: Bool) -> String? {
         if summary["permissionDrift"].bool || permission["drift"] != .null { return "这个会话的权限变了，已停止接受输入" }
         if !canRun { return "这台手机不能发送消息" }
         return nil

@@ -79,6 +79,7 @@ private func certificateSPKI(_ der: Data) throws -> Data {
 private final class RelaySetup: @unchecked Sendable {
     let endpoint: NativeRelayAddress
     let admission: NativeRelayPass
+    let deadline: NativeRelayHandshakeDeadline
     /** The origin this connection dials: the node's URL or, on an edge node, one of its further origins. */
     let origin: URL
     let key: String
@@ -87,7 +88,8 @@ private final class RelaySetup: @unchecked Sendable {
     let clientNonce: Data
     /** Edge kind: the origins of one node race only up to the signature check; one winner then sends the proof. */
     let race: NativeEdgeRace?
-    init(endpoint: NativeRelayAddress, admission: NativeRelayPass, origin: URL, race: NativeEdgeRace?) throws {
+    init(endpoint: NativeRelayAddress, admission: NativeRelayPass, origin: URL, race: NativeEdgeRace?, deadline: NativeRelayHandshakeDeadline) throws {
+        self.deadline = deadline
         self.endpoint = endpoint; self.admission = admission; self.origin = origin; self.race = race
         outerSlot = try endpoint.profile == .outerPadV2 ? RelayOuterSlot() : nil
         key = try LinkBytes.random(16).base64EncodedString()
@@ -120,7 +122,6 @@ private final class RelayFramer: NWProtocolFramerImplementation {
     private var drainScheduled = false
     private var outer: NativeRelayOuterPadding?
     private var outerStart: ContinuousClock.Instant?
-    private let started = ContinuousClock.now
     private var stopped = false
     /** Edge kind: this origin holds the node's claim; the connection's end releases it (`NativeEdgeOrigins.race`). */
     private var claimed = false
@@ -132,7 +133,7 @@ private final class RelayFramer: NWProtocolFramerImplementation {
         let request = "GET \(setup.path) HTTP/1.1\r\nHost: \(authority)\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: \(setup.key)\r\nSec-WebSocket-Protocol: \(protocolName)\r\n\r\n"
         do { try write(Data(request.utf8), framer: framer) }
         catch { framer.markFailed(error: .posix(.ECANCELED)); return .willMarkReady }
-        framer.scheduleWakeup(wakeupTime: .milliseconds(8000))
+        setup.deadline.advanced()
         return .willMarkReady
     }
     private func write(_ bytes: Data, framer: NWProtocolFramer.Instance) throws {
@@ -160,12 +161,7 @@ private final class RelayFramer: NWProtocolFramerImplementation {
         guard !stopped else { return }
         if outer != nil, elapsedMs < NativeRelayOuterPadding.durationMs {
             framer.scheduleWakeup(wakeupTime: .milliseconds(NativeRelayOuterPadding.tickMs - elapsedMs % NativeRelayOuterPadding.tickMs))
-        } else if phase == .ready { framer.scheduleWakeup(wakeupTime: .forever) }
-        else {
-            let spent = started.duration(to: .now).components
-            let milliseconds = spent.seconds * 1000 + spent.attoseconds / 1_000_000_000_000_000
-            framer.scheduleWakeup(wakeupTime: .milliseconds(UInt64(max(1, 8000 - milliseconds))))
-        }
+        } else { framer.scheduleWakeup(wakeupTime: .forever) }
     }
     func handleInput(framer: NWProtocolFramer.Instance) -> Int {
         // Input notifications are edge triggered. A partial WebSocket frame may have more TLS records already buffered.
@@ -211,7 +207,7 @@ private final class RelayFramer: NWProtocolFramerImplementation {
                     fields["upgrade"]?.lowercased() == "websocket", fields["sec-websocket-extensions"] == nil,
                     fields["connection"]?.lowercased().split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }).contains("upgrade") == true else { throw NativeFailure.identityMismatch }
                 remaining = Data(header[end.upperBound...]); header.removeAll(keepingCapacity: false)
-                phase = .challenge
+                phase = .challenge; setup.deadline.advanced()
                 if setup.endpoint.profile == .outerPadV2 { outer = NativeRelayOuterPadding(); outerStart = .now; schedule(framer: framer) }
                 // Edge: EDGE-HELLO with this connection's nonce; self-hosted: the frozen HELLO.
                 try send(setup.endpoint.edge == nil ? Data([0x20, 1]) : Data([0x27]) + setup.clientNonce, framer: framer)
@@ -255,14 +251,16 @@ private final class RelayFramer: NWProtocolFramerImplementation {
                 } else {
                     try send(Data([0x10]) + setup.admission.admission(timeMs: relayTime, nonce: LinkBytes.random(16)), framer: framer)
                 }
-                phase = .admitted
+                phase = .admitted; setup.deadline.advanced()
             case .admitted:
-                guard frame.payload == Data([0x60]) else { throw NativeFailure.unavailable }; phase = .spliced
+                guard frame.payload == Data([0x60]) else { throw NativeFailure.unavailable }
+                phase = .spliced; setup.deadline.advanced()
             case .spliced:
                 let pass = try AdmissionPass.decode(setup.admission.bytes)
                 guard frame.payload.count == 25, frame.payload.first == 0x51,
                       LinkBytes.equal(Data(frame.payload.suffix(16)), pass.tag) else { throw NativeFailure.identityMismatch }
-                phase = .ready; framer.markReady(); schedule(framer: framer)
+                setup.race?.spliced(origin: setup.origin)
+                setup.deadline.advanced(); phase = .ready; framer.markReady(); schedule(framer: framer)
             case .ready:
                 guard frame.payload.first == 0, frame.payload.count <= 16_385 else { throw NativeFailure.invalidRecord }
                 if frame.payload.count > 1 { framer.deliverInput(data: Data(frame.payload.dropFirst()), message: .init(instance: framer), isComplete: false) }
@@ -296,7 +294,6 @@ private final class RelayFramer: NWProtocolFramerImplementation {
                 }
                 schedule(framer: framer); return
             }
-            guard phase == .ready else { framer.markFailed(error: .posix(.ETIMEDOUT)); return }
             framer.scheduleWakeup(wakeupTime: .forever)
         }
         catch { framer.markFailed(error: .posix(.EAUTH)) }
@@ -373,10 +370,11 @@ extension NativeHTTPConnection {
             complete(true)
         }, DispatchQueue(label: "app.latch.relay.tls-verify"))
         let binding: LinkBinding = try endpoint.profile == .outerPadV2 ? .relayPaddedV2(id: endpoint.relayId, route: admission.routeId()) : .relay(id: endpoint.relayId, route: admission.routeId())
-        let state = try HandshakeState(root: rootSpki, knockKey: knockKey, binding: binding)
+        let deadline = NativeRelayHandshakeDeadline()
+        let state = try HandshakeState(root: rootSpki, knockKey: knockKey, binding: binding, relayDeadline: deadline)
         let inner = try NativeTLS.options(state: state, identity: identity)
         let knock = NWProtocolFramer.Options(definition: KnockFramer.definition); knock["latch.state"] = state
-        let relay = NWProtocolFramer.Options(definition: RelayFramer.definition); relay["latch.relay"] = try RelaySetup(endpoint: endpoint, admission: admission, origin: origin, race: race)
+        let relay = NWProtocolFramer.Options(definition: RelayFramer.definition); relay["latch.relay"] = try RelaySetup(endpoint: endpoint, admission: admission, origin: origin, race: race, deadline: deadline)
         let tcp = NWProtocolTCP.Options(); tcp.noDelay = true; tcp.connectionTimeout = 5
         tcp.enableKeepalive = true; tcp.keepaliveIdle = 60; tcp.keepaliveInterval = 15; tcp.keepaliveCount = 4
         let parameters = NWParameters(tls: outer, tcp: tcp)
@@ -407,9 +405,8 @@ public enum NativeEdgeOrigins {
 
 /**
  * The first origin of an edge node to pass the signature check claims the node and alone sends the admission proof.
- * When the node has more than one origin, a claimant that has not become a whole connection (relay join and the inner
- * handshake) within `claimTimeout` is cancelled and its claim released; an origin refused meanwhile then dials again, so
- * a stalled origin cannot keep the others waiting for the outer timeout. A lone origin keeps the outer timeout.
+ * With alternative origins, release a claimant that stalls on admission or on splice. Once joined to the Host,
+ * the inner handshake has its own step and total deadlines; the node remains claimed until success or disconnect.
  */
 public final class NativeEdgeRace: @unchecked Sendable {
     private let lock = NSLock()
@@ -427,7 +424,10 @@ public final class NativeEdgeRace: @unchecked Sendable {
         guard holder == nil else { refused.insert(origin); return false }
         holder = origin; claimedAt = .now; return true
     }
-    /** `origin` has held the claim for `claimTimeout` without the race choosing it. */
+    package func spliced(origin: URL) {
+        lock.lock(); defer { lock.unlock() }
+        if holder == origin { claimedAt = nil }
+    }
     func claimLapsed(origin: URL) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard !finished, !cancelled, holder == origin, let claimedAt else { return false }

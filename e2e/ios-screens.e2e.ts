@@ -24,6 +24,7 @@ const SCENES = [
   'question-reminder',
   'conversation',
   'recovering-chat',
+  'offline-draft',
   'markdown',
   'markdown-code',
   'pictures',

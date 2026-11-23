@@ -10,17 +10,37 @@ struct PreflightCertificate: Sendable {
     let spki: Data
 }
 
+/** A relay has several serial handshakes on the same NWConnection. Only a completed step buys the next step time. */
+package final class NativeRelayHandshakeDeadline: @unchecked Sendable {
+    static let total = TimeAmount.seconds(24)
+    private static let step = TimeAmount.seconds(8)
+    private let lock = NSLock()
+    private let limit: NIODeadline
+    private var next: NIODeadline
+    package init(now: NIODeadline = .now()) {
+        limit = now + Self.total; next = now + Self.step
+    }
+    package func advanced(at now: NIODeadline = .now()) {
+        lock.lock(); defer { lock.unlock() }
+        guard now < next else { return }
+        next = min(now + Self.step, limit)
+    }
+    package var deadline: NIODeadline { lock.lock(); defer { lock.unlock() }; return next }
+}
+
 /** The preflight runs below TLS; access from Network.framework and NIO queues is protected by this lock. */
 final class HandshakeState: @unchecked Sendable {
     let root: Data
     let knockKey: Data
     let binding: LinkBinding
+    let relayDeadline: NativeRelayHandshakeDeadline?
     let nonce: Data
     let startedAt: UInt64
     private let lock = NSLock()
     private var peer: PreflightCertificate?
     private var tlsAccepted = false
-    init(root: Data, knockKey: Data, binding: LinkBinding) throws {
+    init(root: Data, knockKey: Data, binding: LinkBinding, relayDeadline: NativeRelayHandshakeDeadline? = nil) throws {
+        self.relayDeadline = relayDeadline
         let parsedRoot = try P256.Signing.PublicKey(derRepresentation: root)
         guard root.count == 91, LinkBytes.equal(parsedRoot.derRepresentation, root) else { throw NativeFailure.identityMismatch }
         self.root = root; self.knockKey = try LinkBytes.fixed(knockKey, 32); self.binding = binding
@@ -78,6 +98,7 @@ final class KnockFramer: NWProtocolFramerImplementation {
             guard let buffer, buffer.count >= size else { if complete { framer.markFailed(error: .posix(.ECONNRESET)) }; return 0 }
             do {
                 try state.accept(Data(buffer.prefix(size)))
+                state.relayDeadline?.advanced()
                 ready = true
                 framer.passThroughInput(); framer.passThroughOutput(); framer.markReady()
             } catch { framer.markFailed(error: .posix(.EAUTH)) }
@@ -125,6 +146,7 @@ enum NativeTLS {
                   sec_protocol_metadata_get_negotiated_tls_protocol_version(metadata) == .TLSv13,
                   let protocolName = sec_protocol_metadata_get_negotiated_protocol(metadata), String(cString: protocolName) == applicationProtocol else { complete(false); return }
             state.acceptTLS()
+            state.relayDeadline?.advanced()
             complete(true)
         }, DispatchQueue(label: "app.latch.native.tls-verify"))
         return options
@@ -160,7 +182,15 @@ final class HostProofGate: ChannelInboundHandler, RemovableChannelHandler, @unch
     init(state: HandshakeState, completion: EventLoopPromise<Void>) { self.state = state; self.completion = completion }
     func handlerAdded(context: ChannelHandlerContext) {
         self.context = context
-        timer = context.eventLoop.scheduleTask(in: .seconds(8)) { [self] in if let context = self.context { fail(context) } }
+        scheduleDeadline(on: context.eventLoop, at: state.relayDeadline?.deadline ?? (.now() + .seconds(8)))
+    }
+    private func scheduleDeadline(on loop: any EventLoop, at deadline: NIODeadline) {
+        timer = loop.scheduleTask(deadline: deadline) { [self] in
+            guard let context = self.context, !settled else { return }
+            if let next = state.relayDeadline?.deadline, next > .now() {
+                scheduleDeadline(on: loop, at: next)
+            } else { fail(context) }
+        }
     }
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         var incoming = unwrapInboundIn(data)

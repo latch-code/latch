@@ -51,7 +51,7 @@ public actor NativePathOwner {
     }
     public func close() async { await networkChanged() }
     public func migrate(_ candidates: [NativePathCandidate], later: NativeLateDirects? = nil, relayDelay: Duration? = nil,
-        workspace: NativeWorkspace) async throws -> NativeJSON {
+        recovering: Bool = false, workspace: NativeWorkspace) async throws -> NativeJSON {
         guard candidates.count <= 12 else { throw NativeFailure.invalidRecord }
         self.workspace = workspace
         let current = UUID(); generation = current
@@ -61,9 +61,16 @@ public actor NativePathOwner {
         if let upgrade { _ = await upgrade.result }
         guard generation == current, !Task.isCancelled else { throw NativeFailure.unavailable }
         round = nil; upgrading = nil
-        let available = candidates.filter(usable)
-        let directs = Array(available.filter { $0.kind == .direct }.prefix(2))
-        let selected = directs + Array(available.filter { $0.kind == .relay }.prefix(1))
+        let directs = Array(candidates.filter { $0.kind == .direct && usable($0) }.prefix(2))
+        let relays = candidates.filter { $0.kind == .relay }
+        var relay = relays.first(where: usable)
+        if recovering, relay == nil {
+            // The reconnect loop already backs off. Without a ready relay, retry the one whose cooldown ends first.
+            let now = ContinuousClock.now
+            relay = relays.min { (failures[$0.id] ?? now) < (failures[$1.id] ?? now) }
+        }
+        var selected = directs
+        if let relay { selected.append(relay) }
         guard !selected.isEmpty || later != nil else { throw NativeFailure.unavailable }
         let delay = relayDelay ?? NativeReconnectPolicy.relayDelay(directKnown: !directs.isEmpty, lastWinner: nil)
         timeline?.record(.candidates, ordinal: selected.count)
