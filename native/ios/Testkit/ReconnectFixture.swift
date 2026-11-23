@@ -101,6 +101,19 @@ private func fixtureFailure(_ name: String) -> FixtureStage { FixtureStage(name:
               deferred == nil else { throw fixtureFailure("held-session-changed") }
     }
 
+    let tapped = PhoneResumingSession(session: "held", host: host, selection: selection, content: content,
+        tab: .code, agentPath: [], requiresRetainedLease: false)
+    deferred = tapped
+    guard PhoneResumingSession.resolve(&deferred, current: tapped, snapshot: listing(false, complete: false)) == nil,
+          deferred == tapped, PhoneResumingSession.resolve(&deferred, current: tapped, snapshot: listing(true, complete: true)) == .read,
+          deferred == nil else { throw fixtureFailure("cached-selection-confirmed") }
+    deferred = tapped
+    guard PhoneResumingSession.resolve(&deferred, current: nil, snapshot: listing(true, complete: true)) == nil, deferred == nil
+    else { throw fixtureFailure("cached-selection-left") }
+    deferred = tapped
+    guard PhoneResumingSession.resolve(&deferred, current: resume, snapshot: listing(true, complete: true)) == nil, deferred == nil
+    else { throw fixtureFailure("cached-selection-cannot-restore-window") }
+
     // A network change retries at once; failures still back off with bounded jitter.
     guard NativeReconnectPolicy.delay(attempt: 0, afterNetworkChange: true, jitter: 1) == .zero,
           NativeReconnectPolicy.delay(attempt: 0, afterNetworkChange: false, jitter: 0) == .milliseconds(500),

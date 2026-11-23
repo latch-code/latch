@@ -48,20 +48,21 @@ extension PhoneModel {
      * Content opens without asking. With Face ID turned on in 设置, its sheet appears by itself the first time content is
      * opened; declining it is not an error: the conversation offers the one way back, and nothing else nags.
      */
-    func openSession(_ id: String, resuming retained: BodyLease? = nil) async {
+    func openSession(_ id: String, resuming retained: BodyLease? = nil, fromInbox: Bool = false) async {
         guard let workspace else { sessionId = id; detail = .null; return }
         let current = generation
         let reading = UUID(), selectedTab = tab, selectedPath = agentPath
         sessionId = id; detail = .null; detailFailed = nil; contentGeneration = reading; PreviewFiles.clear()
         func stillReading() -> Bool {
             current == generation && sessionId == id && contentGeneration == reading
-                && (retained == nil || (selectedTab == tab && selectedPath == agentPath && retained?.valid == true))
+                && ((!fromInbox && retained == nil) || (selectedTab == tab && selectedPath == agentPath))
+                && retained?.valid != false && (!fromInbox || (!workItemsShown && PhoneSessions.mayReadBody(snapshot: snapshot, sessionId: id)))
         }
         do {
             // If the shelf is already opening this window, wait for its binding before capturing the content epoch.
             if let opening = teamListOpening, opening.transport === installedTransport { try await opening.task.value }
             guard stillReading(), !Task.isCancelled else { return }
-            try await ensureVerified(resuming: retained)
+            try await ensureVerified(resuming: retained, whileCurrent: stillReading)
         }
         catch {
             guard stillReading(), !(error is CancellationError) else { return }

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -11,6 +11,49 @@ const simctl = (...args: string[]) => run('/usr/bin/xcrun', ['simctl', ...args],
 /** A runtime's first boot migrates its data and can take minutes. */
 const simctlSlow = (...args: string[]) => run('/usr/bin/xcrun', ['simctl', ...args], { timeout: 600_000, maxBuffer: 16_777_216 })
 const pause = (ms: number) => new Promise(done => setTimeout(done, ms))
+
+async function captureFirstRows(udid: string, token: string, shot: string, reader: string, started: number) {
+  const container = (await simctl('get_app_container', udid, 'codes.latch.ios.screens', 'data')).stdout.trim()
+  const gate = join(container, 'tmp', `inbox-${token}`)
+  const titles = ['核对发布清单', '检查缓存读取', '整理接口说明']
+  const ready = await vi.waitFor(() => stat(gate + '.ready'), { timeout: 15_000 })
+  const frame = join(container, 'tmp', `visible-${token}.png`)
+  for (const phase of ['first', 'flat', 'grouped'] as const) {
+    const grouped = phase === 'grouped'
+    if (grouped) await writeFile(gate, '')
+    let capturedByMs = 0
+    let capturedAfterMetadataByMs = 0
+    const deadline = performance.now() + 30_000
+    while (true) {
+      await simctl('io', udid, 'screenshot', frame)
+      capturedByMs = Math.round(performance.now() - started)
+      capturedAfterMetadataByMs = Math.max(0, Math.round(Date.now() - ready.mtimeMs))
+      const positions: unknown = JSON.parse(
+        (await run(reader, [frame, ...(phase === 'first' ? [] : ['--settled']), ...titles, '先显示会话'])).stdout,
+      )
+      if (!positions || typeof positions !== 'object') throw new Error('Missing screenshot text positions')
+      const [lead, member, ordinary, waiting] = [...titles, '先显示会话'].map(title => {
+        const values: unknown = Reflect.get(positions, title)
+        if (!Array.isArray(values) || !values.every((value): value is number => typeof value === 'number'))
+          throw new Error('Missing fixture row positions')
+        return values
+      })
+      if (waiting?.length) throw new Error('The team lookup hides the first project rows')
+      if (lead?.length === 1 && member?.length === 1 && ordinary?.length === 1 && Math.abs(ordinary[0]! - lead[0]!) < 0.015) {
+        const indent = member[0]! - lead[0]!
+        if (grouped ? indent > 0.015 : Math.abs(indent) < 0.015) break
+      }
+      if (performance.now() >= deadline) throw new Error(`Expected ${grouped ? 'grouped' : 'flat'} rows, saw ${JSON.stringify(positions)}`)
+      await pause(250)
+    }
+    await copyFile(frame, phase === 'flat' ? shot : shot.replace('.png', `-${phase}.png`))
+    if (phase === 'first')
+      await writeFile(
+        shot.replace('.png', '-timing.json'),
+        JSON.stringify({ firstRowsVisibleByMs: capturedByMs, afterMetadataReadyByMs: capturedAfterMetadataByMs }),
+      )
+  }
+}
 
 /** Count the code surface in the actual Simulator screenshot; a detached text view cannot verify what the user saw. */
 async function expectCodeSurface(png: string, scratch: string, proof: unknown, theme: string) {
@@ -39,6 +82,7 @@ async function expectCodeSurface(png: string, scratch: string, proof: unknown, t
 /** Scenes of the LatchScreens target (`native/ios/Screens/ScreensStage.swift`), chosen by a launch argument. */
 const SCENES = [
   'code',
+  'inbox-first-rows',
   'workspace',
   'workspace-offline',
   'session-team',
@@ -219,6 +263,9 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
         ],
         { timeout: 300_000, maxBuffer: 16_777_216 },
       )
+      const inboxReader = join(derived, 'read-inbox-rows')
+      if (chosen.includes('inbox-first-rows'))
+        await run('/usr/bin/xcrun', ['swiftc', 'native/ios/Tools/InboxScreenshotRows.swift', '-o', inboxReader])
       const application = join(derived, 'Build/Products/Debug-iphonesimulator/LatchScreens.app')
       // The marker the product check looks for is really in this target, so its absence there means something.
       const libraries = (await readdir(application)).filter(name => name.endsWith('.dylib'))
@@ -261,6 +308,8 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
           await simctl('ui', udid, 'appearance', theme)
           for (const scene of chosen) {
             const probe = scene === 'markdown-prose' || scene === 'markdown-dense' ? randomUUID() : undefined
+            const inboxProbe = scene === 'inbox-first-rows' ? randomUUID() : undefined
+            const started = performance.now()
             await simctl(
               'launch',
               '--terminate-running-process',
@@ -269,9 +318,14 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
               '-LatchScene',
               scene,
               ...(probe ? ['-LatchMarkdownProbe', probe] : []),
+              ...(inboxProbe ? ['-LatchInboxProbe', inboxProbe] : []),
             )
-            await pause(2500)
             const shot = join(output, `${scene}--${theme}--${device.name}.png`)
+            if (inboxProbe) {
+              await captureFirstRows(udid, inboxProbe, shot, inboxReader, started)
+              continue
+            }
+            await pause(2500)
             if (probe) {
               const container = (await simctl('get_app_container', udid, 'codes.latch.ios.screens', 'data')).stdout.trim()
               const proof = join(container, 'tmp', `markdown-${probe}.json`)

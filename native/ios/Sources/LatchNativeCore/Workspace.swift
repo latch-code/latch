@@ -118,6 +118,7 @@ public struct NativeListCheckpoint: Sendable {
     private var order: UInt64 = 0
     private var applying = false
     public init() {}
+    public func hasDisplayed(on current: NativeTransportEpoch) -> Bool { current.valid && transport === current }
     @discardableResult public func apply(_ checkpoint: NativeListCheckpoint, on current: NativeTransportEpoch?,
         to display: (NativeJSON) -> Bool) -> Bool {
         guard !applying, let current, current === checkpoint.transport else { return false }

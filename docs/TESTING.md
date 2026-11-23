@@ -262,6 +262,8 @@ pnpm exec vitest run --config e2e/vitest.config.ts e2e/harness-acceptance.e2e.ts
 - **GUI 剪贴板验收。** 只在 `LATCH_IOS_LIVE_GUI_CLIPBOARD=1`、有 `HOLD`、且设备是本轮新建或 `DEVICE` 明确指定时进行。先在内存保存 Mac 剪贴板（读不全即拒绝，不替换原内容），用公开随机文本做双向同步的正控（各 5 秒内）与关闭共享后的负控（各 10 秒），没有成功的正控不接受负控；通过后才发一次码。两个 GUI 都退出且剪贴板仍属本次测试时才恢复原内容；人后来复制的内容保留。中断或等待不算通过，这也不是永久隔离保证。
 - **网络。** Host 的原生监听绑定默认路由接口的私网地址，只在这次运行期间存在、局域网可达，连接仍需连接码。测试 Host 不发布 Bonjour，配对码的局域网提示 2 分钟后失效。
 
+原生会话首屏用 `ios-screens` 的 `inbox-first-rows` 场景验收。夹具先提供会话摘要，测试从模拟器截图中确认项目行已经出现，再放行团队关系，核对同一成员只出现一次并缩进到带队会话下。
+
 原生待办的投影、旧窗口、确切问答或审批和提交版本由 `native-swift.test.ts` 编排。交付与原回合的组合读取经实际原生连接换路用例核对，复用原正文租约时拒绝旧连接的下一次读取和发布。缓存回归暂停旧 Vault，检查快速重开时的新资料库会等待收尾，离线只读到已撤下私有项的快照。用 `ios-screens` 的 `work-`、`review` 场景查看任务列表、来源、同 SHA 证据和文件栏布局。回复排版、消息图片与团队看 `markdown`、`markdown-code`、`markdown-prose`、`markdown-dense`、`markdown-diagram`、`pictures`、`team-results`、`team-graph` 场景，Markdown 分块、团队结果的读取与团队分工卡的位置和末端由 `native-swift.test.ts` 核对。实走「待办 → 原回合 → 回到待办」在本次创建的模拟器及临时 Host 上做，覆盖较窄权限、锁屏和断连。审阅还检查 iPad 横竖屏、分屏、辅助使用字号、长路径与过期警告。
 
 Live 模式只在 `LatchScreens`（仅模拟器）中编译，用进程内存里的软件密钥代替 Secure Enclave；TLS、敲门 HMAC、根证明、正文窗口与 requestId 与产品相同。`pnpm check:boundaries` 核对这些代码不进 `Latch` 目标。

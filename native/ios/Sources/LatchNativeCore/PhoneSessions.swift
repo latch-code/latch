@@ -364,9 +364,12 @@ public enum PhoneSessions {
         return result
     }
 
-    /** These shelves are always flat, so an imminent private team projection cannot rearrange their rows. */
-    public static func shelvesWhileReadingTeams(_ shelves: [PhoneShelf]) -> [PhoneShelf] {
-        shelves.filter { $0.id == "waiting" || $0.id == "running" }
+    /** Readable summaries appear immediately. Only a confirmed body window can supply the extra team hierarchy. */
+    public static func shelves(in snapshot: NativeJSON, teamsVisible: Bool, archived: Bool, query: String) -> [PhoneShelf] {
+        let tasks = PhoneSpaces.tasks(snapshot, in: .code), workspaces = snapshot["catalog"]["workspaces"].array
+        let teams = teamsVisible ? snapshot["teams"].array : nil
+        return archived ? archivedShelves(tasks, workspaces: workspaces, teams: teams, query: query)
+            : shelves(tasks: tasks, workspaces: workspaces, teams: teams, query: query)
     }
 
     public static func withoutTeams(_ snapshot: NativeJSON) -> NativeJSON {

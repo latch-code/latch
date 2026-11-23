@@ -4,36 +4,22 @@ extension PhoneModel {
     private var canReadTeamList: Bool {
         tab == .code && !workItemsShown && snapshot["device"]["status"].string == "active" && hasScope("view")
     }
-    private var teamListSupport: NativeJSON {
-        snapshot["catalog"]["features"]["teams"]
-    }
     private var teamListTransport: NativeTransportEpoch? {
-        canReadTeamList && teamListSupport.bool && transportReady ? installedTransport : nil
+        canReadTeamList && snapshot["catalog"]["features"]["teams"].bool && transportReady ? installedTransport : nil
     }
-    func teamListReadMode(faceID: Bool) -> PhoneTeamListRead {
+    private func teamListReadMode(faceID: Bool) -> PhoneTeamListRead {
         PhoneUnlock.teamListRead(windowOpen: hasContentWindow, confirmed: privateSnapshot.confirmed, faceID: faceID)
     }
-    /** Hold provisional project shelves through the automatic read, including the cache used during the first dial. */
-    var expectsAutomaticTeamList: Bool {
-        guard canReadTeamList, sessionId == nil || hasContentWindow else { return false }
-        if let transport = teamListTransport {
-            if teamListRead?.transport === transport { return teamListRead?.automatic == true }
-            return teamListRetry !== transport
-        }
-        // Older caches have no capability bit. The first authenticated list answers whether we can read it.
-        return teamListSupport != .bool(false) && busy && selectedHost != nil && !connected && !offline && installedTransport == nil
-    }
-
     /** The list can read its private projection silently if the window is already open or no owner prompt is required. */
     func teamListReadKey(faceID: Bool) -> NativeTransportEpoch? {
         guard !busy, !verifying, sessionId == nil || hasContentWindow,
-              let transport = teamListTransport, teamListRead?.transport !== transport, teamListRetry !== transport,
+              let transport = teamListTransport, teamListRead !== transport, teamListRetry !== transport,
               teamListReadMode(faceID: faceID) == .automatic else { return nil }
         return transport
     }
 
     func offersTeamListUnlock(faceID: Bool) -> Bool {
-        guard !busy, !verifying, let transport = teamListTransport, teamListRead?.transport !== transport else { return false }
+        guard !busy, !verifying, let transport = teamListTransport, teamListRead !== transport else { return false }
         let read = teamListReadMode(faceID: faceID)
         return read == .onRequest || (read == .automatic && teamListRetry === transport)
     }
@@ -43,8 +29,8 @@ extension PhoneModel {
         guard let transport = teamListTransport,
               teamListReadKey(faceID: faceID) === transport || (userInitiated && offersTeamListUnlock(faceID: faceID)) else { return }
         let host = generation
-        teamListRead = (transport, automatic: !userInitiated)
-        defer { if teamListRead?.transport === transport { teamListRead = nil } }
+        teamListRead = transport
+        defer { if teamListRead === transport { teamListRead = nil } }
         func current() -> Bool { generation == host && teamListTransport === transport && !Task.isCancelled }
         do {
             if !hasContentWindow {

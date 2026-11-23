@@ -13,14 +13,9 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
             if let id = item["detail"]["summary"]["id"].string {
                 snapshot = PhoneSessions.projectingCurrentSummary(snapshot: snapshot, detail: item["detail"], sessionId: id, cached: false)
             }
-            let tasks = snapshot["tasks"].array, teams = snapshot["teams"].array, workspaces = value["workspaces"].array
-            let query = item["query"].string ?? ""
-            let shelves = item["archived"].bool ? PhoneSessions.archivedShelves(tasks, workspaces: workspaces, teams: teams, query: query)
-                : PhoneSessions.shelves(tasks: tasks, workspaces: workspaces, teams: teams, query: query)
-            let state = item["presentation"]
-            let read = PhoneUnlock.teamListRead(windowOpen: state["open"].bool, confirmed: state["confirmed"].bool, faceID: state["faceID"].bool)
-            let waiting = read.waitsForShelves(automaticReadExpected: state["expected"].bool, waitExpired: state["expired"].bool)
-            let visible = waiting ? PhoneSessions.shelvesWhileReadingTeams(shelves) : shelves
+            let tasks = snapshot["tasks"].array
+            let teamsVisible = !item["closed"].bool && !item["offline"].bool && !item["readingTeams"].bool
+            let visible = PhoneSessions.shelves(in: snapshot, teamsVisible: teamsVisible, archived: item["archived"].bool, query: item["query"].string ?? "")
             return ["rows": visible.flatMap { shelf in shelf.rows.map { row -> [String: Any] in
                 ["shelf": shelf.id, "id": row.id, "parent": row.parentId ?? "", "count": row.memberCount, "last": row.isLastMember]
             } }, "hasTeams": snapshot.object["teams"] != nil, "linked": tasks.filter { $0["teamOf"] != .null }.compactMap { $0["id"].string }]

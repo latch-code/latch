@@ -104,9 +104,10 @@ import LatchNativeCore
         var shown = NativeJSON.null
         if mode == "metadata" {
             let current = try await workspace.listCheckpoint()
-            guard update.checkpoint?.value["tasks"].array.isEmpty == true,
+            guard !list.hasDisplayed(on: current.transport), update.checkpoint?.value["tasks"].array.isEmpty == true,
                   update.snapshot?["revision"] == current.value["revision"],
-                  list.apply(current, on: current.transport, to: { shown = $0; return true }) else { throw NativeFailure.invalidRecord }
+                  list.apply(current, on: current.transport, to: { shown = $0; return true }),
+                  list.hasDisplayed(on: current.transport) else { throw NativeFailure.invalidRecord }
         }
         var onlyMetadata = false
         guard let receipt = reading.publication.apply(update, to: { value in

@@ -40,6 +40,10 @@ struct ConversationView: View {
                 if let work { workTranscript(work) }
                 else { transcript }
             }
+            else if model.waitingForTappedSession && !model.offline {
+                ProgressView(model.connected ? "正在读取会话列表…" : "正在连接…")
+                    .controlSize(.small).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
             else if model.verifiedUntil == nil && !model.verifying { locked }
             else if model.detailFailed == id { unreadable }
             else if !model.connected && !model.verifying { macAway }

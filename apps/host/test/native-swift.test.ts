@@ -1936,6 +1936,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       row('orphan', 11, of('private', 'hidden')),
     ]
     const snapshot = {
+      catalog: { workspaces },
       tasks,
       teams: [{ id: 'first-team', members: [{ sessionId: 'hidden' }, { sessionId: 'first' }, { sessionId: 'second' }] }],
       instanceId: 'host',
@@ -1944,7 +1945,6 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     const detail = (summary: Record<string, unknown>) => ({ summary, sync: { instanceId: 'host', revision: 2 } })
     const { answers } = (await invoke({
       operation: 'phoneProjection',
-      workspaces,
       teamShelfCases: [
         { snapshot },
         { snapshot: { ...snapshot, teams: [] } },
@@ -1953,9 +1953,10 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         { snapshot, offline: true },
         { snapshot, detail: detail(row('second', 18, of('wrong', 'hidden'))) },
         { snapshot, detail: detail(row('second', 18)) },
-        { snapshot: { tasks: tasks.map(task => ({ ...task, archived: true })) }, archived: true },
+        { snapshot: { catalog: { workspaces }, tasks: tasks.map(task => ({ ...task, archived: true })) }, archived: true },
         {
           snapshot: {
+            catalog: { workspaces },
             tasks: [row('a', 18, of('t', 'b')), row('b', 17, of('t', 'a')), row('c', 16, of('t', 'a')), row('self', 15, of('t', 'self'))],
           },
         },
@@ -1999,33 +2000,26 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       ['self', ''],
     ])
   })
-  it('keeps team sessions out of the temporary flat list until the first authorized layout', async () => {
+  it('shows every authorized session immediately and groups the same rows when team relationships arrive', async () => {
     const tasks = [
       { id: 'approval', status: 'waiting-approval' },
       { id: 'run', status: 'running' },
       { id: 'lead', workspaceId: 'p' },
       { id: 'member', workspaceId: 'p', teamOf: { teamId: 'team', leadSessionId: 'lead' } },
     ]
-    const snapshot = { tasks, teams: [{ id: 'team', members: [{ sessionId: 'member' }] }] }
+    const snapshot = {
+      catalog: { workspaces: [{ id: 'p', name: 'project' }] },
+      tasks,
+      teams: [{ id: 'team', members: [{ sessionId: 'member' }] }],
+    }
     const result = await invoke({
       operation: 'phoneProjection',
-      workspaces: [{ id: 'p', name: 'project' }],
-      teamShelfCases: [
-        { snapshot, closed: true, presentation: { expected: true } },
-        { snapshot, closed: true, presentation: { open: true, expected: true } },
-        { snapshot, presentation: { open: true, confirmed: true, expected: true } },
-        { snapshot, closed: true, presentation: { faceID: true, expected: true } },
-        { snapshot, closed: true, presentation: { expected: true, expired: true } },
-        { snapshot, offline: true, presentation: { expected: false } },
-      ],
+      teamShelfCases: [{ snapshot, closed: true }, { snapshot, readingTeams: true }, { snapshot }, { snapshot, offline: true }],
     })
     const { answers } = result as { answers: { rows: { id: string; parent: string }[] }[] }
-    for (const frame of answers.slice(0, 2)) expect(frame.rows.map(row => row.id)).toEqual(['approval', 'run'])
+    for (const frame of answers) expect(frame.rows.map(row => row.id).sort()).toEqual(['approval', 'lead', 'member', 'run'])
     expect(answers[2]?.rows.find(row => row.id === 'member')?.parent).toBe('lead')
-    for (const frame of answers.slice(3)) {
-      expect(frame.rows).toHaveLength(4)
-      expect(frame.rows.every(row => row.parent === '')).toBe(true)
-    }
+    for (const frame of [answers[0], answers[1], ...answers.slice(3)]) expect(frame?.rows.every(row => row.parent === '')).toBe(true)
   })
   it('reveals folded projects during search and restores the folds for each computer and shelf identity', async () => {
     const shelf = 'project:shared'

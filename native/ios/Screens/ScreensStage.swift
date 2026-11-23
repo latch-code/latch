@@ -40,6 +40,8 @@ import UIKit
         model.verifiedUntil = .distantFuture
         _ = model.privateSnapshot.adopt(model.snapshot, captured: model.privateSnapshot.epoch, windowOpen: true)
         switch name {
+        case "inbox-first-rows":
+            stageFirstRows(model, base: value)
         case "question-reminder":
             stageQuestionReminder(model)
         case "session-team":
@@ -748,6 +750,39 @@ extension ScreensStage {
                 task("ses_gggggggggggggggggggggg", "检查 Rust 项目", harness: "codex", project: "rust-learn", minutes: 30)] + children)
             fields["teams"] = .array([.object(["id": .string(teamExample), "leadSessionId": .string(teamLead), "members": .array(members),
                 "state": .string("returned"), "createdAt": .string("2026-11-01T09:00:00Z"), "updatedAt": .string("2026-11-01T10:00:00Z")])])
+        }
+    }
+
+    /** List metadata is already here. The screenshot test releases the private team projection after reading the screen. */
+    private static func stageFirstRows(_ model: PhoneModel, base: NativeJSON) {
+        let team = sessionTeamSnapshot(base)
+        let names = [teamLead: "核对发布清单", teamMembers[0].id: "检查缓存读取", "ses_ffffffffffffffffffffff": "整理接口说明"]
+        let full = patched(team) { fields in
+            fields["tasks"] = .array(team["tasks"].array.compactMap { task in
+                guard let id = task["id"].string, let title = names[id] else { return nil }
+                return patched(task) { $0["title"] = .string(title) }
+            })
+            fields["catalog"] = patched(team["catalog"]) { catalog in
+                catalog["features"] = patched(catalog["features"] ?? .null) { $0["teams"] = .bool(true) }
+            }
+        }
+        stageDisconnected(model)
+        model.verifiedUntil = nil; model.privateSnapshot.clear()
+        model.connected = false; model.offline = false; model.busy = true
+        model.snapshot = patched(full) { fields in
+            fields["tasks"] = .array(full["tasks"].array.map { task in patched(task) { $0["teamOf"] = nil } })
+            fields["teams"] = nil
+        }
+        guard let token = UserDefaults.standard.string(forKey: "LatchInboxProbe"), UUID(uuidString: token) != nil else { return }
+        let gate = FileManager.default.temporaryDirectory.appendingPathComponent("inbox-" + token)
+        try? Data().write(to: gate.appendingPathExtension("ready"))
+        Task {
+            while !FileManager.default.fileExists(atPath: gate.path) {
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+            }
+            model.busy = false; model.connected = true; model.verifiedUntil = .distantFuture
+            _ = model.privateSnapshot.adopt(full, captured: model.privateSnapshot.epoch, windowOpen: true)
+            model.snapshot = full
         }
     }
 

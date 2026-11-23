@@ -44,14 +44,16 @@ public final class NativeConnectionTimeline: @unchecked Sendable {
     public func entries() -> [Entry] { lock.lock(); defer { lock.unlock() }; return ring }
 }
 
-/** A short background hold can resume its selected conversation once the Host lists it again. */
+/** A selection can open once the Host lists it. Only a short background hold requires the previous lease. */
 public struct PhoneResumingSession: Equatable, Sendable {
     public enum Action: Equatable, Sendable { case read, close }
     public let session: String
+    public let requiresRetainedLease: Bool
     private let host: UUID, selection: UUID, content: UUID
     private let tab: PhoneTab, agentPath: [String]
 
-    public init(session: String, host: UUID, selection: UUID, content: UUID, tab: PhoneTab, agentPath: [String]) {
+    public init(session: String, host: UUID, selection: UUID, content: UUID, tab: PhoneTab, agentPath: [String], requiresRetainedLease: Bool = true) {
+        self.requiresRetainedLease = requiresRetainedLease
         self.session = session; self.host = host; self.selection = selection; self.content = content
         self.tab = tab; self.agentPath = agentPath
     }
