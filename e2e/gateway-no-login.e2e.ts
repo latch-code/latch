@@ -176,6 +176,10 @@ it('shows a Harness that cannot be asked about its login the same login row once
     expect(saved.status).toBe(201)
     const qwen = async () => (await owner.json<AppSnapshot>('snapshot')).catalog!.harnesses.find(harness => harness.id === 'qwen')!
     expect((await qwen()).login?.checkable).toBeUndefined()
+    let reads = 0
+    page.on('request', request => {
+      if (request.method() === 'POST' && new URL(request.url()).pathname === '/link/api/agents/qwen/catalogue') reads++
+    })
     await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
     await connected(page)
 
@@ -187,13 +191,12 @@ it('shows a Harness that cannot be asked about its login the same login row once
       .filter({ visible: true })
       .first()
     const menu = page.locator('[role=menu], [role=listbox]').filter({ visible: true }).first()
-    // Qwen Code's lists are read only when asked, since its sessions start the person's MCP servers and hooks; the read
-    // opens a session, which is refused for want of a login.
+    // Opening the model panel asks Qwen Code for its lists; its empty session is refused for want of a login.
     await chip.click()
     expect((await qwen()).catalogueRead).toMatchObject({ when: 'request' })
-    await menu.getByText('读取 Qwen Code 的模型列表', { exact: true }).click()
     await expect.poll(async () => (await qwen()).catalogueRead?.last, { timeout: 20_000 }).toMatchObject({ ok: false, loginRequired: true })
     await menu.getByText('重新读取', { exact: true }).waitFor()
+    expect(reads).toBe(1)
     await page.screenshot({ path: `${OUTPUT}/unasked-menu-1440.png`, animations: 'disabled' })
     // The menu says the state in a word; the sentence and the way to log in are not repeated in it.
     await menu.locator('.model-note[data-tone="warn"]').getByText('还没登录', { exact: true }).waitFor()
@@ -217,6 +220,7 @@ it('shows a Harness that cannot be asked about its login the same login row once
     if (await menu.isVisible()) await page.keyboard.press('Escape')
     await chip.click()
     await menu.getByText('重新读取', { exact: true }).waitFor()
+    expect(reads).toBe(1)
     expect(await menu.getByText('还没登录', { exact: true }).count()).toBe(0)
     await page.screenshot({ path: `${OUTPUT}/unasked-service-model-1440.png`, animations: 'disabled' })
     // Back on its own model the row is back.

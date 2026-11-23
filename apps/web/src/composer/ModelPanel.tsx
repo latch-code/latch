@@ -51,15 +51,7 @@ import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { capsText, shortcutCaps, shortcutKeys, workbenchShortcut } from '../workbenchShortcuts.ts'
 import { BriefHint } from './BriefHint.tsx'
 import { usePartRequest, useSearchRequest } from './ComposerControl.tsx'
-import {
-  CatalogueRows,
-  readHarnessCatalogue,
-  readOnSelect,
-  readsModel,
-  readsOnSelect,
-  TypedModelsPanel,
-  useReading,
-} from './harnessCatalogue.tsx'
+import { CatalogueRows, readsModel, TypedModelsPanel, useReading } from './harnessCatalogue.tsx'
 import {
   defaultModelOf,
   defaultTag,
@@ -109,7 +101,6 @@ const COPY = defineCopy(
     chooseHarness: '先选 Harness',
     levelsNeedHarness: '先选一个 Harness，才知道有哪些思考。',
     useModelList: '在模型列表里选',
-    readLevels: '读取思考档位',
     chooseModel: '选择模型',
     addService: '添加模型服务…',
     entryModel: (value1: string) => `模型：${value1}`,
@@ -133,7 +124,6 @@ const COPY = defineCopy(
     chooseHarness: 'Choose a Harness first',
     levelsNeedHarness: 'Choose a Harness to see its thinking levels.',
     useModelList: 'Choose in the model list',
-    readLevels: 'Read thinking levels',
     chooseModel: 'Choose model',
     addService: 'Add model service…',
     entryModel: (value1: string) => `Model: ${value1}`,
@@ -810,6 +800,7 @@ function useDraftBoard({
 }: DraftBoardProps): Board {
   const [adding, setAdding] = useState(false)
   const [typing, setTyping] = useState(false)
+  const [panelOpen, setPanelOpen] = useState(false)
   const preferences = useModelPreferences()
   const harness = engineEntries(catalog, choice.workspaceId).find(entry => entry.harness.id === choice.harnessId)?.harness
   const reading = useReading(harness)
@@ -869,17 +860,12 @@ function useDraftBoard({
     // What a model nothing is known of offers is read in an empty session: by itself where that loads none of the
     // person's own code, on request otherwise.
     const readable = unknown && readsModel(harness, access)
-    const bySelf = readable && harness.catalogueRead?.when === 'select'
+    const bySelf = !disabled && !panelOpen && readable && harness.catalogueRead?.when === 'select'
     const thinkingNote = harness.capabilities.models.thinkingInModel && !service ? COPY.useModelList : undefined
     const thinkingDefault =
       thinkingNote !== undefined || service || !known || known.thinkingUnknown
         ? undefined
         : unreportedThinkingNote(name, true, known.config, harness.capabilities.models.thinkingPerModel === true)
-    const opened = (open: boolean) => {
-      if (!open) setTyping(false)
-      // Opening the panel of a Harness nothing is known of is asking what it offers.
-      if (open && readsOnSelect(harness, access)) readOnSelect(harness, onRead)
-    }
     const board = harnessBoard({
       catalog,
       harness,
@@ -899,8 +885,11 @@ function useDraftBoard({
             : unreportedModelNote(name, false, []),
       rows: (
         <CatalogueRows
+          key={harness.id}
           harness={harness}
           access={access}
+          disabled={disabled}
+          unknownModel={unknown ? pickedModel : undefined}
           hasModels={modelOption !== undefined}
           ownModels={!service}
           onRead={onRead}
@@ -924,7 +913,10 @@ function useDraftBoard({
           />
         ) : undefined,
       reading,
-      onOpenChange: opened,
+      onOpenChange: open => {
+        setPanelOpen(open)
+        if (!open) setTyping(false)
+      },
       service: { picked: service, onPick: pickService },
       computer,
       defaultModel: defaultModelOf(harness),
@@ -932,12 +924,6 @@ function useDraftBoard({
         option: service && !option ? undefined : option,
         note: thinkingNote,
         defaultHint: thinkingDefault,
-        footer:
-          readable && !bySelf && !reading ? (
-            <MenuFooterLink chevron={false} closes onClick={() => void readHarnessCatalogue(harness, false, pickedModel).catch(() => {})}>
-              {COPY.readLevels}
-            </MenuFooterLink>
-          ) : undefined,
         hint: service && !option && harness.capabilities.models.serviceThinking ? REASONING_COPY.serviceDefault : undefined,
         of: value => draftConfig(harness, picksFor(value))?.config.find(item => item.category === 'thought_level'),
         pickWith: (value, configId, level) => {
@@ -1015,6 +1001,7 @@ function useDraftBoard({
         }
       : {}),
     onOpenChange: open => {
+      setPanelOpen(open)
       if (!open) setAdding(false)
     },
   }

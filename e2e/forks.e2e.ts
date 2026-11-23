@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { chromium, type Page } from '@playwright/test'
 import { describe, expect, it } from 'vitest'
 import { AGENT_PRESETS, type AppSnapshot, type TaskDetail } from '@latch/protocol'
@@ -11,15 +11,15 @@ import { startTestHost } from './helpers/host.ts'
 import { permissionControl, permissionWords, tooltipText } from './helpers/layout.ts'
 import { promptValue } from './helpers/prompt.ts'
 
-/** Reads a Harness's lists the way a person does where it reads them only on request: from the model menu. */
-async function readListsFromMenu(page: Page, harness: string): Promise<void> {
+/** Opening the model menu reads a request-only Harness, including its modes. */
+async function readListsFromMenu(page: Page): Promise<void> {
   await page
     .getByRole('button', { name: /^模型：/u })
     .filter({ visible: true })
     .first()
     .click()
   const menu = page.locator('[role=menu], [role=listbox]').filter({ visible: true }).first()
-  await menu.getByText(`读取 ${harness} 的模型列表`, { exact: true }).click()
+  await menu.getByText('刷新模型列表', { exact: true }).waitFor()
   await page.keyboard.press('Escape')
   // Away from the chip, so its own tooltip is not the one a later check reads.
   await page.mouse.move(0, 0)
@@ -27,7 +27,7 @@ async function readListsFromMenu(page: Page, harness: string): Promise<void> {
 
 describe('conversation forks', () => {
   it('opens a selectable new session, folds authoritative context and returns to its source at desktop, tablet and phone widths', async () => {
-    const host = await startTestHost({ uiDir: resolve('dist/web') })
+    const host = await startTestHost()
     const browser = await chromium.launch(browserLaunchOptions())
     try {
       const owner = await host.enroll({ listener: 'unix' })
@@ -104,7 +104,6 @@ describe('conversation forks', () => {
       await chmod(join(bin, name), 0o755)
     }
     const host = await startTestHost({
-      uiDir: resolve('dist/web'),
       sessionFolders: true,
       detectPreset: preset =>
         preset.id === 'qwen' || preset.id === 'goose' ? { found: true, path: join(bin, preset.id) } : { found: false },
@@ -215,7 +214,6 @@ describe('conversation forks', () => {
     await fake('goose', 'FAKE_ACP_MODES=chat,approve,smart_approve,auto FAKE_ACP_INITIAL_MODE=approve FAKE_ACP_MODELS=small,medium')
     const found: string[] = []
     const host = await startTestHost({
-      uiDir: resolve('dist/web'),
       sessionFolders: true,
       // Only the fakes in this test's folder are ever found.
       detectPreset: preset => {
@@ -317,7 +315,7 @@ describe('conversation forks', () => {
       await pick(page, 'goose').click()
       // Read only when someone asks, as goose's sessions start the person's extensions.
       await page.locator('.fork-missed').first().waitFor()
-      await readListsFromMenu(page, 'goose')
+      await readListsFromMenu(page)
       const mapped = ['没有沿用来源会话的模型「Large」：goose 在这里不能选。', '权限「按规则放行」→ 更严的「先问你」']
       await expect.poll(() => notice.locator('.fork-missed').allInnerTexts(), { timeout: 20_000 }).toEqual(mapped)
       const shown = new Set(await page.evaluate(() => (window as unknown as { forkLines: string[] }).forkLines))

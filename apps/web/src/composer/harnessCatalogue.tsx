@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { TextCursorInput } from 'lucide-react'
 import type { CatalogueRead, HarnessInfo } from '@latch/protocol'
 import {
@@ -9,6 +9,7 @@ import {
   MenuFooterLink,
   TextField,
   useLayerClose,
+  useLayerOpen,
   AlertGlyph,
   ChevronLeftGlyph,
   RefreshGlyph,
@@ -20,18 +21,21 @@ import type { DeviceAccess } from '../core/permissions.ts'
 import { harnessName } from '../composerChoice.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { defineCopy } from '../core/i18n.ts'
+import { useStableCallback } from '../hooks/useStableCallback.ts'
 
 const COPY = defineCopy(
   {
     readFailed: '没有读到。',
     readAgain: '重新读取',
     refresh: '刷新模型列表',
+    readLevels: '读取思考档位',
+    retryLevels: '重新读取思考档位',
     readList: (value1: string) => `读取 ${value1} 的模型列表`,
     readingPrefix: '正在读取 ',
     readingSuffix: ' 的模型列表…',
     notSignedIn: '还没登录',
     failedPrefix: '没有读到：',
-    readRisk: (value1: string) => `读取要启动 ${value1}，会加载你的扩展或插件、运行会话钩子，所以点了才读`,
+    readRisk: (value1: string) => `读取会启动 ${value1}，可能加载你的扩展或插件、运行会话钩子`,
     enterMenu: '填写模型 ID…',
     back: '返回',
     enterTitle: '填写模型 ID',
@@ -46,13 +50,14 @@ const COPY = defineCopy(
     readFailed: 'Could not read the list.',
     readAgain: 'Read again',
     refresh: 'Refresh model list',
+    readLevels: 'Read thinking levels',
+    retryLevels: 'Retry reading thinking levels',
     readList: (value1: string) => `Read model list from ${value1}`,
     readingPrefix: 'Reading ',
     readingSuffix: '’s model list…',
     notSignedIn: 'Signed out',
     failedPrefix: 'Could not read: ',
-    readRisk: (value1: string) =>
-      `Reading starts ${value1} and loads your extensions or plugins and runs session hooks. It happens when you ask to read.`,
+    readRisk: (value1: string) => `Reading starts ${value1} and may load your extensions or plugins and run session hooks.`,
     enterMenu: 'Enter model ID…',
     back: 'Back',
     enterTitle: 'Enter model ID',
@@ -71,7 +76,18 @@ const COPY = defineCopy(
  */
 const selected = new Set<string>()
 /** Reads this page started and is waiting on, so every control says so before the Host's next catalog does. */
-const waiting = new Set<string>()
+const waiting = new Map<string, Map<string | undefined, Promise<CatalogueRead | undefined>>>()
+/** A failed transport or model read has no Host last-read entry. Closing the phone sheet must not silently try it again. */
+const failures = new Map<string, { observation: string; offered: boolean; cause: unknown }>()
+const failureKey = (harness: HarnessInfo, model?: string) => JSON.stringify([harness.id, model])
+const observation = (harness: HarnessInfo) =>
+  JSON.stringify([harness.commandCatalogue?.generation, harness.bound?.id, harness.catalogue?.reportedAt, harness.catalogueRead?.last?.at])
+function failedRead(harness: HarnessInfo, model?: string) {
+  const failed = failures.get(failureKey(harness, model))
+  if (failed && (failed.observation === observation(harness) || (failed.offered && !harness.catalogue && !harness.catalogueRead?.last)))
+    return failed
+  return undefined
+}
 const listeners = new Set<() => void>()
 const changed = () => {
   for (const listener of listeners) listener()
@@ -94,19 +110,38 @@ export function useReading(harness: HarnessInfo | undefined): boolean {
  * Reads what the Harness offers without a turn; the catalog the Host sends next carries it, or why it failed. `model`:
  * only what it offers for that model of its list, such as thinking.
  */
-export async function readHarnessCatalogue(harness: HarnessInfo, auto: boolean, model?: string): Promise<CatalogueRead | undefined> {
-  waiting.add(harness.id)
-  changed()
-  try {
-    const answer = await api<{ catalogueRead?: CatalogueRead }>(`agents/${encodeURIComponent(harness.id)}/catalogue`, {
+export function readHarnessCatalogue(harness: HarnessInfo, auto: boolean, model?: string): Promise<CatalogueRead | undefined> {
+  const requests = waiting.get(harness.id) ?? new Map<string | undefined, Promise<CatalogueRead | undefined>>()
+  const key = model && modelReadKey(harness, model)
+  const pending = requests.get(key)
+  if (pending) return pending
+  const failed = failureKey(harness, model)
+  failures.delete(failed)
+  const read = async () => {
+    // Saving an offered preset can publish the definition before this read starts. Both steps share the same flight.
+    if (harness.offer) await saveOfferedPreset(harness.offer.presetId)
+    const answer = await api<{ ran: boolean; catalogueRead?: CatalogueRead }>(`agents/${encodeURIComponent(harness.id)}/catalogue`, {
       method: 'POST',
       body: { auto, ...(model !== undefined ? { model } : {}) },
     })
+    if (model !== undefined && answer.ran) noteModelRead(modelReadKey(harness, model), 'read')
     return answer.catalogueRead
-  } finally {
-    waiting.delete(harness.id)
-    changed()
   }
+  const request = read()
+    .catch((cause: unknown) => {
+      failures.set(failed, { observation: observation(harness), offered: !!harness.offer, cause })
+      if (failures.size > 256) failures.delete(failures.keys().next().value!)
+      throw cause
+    })
+    .finally(() => {
+      requests.delete(key)
+      if (!requests.size) waiting.delete(harness.id)
+      changed()
+    })
+  requests.set(key, request)
+  waiting.set(harness.id, requests)
+  changed()
+  return request
 }
 
 /**
@@ -126,7 +161,7 @@ export function readsOnSelect(harness: HarnessInfo | undefined, access: Pick<Dev
   const read = harness?.catalogueRead
   return (
     harness !== undefined
-    // A preset without a definition yet is read once its first session saves one: saving it takes Touch ID.
+    // Selecting an offered preset alone does not save it. Opening its model panel or starting its first session does.
     && harness.offer === undefined
     && access.scopes.has('run')
     && harness.status === 'ready'
@@ -135,6 +170,7 @@ export function readsOnSelect(harness: HarnessInfo | undefined, access: Pick<Dev
     && !read.last
     && !harness.catalogue
     && !selected.has(harness.id)
+    && !failedRead(harness)
   )
 }
 
@@ -154,6 +190,27 @@ export function readOnSelect(harness: HarnessInfo, onDone?: () => void | Promise
     })
 }
 
+/** A deliberate visit to a draft's model panel asks for missing choices for this definition, never a timed refresh. */
+export function panelCatalogueTarget(
+  harness: HarnessInfo,
+  access: Pick<DeviceAccess, 'scopes' | 'local' | 'admin'>,
+  unknownModel?: string,
+): { model?: string } | undefined {
+  const read = harness.catalogueRead
+  if (!access.scopes.has('run') || harness.status !== 'ready' || read?.running) return undefined
+  if (harness.offer) return access.local && access.admin && !failedRead(harness) ? {} : undefined
+  if (!read) return undefined
+  if (!harness.catalogue && !read.last && !failedRead(harness)) return {}
+  if (
+    unknownModel
+    && readsModel(harness, access)
+    && modelsAsked.get(modelReadKey(harness, unknownModel)) !== 'read'
+    && !failedRead(harness, unknownModel)
+  )
+    return { model: unknownModel }
+  return undefined
+}
+
 /**
  * The model menu's rows about where the list comes from: when it was read and by what, reading it now, a read that
  * failed with the Harness's reason, reading it again, and typing an ID it does not list. A preset on offer is read once
@@ -164,49 +221,58 @@ export function CatalogueRows({
   access,
   hasModels,
   ownModels = true,
+  disabled,
+  unknownModel,
   onTypeModel,
   onRead,
 }: {
   harness: HarnessInfo
-  access: Pick<DeviceAccess, 'scopes'>
+  access: Pick<DeviceAccess, 'scopes' | 'local' | 'admin'>
   /** The draft is on the Harness's own models, so its login is what the draft depends on. */
   ownModels?: boolean
+  disabled: boolean
+  unknownModel?: string | undefined
   /** It reported a model option, so a typed ID has something to be set as. */
   hasModels: boolean
   onTypeModel: () => void
   onRead?: (() => void | Promise<void>) | undefined
 }) {
-  const [error, setError] = useState('')
-  const [saving, setSaving] = useState(false)
+  const open = useLayerOpen()
+  const attempted = useRef(new Set<string>())
   const name = harnessName(harness)
   const read = harness.catalogueRead
-  const ready = access.scopes.has('run') && harness.status === 'ready'
+  const ready = !disabled && access.scopes.has('run') && harness.status === 'ready' && (!harness.offer || (access.local && access.admin))
   const canRun = ready && harness.offer === undefined
   const running = useReading(harness)
   const catalogue = harness.catalogue
-  const run = async () => {
-    if (running || saving) return
-    setError('')
+  const keyFor = (model?: string) => (model === undefined ? harness.id : modelReadKey(harness, model))
+  const currentFailure = () => (unknownModel === undefined ? undefined : failedRead(harness, unknownModel)) ?? failedRead(harness)
+  const failure = useSyncExternalStore(subscribe, currentFailure, currentFailure)
+  const modelFailed = failure && unknownModel !== undefined && failure === failedRead(harness, unknownModel)
+  const error = failure ? inlineError(failure.cause) : ''
+  const run = useStableCallback(async (model?: string) => {
+    if (!ready || running) return
     try {
-      if (harness.offer) {
-        setSaving(true)
-        try {
-          await saveOfferedPreset(harness.offer.presetId)
-        } finally {
-          setSaving(false)
-        }
-      }
-      await readHarnessCatalogue(harness, false)
-      await onRead?.()
-    } catch (cause) {
-      // A confirmation that did not go through says so on its own card.
-      setError(inlineError(cause))
-      await onRead?.()
+      await readHarnessCatalogue(harness, false, model)
+    } catch {
+      // The read retains its error for every opener, including a sheet that has since closed.
     }
-  }
+    await onRead?.()
+  })
+  const target = ready && !running ? panelCatalogueTarget(harness, access, unknownModel) : undefined
+  const targetKey = target && keyFor(target.model)
+  const targetModel = target?.model
+  const listKey = keyFor()
+  useEffect(() => {
+    // A saved list (or a recorded refusal) rearms a future definition whose old evidence the Host discards.
+    if (catalogue || read?.last) attempted.current.delete(listKey)
+    if (!open || targetKey === undefined || attempted.current.has(targetKey)) return
+    attempted.current.add(targetKey)
+    void run(targetModel)
+  }, [open, targetKey, targetModel, read?.last, catalogue, listKey, run])
   const failed = error || (read?.last && !read.last.ok ? (read.last.message ?? COPY.readFailed) : '')
   const needsLogin = !error && readNeedsLogin(harness)
-  const label = failed ? COPY.readAgain : catalogue ? COPY.refresh : COPY.readList(name)
+  const label = (failure || failed) && !modelFailed ? COPY.readAgain : catalogue ? COPY.refresh : COPY.readList(name)
   return (
     <>
       {running && (
@@ -230,7 +296,6 @@ export function CatalogueRows({
         </p>
       )}
       {((read && canRun) || (harness.offer && ready)) && !running && (
-        // Why a read waits for the press is the row's tooltip: it starts the Harness, which loads the person's own code.
         <Tooltip content={read?.when === 'request' && !catalogue ? COPY.readRisk(name) : undefined}>
           <MenuFooterLink
             icon={RefreshGlyph}
@@ -245,6 +310,11 @@ export function CatalogueRows({
       {hasModels && canRun && (
         <MenuFooterLink icon={TextCursorInput} chevron={false} onClick={onTypeModel}>
           {COPY.enterMenu}
+        </MenuFooterLink>
+      )}
+      {unknownModel && !running && readsModel(harness, access) && !disabled && (
+        <MenuFooterLink icon={RefreshGlyph} chevron={false} onClick={() => void run(unknownModel)}>
+          {modelFailed ? COPY.retryLevels : COPY.readLevels}
         </MenuFooterLink>
       )}
     </>
@@ -353,7 +423,16 @@ export function TypedModelsPanel({
 }
 
 /** Models a draft here asked the Host about, by Harness: each once, as the Host reads each once. */
-const modelsAsked = new Set<string>()
+const modelsAsked = new Map<string, 'asked' | 'read'>()
+
+function noteModelRead(key: string, state: 'asked' | 'read'): void {
+  modelsAsked.set(key, state)
+  if (modelsAsked.size > 256) modelsAsked.delete(modelsAsked.keys().next().value!)
+}
+
+function modelReadKey(harness: HarnessInfo, model: string): string {
+  return JSON.stringify([harness.id, harness.commandCatalogue?.generation, harness.catalogue?.reportedAt, model])
+}
 
 /**
  * Whether a draft that picked a model nothing is known of can read what that model offers, such as thinking: in the
@@ -375,9 +454,8 @@ export function readsModel(harness: HarnessInfo | undefined, access: Pick<Device
 
 /** The read a draft's model pick starts on a `select` Harness, once per model. */
 export function readModelOnSelect(harness: HarnessInfo, model: string): void {
-  const key = `${harness.id}\n${harness.catalogue?.reportedAt ?? ''}\n${model}`
+  const key = modelReadKey(harness, model)
   if (modelsAsked.has(key)) return
-  modelsAsked.add(key)
-  if (modelsAsked.size > 256) modelsAsked.delete(modelsAsked.values().next().value!)
+  noteModelRead(key, 'asked')
   void readHarnessCatalogue(harness, true, model).catch(() => {})
 }

@@ -334,6 +334,78 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       }
     })
 
+    it('saves a detected DeepSeek Harness and reads its models and thinking on the first opening of the model panel', async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'latch-electron-dsh-list-'))
+      const bin = join(directory, 'bin'),
+        program = join(bin, 'dsh'),
+        log = join(directory, 'dsh.log')
+      await mkdir(bin)
+      await writeFile(
+        program,
+        [
+          '#!/bin/sh',
+          'if [ "$1" = "--version" ]; then echo "0.2.2-rc.1"; exit 0; fi',
+          'export FAKE_ACP_CONFIG=options FAKE_ACP_PROCESS_MODE=1 FAKE_ACP_MODES=read-only,workspace-write,danger-full-access FAKE_ACP_INITIAL_MODE=read-only',
+          `export FAKE_ACP_LOG='${log}' FAKE_ACP_STATE='${join(directory, 'state.json')}' DSH_HOME='${join(directory, 'dsh-home')}'`,
+          `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
+        ].join('\n'),
+        { mode: 0o755 },
+      )
+      const host = await startTestHost({
+        demo: false,
+        hostName: '验收电脑',
+        detectPreset: preset => (preset.id === 'dsh' ? { found: true, path: program } : { found: false }),
+        commandDirectories: () => [bin],
+      })
+      let application: ElectronApplication | undefined
+      try {
+        const owner = await host.enroll({ listener: 'unix' })
+        application = await launch(host, join(directory, 'electron'))
+        const page = await application.firstWindow()
+        await resize(application, page, 1440)
+        await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+        page.setDefaultTimeout(15_000)
+        await page.getByRole('button', { name: '继续', exact: true }).click()
+        await page.getByRole('button', { name: /^Harness：DeepSeek Harness/u }).waitFor()
+        const agents = () => owner.json<{ agents: AgentSettings[] }>('agents').then(result => result.agents)
+        expect(await agents()).toEqual([])
+        const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
+        await input.fill('先选模型')
+        const picker = page
+          .getByRole('button', { name: /^模型：/u })
+          .filter({ visible: true })
+          .first()
+        await picker.click()
+        const menu = page.locator('.ui-board').filter({ visible: true })
+        await menu.getByRole('menuitemradio', { name: /^Large/u }).waitFor()
+        await menu.getByRole('menuitemradio', { name: /^High/u }).waitFor()
+        expect(await agents()).toMatchObject([{ id: 'dsh', presetId: 'dsh' }])
+        const events = async () =>
+          (await readFile(log, 'utf8'))
+            .split('\n')
+            .filter(Boolean)
+            .map(line => JSON.parse(line) as { event: string; method?: string })
+        expect((await events()).filter(entry => entry.method === 'session/new')).toHaveLength(1)
+        expect((await events()).some(entry => entry.method === 'session/prompt')).toBe(false)
+        expect((await owner.json<AppSnapshot>('snapshot')).tasks).toEqual([])
+        expect(await promptValue(input)).toBe('先选模型')
+        await mkdir('test-results/desktop-first-use', { recursive: true })
+        await page.screenshot({
+          path: 'test-results/desktop-first-use/deepseek-first-model-open-dark.png',
+          animations: 'disabled',
+          scale: 'css',
+        })
+        await page.keyboard.press('Escape')
+        await picker.click()
+        await menu.getByText('刷新模型列表', { exact: true }).waitFor()
+        expect((await events()).filter(entry => entry.method === 'session/new')).toHaveLength(1)
+      } finally {
+        await application?.close()
+        await host.close()
+        await rm(directory, { recursive: true, force: true })
+      }
+    })
+
     it('runs a Harness found on this computer with nothing to add, asking only for the folder', async () => {
       const directory = await mkdtemp(join(tmpdir(), 'latch-electron-found-'))
       const bin = join(directory, 'installed-harness-adapters-on-this-computer')

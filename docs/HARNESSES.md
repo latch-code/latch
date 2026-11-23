@@ -52,7 +52,7 @@ ACP Agent 是本机可信代码，Latch 不给它加操作系统沙箱，也不�
 ## 使用
 
 1. 在运行 Host 的电脑上安装 Agent，并按它自己的方式登录。
-2. 新会话直接列出命令已装好的预设（`catalog.harnesses` 中带 `offer` 的项，只发给有 `admin` 的设备）；第一次发送时页面先保存它的定义再开始，保存不运行任何东西，也不确认。也可在「设置 → Harness」选预设或填自定义命令（可执行文件名或绝对路径、参数、环境变量）。
+2. 新会话在本机管理设备上列出已安装的预设（`catalog.harnesses` 中带 `offer` 的项）。第一次打开模型面板或发送消息时，页面先保存预设定义。按预设原样绑定的命令可直接保存，命令绑定有变化时沿用本机确认。也可在「设置 → Harness」选预设或填自定义命令（可执行文件名或绝对路径、参数、环境变量）。
 3. 新建会话默认用这台设备上次的 Harness，否则按预设顺序取第一个能开始的，Latch 内置排最后。没有选项目时，如果启动目录由 Host 自动选择（`catalog.sessionFolders`），pi 等 Agent 会在新的空文件夹里开始。如果显式指定的启动目录与 Latch 程序目录重叠，桌面端和浏览器会在发送前打开项目列表，保留草稿。选好其他项目后可再次发送。
 4. 会话头部显示 Agent 提供的模型、模式等选项，修改从下一轮生效；任何档位都能直接选（见「权限菜单」）。
 
@@ -853,14 +853,14 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 - 在 Host 临时目录的新空文件夹里启动 Agent，`session/new` 带空的 `mcpServers`，不发提示；Agent 声明 `sessionCapabilities.delete` 就 `session/delete`，profile 有自己的删除请求（Qwen Code 的 `deleteSession`）就用它，否则声明了 `close` 就 `session/close`；然后停止进程并删除文件夹，最多 20 秒。DeepSeek Harness 不能删会话，连这个空会话也写进它的历史，所以进程停下后由 Host 删掉（见「CLI 自己的存储」）。
 - Codex 不开会话：只发 `initialize`、`config/read` 与 `model/list`（最多 5 页）。经 codex-acp 时用定义的命令加 `cli app-server`。它不报告模式，`catalogueRead.modes` 是 `false`。
 - Grok Build 不开会话：它对 `initialize` 的回答 `_meta.modelState` 已有默认模型、模型列表与每个模型的思考档位（`reasoningEfforts`），Latch 照 `session/new` 报告的样子写成 `model` 与 `reasoning_effort` 两项（`profiles/grok.ts` 的 `grokStartCatalogue`，ID 与取值对真实 1.0.89 核对过）。这个进程不开会话，不启动人配置的 MCP 服务器与钩子（1.0.89 核对）。每个模型的思考都已知，选模型时不再读。`catalogueRead.modes` 是 `false`。
-- **什么时候读。** 新会话里选中这个 Harness、打开它的模型菜单，或打开会报告模式的 Harness 的权限菜单，而它既没有列表、这份定义也没读过时，自动读一次（`auto: true`；Host 再查一遍，不符合就返回 `ran: false`）。从不按时间读，失败后也不自动重读。
-- **哪些自动读**（profile 的 `catalogueRead`）。只有读取不跑一轮、不调模型、也不运行人自己的会话钩子或扩展时才自动读：
+- **打开模型面板。** 桌面端和浏览器在草稿中先显示已有的目录。当前 Harness 还没有目录和上次读取记录时，打开面板就读取；如果是本机待添加的预设，先保存定义。选中的自管模型还缺思考档位时，读取这个模型的选项。已知选项直接复用，读取失败可在面板里重试。
+- **选中 Harness 或打开权限菜单。** 草稿里选中已经添加的 Harness，或打开它能报告模式的权限菜单时，只为 `catalogueRead.when === 'select'` 的定义预读一次（`auto: true`，Host 复查）。`request` 型等人打开模型面板或手动读取。两类都不按时间轮询。
 
-  | 自动读（`select`） | 只在人点「读取模型列表」时读（`request`） |
+  | 选中即可预读（`select`） | 打开模型面板或手动读取时启动（`request`） |
   | --- | --- |
   | Codex（`model/list`，不开线程）、Grok Build（`initialize`，不开会话）、DeepSeek Harness、Cursor、OpenCode、没有 profile 的自定义命令 | pi、Claude Agent、Antigravity：启动会话会加载人的扩展或插件、运行会话开始的钩子。goose：`session/new` 启动人在 goose 里启用的全部扩展（含 stdio MCP 程序）并等它们，1.57.0 实测一个不握手的扩展让它等了 20 秒。Qwen Code：`session/new` 连接人的 MCP 服务器并触发 `SessionStart` 钩子（0.27.4 源码），钩子没有开关能关 |
 
-- **只读确认过的定义。** 自动读取遇到没确认过的定义或命令已解析到别的程序时不读（`ran: false`，不写审计、不启动）；人点读取时返回原因（409 `harness-unconfirmed` 等）。还没有定义的预设（`offer`）从不自动读。
+- **命令核对。** 预读发现命令未经确认或已经指向别的程序时，Host 返回 `ran: false`。显式请求遇到相同情况返回原因（如 409 `harness-unconfirmed`）。仅选中待添加的预设不会保存定义或启动进程。
 - **谁能读。** 与开始会话同一道门：`run`，Harness 可以开始。同一定义同时只读一次；同一模型的请求共用结果。启动进程前写 `agent.catalogue.requested`（写不进就不启动），结束后 `agent.catalogue.read`。
 - **结果。** 成功时列表来源为 `check`；失败保存脱敏后的 `last: { ok: false, message }`。Harness 以 ACP 的 `auth_required`（-32000）拒绝时另带 `loginRequired: true`：按错误码判断，不看消息文字。
 
@@ -869,7 +869,7 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 **草稿。**
 
 - 已知权限预设在草稿就给出全部档位（`permission.modes` 与 `startMode`，暂用 `~mode` ID），开始时再匹配 Agent 实际的模式 ID。之后到达的列表不能抹掉人的选择。
-- 草稿换模型后在私有空会话里切到该模型读选项，不发提示；自动与需人请求的边界同上。读不到或失败时保持未知，不把别的模型的档位搬过来。OpenCode 与 DeepSeek Harness 按模型报告思考（`thinkingPerModel`），没有就是这个模型没有思考档位；Cursor 的思考在模型列表里选（`thinkingInModel`）。
+- 草稿换自管模型后，缺少它的档位时可在私有空会话里切到该模型读选项，不发提示。选中即可预读的 Harness 可在草稿中读取，其他 Harness 在打开的模型面板中读取。读不到或失败时保持未知，不把别的模型的档位搬过来。OpenCode 与 DeepSeek Harness 按模型报告思考（`thinkingPerModel`），没有就是这个模型没有思考档位；Cursor 的思考在模型列表里选（`thinkingInModel`）。
 - 首轮设置未完成时，会话里的新选择取代对应的草稿项（相同值也算重新选择），并在恢复会话或应用其他草稿项之前持久化。
 
 **应用。**

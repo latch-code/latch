@@ -170,19 +170,38 @@ describe('pi over its own RPC mode', () => {
     await expect.poll(executed).toBe(before + 1)
   }
 
-  it('starts pi only when sent to or asked for its list, then runs, stops and keeps the session after a reload', async () => {
+  it('reads pi on the first model-panel opening, then runs, stops and keeps the session after a reload', async () => {
     const page = await open(1440, 'light')
     await expect.poll(() => chip(page, 'Harness').innerText()).toContain('pi')
     await expect.poll(() => chip(page, '模型').innerText()).toContain('默认模型')
     await expect.poll(() => permissionWords(page)).toContain('先问你')
-    // Selecting pi loads nothing: its list is read only when a person asks.
-    await chip(page, '模型').click()
-    const readModels = page.getByRole('menuitem', { name: '读取 pi 的模型列表', exact: true })
-    await readModels.waitFor()
-    await shot(page, 'draft-menu-1440-light')
+    // Choosing pi alone starts nothing. Hold only the first catalogue request to check the in-flight and reopened panel.
     expect(await received()).toEqual([])
-    await readModels.click()
+    let reads = 0
+    let release!: () => void
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    await page.route('**/link/api/agents/pi/catalogue', async route => {
+      reads++
+      if (reads === 1) await gate
+      if (reads === 2) return route.fulfill({ status: 503, json: { error: 'fixture-unavailable' } })
+      return route.continue()
+    })
+    await chip(page, '模型').click()
+    const loading = page.getByText('正在读取 pi 的模型列表…', { exact: true })
+    try {
+      await loading.waitFor()
+      await shot(page, 'draft-menu-1440-light')
+      await page.keyboard.press('Escape')
+      await chip(page, '模型').click()
+      await loading.waitFor()
+      expect(reads).toBe(1)
+    } finally {
+      release()
+    }
     await page.getByRole('menuitemradio', { name: /Claude Sonnet 4\.5/u }).waitFor()
+    await page.getByRole('menuitemradio', { name: '高', exact: true }).waitFor()
     const read = await received()
     expect(read.filter(entry => entry.event === 'start')).toHaveLength(1)
     expect(read.find(entry => entry.event === 'start')!.argv).toEqual([
@@ -198,6 +217,15 @@ describe('pi over its own RPC mode', () => {
         .every(entry => /^\/latch-permission(?: (?:plan|ask|rule|never))?$/u.test(entry.message ?? '')),
     ).toBe(true)
     await shot(page, 'listed-1440-light')
+    await page.keyboard.press('Escape')
+    await chip(page, '模型').click()
+    const refresh = modelAction(page, '刷新模型列表')
+    await refresh.waitFor()
+    expect(reads).toBe(1)
+    await refresh.click()
+    await modelAction(page, '重新读取').click()
+    await refresh.waitFor()
+    expect(reads).toBe(3)
     await page.keyboard.press('Escape')
 
     await start(page, 'say hello')
@@ -429,8 +457,6 @@ describe('pi over its own RPC mode', () => {
       await chip(page, '模型').click()
       // The menu's group, not the status line under the input, which names the same thing.
       const inMenu = (text: string) => page.getByText(text, { exact: true }).and(page.locator(':not(.composer-status, .composer-status *)'))
-      const readModels = modelAction(page, '读取 pi 的模型列表')
-      if (await readModels.isVisible()) await readModels.click()
       await modelAction(page, '刷新模型列表').waitFor()
       // Latch forwards pi to no service, so no service is listed or folded into a row of ones it cannot use.
       for (const gone of ['pi 自己的模型', '服务用不了', 'Relay']) expect(await inMenu(gone).count()).toBe(0)

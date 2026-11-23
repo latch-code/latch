@@ -693,7 +693,7 @@ describe('opening 权限 first on a Harness whose lists are read only on request
       [
         '#!/bin/sh',
         `export FAKE_ACP_STATE='${join(directory, 'state.json')}' FAKE_ACP_LOG='${log}'`,
-        'export FAKE_ACP_MODES=plan,default,auto-edit,auto,yolo FAKE_ACP_INITIAL_MODE=default FAKE_ACP_CONFIG=options',
+        'export FAKE_ACP_MODES=plan,default,auto-edit,auto,yolo FAKE_ACP_INITIAL_MODE=default FAKE_ACP_CONFIG=options FAKE_ACP_EFFORT_BY_MODEL=1',
         `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
       ].join('\n'),
     )
@@ -769,8 +769,39 @@ describe('opening 权限 first on a Harness whose lists are read only on request
         .first()
         .click()
       const menu = page.locator('[role=menu], [role=listbox]').filter({ visible: true }).first()
-      await menu.getByText('读取 Qwen Code 的模型列表', { exact: true }).click()
+      await menu.getByText('刷新模型列表', { exact: true }).waitFor()
       await expect.poll(sent).toHaveLength(1)
+      // A model with unknown levels is read while the panel stays open. Its late answer still belongs to that model.
+      let release!: () => void,
+        modelReads = 0
+      const gate = new Promise<void>(resolve => {
+        release = resolve
+      })
+      await page.route('**/link/api/agents/qwen/catalogue', async route => {
+        if (route.request().postDataJSON().model === 'large') {
+          modelReads++
+          await gate
+        }
+        return route.continue()
+      })
+      const large = menu.getByRole('menuitemradio', { name: /^Large/u })
+      const small = menu.getByRole('menuitemradio', { name: /^Small/u })
+      const max = page.locator('.ui-board').filter({ visible: true }).getByRole('menuitemradio', { name: /^Max/u })
+      try {
+        await large.click()
+        await expect.poll(() => modelReads).toBe(1)
+        await small.click()
+      } finally {
+        release()
+      }
+      await expect.poll(async () => (await sent()).length).toBe(2)
+      await menu.getByText('刷新模型列表', { exact: true }).waitFor()
+      expect(await small.getAttribute('aria-checked')).toBe('true')
+      expect(await max.count()).toBe(0)
+      await large.click()
+      await max.waitFor()
+      expect(modelReads).toBe(1)
+      await shot('qwen-picked-model-levels-1280-dark')
       await page.keyboard.press('Escape')
       await expect.poll(() => permissionWords(page)).toBe('权限：由模型判断')
       expect(await page.getByText('发第一条消息后可以换', { exact: false }).count()).toBe(0)
