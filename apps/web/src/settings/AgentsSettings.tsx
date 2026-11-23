@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState, type FormEvent } from 'react'
+import { Fragment, useCallback, useEffect, useId, useState, type FormEvent } from 'react'
 import { CircleArrowUp, ShieldCheck, ShieldQuestion } from 'lucide-react'
 import {
   runsPresetFallback,
@@ -1071,6 +1071,7 @@ export function AgentRow({
   preset,
   harness,
   busy,
+  confirming = false,
   onOpen,
   onToggle,
   local = false,
@@ -1080,6 +1081,7 @@ export function AgentRow({
   preset?: AgentPreset
   harness?: HarnessInfo
   busy: boolean
+  confirming?: boolean
   onOpen: () => void
   onToggle: () => void
   /** The desktop app on this Mac, where a moved command is confirmed. */
@@ -1123,7 +1125,12 @@ export function AgentRow({
             <Hint label={COPY.via([preset.fallback.command, ...preset.fallback.args].join(' '))}>{words?.direct}</Hint>
           )}
           {moved && local && onConfirm ? (
-            <Button variant="secondary" disabled={busy} aria-label={COPY.confirmProgramName(agent.name)} onClick={onConfirm}>
+            <Button
+              variant="secondary"
+              disabled={busy}
+              pending={confirming}
+              aria-label={COPY.confirmProgramName(agent.name)}
+              onClick={onConfirm}>
               {COPY.confirmProgram}
             </Button>
           ) : (
@@ -1269,7 +1276,9 @@ export function AgentsSettings({
   useEffect(() => {
     if (initialPage) setEditing(editingOf(initialPage))
   }, [initialPage])
-  const [busy, setBusy] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  // Keep a failed confirmation beside its Harness when the request settles and the button becomes available again.
+  const [confirmationTarget, setConfirmationTarget] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
   const load = useCallback(async () => {
     try {
@@ -1307,7 +1316,8 @@ export function AgentsSettings({
     refreshed()
   }
   const toggle = async (agent: AgentSettings) => {
-    setBusy(agent.id)
+    setConfirmationTarget(null)
+    setBusy(true)
     setError('')
     try {
       await api(`agents/${encodeURIComponent(agent.id)}`, { method: 'PUT', body: { enabled: !agent.enabled } })
@@ -1316,12 +1326,13 @@ export function AgentsSettings({
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
-      setBusy(null)
+      setBusy(false)
     }
   }
   /** Saves a moved definition as it is: the Host asks for Touch ID with the program its command now finds. */
   const confirmMoved = async (agent: AgentSettings) => {
-    setBusy(agent.id)
+    setConfirmationTarget(agent.id)
+    setBusy(true)
     setError('')
     try {
       await withConfirmation(confirmation =>
@@ -1331,12 +1342,13 @@ export function AgentsSettings({
           ...(confirmation ? { confirmation } : {}),
         }),
       )
+      setConfirmationTarget(null)
       onChanged()
       await load()
     } catch (cause) {
-      setError(errorMessage(cause))
+      setError(inlineError(cause))
     } finally {
-      setBusy(null)
+      setBusy(false)
     }
   }
   if (data === null) return error ? <InlineNotice tone="error">{error}</InlineNotice> : <Loading />
@@ -1350,23 +1362,26 @@ export function AgentsSettings({
     setEditing({ kind: 'new', preset })
   }
   const engineRow = (agent: AgentSettings) => (
-    <AgentRow
-      key={agent.id}
-      agent={agent}
-      preset={data.presets.find(item => item.id === agent.presetId)}
-      harness={snapshot.catalog?.harnesses.find(item => item.id === agent.id)}
-      busy={busy !== null}
-      onOpen={() => {
-        setEditing({ kind: 'agent', id: agent.id })
-      }}
-      onToggle={() => {
-        void toggle(agent)
-      }}
-      local={local}
-      onConfirm={() => {
-        void confirmMoved(agent)
-      }}
-    />
+    <Fragment key={agent.id}>
+      <AgentRow
+        agent={agent}
+        preset={data.presets.find(item => item.id === agent.presetId)}
+        harness={snapshot.catalog?.harnesses.find(item => item.id === agent.id)}
+        busy={busy}
+        confirming={busy && confirmationTarget === agent.id}
+        onOpen={() => {
+          setEditing({ kind: 'agent', id: agent.id })
+        }}
+        onToggle={() => {
+          void toggle(agent)
+        }}
+        local={local}
+        onConfirm={() => {
+          void confirmMoved(agent)
+        }}
+      />
+      {local && editing === null && confirmationTarget === agent.id && <InlineConfirm active={busy} rank={1} />}
+    </Fragment>
   )
   const main = (
     <>

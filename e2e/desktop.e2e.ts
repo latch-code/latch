@@ -1,6 +1,6 @@
 import { _electron, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { createServer as createHttpServer, type Server } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
 import { createServer, type Socket } from 'node:net'
@@ -1902,9 +1902,12 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
     }
   })
 
-  it('tests an Agent handshake from its settings, keeps login claims precise and displays redacted diagnostics', async () => {
+  it('confirms a moved Harness from its settings row before probing it and displaying redacted diagnostics', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-probe-'))
-    const testHost = await startTestHost({ demo: true, uiDir: resolve('dist/web'), presenceMode: 'manual' })
+    const original = join(root, 'old-bin'),
+      moved = join(root, 'new-bin'),
+      command = 'probe-fixture'
+    const testHost = await startTestHost({ demo: true, presenceMode: 'manual', commandDirectories: () => [original, moved] })
     const { host } = testHost
     let application: ElectronApplication | undefined
     try {
@@ -1937,19 +1940,61 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await enrollShell(page, testHost)
       // A definition's program is confirmed on this Mac: the test backend stands in for Touch ID.
       const local = await testHost.enroll({ listener: 'unix', name: '定义 Harness' })
+      await mkdir(original)
+      await mkdir(moved)
+      await symlink(process.execPath, join(original, command))
       const created = await local.confirmed('agents', {
         method: 'POST',
         body: {
           id: 'probe-fixture',
           name: 'Probe fixture',
-          command: process.execPath,
+          command,
           args: [FAKE_ACP_AGENT],
           env: { FAKE_ACP_CAPS: 'images,resume,dirs', FAKE_ACP_AUTH: 'new' },
         },
       })
       expect(created.status).toBe(201)
+      const bound = async () =>
+        (await local.json<AppSnapshot>('snapshot')).catalog?.harnesses.find(item => item.id === 'probe-fixture')?.bound?.path
+      expect(await bound()).toBe(join(original, command))
+      await rename(join(original, command), join(moved, command))
+      await local.json('agents') // Recheck commands before the page reads its catalog.
+      await page.reload()
+      await page.locator('.app-shell[data-connection="connected"]').waitFor()
       const settings = await openSettings(page)
       await openSection(settings, 'Harness')
+      const confirmName = '确认 Probe fixture 的新程序'
+      const confirm = settings.getByRole('button', { name: confirmName, exact: true })
+      await confirm.click()
+      const waiting = settings.locator('.inline-confirm[data-confirmation-phase="waiting"]')
+      await waiting.waitFor({ state: 'attached' })
+      await testHost.presence.waitForRequest()
+      expect(
+        await waiting.locator('xpath=preceding::*[contains(@class, "agent-row")][1]').getByRole('button', { name: confirmName }).count(),
+      ).toBe(1)
+      const cancellation = page.waitForResponse(
+        response => response.request().method() === 'DELETE' && response.url().includes('/api/confirmations/'),
+      )
+      await closeSettings(settings)
+      expect((await cancellation).ok()).toBe(true)
+      expect(await bound()).toBe(join(original, command))
+      await openSettings(page)
+      await openSection(settings, 'Harness')
+      await confirm.click()
+      await waiting.waitFor({ state: 'attached' })
+      await testHost.presence.waitForRequest()
+      testHost.presence.denyNext()
+      const refused = settings.getByText('没有执行：确认没有通过。', { exact: true })
+      await refused.waitFor()
+      expect(await refused.count()).toBe(1)
+      expect(await bound()).toBe(join(original, command))
+      await confirm.click()
+      await waiting.waitFor({ state: 'attached' })
+      const request = await testHost.presence.waitForRequest()
+      expect(request.preview.lines).toContainEqual({ label: '命令', value: join(moved, command) })
+      testHost.presence.approveNext()
+      await expect.poll(bound).toBe(join(moved, command))
+      await confirm.waitFor({ state: 'detached' })
       await settings.getByRole('button', { name: '编辑 Probe fixture', exact: true }).click()
       const probe = settings.locator('.settings-group', { has: page.getByRole('heading', { name: '测试启动', exact: true }) })
       for (const [width, height] of [
