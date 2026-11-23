@@ -84,6 +84,7 @@ struct PromptComposer: View {
         if rejecting == nil, PhoneSlash.actionOf(text) != nil {
             if case .open = PhoneSlash.action(text, context: slashContext) { return !slash.composing }; return false
         }
+        guard model.transportReady else { return false }
         let attached = !attachments.isEmpty && rejecting == nil
         return (!trimmed.isEmpty || attached) && model.canRun && !model.busy && !sending && !slash.composing && model.pending.isEmpty && !noteTooLong
             && (!running || rejecting != nil || followUp != .none) && heldBack == nil
@@ -96,7 +97,7 @@ struct PromptComposer: View {
                     Spacer()
                     // A new topic's start is retried on its own page or the list, never into this conversation.
                     if PhonePending.retried(pending, at: draftId.map { .session($0) } ?? .list) {
-                        Button("重试这次提交") { Task { if PhoneHistory.isImport(pending) { await model.retryPending(pending) } else { await model.submit(pending) } } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                        Button("重试这次提交") { Task { if PhoneHistory.isImport(pending) { await model.retryPending(pending) } else { await model.submit(pending) } } }.font(PhoneTheme.caption).disabled(model.busy || !model.transportReady)
                     }
                     if PhonePending.prompt(pending) != nil, let draftId, PhonePending.kind(pending) == .session(id: draftId) {
                         Button("放弃这次提交") { Task { await abandon(pending) } }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).disabled(model.busy)
@@ -230,7 +231,7 @@ struct PromptComposer: View {
                 else { RoundedRectangle(cornerRadius: 2).fill(quiet ? PhoneTheme.muted : PhoneTheme.canvas).frame(width: 12, height: 12) }
             }.frame(width: 36, height: 36).background(quiet ? PhoneTheme.bubble : PhoneTheme.ink, in: Circle())
                 .frame(width: 44, height: 44).contentShape(Rectangle())
-        }.buttonStyle(.plain).disabled(model.stoppingCurrent).accessibilityLabel(model.stoppingCurrent ? "正在停止" : "停止")
+        }.buttonStyle(.plain).disabled(model.stoppingCurrent || !model.transportReady).accessibilityLabel(model.stoppingCurrent ? "正在停止" : "停止")
     }
     private func send() {
         guard let target = draftId, model.sessionId == target, gate == nil, canSend else { return }

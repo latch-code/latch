@@ -275,7 +275,7 @@ do {
         guard let rows = input["interfaces"] as? [[String: String]], let routers = input["routers"] as? [String], let peer = input["peer"] as? String else { throw NativeFailure.invalidRecord }
         let hash = NativeDiscoveryWire.pairingGatewayHash(peer: peer, interfaces: try rows.map { (address: $0["address"] ?? "", mask: try LinkBytes.unhex($0["mask"] ?? "")) }, routers: routers)
         result["hash"] = hash.map { LinkBytes.hex($0) }
-    case "nativeRelayLifecycle", "nativeRelayTransferNormal", "nativeRelayTransferAfterCancel", "nativeRelayBulkNormal", "nativeRelayBulkLegacy", "nativeRelayBulkReauthenticate", "nativeRelayBulkAfterCancel", "nativeRelayBulkCancel", "nativeRelayBulkEarlyCancel", "nativeDirectTransfer", "nativeRelayThroughput", "nativeRelayUploadThroughput", "nativeRelayUpload", "nativeRelayControlLatency":
+    case "nativeRelayLifecycle", "nativeRelayFailover", "nativeRelayTransferNormal", "nativeRelayTransferAfterCancel", "nativeRelayBulkNormal", "nativeRelayBulkLegacy", "nativeRelayBulkReauthenticate", "nativeRelayBulkAfterCancel", "nativeRelayBulkCancel", "nativeRelayBulkEarlyCancel", "nativeDirectTransfer", "nativeRelayThroughput", "nativeRelayUploadThroughput", "nativeRelayUpload", "nativeRelayControlLatency":
         stage = "relay-pairing"
         let invitation = try PairingInvitation.parse(input["payload"] as? String ?? "", privateOnly: false), keys = try FixtureKeys()
         let anchor = try LinkBytes.unhex(input["trustAnchor"] as? String ?? "")
@@ -327,6 +327,30 @@ do {
             }
             return try await NativeHTTPConnection.relay(endpoint: endpoint, admission: admission, rootSpki: device.rootSpki,
                 knockKey: device.knockKey, identity: keys.identity(), trustAnchor: anchor)
+        }
+        if input["operation"] as? String == "nativeRelayFailover" {
+            // A paired phone loses its LAN socket; the new subnet offers no direct candidate.
+            let workspace = try NativeWorkspace(device: device, keys: keys, vault: vault)
+            let paths = NativePathOwner()
+            let lan = try await NativeHTTPConnection.open(host: location.host, port: location.port, rootSpki: device.rootSpki,
+                knockKey: device.knockKey, identity: keys.identity())
+            _ = try await paths.migrate([NativePathCandidate(id: "lan", kind: .direct) { lan }], workspace: workspace)
+            let window = try await workspace.verify()
+            let original = try await workspace.listCheckpoint().transport
+            await lan.close()
+            guard await workspace.transportEnded(on: original) else { throw NativeFailure.invalidRecord }
+            stage = "relay-failover"
+            let relay = try NativePathCandidate(id: "relay", kind: .relay, connect: dial)
+            let next = try await paths.migrate([relay], workspace: workspace)
+            let confirmed = try await workspace.snapshot()
+            guard await workspace.installedPathKind() == .relay, !original.valid,
+                  next["device"]["id"].string == device.deviceId, confirmed["device"]["id"].string == device.deviceId,
+                  await workspace.lease()?.sameWindow(as: window) == true, await keys.verificationCalls.value == 1 else {
+                throw NativeFailure.identityMismatch
+            }
+            result = ["recoveredOnRelay": true, "windowResumed": true]
+            await workspace.closeOpening()
+            break
         }
         stage = "relay-pairing-refused"
         // The same QR knock, still valid on the LAN, opens nothing over the relay.

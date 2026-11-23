@@ -2812,7 +2812,13 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       holdExpires: true,
       holdLockTearsDown: true,
       holdResumes: true,
-      liveness: { silentClosedAtMs: 20_000, answeredStaysOpen: true },
+      presentation: {
+        graceBlocksRequests: true,
+        failedOrExpiredShowsOffline: true,
+        replacementIgnoresOldCallbacks: true,
+        clearedOpeningIgnoresOldCallbacks: true,
+      },
+      liveness: { silentClosedAtMs: 20_000, answeredStaysOpen: true, routeProbe: true },
     })
   })
   it('reconnects the phone: late direct wins, relay upgrades to direct, the window is rechecked and nothing is resent', async () => {
@@ -2870,7 +2876,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         },
         holdRecheck: true,
         revocationFirst: true,
-        liveness: { answeredStaysOpen: true, silentClosed: true },
+        liveness: { answeredStaysOpen: true, silentClosed: true, backupInstalled: true, staleLossIgnored: true },
       })
       // The timeline holds phase names, path kinds and numbers only.
       const timeline = JSON.stringify(result.timeline)

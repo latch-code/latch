@@ -44,7 +44,8 @@ package func openNativeHTTP2Stream<Value: Sendable>(on loop: any EventLoop, usin
 /** One authenticated inner TLS/HTTP2 channel; replacement is owned by the workspace, never by a write request. */
 public actor NativeHTTPConnection {
     @TaskLocal static var fileTransferBuffer = false
-    /** The HTTP/2 PING period; fixtures shorten it. Two unanswered PINGs close the connection. */
+    @TaskLocal static var workspaceDirectDial = false
+    /** The normal HTTP/2 PING period. Paired workspace direct paths lower it when needed. */
     @TaskLocal public static var livenessInterval: TimeAmount = NativeLivenessHandler.interval
     public nonisolated let usesRelay: Bool
     private let channel: any Channel
@@ -73,17 +74,20 @@ public actor NativeHTTPConnection {
         let parameters = try NativeTLS.parameters(state: state, identity: identity)
         if let interface { parameters.requiredInterface = interface }
         let connection = NWConnection(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!, using: parameters)
-        return try await establish(connection, state: state)
+        let fastLiveness: Bool
+        if case .direct = binding { fastLiveness = workspaceDirectDial && identity != nil }
+        else { fastLiveness = false }
+        return try await establish(connection, state: state, fastLiveness: fastLiveness)
     }
-    static func establish(_ connection: NWConnection, state: HandshakeState) async throws -> NativeHTTPConnection {
+    static func establish(_ connection: NWConnection, state: HandshakeState, fastLiveness: Bool = false) async throws -> NativeHTTPConnection {
         guard !Task.isCancelled else { connection.cancel(); throw CancellationError() }
         let cancellation = NativeConnectionCancellation()
         return try await withTaskCancellationHandler {
-            try await establishOnce(connection, state: state, cancellation: cancellation)
+            try await establishOnce(connection, state: state, cancellation: cancellation, fastLiveness: fastLiveness)
         } onCancel: { cancellation.cancel() }
     }
     private static func establishOnce(_ connection: NWConnection, state: HandshakeState,
-        cancellation: NativeConnectionCancellation) async throws -> NativeHTTPConnection {
+        cancellation: NativeConnectionCancellation, fastLiveness: Bool) async throws -> NativeHTTPConnection {
         // A bulk companion's stream and connection windows near the BDP of a fast, far link; the Host bounds the rest.
         let window = fileTransferBuffer ? 2_097_152 : 65_535
         let group = NIOTSEventLoopGroup(loopCount: 1)
@@ -106,7 +110,7 @@ public actor NativeHTTPConnection {
                 HTTP2Setting(parameter: .maxConcurrentStreams, value: 32), HTTP2Setting(parameter: .maxHeaderListSize, value: 32_768),
             ], targetWindowSize: window, inboundStreamInitializer: { stream in stream.close() }).map { $0.sendableView }.get()
             try await channel.pipeline.removeHandler(gate).get()
-            try await channel.pipeline.addHandler(NativeLivenessHandler(interval: livenessInterval)).get()
+            try await channel.pipeline.addHandler(NativeLivenessHandler(fast: fastLiveness, interval: livenessInterval)).get()
             guard !Task.isCancelled else { throw CancellationError() }
             return NativeHTTPConnection(channel: channel, streams: streams, group: group, padding: padding)
         } catch {
@@ -317,6 +321,13 @@ public actor NativeHTTPConnection {
     public func isClosed() -> Bool { closed || !channel.isActive }
     /** Returns once the channel has closed, for whatever reason. */
     public func waitForClose() async { try? await channel.closeFuture.get() }
+    func waitForCloseOrCancellation() async {
+        // Waiting on the stream lets a caller cancel its observation without closing the channel.
+        let (notification, continuation) = AsyncStream<Void>.makeStream()
+        channel.closeFuture.whenComplete { _ in continuation.finish() }
+        var iterator = notification.makeAsyncIterator()
+        _ = await iterator.next()
+    }
     /** After the Host activated this companion: its uplink goes unclocked past the bulk delay, each cell checked first. */
     func enableBulk(permitted: @escaping @Sendable () -> Bool) async throws {
         guard let padding, !closed else { throw NativeFailure.unavailable }
@@ -392,9 +403,8 @@ private final class HTTPResponseCollector: ChannelInboundHandler, @unchecked Sen
 }
 
 /**
- * Silent-peer detection on the parent channel, after the multiplexer that forwards stream 0's frames. A PING goes out at
- * once and then every `interval`; any PING acknowledgement clears the count, and `misses` unanswered ones in a row close
- * the channel (about 20 s by default) so requests and streams fail instead of waiting for the SSE timer.
+ * Two unanswered PINGs close this parent channel. A paired workspace's direct path uses a shorter interval so even
+ * packet loss without a Network.framework event is detected. A route hint from that connection starts a prompt probe.
  */
 public final class NativeLivenessHandler: ChannelInboundHandler, @unchecked Sendable {
     public typealias InboundIn = HTTP2Frame
@@ -403,19 +413,44 @@ public final class NativeLivenessHandler: ChannelInboundHandler, @unchecked Send
     public static let misses = 2
     private let interval: TimeAmount
     private let misses: Int
+    private let fast: Bool
     private var timer: RepeatedTask?
+    private var pathProbe: (sequence: UInt64, deadline: Scheduled<Void>)?
     private var outstanding = false
     private var missed = 0
     private var sequence: UInt64 = 0
-    public init(interval: TimeAmount = NativeLivenessHandler.interval, misses: Int = NativeLivenessHandler.misses) {
-        self.interval = max(interval, .milliseconds(10)); self.misses = max(1, misses)
+    public convenience init(interval: TimeAmount = NativeLivenessHandler.interval, misses: Int = NativeLivenessHandler.misses) {
+        self.init(fast: false, interval: interval, misses: misses)
+    }
+    package init(fast: Bool, interval: TimeAmount = NativeLivenessHandler.interval, misses: Int = NativeLivenessHandler.misses) {
+        self.fast = fast
+        self.interval = max(fast ? min(interval, .seconds(2)) : interval, .milliseconds(10))
+        self.misses = max(1, misses)
     }
     public func handlerAdded(context: ChannelHandlerContext) { if context.channel.isActive { start(context) } }
     public func channelActive(context: ChannelHandlerContext) { start(context); context.fireChannelActive() }
     public func channelInactive(context: ChannelHandlerContext) { stop(); context.fireChannelInactive() }
     public func handlerRemoved(context: ChannelHandlerContext) { stop() }
+    public func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if fast, context.channel.isActive, pathProbe == nil,
+           (event as? NIOTSNetworkEvents.ViabilityUpdate)?.isViable == false || event is NIOTSNetworkEvents.PathChanged {
+            ping(context)
+            let deadline = context.eventLoop.scheduleTask(in: interval) { [weak self, weak channel = context.channel] in
+                guard let self, let channel else { return }
+                self.stop(); channel.close(promise: nil)
+            }
+            pathProbe = (sequence, deadline)
+        }
+        context.fireUserInboundEventTriggered(event)
+    }
     public func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        if case .ping(_, ack: true) = unwrapInboundIn(data).payload { outstanding = false; missed = 0 }
+        if case let .ping(value, ack: true) = unwrapInboundIn(data).payload {
+            outstanding = false; missed = 0
+            // An ACK to an earlier ping may already be in flight when the route changes.
+            if let pathProbe, pathProbe.sequence == value.integer {
+                pathProbe.deadline.cancel(); self.pathProbe = nil
+            }
+        }
         context.fireChannelRead(data)
     }
     private func start(_ context: ChannelHandlerContext) {
@@ -427,8 +462,12 @@ public final class NativeLivenessHandler: ChannelInboundHandler, @unchecked Send
             self.tick(context)
         }
     }
-    private func stop() { timer?.cancel(); timer = nil }
+    private func stop() {
+        timer?.cancel(); timer = nil
+        pathProbe?.deadline.cancel(); pathProbe = nil
+    }
     private func tick(_ context: ChannelHandlerContext) {
+        guard pathProbe == nil else { return }
         if outstanding {
             missed += 1
             if missed >= misses { stop(); context.close(promise: nil); return }

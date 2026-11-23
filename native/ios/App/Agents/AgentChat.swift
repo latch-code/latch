@@ -203,7 +203,7 @@ private struct NewTopicView: View {
         if PhoneSlash.actionOf(prompt) != nil {
             if case .open = PhoneSlash.action(prompt, context: slashContext) { return !slash.composing }; return false
         }
-        return blocker == nil && mine.isEmpty && !sending && !model.busy && !slash.composing && (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.tray(attachKey).isEmpty)
+        return model.transportReady && blocker == nil && mine.isEmpty && !sending && !model.busy && !slash.composing && (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.tray(attachKey).isEmpty)
     }
     /** Cards of runs that settled while the Agent had no topic: here until the next topic keeps them. */
     private var waiting: [PhoneScheduleResult] { model.agentResults[frame.owner] ?? [] }
@@ -252,7 +252,7 @@ private struct NewTopicView: View {
                 HStack(spacing: 10) {
                     Label("第一条消息结果待确认", systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                     Spacer()
-                    Button("重试同一请求") { retry(pending) }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                    Button("重试同一请求") { retry(pending) }.font(PhoneTheme.caption).disabled(model.busy || !model.transportReady)
                     Button("放弃这次提交") {
                         Task { if case let .text(back, _) = await model.abandonPrompt(pending) { prompt = PhonePending.joined(prompt, back) } }
                     }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).disabled(model.busy)

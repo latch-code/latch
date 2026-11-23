@@ -23,6 +23,7 @@ const SCENES = [
   'usage-spend',
   'question-reminder',
   'conversation',
+  'recovering-chat',
   'markdown',
   'markdown-code',
   'pictures',

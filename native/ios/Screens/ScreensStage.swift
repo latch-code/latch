@@ -77,8 +77,12 @@ import UIKit
                 })
                 object["catalog"] = .object(catalog)
             }
-        case "conversation":
+        case "conversation", "recovering-chat":
             model.tab = .code; model.sessionId = "ses_review"; model.detail = conversation()
+            if name == "recovering-chat" {
+                model.draftInserts["ses_review"] = "请再看一下相关测试。"
+                model.stageReconnect()
+            }
         case "conversation-limited":
             // Codex used its 5-hour limit up: the conversation says so above its input.
             model.tab = .code; model.sessionId = "ses_review"; model.detail = conversation()

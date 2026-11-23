@@ -181,6 +181,7 @@ extension PhoneModel {
      * request kept while its result is unknown. Only while the new topic is still what is shown does the answer open it.
      */
     func startTopic(owner: String, agent: NativeJSON, choice: PhoneStartChoice, prompt: String, attachments: [String] = []) async -> Bool {
+        guard transportReady else { return false }
         let current = generation
         do {
             guard canRun, prompt.count <= 16_000, attachments.count <= PhoneAttachments.perMessage else { throw NativeFailure.forbidden }

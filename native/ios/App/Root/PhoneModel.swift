@@ -68,6 +68,17 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             else if oldValue { questionAttention = nil; questionTopic = nil; withdrawDisconnectedWork() }
         }
     }
+    @Published private var reconnectPresentation = PhoneReconnectPresentation()
+    private var restoringTransport: Bool { reconnectPresentation.interruption != nil }
+    var transportReady: Bool {
+        #if LATCH_SCREENS
+        if staged { return reconnectPresentation.permitsRequests(connected: connected, transportValid: true) }
+        #endif
+        return reconnectPresentation.permitsRequests(connected: connected, transportValid: installedTransport?.valid == true)
+    }
+    #if LATCH_SCREENS
+    func stageReconnect() { _ = reconnectPresentation.begin() }
+    #endif
     /** The store has answered, so an empty host list means this phone has none. */
     @Published var storeState: PhoneStoreState = .opening
     /** Reaching the Mac has failed at least once; the list shows what it last knew. */
@@ -207,7 +218,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     @Published var createdHelper: CreatedHelper?
     private(set) var bodyLease: BodyLease?
     var currentFileAccess: NativeFileAccess? {
-        guard connected, let bodyLease, bodyLease.valid, let installedTransport, installedTransport.valid else { return nil }
+        guard transportReady, let bodyLease, bodyLease.valid, let installedTransport, installedTransport.valid else { return nil }
         return NativeFileAccess(lease: bodyLease, transport: installedTransport)
     }
     var hasContentWindow: Bool {
@@ -235,11 +246,11 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     private let discovery = NativeDiscovery()
     private var networkFilter = NativeNetworkChangeFilter()
     private var winners = NativeWinningPaths()
-    private var upgradeTask: Task<Void, Never>?
+    private var upgradeTask: (id: UUID, task: Task<Void, Never>)?
     /** A short background that keeps the connection; see `enterBackground`. */
     private let hold = NativeBackgroundHold()
     private var holdTask = UIBackgroundTaskIdentifier.invalid
-    private var holdWatch: Task<Void, Never>?
+    private var transportWatch: Task<Void, Never>?
     private(set) var generation = UUID()
     private(set) var networkGeneration = UUID()
     var freshPairings: [String: (PairingInvitation, UUID)] = [:]
@@ -254,6 +265,9 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     private let listPublication = NativeListPublication()
     private var initialListTask: Task<Void, Never>?
     private var reconnectTask: (id: UUID, task: Task<Void, Never>)?
+    private var reconnectDelay: Task<Void, Error>?
+    private var reconnectBookChanged = false
+    private var offlineTask: Task<Void, Never>?
     var pairingTask: Task<Void, Never>?
     var pairingConnection: NativeHTTPConnection?
     private var monitor: NWPathMonitor?
@@ -325,7 +339,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
      * revocation, a dead connection, a network change, a computer switch or the time running out tear everything down.
      */
     func enterBackground() {
-        guard let workspace, connected, store != nil, pairing == nil, draft == nil, !protectedDataLocked,
+        guard workspace != nil, transportReady, store != nil, pairing == nil, draft == nil, !protectedDataLocked,
               UIApplication.shared.isProtectedDataAvailable else { lock(); return }
         hold.enter(withdraw: { withdrawForHold() }, finish: { [weak self] in
             guard let self, self.holdTask != .invalid else { return }
@@ -334,19 +348,13 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         holdTask = UIApplication.shared.beginBackgroundTask(withName: "latch-hold") { [weak self] in
             MainActor.assumeIsolated { self?.hold.expired() }
         }
-        guard holdTask != .invalid else { hold.expired(); return }
-        holdWatch?.cancel()
-        holdWatch = Task { [weak self] in
-            await workspace.transportEnded()
-            guard !Task.isCancelled else { return }
-            self?.hold.expired()
-        }
+        if holdTask == .invalid { hold.expired() }
     }
     private func withdrawForHold() {
         questionAttention = nil; questionTopic = nil
         if let sessionId, !workPath.contains(where: { $0.openedSession == sessionId }) { resumeSession = sessionId }
         eventTask?.cancel(); refreshTask?.cancel(); expiryTask?.cancel(); initialListTask?.cancel(); cancelReconnect()
-        proximityTask?.cancel(); proximityTask = nil; upgradeTask?.cancel(); upgradeTask = nil
+        proximityTask?.cancel(); proximityTask = nil; cancelUpgrade()
         streamGeneration = UUID(); stopWatching(forget: true)
         cancelPreview(); clearPrivateContent(); verifiedUntil = nil
         agentPath = []; appPath = []; resetWorkItems(); proposals.clear(); agentResults.clear()
@@ -354,19 +362,19 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     }
     /** Back within the hold: the Host rechecks the window on the kept connection, which never extends it. */
     private func returnFromHold() async {
-        holdWatch?.cancel(); holdWatch = nil
         guard hold.resume() else { return }
-        guard let workspace, let host = selectedHost, storageAvailable else { lock(); await open(); return }
+        guard let workspace, let host = selectedHost, let transport = installedTransport, transport.valid, storageAvailable else { lock(); await open(); return }
         timeline.begin()
         let current = generation, selected = contentGeneration, resume = resumeSession
         resumeSession = nil
         watchOthers()
         do {
             let kept = try await workspace.recheckWindow()
-            guard generation == current, storageAvailable else { return }
+            guard generation == current, installedTransport === transport, storageAvailable else { return }
             timeline.record(.verification)
-            if kept, let lease = await workspace.lease() { try? bindBodyLease(lease, current: current) }
-            guard generation == current, storageAvailable, !hold.holding else { return }
+            let lease = kept ? await workspace.lease() : nil
+            guard generation == current, installedTransport === transport, transport.valid, storageAvailable, !hold.holding else { return }
+            if let lease { try? bindBodyLease(lease, current: current) }
             if kept, let resume, sessionId == resume, contentGeneration == selected { resumeAfterListing = visibleSessionIntent }
             // Resume the list stream while a partial first checkpoint still lacks the selected session.
             startEvents(listOnly: contentGeneration == selected && sessionId == resume)
@@ -375,10 +383,9 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             recoverInitialList()
             tryUpgrade()
         } catch {
-            guard generation == current, storageAvailable else { return }
+            guard generation == current, installedTransport === transport, storageAvailable else { return }
             if let proof = await workspace.verifiedRevocation() { await retire(host, proof: proof); return }
-            connected = false; offline = true; status = "不在线"
-            startReconnect(immediately: true)
+            recoverTransport(on: transport)
         }
     }
     private var waitingForSessionList: Bool {
@@ -397,7 +404,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     }
     func lock() {
         questionAttention = nil; questionTopic = nil; pendingQuestionLink = nil
-        hold.release(); holdWatch?.cancel(); holdWatch = nil; upgradeTask?.cancel(); upgradeTask = nil
+        hold.release(); transportWatch?.cancel(); transportWatch = nil; cancelUpgrade()
         if let sessionId, !workPath.contains(where: { $0.openedSession == sessionId }) { resumeSession = sessionId }
         if let selectedHost { lastHostId = selectedHost.id }
         generation = UUID(); eventTask?.cancel(); refreshTask?.cancel(); expiryTask?.cancel(); initialListTask?.cancel(); cancelReconnect(); pairingTask?.cancel()
@@ -427,7 +434,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     func connect(_ host: RegisteredHost) async {
         guard let store, !busy, storageAvailable, !forgettingComputers.contains(host.id),
               hosts.contains(where: { $0.id == host.id }) else { return }
-        hold.release(); upgradeTask?.cancel(); upgradeTask = nil
+        hold.release(); transportWatch?.cancel(); transportWatch = nil; cancelUpgrade()
         busy = true
         generation = UUID(); let current = generation
         defer { if generation == current { busy = false } }
@@ -482,7 +489,10 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         }
     }
     private func adoptTransport(_ path: NativeInstalledTransport, current: UUID) {
-        guard generation == current, storageAvailable else { return }
+        guard generation == current, let workspace else { return }
+        // The short background hold can keep only the connection it entered with.
+        if hold.holding { hold.expired(); return }
+        guard storageAvailable else { return }
         _ = path.epoch.whileCurrent {
             _ = withdrawWorkSessionBody()
             let restored = path.lease.map { (try? bindBodyLease($0, current: current)) != nil } ?? false
@@ -494,8 +504,19 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             if let selectedHost { offlineCacheBlocked.remove(selectedHost.id) }
             adoptSnapshot(path.checkpoint, windowOpen: bodyLease?.valid == true)
             connected = true; status = "已连接"
+            clearTransportRecovery()
+            watchTransport(workspace, transport: path.epoch, current: current)
             startEvents()
             recoverInitialList()
+        }
+    }
+    private func watchTransport(_ workspace: NativeWorkspace, transport: NativeTransportEpoch, current: UUID) {
+        transportWatch?.cancel()
+        transportWatch = Task { [weak self] in
+            guard await workspace.transportEnded(on: transport), !Task.isCancelled,
+                  let self, self.generation == current, self.workspace === workspace, self.installedTransport === transport else { return }
+            if self.hold.holding { self.hold.expired() }
+            else { self.recoverTransport(on: transport) }
         }
     }
     /** Retry a partial first checkpoint even when there is no body window for the list event stream. */
@@ -514,7 +535,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                     self.adoptSnapshot(value, captured: reading, windowOpen: lease?.valid == true)
                 }
             } catch {
-                if current() { _ = wentAway(error) }
+                if current(), wentAway(error) { recoverTransport(on: transport) }
             }
         }
     }
@@ -525,11 +546,12 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         catch { if generation == current { report(error) } }
     }
     func retryControl() async {
-        guard let workspace, !busy else { return }
+        guard let workspace, transportReady, !busy else { return }
         let current = generation
         busy = true; defer { if generation == current { busy = false } }
         do {
             guard let saved = try await workspace.pendingControl(), let path = saved["path"].string else { await refreshControlPending(); return }
+            guard generation == current, transportReady else { return }
             controlsInFlight.insert(path); defer { controlsInFlight.remove(path) }
             _ = try await workspace.freeAction(path: path, fields: saved["fields"].object)
             guard generation == current else { return }
@@ -537,15 +559,16 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         } catch { if generation == current { await refreshControlPending(); report(error) } }
     }
     func ensureVerified(resuming retained: BodyLease? = nil) async throws {
+        guard !restoringTransport else { throw CancellationError() }
         guard let workspace, let transport = installedTransport, transport.valid else { throw NativeFailure.unavailable }
         guard hasScope("view") else { throw NativeFailure.forbidden }
         let current = generation, openingWindow = privateSnapshot.epoch
         func restore(_ lease: BodyLease) async throws {
-            guard installedTransport === transport, transport.valid, privateSnapshot.accepts(openingWindow) else { throw CancellationError() }
+            guard !restoringTransport, installedTransport === transport, transport.valid, privateSnapshot.accepts(openingWindow) else { throw CancellationError() }
             try bindBodyLease(lease, current: current)
             let window = privateSnapshot.epoch
             let saved = try await workspace.pendingWrites()
-            guard current == generation, installedTransport === transport, transport.valid, !hold.holding, !Task.isCancelled,
+            guard current == generation, !restoringTransport, installedTransport === transport, transport.valid, !hold.holding, !Task.isCancelled,
                   bodyLease?.sameWindow(as: lease) == true, privateSnapshot.accepts(window) else { throw CancellationError() }
             try lease.requireValid()
             pending = saved
@@ -555,7 +578,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             try await restore(lease)
             return
         }
-        guard retained == nil, generation == current, installedTransport === transport, transport.valid, !hold.holding,
+        guard retained == nil, generation == current, !restoringTransport, installedTransport === transport, transport.valid, !hold.holding,
               privateSnapshot.accepts(openingWindow) else { throw CancellationError() }
         verifying = true; defer { verifying = false }
         let lease = try await workspace.verify()
@@ -599,7 +622,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     }
     /** What was on screen when its window ran out comes back without a tap; nothing asks the person. */
     private func reopenContent(_ current: UUID) async {
-        guard current == generation, connected, verifiedUntil == nil, !verifying else { return }
+        guard current == generation, transportReady, verifiedUntil == nil, !verifying else { return }
         if let lastReopen, lastReopen.duration(to: .now) < .seconds(60) { return }
         lastReopen = .now
         if tab == .code, workItemsShown { await openWorkWindow(); return }
@@ -760,9 +783,9 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         }
     }
     @discardableResult func refresh(includeSelectedBody: Bool = true) async -> Bool {
-        guard let workspace else { return false }
+        guard let workspace, !restoringTransport else { return false }
         let current = generation, selected = sessionId, transport = installedTransport
-        func sameConnection() -> Bool { generation == current && installedTransport === transport && transport?.valid != false }
+        func sameConnection() -> Bool { generation == current && !restoringTransport && installedTransport === transport && transport?.valid != false }
         var reading = privateSnapshot.epoch
         do {
             let lease = await workspace.lease()
@@ -789,7 +812,9 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             return true
         } catch {
             guard sameConnection(), privateSnapshot.accepts(reading), !Task.isCancelled, !(error is CancellationError) else { return false }
-            if !wentAway(error) {
+            if wentAway(error) {
+                if let transport { recoverTransport(on: transport) }
+            } else {
                 report(error)
                 if selected == sessionId, detail == .null, verifiedUntil != nil { detailFailed = selected }
             }
@@ -800,13 +825,12 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     static func outOfReach(_ failure: Error) -> Bool {
         [NativeFailure.unavailable, .resultUnknown].contains(failure as? NativeFailure)
     }
-    /** Going away is the banner's to say, not an alert's; true when that is what this failure was. */
+    /** Only a failed connection or a current list/stream probe starts recovery. Individual reads can fail on their own. */
     @discardableResult func wentAway(_ failure: Error) -> Bool {
         guard Self.outOfReach(failure) else { return false }
 #if LATCH_SCREENS
         PhoneLive.connectionCheckpoint(.readUnavailable, leaseValid: bodyLease?.valid == true, connected: connected)
 #endif
-        if connected { connected = false; offline = true; status = "不在线"; startReconnect() }
         return true
     }
     func startEvents(listOnly: Bool = false) {
@@ -814,7 +838,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         bodyRead?.cancelPending()
         refreshTask?.cancel(); refreshTask = nil; refreshId = nil; pendingEvent = nil
         streamGeneration = UUID()
-        guard let workspace else { return }
+        guard let workspace, let transport = installedTransport, !hold.holding, !restoringTransport else { return }
         let current = generation, selected = !listOnly && verifiedUntil != nil && !waitingForSessionList ? sessionId : nil, streamId = streamGeneration
         eventTask = Task {
             var streamLease: BodyLease?
@@ -851,7 +875,8 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                     }
                 }
             } catch {
-                guard !Task.isCancelled, generation == current, streamGeneration == streamId else { return }
+                guard !Task.isCancelled, generation == current, streamGeneration == streamId,
+                      installedTransport === transport, transport.valid else { return }
                 if let selectedBody, !bodyIntentIsCurrent(selectedBody) { return }
                 selectedBody?.cancelPending()
                 if (error as? NativeReadFailure) == .bodyAccessChanged, let selectedBody {
@@ -868,6 +893,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                 let reading = privateSnapshot.epoch
                 guard let recovery = await PhoneUnlock.recoverStream(error, current: {
                     !Task.isCancelled && self.generation == current && self.streamGeneration == streamId && self.privateSnapshot.accepts(reading)
+                        && self.installedTransport === transport && transport.valid
                 }, readCheckpoint: { try await workspace.listCheckpoint() }) else { return }
                 if recovery.action == .eventOverflow {
                     // The selected reader already spent its one full repair; a new event task must not reset it.
@@ -888,7 +914,6 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
 #endif
                     adoptSnapshot(value, captured: reading, windowOpen: bodyLease?.valid == true)
                     connected = true; status = "已连接"
-                    cancelReconnect()
                     if let streamLease, !streamLease.valid, bodyLease?.sameWindow(as: streamLease) == true {
                         closeBodyWindow(streamLease, current: current)
                         return
@@ -903,7 +928,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
 #if LATCH_SCREENS
                 PhoneLive.connectionCheckpoint(.reconnectRequired, leaseValid: bodyLease?.valid == true, connected: connected)
 #endif
-                connected = false; offline = true; status = "不在线"; startReconnect()
+                recoverTransport(on: transport)
             }
         }
     }
@@ -1005,9 +1030,36 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         if connected { _ = await refresh() }
         else if offline { retryConnection() }
     }
+    private func recoverTransport(on transport: NativeTransportEpoch) {
+        guard installedTransport === transport, transportReady, storageAvailable, !hold.holding,
+              let interruption = reconnectPresentation.begin() else { return }
+        eventTask?.cancel(); refreshTask?.cancel(); initialListTask?.cancel()
+        bodyRead?.cancelPending(); cancelUpgrade()
+        let current = generation
+        // Give a replacement time to pass the connection checks before changing the page's connection state.
+        offlineTask = Task { [weak self] in
+            do { try await Task.sleep(until: interruption.deadline, clock: .continuous) } catch { return }
+            guard let self, self.generation == current, self.installedTransport === transport,
+                  self.reconnectPresentation.shouldShowOffline(for: interruption) else { return }
+            self.publishOffline()
+        }
+        startReconnect(immediately: true)
+    }
+    private func publishOffline() {
+        guard !offline else { return }
+        offlineTask?.cancel(); offlineTask = nil
+        connected = false; offline = true; status = "不在线"
+    }
+    private func clearTransportRecovery() {
+        offlineTask?.cancel(); offlineTask = nil
+        reconnectPresentation.reset()
+    }
     private func cancelReconnect() {
         reconnectTask?.task.cancel()
         reconnectTask = nil
+        reconnectDelay?.cancel(); reconnectDelay = nil
+        reconnectBookChanged = false
+        clearTransportRecovery()
     }
     /** Reconnecting is automatic; this only starts the next try now. */
     func retryConnection() {
@@ -1017,30 +1069,37 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         else { offline = false; status = "正在连接…"; startReconnect(immediately: true) }
     }
     private func startReconnect(immediately: Bool = false) {
-        guard reconnectTask == nil, !hold.holding, let workspace, let host = selectedHost else { return }
+        guard reconnectTask == nil, storageAvailable, !hold.holding, let workspace, let host = selectedHost else { return }
         let current = generation, id = UUID()
         reconnectTask = (id, Task {
             defer { if reconnectTask?.id == id { reconnectTask = nil } }
             for attempt in 0..<1000 {
+                // An announced restart, update, stop or sleep says when to look again.
+                let delay = hostNotice.map { Duration.seconds($0.retryAfter) }
+                    ?? (reconnectBookChanged ? .zero : NativeReconnectPolicy.delay(attempt: attempt, afterNetworkChange: immediately))
+                let waiting = Task { try await Task.sleep(for: delay) }
+                reconnectDelay = waiting
+                _ = await waiting.result
+                guard current == generation, reconnectTask?.id == id, !Task.isCancelled, storageAvailable, !hold.holding else { return }
+                reconnectDelay = nil
+                reconnectBookChanged = false
+                let previous = installedTransport, interruption = reconnectPresentation.interruption
                 do {
-                    // An announced restart, update, stop or sleep says when to look again, as the web's: not a failure to back off from.
-                    if let notice = hostNotice { try await Task.sleep(for: .seconds(Double(notice.retryAfter))) }
-                    else { try await Task.sleep(for: NativeReconnectPolicy.delay(attempt: attempt, afterNetworkChange: immediately)) }
-                    guard current == generation else { return }
-                    try await dialRound(host, workspace: workspace, current: current)
+                    try await dialRound(host, workspace: workspace, current: current, recovering: restoringTransport || !connected)
                     guard current == generation, !Task.isCancelled else { return }
                     await bookRefresher?.connectionChanged()
                     guard current == generation, !Task.isCancelled else { return }
                     _ = await refresh()
                     guard current == generation, !Task.isCancelled else { return }
-                    if !connected { continue }
+                    if !transportReady || reconnectBookChanged { continue }
                     scheduleProximity(workspace); return
                 } catch {
                     if Task.isCancelled || current != generation { return }
                     let proof = await workspace.verifiedRevocation()
                     guard current == generation, !Task.isCancelled else { return }
                     if let proof { await retire(host, proof: proof); return }
-                    if !connected { offline = true; status = "不在线" }
+                    if !reconnectBookChanged, installedTransport === previous,
+                       reconnectPresentation.shouldShowOffline(afterFailedRound: interruption, connected: connected) { publishOffline() }
                 }
             }
         })
@@ -1065,10 +1124,18 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             self.proximityTask?.cancel(); self.proximityTask = nil
             self.networkGeneration = UUID(); self.freshPairings.removeAll(); self.discovery.stop()
             if path.status == .satisfied, let host = self.selectedHost { try? self.startDiscovery(host) }
-            await self.paths.networkChanged()
             self.othersNetworkChanged()
-            self.cancelReconnect()
-            if self.selectedHost != nil { self.startReconnect(immediately: true) }
+            let network = self.networkGeneration
+            await self.paths.forgetFailures()
+            guard self.monitorGeneration == current, self.networkGeneration == network, path.status == .satisfied else { return }
+            if self.transportReady, let workspace = self.workspace {
+                self.scheduleProximity(workspace)
+                self.tryUpgrade()
+            } else if self.hostNotice == nil {
+                // Wake a backoff, but leave an in-flight relay dial alone.
+                self.reconnectDelay?.cancel()
+                if !self.busy { self.startReconnect(immediately: true) }
+            }
         } }
         next.start(queue: DispatchQueue(label: "app.latch.path-monitor"))
     }
@@ -1108,14 +1175,15 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         var saved = host; saved.device = device; saved.prepared = false
         selectedHost = saved; hosts = savedHosts; draft = pendingDraft
         guard let newBook, NativeBookPathChange.requiresMigration(previous: oldBook, current: newBook), let workspace else { return }
+        guard storageAvailable, !hold.holding else { return }
         do {
             if oldKey != newBook.discoveryKey { discovery.stop(); try startDiscovery(saved) }
-            try await dialRound(saved, workspace: workspace, current: current)
+            try await dialRound(saved, workspace: workspace, current: current, changedBook: true)
             guard generation == current else { return }
             await bookRefresher?.connectionChanged()
             guard generation == current else { return }
             _ = await refresh()
-        } catch { if generation == current, !Task.isCancelled { startReconnect() } }
+        } catch { if generation == current, !Task.isCancelled, !(error is CancellationError) { startReconnect() } }
     }
     private func bookFailed(_ failure: NativeFailure, current: UUID) {
 #if LATCH_SCREENS
@@ -1132,20 +1200,26 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     private func currentGateway() -> Data? { currentNetworkPath.flatMap { NativeDiscoveryWire.currentGatewayHashes($0).first } }
     /**
      * One dial round: known direct candidates and the relay, or, while browsing has no result yet, a direct candidate that
-     * waits up to its deadline. The relay waits only for a known direct path or one that won on this gateway before.
+     * waits up to its deadline. On recovery the relay starts immediately. On first connect, direct can have a head start.
      */
-    private func dialRound(_ host: RegisteredHost, workspace: NativeWorkspace, current: UUID) async throws {
+    private func dialRound(_ host: RegisteredHost, workspace: NativeWorkspace, current: UUID, recovering: Bool = false, changedBook: Bool = false) async throws {
         let latest = hosts.first { $0.id == host.id } ?? host
         try? startDiscovery(latest)
         let available = try await candidates(latest)
-        guard generation == current, storageAvailable, self.workspace === workspace, !Task.isCancelled else { throw NativeFailure.unavailable }
-        let known = available.contains { $0.kind == .direct }, gateway = currentGateway()
+        guard generation == current, storageAvailable, !hold.holding, self.workspace === workspace, !Task.isCancelled else { throw NativeFailure.unavailable }
+        if changedBook, reconnectTask != nil {
+            // The active recovery can finish its attempt, then use the newly verified book.
+            reconnectBookChanged = true
+            if hostNotice == nil { reconnectDelay?.cancel() }
+            throw CancellationError()
+        }
+        let known = available.contains { $0.kind == .direct }, gateway = currentGateway(), network = networkGeneration
         let later = known || !discovery.browsing ? nil : discovery.lateCandidates(device: latest.device, keys: PhoneKeys.provider(latest.keys))
-        let delay = NativeReconnectPolicy.relayDelay(directKnown: known, lastWinner: winners.winner(gateway: gateway))
+        let delay = recovering ? .zero : NativeReconnectPolicy.relayDelay(directKnown: known, lastWinner: winners.winner(gateway: gateway))
         _ = try await paths.migrate(available, later: later, relayDelay: delay, workspace: workspace)
         let kind = await workspace.installedPathKind()
         guard generation == current else { return }
-        winners.record(kind, gateway: gateway)
+        if networkGeneration == network { winners.record(kind, gateway: gateway) }
         // The reads that follow a new connection go first; the upgrade waits for a quiet path anyway.
         if kind == .relay { tryUpgrade(after: .seconds(1)) }
     }
@@ -1153,18 +1227,22 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         timeline.recordOnce(.firstBrowse)
         tryUpgrade()
     }
+    private func cancelUpgrade() {
+        upgradeTask?.task.cancel()
+        upgradeTask = nil
+    }
     /**
      * On a relay, a direct path that browsing found moves the connection in the background. It waits for the path to be
      * quiet and tries a few times, seconds apart; a failure leaves the relay.
      */
     private func tryUpgrade(after delay: Duration = .zero) {
-        guard upgradeTask == nil, !hold.holding, storageAvailable, let workspace, let host = selectedHost else { return }
-        let current = generation
-        upgradeTask = Task { [weak self] in
-            defer { self?.upgradeTask = nil }
+        guard upgradeTask == nil, transportReady, !hold.holding, storageAvailable, let workspace, let host = selectedHost else { return }
+        let current = generation, id = UUID()
+        upgradeTask = (id, Task { [weak self] in
+            defer { if self?.upgradeTask?.id == id { self?.upgradeTask = nil } }
             if delay > .zero { do { try await Task.sleep(for: delay) } catch { return } }
             for _ in 0..<5 {
-                guard let self, self.generation == current, self.connected, !self.hold.holding, self.storageAvailable,
+                guard let self, self.generation == current, self.transportReady, !self.hold.holding, self.storageAvailable,
                       self.workspace === workspace, await workspace.installedPathKind() == .relay else { return }
                 let latest = self.hosts.first { $0.id == host.id } ?? host
                 let directs = (try? await self.discovery.candidates(device: latest.device, keys: PhoneKeys.provider(latest.keys))) ?? []
@@ -1178,7 +1256,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                 }
                 do { try await Task.sleep(for: .seconds(3)) } catch { return }
             }
-        }
+        })
     }
     private func warmRelays() {
         guard let host = selectedHost ?? hosts.first(where: { $0.id == lastHostId }) ?? hosts.first else { return }
@@ -1246,7 +1324,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         if isCurrent {
             generation = UUID(); cancelReconnect(); initialListTask?.cancel(); eventTask?.cancel(); expiryTask?.cancel(); refreshTask?.cancel()
             resetBookRefresh(); proximityTask?.cancel(); proximityTask = nil
-            hold.release(); holdWatch?.cancel(); holdWatch = nil; upgradeTask?.cancel(); upgradeTask = nil
+            hold.release(); transportWatch?.cancel(); transportWatch = nil; cancelUpgrade()
             clearPrivateContent(); resetWorkItems(); resetSessionActions(); resetReview()
             controlPending = .null; snapshot = .null; verifiedUntil = nil; selectedHost = nil; connected = false; offline = false
             sessionId = nil; resumeSession = nil; lastHostId = nil; agentPath = []; appPath = []; heldDrafts = [:]

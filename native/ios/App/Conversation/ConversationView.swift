@@ -135,8 +135,8 @@ struct ConversationView: View {
         let switches = PhoneConversation.switches(turns)
         let status = summary["status"].string ?? model.detail["summary"]["status"].string
         let running = status == "running" || status == "waiting-approval"
-        let canSend = model.connected && inputReason == nil
-        let canFork = model.connected && model.canFork && summary["personal"] == .null
+        let canSend = model.transportReady && inputReason == nil
+        let canFork = model.transportReady && model.canFork && summary["personal"] == .null
         return ConversationReader(session: id, contentEpoch: model.privateSnapshot.epoch,
             offersTurnIndex: turns.lazy.compactMap(\.user).dropFirst().first != nil) {
             LazyVStack(alignment: .leading, spacing: 20) {

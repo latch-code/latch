@@ -51,6 +51,7 @@ extension PhoneModel {
             guard let originalLease, originalLease.valid, bodyLease?.sameWindow(as: originalLease) == true else { return false }
             return generation == current && installedTransport === transport && transport.valid && privateSnapshot.accepts(window)
         }
+        guard transportReady else { return .failed(CancellationError()) }
         // Busy from the first moment, so 放弃这次结果 cannot drop a write this is about to send.
         guard !busy else { return .failed(NativeFailure.resultUnknown) }
         busy = true; defer { if generation == current { busy = false } }
@@ -64,7 +65,7 @@ extension PhoneModel {
                 else { throw CancellationError() }
                 pending = saved
             } else { try await ensureVerified() }
-            guard current == generation else { return .failed(NativeFailure.unavailable) }
+            guard current == generation, transportReady else { throw CancellationError() }
             // An earlier write without an answer goes first: the core keeps one unconfirmed write at a time.
             guard pending.allSatisfy({ $0.requestId == request.requestId }) else { return .failed(NativeFailure.resultUnknown) }
         } catch { return .failed(error) }

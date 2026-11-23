@@ -89,7 +89,7 @@ extension PhoneModel {
         return await sessionAction { try PhoneSessionWrite.rename(id, title: title) }
     }
     func delete(_ task: NativeJSON) async {
-        guard let id = task["id"].string else { return }
+        guard transportReady, let id = task["id"].string else { return }
         // Off the session first: a read of what is being deleted would only fail.
         if sessionId == id { closeSession() }
         if await sessionAction({ try PhoneSessionWrite.remove(id) }) { clearing.remove(id); heldDrafts.removeValue(forKey: id) }

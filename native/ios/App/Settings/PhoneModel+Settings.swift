@@ -14,7 +14,7 @@ extension PhoneModel {
      * only on the Root-signed tombstone, which the next connection reads.
      */
     func disconnect(_ host: RegisteredHost) async -> Bool {
-        guard selectedHost?.id == host.id, let workspace else { return false }
+        guard selectedHost?.id == host.id, transportReady, let workspace else { return false }
         await workspace.removeThisDevice()
         for attempt in 0..<4 {
             do { _ = try await paths.migrate(candidates(host), workspace: workspace) }

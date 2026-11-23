@@ -3,6 +3,7 @@ import LatchNativeCore
 import NIOCore
 import NIOEmbedded
 import NIOHTTP2
+import NIOTransportServices
 
 /** A paired fixture device on a loopback Host: the same steps the App's pairing takes, with in-memory keys. */
 struct ReconnectDevice {
@@ -50,7 +51,11 @@ actor ReconnectBox {
     func keep(_ value: NativeHTTPConnection) { connection = value }
     func started(_ ms: Double) { starts.append(ms) }
 }
-@MainActor final class ReconnectInstalls { var count = 0 }
+@MainActor final class ReconnectInstalls {
+    var count = 0
+    var epoch: NativeTransportEpoch?
+    func record(_ path: NativeInstalledTransport) { count += 1; epoch = path.epoch }
+}
 
 private func fixtureFailure(_ name: String) -> FixtureStage { FixtureStage(name: name) }
 
@@ -150,7 +155,36 @@ private func fixtureFailure(_ name: String) -> FixtureStage { FixtureStage(name:
     guard resumed, !again, log == ["withdraw", "finish"] else { throw fixtureFailure("hold-resume") }
     guard NativeBackgroundHold.limit == .seconds(30) else { throw fixtureFailure("hold-limit") }
     return ["initialListRecovers": true, "backoff": true, "relayDelay": true, "winners": true, "filter": true, "ring": true, "holdWithdrawsAtOnce": true,
-        "holdExpires": true, "holdLockTearsDown": true, "holdResumes": true, "liveness": try livenessRules()]
+        "holdExpires": true, "holdLockTearsDown": true, "holdResumes": true, "presentation": try reconnectPresentationRules(), "liveness": try livenessRules()]
+}
+
+private func reconnectPresentationRules() throws -> [String: Bool] {
+    let start = ContinuousClock.now
+    var ui = PhoneReconnectPresentation()
+    guard ui.permitsRequests(connected: true, transportValid: true),
+          !ui.permitsRequests(connected: true, transportValid: false),
+          !ui.shouldShowOffline(afterFailedRound: nil, connected: true),
+          ui.shouldShowOffline(afterFailedRound: nil, connected: false),
+          let lost = ui.begin(at: start), ui.begin(at: start) == nil,
+          !ui.permitsRequests(connected: true, transportValid: true),
+          !ui.shouldShowOffline(at: start.advanced(by: .milliseconds(5_999)), for: lost) else { throw fixtureFailure("presentation-grace") }
+    guard ui.shouldShowOffline(afterFailedRound: lost, connected: true),
+          ui.shouldShowOffline(at: start.advanced(by: .seconds(6)), for: lost) else { throw fixtureFailure("presentation-offline") }
+
+    ui.reset()
+    guard ui.permitsRequests(connected: true, transportValid: true),
+          !ui.shouldShowOffline(at: lost.deadline, for: lost),
+          !ui.shouldShowOffline(afterFailedRound: lost, connected: true),
+          let next = ui.begin(at: start),
+          !ui.shouldShowOffline(at: lost.deadline, for: lost),
+          !ui.shouldShowOffline(afterFailedRound: lost, connected: true),
+          ui.shouldShowOffline(afterFailedRound: next, connected: true) else { throw fixtureFailure("presentation-old-callback") }
+
+    ui.reset()
+    guard !ui.permitsRequests(connected: false, transportValid: false),
+          !ui.shouldShowOffline(at: next.deadline, for: next),
+          !ui.shouldShowOffline(afterFailedRound: next, connected: false) else { throw fixtureFailure("presentation-withdrawn") }
+    return ["graceBlocksRequests": true, "failedOrExpiredShowsOffline": true, "replacementIgnoresOldCallbacks": true, "clearedOpeningIgnoresOldCallbacks": true]
 }
 
 /** The PING rule on a virtual clock: about 20 s for a silent peer, never while acknowledgements come. */
@@ -162,6 +196,10 @@ func livenessRules() throws -> [String: Any] {
             result.append(data)
         }
         return result
+    }
+    func acknowledge(_ ping: HTTP2PingData, on channel: EmbeddedChannel) throws {
+        try channel.writeInbound(HTTP2Frame(streamID: .rootStream, payload: .ping(ping, ack: true)))
+        _ = try channel.readInbound(as: HTTP2Frame.self)
     }
     let silent = EmbeddedChannel(handler: NativeLivenessHandler())
     try silent.connect(to: SocketAddress(ipAddress: "127.0.0.1", port: 9)).wait()
@@ -176,15 +214,38 @@ func livenessRules() throws -> [String: Any] {
     let live = EmbeddedChannel(handler: NativeLivenessHandler())
     try live.connect(to: SocketAddress(ipAddress: "127.0.0.1", port: 9)).wait()
     for _ in 0..<12 {
-        for data in try pings(live) {
-            try live.writeInbound(HTTP2Frame(streamID: .rootStream, payload: .ping(data, ack: true)))
-            _ = try live.readInbound(as: HTTP2Frame.self)
-        }
+        for data in try pings(live) { try acknowledge(data, on: live) }
         live.embeddedEventLoop.advanceTime(by: .seconds(10))
     }
     guard live.isActive else { throw fixtureFailure("liveness-live") }
     _ = try? live.finish()
-    return ["silentClosedAtMs": 20_000, "answeredStaysOpen": true]
+
+    let pathLoss = NIOTSNetworkEvents.ViabilityUpdate(isViable: false)
+    for recovered in [false, true] {
+        let direct = EmbeddedChannel(handler: NativeLivenessHandler(fast: true))
+        try direct.connect(to: SocketAddress(ipAddress: "127.0.0.1", port: 9)).wait()
+        guard let old = try pings(direct).first else { throw fixtureFailure("liveness-first-ping") }
+        direct.embeddedEventLoop.advanceTime(by: .milliseconds(500))
+        direct.pipeline.fireUserInboundEventTriggered(pathLoss)
+        guard let probe = try pings(direct).first, probe != old else { throw fixtureFailure("liveness-path-probe") }
+        direct.pipeline.fireUserInboundEventTriggered(pathLoss)
+        guard try pings(direct).isEmpty else { throw fixtureFailure("liveness-duplicate-probe") }
+        try acknowledge(old, on: direct)
+        direct.embeddedEventLoop.advanceTime(by: .milliseconds(1999))
+        guard direct.isActive else { throw fixtureFailure("liveness-early-path-close") }
+        if recovered { try acknowledge(probe, on: direct) }
+        direct.embeddedEventLoop.advanceTime(by: .milliseconds(1))
+        guard direct.isActive == recovered else { throw fixtureFailure("liveness-path-recovery") }
+        _ = try? direct.finish()
+    }
+    let ordinary = EmbeddedChannel(handler: NativeLivenessHandler())
+    try ordinary.connect(to: SocketAddress(ipAddress: "127.0.0.1", port: 9)).wait()
+    _ = try pings(ordinary)
+    ordinary.pipeline.fireUserInboundEventTriggered(pathLoss)
+    ordinary.embeddedEventLoop.advanceTime(by: .seconds(2))
+    guard ordinary.isActive, try pings(ordinary).isEmpty else { throw fixtureFailure("liveness-ordinary-path-event") }
+    _ = try? ordinary.finish()
+    return ["silentClosedAtMs": 20_000, "answeredStaysOpen": true, "routeProbe": true]
 }
 
 /** Against a loopback Host: dial timing, a late direct path, relay delay, upgrade with the window rechecked, and PINGs. */
@@ -277,32 +338,45 @@ func livenessRules() throws -> [String: Any] {
         result["relayStartsAtOnce"] = alone >= 0 && alone < 100 && behindDirect >= 250 && behindWinner >= 600
         await workspace.closeOpening()
     }
-    // A Host behind a proxy that goes quiet: two unanswered PINGs close the connection; an answering Host keeps it.
+    // Test the real workspace liveness settings with a proxy that drops traffic without sending FIN or changing the path.
     if let proxy = input["silentPort"] {
         let silentPort = try fixturePort(["port": proxy])
-        try await NativeHTTPConnection.$livenessInterval.withValue(.milliseconds(250)) {
-            let live = try await paired.open()
-            try await Task.sleep(for: .milliseconds(1500))
-            let liveOpen = !(await live.isClosed())
-            await live.close()
-            let quiet = try await paired.open(port: silentPort)
-            _ = try await quiet.request(.get, path: "/link/api/native/revocation")
-            // The proxy stops forwarding once this marker exists, without closing either side.
-            FileManager.default.createFile(atPath: input["silentMarker"] as? String ?? "", contents: Data())
-            let start = ContinuousClock.now
-            let closed = Task { await quiet.waitForClose(); return elapsedMs(since: start) }
-            let watchdog = Task { try? await Task.sleep(for: .seconds(6)); await quiet.close() }
-            let deadAt = await closed.value
-            watchdog.cancel()
-            timings["silentProxyDeadMs"] = deadAt
-            result["liveness"] = ["answeredStaysOpen": liveOpen, "silentClosed": deadAt >= 250 && deadAt < 2000] as [String: Any]
+        let installs = ReconnectInstalls(), paths = NativePathOwner(), connected = ReconnectBox()
+        let workspace = try paired.workspace(prefetch: false, installed: installs.record)
+        let direct = try NativePathCandidate(id: "blackhole-direct", kind: .direct) {
+            let connection = try await paired.open(port: silentPort)
+            await connected.keep(connection); return connection
         }
+        _ = try await paths.migrate([direct], workspace: workspace)
+        guard let lost = installs.epoch, let primary = await connected.connection else { throw fixtureFailure("liveness-install") }
+        let stoppedWatcher = Task { await workspace.transportEnded(on: lost) }
+        try await Task.sleep(for: .milliseconds(4250))
+        stoppedWatcher.cancel()
+        guard !(await stoppedWatcher.value) else { throw fixtureFailure("liveness-watch-cancelled") }
+        let liveOpen = !(await primary.isClosed())
+        let start = ContinuousClock.now
+        FileManager.default.createFile(atPath: input["silentMarker"] as? String ?? "", contents: Data())
+        let watchdog = Task {
+            do { try await Task.sleep(for: .seconds(8)) } catch { return }
+            await primary.close()
+        }
+        let observed = await workspace.transportEnded(on: lost)
+        watchdog.cancel()
+        let deadAt = elapsedMs(since: start)
+        let backup = try NativePathCandidate(id: "blackhole-backup", kind: .relay) { try await paired.open() }
+        _ = try await paths.migrate([backup], relayDelay: .zero, workspace: workspace)
+        let kind = await workspace.installedPathKind(), staleLoss = await workspace.transportEnded(on: lost)
+        timings["silentProxyDeadMs"] = deadAt
+        timings["silentProxyFallbackMs"] = elapsedMs(since: start)
+        result["liveness"] = ["answeredStaysOpen": liveOpen, "silentClosed": observed && deadAt >= 3000 && deadAt < 7000,
+            "backupInstalled": kind == .relay, "staleLossIgnored": !staleLoss] as [String: Any]
+        await workspace.closeOpening()
     }
     // Relay to direct in the background: the old path stays until the new one qualified, the Host rechecks the window, and
     // an unknown write keeps its requestId without being sent again.
     do {
         let installs = ReconnectInstalls()
-        let workspace = try paired.workspace(prefetch: true) { _ in installs.count += 1 }
+        let workspace = try paired.workspace(prefetch: true, installed: installs.record)
         let paths = NativePathOwner(), relayBox = ReconnectBox()
         _ = try await paths.migrate([NativePathCandidate(id: "relay", kind: .relay) {
             let connection = try await paired.open(); await relayBox.keep(connection); return connection
@@ -314,17 +388,38 @@ func livenessRules() throws -> [String: Any] {
         var unknownWrite = false
         do { _ = try await workspace.submit(unknown) } catch { unknownWrite = (error as? NativeFailure) == .resultUnknown }
         guard unknownWrite, try await workspace.pendingWrites().map(\.requestId) == [unknown.requestId] else { throw fixtureFailure("unknown-write") }
+        let cancelledDirect = ReconnectBox()
+        let cancellable = try NativePathCandidate(id: "lan-cancel-upgrade", kind: .direct) {
+            let connection = try await paired.open()
+            await cancelledDirect.keep(connection)
+            do { try await Task.sleep(for: .seconds(1)); return connection }
+            catch { await connection.close(); throw error }
+        }
+        let interrupted = Task { await paths.upgrade([cancellable], workspace: workspace) }
+        for _ in 0..<50 {
+            if await cancelledDirect.connection != nil { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        interrupted.cancel()
+        let lateUpgrade = await interrupted.value, keptRelay = await workspace.installedPathKind() == .relay
+        guard let losingDirect = await cancelledDirect.connection, await losingDirect.isClosed(), !lateUpgrade, keptRelay else {
+            throw fixtureFailure("cancelled-upgrade")
+        }
         // A read on the relay keeps it: the upgrade waits for a quiet path rather than cutting the answer off.
         let held = Task { try await workspace.read("/link/api/custom-agents/general", body: true) }
         try await Task.sleep(for: .milliseconds(150))
         let duringRead = await paths.upgrade([try NativePathCandidate(id: "lan-busy", kind: .direct) { try await paired.open() }], workspace: workspace)
         let heldRead = (try? await held.value) != nil
         let relayOnly = await paths.upgrade([try NativePathCandidate(id: "relay-not-direct", kind: .relay) { try await paired.open() }], workspace: workspace)
+        guard let replaced = installs.epoch else { throw fixtureFailure("upgrade-incumbent-epoch") }
+        let replacedWatcher = Task { await workspace.transportEnded(on: replaced) }
         let oldOpenWhileDialing = ReconnectBox()
         let upgraded = await paths.upgrade([try NativePathCandidate(id: "lan-upgrade", kind: .direct) {
             if let old = await relayBox.connection, !(await old.isClosed()) { await oldOpenWhileDialing.started(1) }
             return try await paired.open()
         }], workspace: workspace)
+        if !upgraded { replacedWatcher.cancel() }
+        guard !(await replacedWatcher.value) else { throw fixtureFailure("upgrade-reports-stale-loss") }
         let kind = await workspace.installedPathKind()
         let current = await workspace.lease()
         var oldClosed = false

@@ -98,6 +98,40 @@ public enum NativeReconnectPolicy {
     public static let browseDeadline: Duration = .milliseconds(500)
 }
 
+/** Keep the current page during brief recovery while blocking requests to the interrupted connection. */
+public struct PhoneReconnectPresentation: Sendable {
+    public struct Interruption: Sendable, Equatable {
+        private let id = UUID()
+        public let deadline: ContinuousClock.Instant
+
+        fileprivate init(startedAt: ContinuousClock.Instant) { deadline = startedAt.advanced(by: .seconds(6)) }
+    }
+
+    public private(set) var interruption: Interruption?
+    public init() {}
+
+    public func permitsRequests(connected: Bool, transportValid: Bool) -> Bool {
+        connected && transportValid && interruption == nil
+    }
+
+    public mutating func begin(at now: ContinuousClock.Instant = .now) -> Interruption? {
+        guard interruption == nil else { return nil }
+        let current = Interruption(startedAt: now)
+        interruption = current
+        return current
+    }
+
+    public func shouldShowOffline(afterFailedRound startedWith: Interruption?, connected: Bool) -> Bool {
+        startedWith == interruption && (interruption != nil || !connected)
+    }
+
+    public func shouldShowOffline(at now: ContinuousClock.Instant = .now, for expected: Interruption) -> Bool {
+        interruption == expected && now >= expected.deadline
+    }
+
+    public mutating func reset() { interruption = nil }
+}
+
 /** The last winning path kind per gateway hash, in memory only. It never holds an address and is never dialed. */
 public struct NativeWinningPaths: Sendable {
     private var entries: [(gateway: Data, kind: NativePathCandidate.Kind)] = []

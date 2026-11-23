@@ -26,6 +26,7 @@ let package = Package(
             .product(name: "NIOCore", package: "swift-nio"),
             .product(name: "NIOEmbedded", package: "swift-nio"),
             .product(name: "NIOHTTP2", package: "swift-nio-http2"),
+            .product(name: "NIOTransportServices", package: "swift-nio-transport-services"),
         ], path: "Testkit"),
     ],
     swiftLanguageModes: [.v6]

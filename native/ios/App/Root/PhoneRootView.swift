@@ -87,7 +87,7 @@ struct ControlPendingBar: View {
             HStack(spacing: 12) {
                 Label("上次操作结果待确认", systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                 Spacer()
-                Button("重试这次操作") { Task { await model.retryControl() } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                Button("重试这次操作") { Task { await model.retryControl() } }.font(PhoneTheme.caption).disabled(model.busy || !model.transportReady)
             }.padding(.horizontal, 16).padding(.vertical, 10).background(.bar)
         }
     }

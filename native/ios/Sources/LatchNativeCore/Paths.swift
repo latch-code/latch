@@ -37,8 +37,10 @@ public actor NativePathOwner {
     private weak var workspace: NativeWorkspace?
     private let timeline: NativeConnectionTimeline?
     public init(timeline: NativeConnectionTimeline? = nil) { self.timeline = timeline }
+    /** A new network can make a rejected candidate reachable without disrupting the installed connection. */
+    public func forgetFailures() { failures.removeAll() }
     public func networkChanged() async {
-        failures.removeAll()
+        forgetFailures()
         let current = UUID(); generation = current
         let previous = round, upgrade = upgrading
         previous?.cancel(); upgrade?.cancel()
@@ -83,12 +85,14 @@ public actor NativePathOwner {
         guard round == nil, upgrading == nil, candidates.count <= 12 else { return false }
         let directs = Array(candidates.filter { $0.kind == .direct && usable($0) }.prefix(2))
         guard !directs.isEmpty, await workspace.installedPathKind() == .relay, await workspace.quiet() else { return false }
-        guard round == nil, upgrading == nil else { return false }
+        guard round == nil, upgrading == nil, !Task.isCancelled else { return false }
         self.workspace = workspace
         let current = generation
         let task = Task { try await self.dial(directs, later: nil, relayDelay: .zero, upgrade: true, workspace: workspace, generation: current) }
         upgrading = task
-        let result = await task.result
+        let result = await withTaskCancellationHandler {
+            await task.result
+        } onCancel: { task.cancel() }
         if generation == current { upgrading = nil }
         if case .success = result { return true }
         return false
@@ -112,7 +116,7 @@ public actor NativePathOwner {
                 group.addTask {
                     do {
                         if candidate.kind == .relay, relayDelay > .zero { try await Task.sleep(for: relayDelay) }
-                        let connection = try await candidate.connect()
+                        let connection = try await NativeHTTPConnection.$workspaceDirectDial.withValue(candidate.kind == .direct) { try await candidate.connect() }
                         guard !Task.isCancelled else { await connection.close(); return .path(candidate.id, candidate.kind, nil) }
                         timeline?.record(.connect, path: candidate.kind, ordinal: ordinal)
                         let path = try await workspace.qualify(connection, ticket: ticket, kind: candidate.kind, upgrade: upgrade, reopen: candidate.connect)

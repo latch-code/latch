@@ -55,6 +55,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
         rootRevocationClosedLease: true,
       },
     ],
+    ['nativeRelayFailover', { recoveredOnRelay: true, windowResumed: true }],
     ['nativeDirectTransfer', { bulk: true, direct: true, afterCancel: false, bytes: 1_048_576, chunks: 17 }],
     ['nativeRelayTransferNormal', { bulk: true, direct: false, afterCancel: false, bytes: 1_048_576, chunks: 17 }],
     ['nativeRelayBulkCancel', { cancelled: true, retried: true, identityKept: true }],

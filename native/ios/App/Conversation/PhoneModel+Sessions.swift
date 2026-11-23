@@ -12,12 +12,12 @@ extension PhoneModel {
     private static func cancelPath(_ id: String) -> String { "/link/api/tasks/\(id)/cancel" }
     static func approvalPath(_ id: String) -> String { "/link/api/approvals/" + id }
     private func performControl(path: String, fields: [String: NativeJSON], work: PhoneWorkDecisionContext? = nil) async {
-        guard let workspace, permitsWorkDecision(work) else { return }
+        guard let workspace, transportReady, permitsWorkDecision(work) else { return }
         let current = generation, previous = controlTail
         controlsInFlight.insert(path)
         let turn = Task { @MainActor in
             await previous?.value
-            guard generation == current else { return }
+            guard generation == current, transportReady else { return }
             do {
                 var body = fields
                 if let saved = try await workspace.pendingControl() {
@@ -29,7 +29,7 @@ extension PhoneModel {
                     }
                     body = saved["fields"].object
                 }
-                guard permitsWorkDecision(work) else { return }
+                guard generation == current, transportReady, permitsWorkDecision(work) else { return }
                 _ = try await workspace.freeAction(path: path, fields: body)
                 guard generation == current else { return }
                 await refreshControlPending(); _ = await refresh()
@@ -68,6 +68,7 @@ extension PhoneModel {
             if (error as? NativeFailure) != .declined, !wentAway(error) { report(error) }
             return
         }
+        let transport = installedTransport
         guard let lease = await workspace.lease(), stillReading(), retained?.sameWindow(as: lease) != false else { return }
         do {
             let applied = try await readSelectedBody(id, workspace: workspace)
@@ -78,7 +79,8 @@ extension PhoneModel {
             guard stillReading() else { return }
             if wentAway(error) {
                 // The window is still open, and this is what it last read; it is said to be old where it is shown.
-                if let cached = try? await workspace.cachedDetail(id), stillReading(), lease.valid { detail = cached; detailCached = true }
+                if let cached = try? await workspace.cachedDetail(id), stillReading(), lease.valid,
+                   installedTransport === transport, transport?.valid == true, detail == .null { detail = cached; detailCached = true }
             } else if [NativeFailure.expired, .forbidden, .contextChanged].contains(error as? NativeFailure) { report(error) }
             else { detailFailed = id }
         }
@@ -95,6 +97,7 @@ extension PhoneModel {
     /** Back to the list; the window stays open for the next conversation. */
     func closeSession() { sessionId = nil; detail = .null; contentGeneration = UUID(); PreviewFiles.clear(); startEvents() }
     func start(_ choice: PhoneStartChoice, prompt: String, attachments: [String] = []) async -> Bool {
+        guard transportReady else { return false }
         let current = generation
         do {
             guard canRun, prompt.count <= 16_000, attachments.count <= PhoneAttachments.perMessage else { throw NativeFailure.forbidden }
@@ -112,6 +115,7 @@ extension PhoneModel {
     /** `steer`: into the running turn, where the Harness takes that now. A message after 清空上下文 starts a new context; it is never queued or steered. */
     /** `target`: with attachments, the session the send began in; the message goes nowhere else. */
     @discardableResult func send(text: String, queue: Bool = false, steer: Bool = false, nextModel: PhoneModelChoice? = nil, attachments: [String] = [], target: String?? = nil) async -> Bool {
+        guard transportReady else { return false }
         if let target, target != sessionId { if let key = target { attachTrays[key, default: PhoneAttachTray()].note = PhoneAttachSend.movedWords }; return false }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty, text.count <= 16_000,
               attachments.count <= PhoneAttachments.perMessage, attachments.isEmpty || (!queue && !steer) else { return false }
@@ -136,10 +140,10 @@ extension PhoneModel {
         } catch { report(error); return false }
     }
     @discardableResult func submit(_ request: NativePendingWrite) async -> Bool {
-        guard let workspace, !busy else { return false }
+        guard let workspace, transportReady, !busy else { return false }
         let current = generation, initialReading = contentGeneration
         do { try await ensureVerified() } catch { report(error); return false }
-        guard current == generation, initialReading == contentGeneration else { return false }
+        guard current == generation, initialReading == contentGeneration, transportReady else { return false }
         let selected = sessionId, reading = contentGeneration
         busy = true; defer { if generation == current { busy = false } }
         // A message with attachments hears the Host's own refusal: `attachment-released` proves it was not delivered, even on a retry.
@@ -267,7 +271,7 @@ extension PhoneModel {
     /** 继续等 only ever asks the Host for a longer threshold; it doubles what the request saw. */
     func keepWaiting() async {
         let live = currentSummary["live"]
-        guard let id = sessionId, let run = live["runId"].string, let threshold = live["silenceThresholdMs"].integer, let workspace else { return }
+        guard transportReady, let id = sessionId, let run = live["runId"].string, let threshold = live["silenceThresholdMs"].integer, let workspace else { return }
         do {
             _ = try await workspace.keepWaiting(sessionId: id, runId: run, thresholdMs: threshold)
             await refresh()

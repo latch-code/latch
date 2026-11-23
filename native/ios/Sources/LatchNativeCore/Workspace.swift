@@ -209,7 +209,7 @@ public actor NativeWorkspace {
     }
     public func install(_ candidate: @escaping @Sendable () async throws -> NativeHTTPConnection) async throws -> NativeJSON {
         let id = await beginPathRound()
-        let next = try await candidate()
+        let next = try await NativeHTTPConnection.$workspaceDirectDial.withValue(true) { try await candidate() }
         let qualified = try await qualify(next, ticket: id, reopen: candidate)
         return try await installQualified(qualified)
     }
@@ -338,6 +338,12 @@ public actor NativeWorkspace {
     public func transportEnded() async {
         guard let connection else { return }
         await connection.waitForClose()
+    }
+    /** A retired opening or superseded transport cannot report the loss of a newer connection. */
+    public func transportEnded(on expected: NativeTransportEpoch) async -> Bool {
+        guard installedTransport === expected, expected.valid, let connection else { return false }
+        await connection.waitForCloseOrCancellation()
+        return !Task.isCancelled && installedTransport === expected && expected.valid
     }
     public func verifiedRevocation() -> VerifiedNativeRevocation? { revocation }
     public func discoveryEpoch() throws -> String {
