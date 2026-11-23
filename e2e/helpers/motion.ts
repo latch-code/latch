@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test'
 /** One transition or animation that started on the page, as the browser reports it. */
 export interface Motion {
   kind: 'transition' | 'animation'
-  /** The element's classes. */
+  /** The element's classes, without the transient `ui-scrolling` (or its tag when it has none). */
   target: string
   /** The transitioned property, or the animation's name. */
   name: string
@@ -71,6 +71,9 @@ export async function motions(page: Page, act: () => Promise<void>): Promise<Mot
   await page.evaluate(() => {
     const record: Motion[] = []
     Reflect.set(window, 'latchMotions', record)
+    // The scrollbar reveal marks an element `ui-scrolling` for 900ms after it scrolls, and a click scrolls its target
+    // into view first, so the mark says nothing about which element moved. A literal: this runs in the page.
+    const target = (element: Element) => [...element.classList].filter(name => name !== 'ui-scrolling').join(' ') || element.tagName
     document.addEventListener(
       'transitionrun',
       event => {
@@ -80,7 +83,7 @@ export async function motions(page: Page, act: () => Promise<void>): Promise<Mot
         const pick = (list: string) => list.split(/,\s*(?![^(]*\))/u)[Math.max(0, index)] ?? list
         record.push({
           kind: 'transition',
-          target: event.target.getAttribute('class') ?? event.target.tagName,
+          target: target(event.target),
           name: event.propertyName,
           duration: pick(style.transitionDuration),
           easing: pick(style.transitionTimingFunction),
@@ -95,7 +98,7 @@ export async function motions(page: Page, act: () => Promise<void>): Promise<Mot
         const style = getComputedStyle(event.target)
         record.push({
           kind: 'animation',
-          target: event.target.getAttribute('class') ?? event.target.tagName,
+          target: target(event.target),
           name: event.animationName,
           duration: style.animationDuration,
           easing: style.animationTimingFunction,
