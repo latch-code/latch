@@ -50,7 +50,13 @@ func phoneRichTextFixture(_ input: Data) throws -> [String: Any] {
         case .text: "text"
         }
     }
-    return ["cases": cases, "links": links]
+    let candidates: [Any] = vectors["fileCandidates"].array.map { item in
+        item.string.flatMap(PhoneRichText.codeFileCandidate).map { $0 as Any } ?? NSNull()
+    }
+    let diagrams: [Any] = vectors["diagrams"].array.map { item in
+        item.string.flatMap(PhoneDiagramSource.prepare).map { $0 as Any } ?? NSNull()
+    }
+    return ["cases": cases, "links": links, "fileCandidates": candidates, "diagrams": diagrams]
 }
 
 /** Team results as the phone reads them: which message is one, its rows, a member's reply to a round. */

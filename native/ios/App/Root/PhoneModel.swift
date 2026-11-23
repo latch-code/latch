@@ -192,6 +192,10 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             content: privateSnapshot.epoch, tab: tab, agentPath: agentPath)
     }
     private var lastHostId: String?
+    private var defaultHost: RegisteredHost? {
+        let available = hosts.filter { !forgettingComputers.contains($0.id) }
+        return available.first { $0.id == lastHostId } ?? available.first
+    }
     /** When a window that ran out last opened again by itself; a clock far off the Mac's cannot make it spin. */
     private var lastReopen: ContinuousClock.Instant?
     /** Drawn on every update of anything, so it is worked out once per list and search. */
@@ -309,10 +313,11 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             guard canOpenStore(current) else { await opened.lock(); return }
             let saved = await opened.list(), pending = try await opened.draft()
             guard canOpenStore(current) else { await opened.lock(); return }
+            lastHostId = RegisteredHost.preferred(in: saved, lastID: lastHostId)?.id
             store = opened; hosts = saved; draft = pending; storeState = .ready
             timeline.record(.storeReady)
             // Browsing starts before the vault opens, so the first round can already see the Mac on this network.
-            if pending == nil, let host = hosts.first(where: { $0.id == lastHostId }) ?? hosts.first { try? startDiscovery(host) }
+            if pending == nil, let host = defaultHost { try? startDiscovery(host) }
             observeNetwork()
             if pending != nil { resumePairing() }
             else {
@@ -331,7 +336,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     }
     /** The Mac this phone last used, or the first saved one. */
     func connectLast() async {
-        if let host = hosts.first(where: { $0.id == lastHostId }) ?? hosts.first { await connect(host) }
+        if let host = defaultHost { await connect(host) }
     }
     /**
      * Going to the background withdraws content and previews at once. With the Mac connected and the data unlocked, the
@@ -449,6 +454,8 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         QuotaWidgetWriter.connecting(to: host.id, computers: hosts.count)
         selectedHost = host; lastHostId = host.id; lastConfirmed = nil; hostNotice = nil; status = "正在连接…"; error = nil
         watchOthers()
+        // A preference-write failure should still let the reader open the workspace.
+        try? await store.rememberSelection(host.id)
         guard await storageOpening.waitForClose(), generation == current, self.store === store, storageAvailable else { return }
         do {
             let vault = try await store.hostVault(host)
@@ -1267,7 +1274,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         })
     }
     private func warmRelays() {
-        guard let host = selectedHost ?? hosts.first(where: { $0.id == lastHostId }) ?? hosts.first else { return }
+        guard let host = selectedHost ?? defaultHost else { return }
         let book = try? AddressBookCodec.verify(host.device.signedAddressBook, rootSpki: host.device.rootSpki, deviceId: host.device.deviceId,
             nowMs: UInt64(max(0, Date().timeIntervalSince1970 * 1000)), priorGeneration: host.device.bookGeneration, priorHash: host.device.bookHash)
         NativeRelayWarmup.warm(book)
@@ -1315,7 +1322,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         forgettingComputers.remove(host.id)
         if !removed, self.store === store, storageAvailable {
             watchOthers()
-            if selectedHost == nil, let saved = hosts.first { await connect(saved) }
+            if selectedHost == nil { await connectLast() }
             if self.store === store, storageAvailable, !hosts.contains(where: { $0.id == host.id }) {
                 error = "本机资料未清理完。请重新打开 Latch 继续清理。"
             }
@@ -1370,7 +1377,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         if isCurrent || selectedHost == nil {
             removedByMac = showRevocation
             status = "选择一台电脑"
-            if let next = hosts.first(where: { !forgettingComputers.contains($0.id) }) { await connect(next) }
+            await connectLast()
         }
         return removed
     }

@@ -581,11 +581,30 @@ public actor NativeWorkspace {
         return try NativeJSON.decode(response.body)
     }
     public func resolveFile(sessionId: String, reference: String, rootId: String?, access: NativeFileAccess? = nil) async throws -> NativeJSON {
-        guard LinkBytes.matches(sessionId, "[A-Za-z0-9_-]{1,160}"), !reference.isEmpty, reference.utf8.count <= 4096 else { throw NativeFailure.invalidRecord }
+        try await resolveFiles(sessionId: sessionId, references: [reference], rootId: rootId, access: access)
+    }
+    /** Only the requested names confirmed by the Host leave the resolver; file handles are not retained in prose. */
+    public func knownFileReferences(sessionId: String, references: [String], access: NativeFileAccess) async throws -> [String] {
+        let device = metadata["device"]
+        guard PhoneWorkItems.canReadFiles(metadata), PhoneSessions.mayReadBody(snapshot: metadata, sessionId: sessionId) else { throw NativeFailure.forbidden }
+        let response = try await resolveFiles(sessionId: sessionId, references: references, rootId: nil, access: access)
+        let window = await verification.currentLease()
+        try access.check(installedTransport, window: window)
+        guard ["id", "status", "dataScope", "scopes"].allSatisfy({ metadata["device"][$0] == device[$0] }),
+              PhoneSessions.mayReadBody(snapshot: metadata, sessionId: sessionId) else { throw NativeReadFailure.bodyAccessChanged }
+        let requested = Set(references.map { Data($0.utf8) })
+        return response["files"].array.compactMap { row in
+            guard row["status"].string == "ok", let input = row["input"].string, requested.contains(Data(input.utf8)) else { return nil }
+            return input
+        }
+    }
+    private func resolveFiles(sessionId: String, references: [String], rootId: String?, access: NativeFileAccess?) async throws -> NativeJSON {
+        guard LinkBytes.matches(sessionId, "[A-Za-z0-9_-]{1,160}"), (1...64).contains(references.count),
+              references.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 4096 }) else { throw NativeFailure.invalidRecord }
         let (connection, current) = try transport()
         guard let lease = await verification.currentLease() else { throw NativeFailure.expired }
         try access?.check(installedTransport, window: lease)
-        var fields: [String: NativeJSON] = ["paths": .array([.string(reference)])]
+        var fields: [String: NativeJSON] = ["paths": .array(references.map(NativeJSON.string))]
         if let rootId {
             guard LinkBytes.matches(rootId, "[A-Za-z0-9_-]{1,32}") else { throw NativeFailure.invalidRecord }; fields["rootId"] = .string(rootId)
         }

@@ -169,7 +169,7 @@ struct ConversationView: View {
                 ForEach(graphs[""] ?? []) { teamGraph($0) }
                 ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
                     let latest = index == turns.count - 1
-                    TurnView(turn: turn, latest: latest, status: latest ? status : nil, running: latest && running, frozen: !model.connected,
+                    TurnView(session: id, turn: turn, latest: latest, status: latest ? status : nil, running: latest && running, frozen: !model.connected,
                         delivery: latest && running ? PhoneConversation.delivery(model.detail, turn: turn) : nil, switched: switches[turn.id],
                         mark: model.engineMark(summary["harnessId"].string), engine: engine, helper: frame?.entry, fileScope: PhoneFileScope(model.detail["summary"]),
                         teamCard: turn.user.flatMap { PhoneTeamReturn.card($0, teams: teams) },
@@ -210,7 +210,7 @@ struct ConversationView: View {
                     Label(PhoneConversation.visible(item.title), systemImage: "checklist").font(.subheadline).foregroundStyle(PhoneTheme.muted)
                 }
                 if let turn {
-                    TurnView(turn: turn, latest: live, status: live ? status : nil, running: live, frozen: !model.connected,
+                    TurnView(session: id, turn: turn, latest: live, status: live ? status : nil, running: live, frozen: !model.connected,
                         delivery: live ? PhoneConversation.delivery(model.detail, turn: turn) : nil, switched: nil,
                         mark: model.engineMark(summary["harnessId"].string), engine: engine, fileScope: PhoneFileScope(model.detail["summary"]),
                         teamCard: turn.user.flatMap { PhoneTeamReturn.card($0, teams: model.hasContentWindow && model.privateSnapshot.confirmed ? model.snapshot["teams"].array : []) },

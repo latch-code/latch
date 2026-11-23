@@ -359,6 +359,8 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 
 **iOS App 包。** `native/ios/Latch.xcodeproj` 的 `Latch` 目标（包标识 `codes.latch.ios`；仅模拟器的 `LatchScreens` 为 `codes.latch.ios.screens`）与共享方案 `Latch`（归档用 Release）。主 App 内嵌 WidgetKit 扩展 `codes.latch.ios.questions`（待回答问题的实时活动与额度小组件）；真机导出时主 App 和扩展分别使用本团队的描述文件。版本号来自构建设置 `MARKETING_VERSION` 与 `CURRENT_PROJECT_VERSION`，再次上传只需在命令行提高后者。`App/PrivacyInfo.xcprivacy` 声明不跟踪、不收集数据，并给出用到的 required-reason API 的理由：UserDefaults 为 `CA92.1`，App 容器内 `stat` 系列为 `C617.1`；随包链接的 NIOPosix 自带清单。新增这类 API 时同步更新。权限文件只有 App Group `group.codes.latch.ios`（构建设置 `LATCH_APP_GROUP`，`LatchScreens` 另用 `.screens`），额度小组件只从中读 App 写的额度副本，真机签名须在开发者账户登记它；推送与 App Attest 尚未接入，不申请这两项能力。出口合规键 `ITSAppUsesNonExemptEncryption` 由所有者声明，仓库不写。团队、签名与上传不在仓库中。
 
+MermaidKit 由 Xcode 的 Package.resolved 精确锁定，只链接到 App 和模拟器截图目标。图表在设备内存中生成，复制和存储都由读者发起。
+
 ## 会话级别与审批风险
 
 | Harness | 级别 | 谁把关 | 设备权限 |
@@ -915,7 +917,7 @@ iOS 遇到首次发言失去回执时保留原请求。用户点核对后，App 
 
 **更新与确认。** 桌面端只更新这台 Mac 的 Host；其他电脑的更新、重启、插件与模型密钥都在那台电脑上进行，本机确认留在各自的电脑上。
 
-**iPhone/iPad。** 选中的电脑保持完整工作台；其他电脑由核心的 `NativeListWatcher` 各开一个只读连接。
+**iPhone/iPad。** 当前工作台的选择随本机加密登记保存，冷启动只恢复仍在登记列表中的电脑。地址簿刷新保留已有选择。选中的电脑保持完整工作台；其他电脑由核心的 `NativeListWatcher` 各开一个只读连接。
 
 - 只发 `GET /link/api/native/revocation` 与 `GET /link/api/snapshot`：不开正文窗口、不读详情、不订阅 SSE、不发任何写入。
 - 读到绑定那台电脑与本设备、由其 Root 签名的撤销证明时，清除资料、密钥与加密缓存，之后不再拨这个身份。

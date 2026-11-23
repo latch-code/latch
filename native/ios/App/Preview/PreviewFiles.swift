@@ -6,14 +6,17 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-struct PreviewItem: Identifiable {
+struct PreviewItem: Identifiable, Hashable {
     let id = UUID()
     let name: String
     let text: String?
     let url: URL?
     let lease: BodyLease
+    var format: PreviewTextFormat = .plain
     /** A text file the Host offers to edit, with the version this read fixed. */
     var edit: PreviewEdit? = nil
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
 struct PreviewEdit: Equatable {
@@ -119,7 +122,8 @@ struct PreviewEdit: Equatable {
             guard let value = String(data: data, encoding: .utf8) else { throw NativeFailure.unsupported }
             let edit = !attachment && PhoneFileEdit.offered(meta, canRun: true, wholeText: data.count == Int(size), text: value)
                 ? PreviewEdit(sessionId: session, handle: handle, baseHash: PhoneFileEdit.baseHash(data), reference: reference, root: root) : nil
-            return PreviewItem(name: name, text: value, url: nil, lease: lease, edit: edit)
+            let format = PreviewTextFormat(meta: meta, session: session, attachment: attachment, access: access)
+            return PreviewItem(name: name, text: value, url: nil, lease: lease, format: format, edit: edit)
         }
         guard let image = redrawn(data, maxPixels: 4096), let png = UIImage(cgImage: image).pngData(), png.count <= 8_388_608 else { throw NativeFailure.unsupported }
         try lease.requireValid()
@@ -138,37 +142,102 @@ struct PreviewEdit: Equatable {
 
 struct NativePreviewView: View {
     @EnvironmentObject private var model: PhoneModel
-    @State var item: PreviewItem
     @Environment(\.dismiss) private var dismiss
+    let item: PreviewItem
+    @State private var path: [PreviewItem] = []
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            page(item)
+                .navigationDestination(for: PreviewItem.self) { page($0) }
+        }
+        .onChange(of: path) { old, new in
+            for removed in old where !new.contains(removed) { PreviewFiles.discard(removed) }
+        }
+        .onDisappear { for linked in path { PreviewFiles.discard(linked) } }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in dismiss() }
+        .onChange(of: model.contentGeneration) { _, _ in dismiss() }
+    }
+
+    private func page(_ item: PreviewItem) -> some View {
+        PreviewPage(item: item, follow: { path.append($0) }, close: { dismiss() }).id(item.id)
+    }
+}
+
+private struct PreviewPage: View {
+    @EnvironmentObject private var model: PhoneModel
+    @State var item: PreviewItem
+    let follow: (PreviewItem) -> Void
+    let close: () -> Void
     @State private var editing = false
     @State private var saved = false
+    @State private var source = false
+    @State private var request: String?
+    @State private var unavailable = false
+
     var body: some View {
-        NavigationStack {
-            Group {
-                if !item.lease.valid { ContentUnavailableView("内容已收起", systemImage: "lock", description: Text("关闭预览后再打开一次。")) }
-                else if let text = item.text { ScrollView { ConversationText(text: text, monospaced: true).padding().frame(maxWidth: .infinity, alignment: .leading) } }
-                else if item.url != nil { RasterQuickLook(item: item) }
-            }
-            .navigationTitle(item.name).navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } }
-                if let edit = item.edit, item.text != nil, model.canRun, item.lease.valid {
-                    let running = ["running", "waiting-approval"].contains(model.summary(of: edit.sessionId)["status"].string ?? "")
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button(saved ? "已保存" : "编辑") { editing = true }.disabled(running || saved)
-                            .accessibilityLabel(running ? "Agent 运行中，不能编辑" : "编辑")
+        Group {
+            if !item.lease.valid { ContentUnavailableView("内容已收起", systemImage: "lock", description: Text("关闭预览后再打开一次。")) }
+            else if let text = item.text {
+                ScrollView {
+                    if case let .markdown(origin) = item.format, !source {
+                        MarkdownView(text: text, open: origin == nil ? nil : { link, _ in
+                            guard request == nil, let origin, valid(origin) else { return }
+                            request = origin.reference(link)
+                        }, cacheParsedText: false, allowsFile: { link in
+                            guard let origin, valid(origin) else { return false }
+                            return origin.reference(link) != nil
+                        }).padding().frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        ConversationText(text: text, monospaced: true).padding().frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
+            } else if item.url != nil { RasterQuickLook(item: item) }
+        }
+        .navigationTitle(item.name).navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) { Button("完成", action: close) }
+            if case .markdown = item.format, item.lease.valid {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(source ? "预览" : "源码") { source.toggle() }.disabled(request != nil)
+                }
             }
-            .fullScreenCover(isPresented: $editing) {
-                if let edit = item.edit, let text = item.text {
-                    FileEditorView(name: item.name, edit: edit, original: text) { next in
-                        if let next { item = next; saved = true; Task { try? await Task.sleep(for: .seconds(2)); saved = false } }
-                    }
+            if let edit = item.edit, item.text != nil, model.canRun, item.lease.valid {
+                let running = ["running", "waiting-approval"].contains(model.summary(of: edit.sessionId)["status"].string ?? "")
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(saved ? "已保存" : "编辑") { editing = true }.disabled(running || saved || request != nil)
+                        .accessibilityLabel(running ? "Agent 运行中，不能编辑" : "编辑")
                 }
             }
         }
-        .onChange(of: model.privateSnapshot.epoch) { _, _ in editing = false; dismiss() }
+        .fullScreenCover(isPresented: $editing) {
+            if let edit = item.edit, let text = item.text {
+                FileEditorView(name: item.name, edit: edit, original: text) { next in
+                    if let next { item = next; saved = true; Task { try? await Task.sleep(for: .seconds(2)); saved = false } }
+                }
+            }
+        }
+        .task(id: request) {
+            guard let request else { return }
+            defer { self.request = nil }
+            guard case let .markdown(origin?) = item.format, valid(origin) else { return }
+            let generation = model.contentGeneration
+            do {
+                let next = try await model.preview(reference: request, root: origin.root, session: origin.session, access: origin.access)
+                guard !Task.isCancelled, model.contentGeneration == generation, valid(origin),
+                      item.lease.sameWindow(as: next.lease) else { PreviewFiles.discard(next); return }
+                follow(next)
+            } catch {
+                if !Task.isCancelled, model.contentGeneration == generation, valid(origin) { unavailable = true }
+            }
+        }
+        .alert("无法预览这个文件", isPresented: $unavailable) { Button("好") {} }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in editing = false }
+    }
+
+    private func valid(_ origin: PreviewDocumentOrigin) -> Bool {
+        guard item.lease.valid, let access = model.currentFileAccess else { return false }
+        return access.transport === origin.access.transport && item.lease.sameWindow(as: access.lease)
     }
 }
 private struct RasterQuickLook: UIViewControllerRepresentable {

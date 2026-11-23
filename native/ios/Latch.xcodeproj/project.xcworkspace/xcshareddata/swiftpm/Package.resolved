@@ -1,6 +1,15 @@
 {
-  "originHash" : "79678a15c69579ff8ff4afb3086fc00dea48c7e16d2ef97c3769a030b4bbd5cf",
+  "originHash" : "8704b6d9053547e47aa5c3f580c206a3a6fd939745ce268831c7b80044e90c7a",
   "pins" : [
+    {
+      "identity" : "mermaidkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/2389-research/MermaidKit.git",
+      "state" : {
+        "revision" : "8556a1b80a1f624d35a4c6e13dcb7a5d427f65c3",
+        "version" : "2.10.2"
+      }
+    },
     {
       "identity" : "swift-atomics",
       "kind" : "remoteSourceControl",

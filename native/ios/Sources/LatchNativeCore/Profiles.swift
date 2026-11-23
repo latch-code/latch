@@ -6,6 +6,12 @@ public struct NativeRegisteredHost: Codable, Identifiable, Sendable {
     public var device: PreparedNativeDevice
     public var keys: DeviceKeyReference
     public var prepared: Bool
+    // Older encrypted registrations have no selection mark.
+    fileprivate var lastSelected: Bool?
+
+    public static func preferred(in hosts: [Self], lastID: String? = nil) -> Self? {
+        hosts.first { $0.id == lastID } ?? hosts.first { $0.lastSelected == true } ?? hosts.first
+    }
     public init(name: String, device: PreparedNativeDevice, keys: DeviceKeyReference, prepared: Bool) { self.name = name; self.device = device; self.keys = keys; self.prepared = prepared }
 }
 public struct NativePairingDraft: Codable, Sendable {
@@ -121,7 +127,22 @@ public actor NativeProfileStore {
     public func update(_ host: NativeRegisteredHost) async throws {
         try await serializeProfiles { try await self.saveHost(host, existingOnly: true) }
     }
-    private func saveHost(_ host: NativeRegisteredHost, existingOnly: Bool = false) async throws {
+    /** Save the accepted workspace selection before dialing, including when that computer is offline. */
+    public func rememberSelection(_ id: String) async throws {
+        try await serializeProfiles { try await self.markSelected(id) }
+    }
+    private func markSelected(_ id: String) async throws {
+        guard !closed else { throw NativeFailure.storageUnavailable }
+        guard let index = hosts.firstIndex(where: { $0.id == id }) else { throw NativeFailure.contextChanged }
+        guard hosts[index].lastSelected != true else { return }
+        var next = hosts
+        for index in next.indices { next[index].lastSelected = next[index].id == id ? true : nil }
+        try await vault.storeMetadata(JSONEncoder().encode(next), name: "hosts")
+        guard !closed else { throw NativeFailure.storageUnavailable }
+        hosts = next
+    }
+    private func saveHost(_ registration: NativeRegisteredHost, existingOnly: Bool = false) async throws {
+        var host = registration
         guard !closed else { throw NativeFailure.storageUnavailable }; try validate(host)
         let previous = hosts.first { $0.id == host.id }
         guard !existingOnly || previous != nil else { throw NativeFailure.contextChanged }
@@ -133,6 +154,8 @@ public actor NativeProfileStore {
                   host.keys.connectionTag == previous.keys.connectionTag, host.keys.verificationTag == previous.keys.verificationTag,
                   host.keys.connectionSpki == previous.keys.connectionSpki, host.keys.verificationSpki == previous.keys.verificationSpki else { throw NativeFailure.identityMismatch }
         }
+        // Pairing and address-book refreshes carry registration data, not a workspace selection.
+        host.lastSelected = previous?.lastSelected
         var next = hosts.filter { $0.id != host.id }; next.append(host)
         guard next.count + retirements.count <= 16 else { throw NativeFailure.storageUnavailable }
         try await vault.storeMetadata(JSONEncoder().encode(next), name: "hosts")

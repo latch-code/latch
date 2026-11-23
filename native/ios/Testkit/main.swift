@@ -950,6 +950,25 @@ do {
         await workspace.closeOpening()
         result = ["paired": true, "verified": true, "created": true, "persistedBeforeComplete": true, "bookRefreshed": true, "bookRefreshCoalesced": true, "epochHintUntrusted": true, "resumedWithoutSigning": true, "oldLeaseClosed": true, "workspace": true, "events": true, "streamRequiresWindow": true, "replayedAfterMetadata": true, "rootRevocationClosedLease": true, "files": true, "pendingCleared": true, "freeCancel": true, "fallbackAfterHandshake": true, "fallbackAfterResumeFailure": true, "expiredLeafRejected": true]
         await connection.close(); await replacement.close()
+    case "preferredComputer":
+        let directory = URL(fileURLWithPath: input["directory"] as? String ?? "", isDirectory: true)
+        let key = try LinkBytes.fixed(LinkBytes.unhex(input["key"] as? String ?? ""), 32)
+        if let legacy = input["legacyProfiles"] as? [[String: Any]] {
+            // The exact old encoding, including the absence of a selection field.
+            let vault = try EncryptedVault(directory: directory.appendingPathComponent("profiles"), key: key, binding: "profiles")
+            try await vault.storeMetadata(JSONSerialization.data(withJSONObject: legacy), name: "hosts")
+            await vault.lock()
+        }
+        let store = try await NativeProfileStore.open(directory: directory, key: key, eraseKeys: { _ in })
+        if let id = input["remember"] as? String { try await store.rememberSelection(id) }
+        if let refresh = input["refresh"] as? [String: Any] {
+            let profile = try JSONDecoder().decode(NativeRegisteredHost.self, from: JSONSerialization.data(withJSONObject: refresh))
+            try await store.update(profile)
+        }
+        if let id = input["forget"] as? String { try await store.forget(id) }
+        let preferred = NativeRegisteredHost.preferred(in: await store.list())
+        result = ["preferred": preferred?.id ?? ""]
+        await store.lock()
     case "profiles":
         stage = "profiles"
         let directory = URL(fileURLWithPath: input["directory"] as? String ?? "", isDirectory: true)

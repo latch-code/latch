@@ -7,7 +7,7 @@ import UIKit
  * steps, lists with their markers and tasks, quotes behind a bar, a rule, tables that scroll sideways, and code in a
  * card with its language, a copy button and a fold past 18 lines. Prose that runs together stays one selectable text.
  * Web and mail links open when pressed and a project path previews; pictures load only from the project, never the web.
- * Formulas and diagrams are shown as their source: drawing them needs a web view, which the phone does not use.
+ * A completed Mermaid fence can be viewed as a diagram. Formulas retain their source.
  */
 struct MarkdownView: View {
     let text: String
@@ -19,21 +19,30 @@ struct MarkdownView: View {
     var inert = false
     /** The prose's ink; a thought is in the secondary one. */
     var ink: UIColor = .label
+    var knownFiles: Set<Data> = []
+    var cacheParsedText = true
+    var allowsFile: ((String) -> Bool)? = nil
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.openURL) private var openURL
     @Environment(\.sizeCategory) private var sizeCategory
     /** A long reply's last parse, made off the main thread; while it streams, the one before stays shown. */
     @State private var parsed: MarkdownCache.Parse?
     var body: some View {
-        content(MarkdownCache.lookup(text) ?? parsed)
-            .task(id: text) {
-            guard MarkdownCache.lookup(text) == nil else { return }
-            // While a long reply arrives, one parse per pause rather than per word.
-            if streaming && parsed != nil { try? await Task.sleep(for: .milliseconds(150)) }
-            guard !Task.isCancelled else { return }
-            let next = await MarkdownCache.parse(text)
-            guard !Task.isCancelled else { return }
-            parsed = next
+        // The previous streamed prefix can stay on screen; an edited path with different UTF-8 bytes cannot.
+        let cached = cacheParsedText ? MarkdownCache.lookup(text) : nil
+        let result = cached ?? parsed.flatMap { prior in
+            (streaming ? text.utf8.starts(with: prior.text.utf8) : text.utf8.elementsEqual(prior.text.utf8)) ? prior : nil
         }
+        content(result)
+            .task(id: text as NSString) {
+                guard cached == nil else { return }
+                // While a long reply arrives, one parse per pause rather than per word.
+                if streaming && parsed != nil { try? await Task.sleep(for: .milliseconds(150)) }
+                guard !Task.isCancelled else { return }
+                let next = await MarkdownCache.parse(text, storeResult: cacheParsedText)
+                guard !Task.isCancelled else { return }
+                parsed = next
+            }
     }
     @ViewBuilder private func content(_ parse: MarkdownCache.Parse?) -> some View {
         if let parse, let blocks = parse.blocks {
@@ -57,24 +66,31 @@ struct MarkdownView: View {
     @ViewBuilder private func view(_ piece: MarkdownPiece, last: Bool) -> some View {
         switch piece.kind {
         case let .prose(lines):
-            let (rich, links) = MarkdownStyle.prose(lines, size: scaled, inert: inert, ink: ink)
+            let (rich, links) = MarkdownStyle.prose(lines, size: scaled, style: inlineStyle, ink: ink)
             ConversationText(rich: rich, links: links, onLink: follow).frame(maxWidth: .infinity, alignment: .leading)
         case let .code(language, code, open):
-            MarkdownCode(code: code, language: language, arriving: open && streaming && last)
+            if language?.lowercased() == "mermaid", !open, !inert {
+                MermaidDiagramView(source: code)
+            } else {
+                MarkdownCode(code: code, language: language, arriving: open && streaming && last)
+            }
         case let .table(table):
-            MarkdownTable(table: table, size: scaled)
+            MarkdownTable(table: table, size: scaled, style: inlineStyle, onLink: follow)
         case .rule:
             Rectangle().fill(PhoneTheme.line).frame(height: 1).padding(.vertical, 6)
         case let .image(source, alt):
-            MarkdownPicture(source: source, alt: alt, open: inert ? nil : open)
+            MarkdownPicture(source: source, alt: alt, open: inert || allowsFile?(source) == false ? nil : open)
         }
+    }
+    private var inlineStyle: MarkdownStyle.Links {
+        .init(active: !inert, opensFiles: open != nil, knownFiles: streaming ? [] : knownFiles, dark: colorScheme == .dark, allowsFile: allowsFile)
     }
     private var scaled: CGFloat { _ = sizeCategory; return UIFontMetrics(forTextStyle: .body).scaledValue(for: size) }
     private func follow(_ target: PhoneRichText.LinkTarget) {
         switch target {
         case let .web(url): openURL(url)
-        case let .path(path): open?(path, nil)
-        case .text: break
+        case let .path(path) where allowsFile?(path) != false: open?(path, nil)
+        default: break
         }
     }
     @ViewBuilder private func quoted<Content: View>(_ depth: Int, @ViewBuilder _ content: () -> Content) -> some View {
@@ -106,9 +122,9 @@ struct MarkdownView: View {
         cache.setObject(Entry(blocks), forKey: key, cost: key.length)
         return Parse(text: text, blocks: blocks)
     }
-    static func parse(_ text: String) async -> Parse {
+    static func parse(_ text: String, storeResult: Bool = true) async -> Parse {
         let blocks = await Task.detached(priority: .userInitiated) { PhoneRichText.blocks(text) }.value
-        cache.setObject(Entry(blocks), forKey: text as NSString, cost: (text as NSString).length)
+        if storeResult { cache.setObject(Entry(blocks), forKey: text as NSString, cost: (text as NSString).length) }
         return Parse(text: text, blocks: blocks)
     }
 }
@@ -147,7 +163,14 @@ struct MarkdownPiece {
 enum MarkdownStyle {
     /** One level of a list: 22 points at the body size, growing with the text so a marker always fits before its words. */
     static func indent(_ size: CGFloat) -> CGFloat { (size * 1.4).rounded() }
-    static func prose(_ lines: [PhoneRichLine], size: CGFloat, inert: Bool = false, ink: UIColor = .label) -> (NSAttributedString, [PhoneRichText.LinkTarget]) {
+    struct Links {
+        let active: Bool
+        let opensFiles: Bool
+        let knownFiles: Set<Data>
+        let dark: Bool
+        var allowsFile: ((String) -> Bool)? = nil
+    }
+    @MainActor static func prose(_ lines: [PhoneRichLine], size: CGFloat, style linksStyle: Links, ink: UIColor) -> (NSAttributedString, [PhoneRichText.LinkTarget]) {
         let result = NSMutableAttributedString()
         var links: [PhoneRichText.LinkTarget] = []
         for (index, line) in lines.enumerated() {
@@ -172,16 +195,16 @@ enum MarkdownStyle {
                 piece.append(markerText(marker, depth: line.depth, font: font))
                 piece.append(NSAttributedString(string: "\t", attributes: [.font: font]))
             }
-            let (words, found) = inline(line.content, font: font, color: ink, linkBase: links.count, inert: inert)
+            let color: UIColor = if case .heading = line.kind { UIColor(PhoneTheme.ink) } else { ink }
+            let (words, found) = inline(line.content, font: font, color: color, linkBase: links.count, style: linksStyle)
             links += found
             piece.append(words)
-            if case .heading = line.kind { piece.addAttribute(.foregroundColor, value: UIColor(PhoneTheme.ink), range: NSRange(location: 0, length: piece.length)) }
             piece.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: piece.length))
             result.append(piece)
         }
         return (result, links)
     }
-    private static func markerText(_ marker: PhoneRichMarker, depth: Int, font: UIFont) -> NSAttributedString {
+    @MainActor private static func markerText(_ marker: PhoneRichMarker, depth: Int, font: UIFont) -> NSAttributedString {
         let muted = UIColor(PhoneTheme.muted)
         switch marker {
         case .bullet:
@@ -204,10 +227,12 @@ enum MarkdownStyle {
      * Foundation's inline runs in UIKit attributes. A link keeps its words and becomes `latch-link:<n>` into the returned
      * targets; a picture in a sentence is the words 图片 or 外部图片 with its name, opening as its link would.
      */
-    static func inline(_ value: AttributedString, font: UIFont, color: UIColor, linkBase: Int = 0, inert: Bool = false) -> (NSAttributedString, [PhoneRichText.LinkTarget]) {
+    typealias Inline = (text: NSAttributedString, links: [PhoneRichText.LinkTarget])
+    @MainActor static func inline(_ value: AttributedString, font: UIFont, color: UIColor, linkBase: Int = 0, style: Links) -> Inline {
         let result = NSMutableAttributedString()
         var links: [PhoneRichText.LinkTarget] = []
         let mono = UIFont.monospacedSystemFont(ofSize: font.pointSize * 0.88, weight: .regular)
+        var previousTarget: PhoneRichText.LinkTarget?
         for run in value.runs {
             var words = String(value[run.range].characters)
             let intent = run.inlinePresentationIntent ?? []
@@ -222,7 +247,7 @@ enum MarkdownStyle {
                 attributes[.font] = UIFont(descriptor: descriptor, size: font.pointSize)
                 if traits.contains(.traitBold) { attributes[.foregroundColor] = UIColor(PhoneTheme.ink) }
             }
-            if intent.contains(.code) { attributes[.font] = mono; attributes[.backgroundColor] = PhoneTheme.codeTint }
+            if intent.contains(.code) { attributes[.font] = mono }
             if intent.contains(.strikethrough) { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
             let target: PhoneRichText.LinkTarget? = {
                 if let url = run.imageURL {
@@ -231,34 +256,84 @@ enum MarkdownStyle {
                     words = (local == nil ? "外部图片：" : "图片：") + (name.isEmpty ? (url.lastPathComponent.isEmpty ? "图片" : url.lastPathComponent) : name)
                     return PhoneRichText.linkTarget(url)
                 }
-                return run.link.map(PhoneRichText.linkTarget)
+                if let url = run.link { return PhoneRichText.linkTarget(url) }
+                if style.opensFiles, !style.knownFiles.isEmpty, intent.contains(.code),
+                   let candidate = PhoneRichText.codeFileCandidate(words), style.knownFiles.contains(Data(candidate.utf8)) { return .path(candidate) }
+                return nil
             }()
-            if let target, !inert {
-                if case .text = target {} else {
-                    attributes[.link] = URL(string: "latch-link:\(linkBase + links.count)")
+            let continues: Bool = switch (previousTarget, target) {
+            case let (.path(a), .path(b)): a.utf8.elementsEqual(b.utf8)
+            case let (.web(a), .web(b)): a == b
+            default: false
+            }
+            var prefix: NSMutableAttributedString?
+            var actionable = false
+            if style.active, let target {
+                switch target {
+                case .web:
+                    actionable = true
                     attributes[.foregroundColor] = PhoneTheme.accentInk
-                    links.append(target)
+                    attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+                    attributes[.underlineColor] = PhoneTheme.accentInk.withAlphaComponent(0.55)
+                case let .path(path) where style.opensFiles && style.allowsFile?(path) != false:
+                    actionable = true
+                    if run.link == nil || !intent.contains(.code) { attributes[.font] = font }
+                    attributes[.underlineStyle] = NSUnderlineStyle.single.union(.patternDot).rawValue
+                    attributes[.underlineColor] = UIColor(PhoneTheme.muted)
+                    if !continues {
+                        let mark = MarkdownFileMark.attachment(for: path, font: font, dark: style.dark)
+                        prefix = NSMutableAttributedString(attachment: mark)
+                        // The mark and the first letter move onto the next line together.
+                        prefix?.append(NSAttributedString(string: "\u{2060}"))
+                    }
+                default: break
+                }
+                if actionable {
+                    if !continues { links.append(target) }
+                    attributes[.link] = URL(string: "latch-link:\(linkBase + links.count - 1)")
                 }
             }
-            result.append(NSAttributedString(string: words, attributes: attributes))
+            if let prefix {
+                let range = NSRange(location: 0, length: prefix.length)
+                prefix.addAttribute(.inlineDecoration, value: true, range: range)
+                if let link = attributes[.link] { prefix.addAttribute(.link, value: link, range: range) }
+                result.append(prefix)
+            }
+            if intent.contains(.code), target == nil {
+                attributes[.inlineCodeSurface] = mono
+                // NBSP is sized like a body-text space; only these marked padding characters are omitted when copied.
+                let pad = NSAttributedString(string: "\u{00a0}", attributes: [.font: UIFont.systemFont(ofSize: mono.pointSize),
+                    .inlineDecoration: true, .inlineCodeSurface: mono])
+                result.append(pad)
+                appendCode(words, attributes: attributes, to: result)
+                result.append(pad)
+            } else {
+                result.append(NSAttributedString(string: words, attributes: attributes))
+            }
+            previousTarget = actionable ? target : nil
         }
         return (result, links)
     }
-    /** Cell text for SwiftUI: emphasis, code and strikethrough; a table's links read as their words. */
-    static func cell(_ value: AttributedString, size: CGFloat, header: Bool) -> AttributedString {
-        var result = AttributedString()
-        for run in value.runs {
-            var piece = AttributedString(String(value[run.range].characters))
-            let intent = run.inlinePresentationIntent ?? []
-            var font = Font.system(size: size, weight: header || intent.contains(.stronglyEmphasized) ? .semibold : .regular)
-            if intent.contains(.emphasized) { font = font.italic() }
-            if intent.contains(.code) { font = .system(size: size * 0.88, design: .monospaced); piece.backgroundColor = Color(PhoneTheme.codeTint) }
-            piece.font = font
-            if intent.contains(.strikethrough) { piece.strikethroughStyle = .single }
-            if run.link != nil || run.imageURL != nil { piece.foregroundColor = Color(PhoneTheme.accentInk) }
-            result += piece
+    private static let longIdentifier = try! NSRegularExpression(pattern: #"\S{20,}"#)
+    /** TextKit otherwise sends an entire identifier to the next line and can strand just its leading pad. */
+    private static func appendCode(_ words: String, attributes: [NSAttributedString.Key: Any], to result: NSMutableAttributedString) {
+        var cursor = words.startIndex
+        for match in longIdentifier.matches(in: words, range: NSRange(words.startIndex..., in: words)) {
+            guard let range = Range(match.range, in: words) else { continue }
+            var previous: Character?, uninterrupted = 0
+            for index in words[range].indices {
+                let char = words[index]
+                let natural = previous.map { "._/-".contains($0) || ($0.isLowercase && char.isUppercase) } ?? false
+                if uninterrupted >= 14 || (uninterrupted >= 4 && natural) {
+                    result.append(NSAttributedString(string: String(words[cursor..<index]), attributes: attributes))
+                    var separator = attributes; separator[.inlineDecoration] = true
+                    result.append(NSAttributedString(string: "\u{200b}", attributes: separator))
+                    cursor = index; uninterrupted = 0
+                }
+                previous = char; uninterrupted += 1
+            }
         }
-        return result
+        result.append(NSAttributedString(string: String(words[cursor...]), attributes: attributes))
     }
 }
 
@@ -266,15 +341,19 @@ enum MarkdownStyle {
 struct MarkdownTable: View {
     let table: PhoneRichTable
     let size: CGFloat
+    let style: MarkdownStyle.Links
+    let onLink: (PhoneRichText.LinkTarget) -> Void
     var body: some View {
         let fontSize = size - 1
-        let widths = columnWidths(fontSize: fontSize)
+        let header = formatted(table.header, size: fontSize, header: true)
+        let rows = table.rows.map { formatted($0, size: fontSize, header: false) }
+        let widths = columnWidths([header] + rows, fontSize: fontSize)
         ScrollView(.horizontal, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
-                row(table.header, header: true, widths: widths, fontSize: fontSize)
+                row(header, header: true, widths: widths)
                 Rectangle().fill(PhoneTheme.lineStrong).frame(height: 1)
-                ForEach(Array(table.rows.enumerated()), id: \.offset) { index, cells in
-                    row(cells, header: false, widths: widths, fontSize: fontSize)
+                ForEach(Array(rows.enumerated()), id: \.offset) { index, cells in
+                    row(cells, header: false, widths: widths)
                     if index < table.rows.count - 1 { Rectangle().fill(PhoneTheme.line).frame(height: 1) }
                 }
             }.fixedSize()
@@ -284,29 +363,44 @@ struct MarkdownTable: View {
         .contextMenu { Button { LocalClipboard.copy(source) } label: { Label("复制表格", systemImage: "doc.on.doc") } }
         .accessibilityElement(children: .contain).accessibilityLabel("表格，可横向滚动")
     }
-    private func row(_ cells: [AttributedString], header: Bool, widths: [CGFloat], fontSize: CGFloat) -> some View {
+    private func formatted(_ cells: [AttributedString], size: CGFloat, header: Bool) -> [MarkdownStyle.Inline] {
+        let font = UIFont.systemFont(ofSize: size, weight: header ? .semibold : .regular)
+        return cells.enumerated().map { column, cell in
+            let inline = MarkdownStyle.inline(cell, font: font, color: UIColor(header ? PhoneTheme.ink : PhoneTheme.ink2), style: style)
+            let text = NSMutableAttributedString(attributedString: inline.text)
+            let align = table.alignments.indices.contains(column) ? table.alignments[column] : .leading
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = align == .center ? .center : align == .trailing ? .right : .left
+            paragraph.lineSpacing = 3
+            text.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: text.length))
+            return (text, inline.links)
+        }
+    }
+    private func row(_ cells: [MarkdownStyle.Inline], header: Bool, widths: [CGFloat]) -> some View {
         HStack(alignment: .top, spacing: 16) {
             ForEach(widths.indices, id: \.self) { column in
-                let alignment = table.alignments.indices.contains(column) ? table.alignments[column] : .leading
-                Text(MarkdownStyle.cell(cells.indices.contains(column) ? cells[column] : AttributedString(), size: fontSize, header: header))
-                    .foregroundStyle(header ? PhoneTheme.ink : PhoneTheme.ink2)
-                    .lineSpacing(3)
-                    .multilineTextAlignment(alignment == .center ? .center : alignment == .trailing ? .trailing : .leading)
-                    .frame(width: widths[column], alignment: alignment == .center ? .top : alignment == .trailing ? .topTrailing : .topLeading)
-                    .fixedSize(horizontal: false, vertical: true)
+                if cells.indices.contains(column) {
+                    let cell = cells[column]
+                    ConversationText(rich: cell.text, links: cell.links, onLink: onLink)
+                        .frame(width: widths[column]).fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Color.clear.frame(width: widths[column], height: 0)
+                }
             }
         }.padding(.vertical, header ? 6 : 9)
     }
-    /** Each column as wide as its longest cell on one line, between 6 and 18 characters of the body size. */
-    private func columnWidths(fontSize: CGFloat) -> [CGFloat] {
-        let count = max(table.alignments.count, table.header.count, table.rows.map(\.count).max() ?? 0)
-        let bold = UIFont.systemFont(ofSize: fontSize, weight: .semibold), plain = UIFont.systemFont(ofSize: fontSize)
-        return (0..<count).map { column in
-            let header = table.header.indices.contains(column) ? [MarkdownStyle.inline(table.header[column], font: bold, color: .label).0] : []
-            let cells = header + table.rows.compactMap { $0.indices.contains(column) ? MarkdownStyle.inline($0[column], font: plain, color: .label).0 : nil }
-            let widest = cells.map { $0.boundingRect(with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin], context: nil).width }.max() ?? 0
-            return min(max(ceil(widest) + 2, fontSize * 4), fontSize * 15)
+    /** Measure the same marks and padding the cells draw. */
+    private func columnWidths(_ rows: [[MarkdownStyle.Inline]], fontSize: CGFloat) -> [CGFloat] {
+        let count = max(table.alignments.count, rows.map(\.count).max() ?? 0)
+        var widths = Array(repeating: fontSize * 4, count: count)
+        for row in rows {
+            for (column, cell) in row.enumerated() {
+                let width = cell.text.boundingRect(with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),
+                    options: [.usesLineFragmentOrigin], context: nil).width
+                widths[column] = min(fontSize * 15, max(widths[column], ceil(width) + 2))
+            }
         }
+        return widths
     }
     private var source: String {
         func line(_ cells: [AttributedString]) -> String { "| " + cells.map { String($0.characters).replacingOccurrences(of: "|", with: "\\|") }.joined(separator: " | ") + " |" }

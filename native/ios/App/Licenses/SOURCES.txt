@@ -58,3 +58,9 @@ The icon set is distributed under the MIT License, reproduced in LICENSE-lobe-ic
 
 Each project's copyright line(s) and NOTICE (none was found) are recorded in NOTICE-brands.txt, the Apache License 2.0
 in LICENSE-Apache-2.0.txt, both beside this file and in the iPhone app.
+
+Native diagrams
+
+MermaidKit 2.10.2, https://github.com/2389-research/MermaidKit/tree/v2.10.2
+(commit 8556a1b80a1f624d35a4c6e13dcb7a5d427f65c3). Its Swift parser, layout and
+CoreGraphics renderer are included under the MIT License in LICENSE-MermaidKit.txt.

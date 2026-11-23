@@ -73,6 +73,8 @@ import LatchNativeCore
             }
             let previews = try await workspace.resolveFile(sessionId: session, reference: location.appending(file.name), rootId: root.id, access: access)
             let previewable = previews["files"].array.first?["file"]["handle"].string != nil
+            let path = location.appending(file.name)
+            let inline = try await workspace.knownFileReferences(sessionId: session, references: [path, "does-not-exist.txt"], access: access)
             let unsafe = (try? PhoneFileFolder(root: root.id, dir: "../other").path(session: session)) == nil
             let wrongRoot = (try? PhoneFileDirectory(.object(["context": .object(["kind": .string("session"), "sessionId": .string(session)]),
                 "roots": .array([]), "entries": .array([]), "truncated": .bool(false)]), session: session, folder: location)) == nil
@@ -81,8 +83,9 @@ import LatchNativeCore
             }
             let oldPreview = try? await workspace.resolveFile(sessionId: session, reference: location.appending(file.name), rootId: root.id, access: access)
             let oldList = try? await workspace.fileDirectory(session: session, folder: location, access: access)
+            let oldInline = try? await workspace.knownFileReferences(sessionId: session, references: [path], access: access)
             _ = await workspace.closeOpening()
-            return ["oldPanelClosed": oldPreview == nil && oldList == nil, "previewable": previewable, "badFolderRejected": unsafe, "wrongRootRejected": wrongRoot]
+            return ["inlineFiles": inline, "oldPanelClosed": oldPreview == nil && oldList == nil && oldInline == nil, "previewable": previewable, "badFolderRejected": unsafe, "wrongRootRejected": wrongRoot]
         }
         let lease = try await workspace.verify()
         if let id = input["workSettlementItem"] as? String, let markers = input["workSettlementMarkers"] as? String {

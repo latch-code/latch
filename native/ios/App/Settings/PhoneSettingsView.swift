@@ -177,7 +177,7 @@ actor NativeAppAttestHook {
 
 /** 开源许可: the notices and licence texts of what the App carries, read from its own bundle. */
 struct LicensesView: View {
-    static let files = [("版权与声明", "NOTICE-brands"), ("来源", "SOURCES"), ("Apache License 2.0", "LICENSE-Apache-2.0"), ("LobeHub Icons（MIT）", "LICENSE-lobe-icons")]
+    static let files = [("版权与声明", "NOTICE-brands"), ("来源", "SOURCES"), ("Apache License 2.0", "LICENSE-Apache-2.0"), ("LobeHub Icons（MIT）", "LICENSE-lobe-icons"), ("MermaidKit（MIT）", "LICENSE-MermaidKit")]
     var body: some View {
         List(Self.files, id: \.1) { title, name in
             NavigationLink(title) { LicenseText(title: title, name: name) }

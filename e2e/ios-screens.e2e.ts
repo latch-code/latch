@@ -1,15 +1,40 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 
 const run = promisify(execFile)
 const simctl = (...args: string[]) => run('/usr/bin/xcrun', ['simctl', ...args], { timeout: 120_000, maxBuffer: 16_777_216 })
 /** A runtime's first boot migrates its data and can take minutes. */
 const simctlSlow = (...args: string[]) => run('/usr/bin/xcrun', ['simctl', ...args], { timeout: 600_000, maxBuffer: 16_777_216 })
 const pause = (ms: number) => new Promise(done => setTimeout(done, ms))
+
+/** Count the code surface in the actual Simulator screenshot; a detached text view cannot verify what the user saw. */
+async function expectCodeSurface(png: string, scratch: string, proof: unknown, theme: string) {
+  const palettes = proof && typeof proof === 'object' && 'surfaceRGB' in proof ? proof.surfaceRGB : undefined
+  const rgb: unknown = palettes && typeof palettes === 'object' ? Reflect.get(palettes, theme) : undefined
+  if (!Array.isArray(rgb) || rgb.length !== 3 || !rgb.every(Number.isInteger)) throw new Error('Missing code surface colour')
+  const bmp = join(scratch, 'markdown-prose.bmp')
+  await run('/usr/bin/sips', ['-Z', '640', '-s', 'format', 'bmp', png, '--out', bmp])
+  const bitmap = await readFile(bmp)
+  expect(bitmap.toString('ascii', 0, 2)).toBe('BM')
+  const width = bitmap.readInt32LE(18),
+    height = Math.abs(bitmap.readInt32LE(22)),
+    bytes = bitmap.readUInt16LE(28) / 8
+  expect([3, 4]).toContain(bytes)
+  const stride = Math.ceil((width * bytes) / 4) * 4,
+    offset = bitmap.readUInt32LE(10)
+  let pixels = 0
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      const at = offset + y * stride + x * bytes
+      if (rgb.every((channel, index) => Math.abs(channel - bitmap[at + 2 - index]) <= 1)) pixels += 1
+    }
+  expect(pixels).toBeGreaterThan(width * height * 0.002)
+}
 
 /** Scenes of the LatchScreens target (`native/ios/Screens/ScreensStage.swift`), chosen by a launch argument. */
 const SCENES = [
@@ -27,6 +52,9 @@ const SCENES = [
   'offline-draft',
   'markdown',
   'markdown-code',
+  'markdown-prose',
+  'markdown-dense',
+  'markdown-diagram',
   'pictures',
   'conversation-limited',
   'conversation-reading',
@@ -232,9 +260,43 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
         for (const theme of ['light', 'dark']) {
           await simctl('ui', udid, 'appearance', theme)
           for (const scene of chosen) {
-            await simctl('launch', '--terminate-running-process', udid, 'codes.latch.ios.screens', '-LatchScene', scene)
+            const probe = scene === 'markdown-prose' || scene === 'markdown-dense' ? randomUUID() : undefined
+            await simctl(
+              'launch',
+              '--terminate-running-process',
+              udid,
+              'codes.latch.ios.screens',
+              '-LatchScene',
+              scene,
+              ...(probe ? ['-LatchMarkdownProbe', probe] : []),
+            )
             await pause(2500)
-            await simctl('io', udid, 'screenshot', join(output, `${scene}--${theme}--${device.name}.png`))
+            const shot = join(output, `${scene}--${theme}--${device.name}.png`)
+            if (probe) {
+              const container = (await simctl('get_app_container', udid, 'codes.latch.ios.screens', 'data')).stdout.trim()
+              const proof = join(container, 'tmp', `markdown-${probe}.json`)
+              const readProof = async (): Promise<unknown> => JSON.parse(await readFile(proof, 'utf8'))
+              await expect.poll(readProof, { timeout: 20_000, interval: 500 }).toMatchObject({
+                codeWraps: true,
+                codeInkHasBalancedInsets: true,
+                copyPreservesSource: true,
+                selectionSurvivesResolution: true,
+                authorizedFileBytes: true,
+                distinctLinkStyles: true,
+                inactiveLinksStayWords: true,
+              })
+              const palette = await readProof()
+              const frame = join(derived, 'markdown-frame.png')
+              // The launch transition can still cover a fully laid out iPad scene. Keep the first verified screen frame.
+              await vi.waitFor(
+                async () => {
+                  await simctl('io', udid, 'screenshot', frame)
+                  await expectCodeSurface(frame, derived, palette, theme)
+                },
+                { timeout: 20_000, interval: 500 },
+              )
+              await copyFile(frame, shot)
+            } else await simctl('io', udid, 'screenshot', shot)
           }
         }
         if (!KEEP_RUNNING) await simctl('terminate', udid, 'codes.latch.ios.screens').catch(() => {})

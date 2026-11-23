@@ -96,8 +96,9 @@ import UIKit
             }
         case "pictures":
             model.tab = .code; model.sessionId = "ses_review"; model.detail = picturesConversation()
-        case "markdown", "markdown-code":
-            model.tab = .code; model.sessionId = "ses_review"; model.detail = markdownConversation(code: name == "markdown-code")
+        case "markdown", "markdown-code", "markdown-prose", "markdown-dense", "markdown-diagram", "markdown-diagram-unsupported":
+            if name == "markdown-prose" || name == "markdown-dense" { MarkdownLayoutFixture.recordIfRequested() }
+            model.tab = .code; model.sessionId = "ses_review"; model.detail = markdownConversation(scene: name)
         case "conversation-reading", "project-files":
             if name == "project-files" {
                 model.snapshot = patched(value) { root in
@@ -415,7 +416,7 @@ import UIKit
         }
     }
     /** A reply with each kind of block the web draws: headings, a table, lists and tasks, a quote, code, a rule, links. */
-    private static func markdownConversation(code: Bool) -> NativeJSON {
+    private static func markdownConversation(scene: String) -> NativeJSON {
         let table = """
         当前会话的团队共有 4 个 Agent，只有主 Agent 正在运行。
 
@@ -465,10 +466,61 @@ import UIKit
         ```
 
         """ + "\n\n```text\n" + (1...30).map { "第 \($0) 行日志" }.joined(separator: "\n") + "\n```"
+        let prose = """
+        ### 接入与协议层
+
+        服务从 [main.go](main.go) 启动，[router.go](router.go) 注册路由。[idl/](idl/) 保存协议定义，例子见 [API.md](docs/API.md)。
+
+        - **请求入口**：`POST /chat` 接收消息，交给 `HandleChat` 处理。
+        - **流式返回**：处理器通过 `SSE` 逐段发送结果；客户端按 `event_id` 记录位置。
+        - **长标识符**：`ConversationSession.requestConfigurationForSelectedProject` 可随屏幕宽度换行。
+
+        | 阶段 | 内容 |
+        | --- | --- |
+        | 执行 | `ModelInput` 与 `ToolResults` |
+
+        细节见[协议说明](https://example.org/events)和[路由实现 `router.go`](router.go)。
+        """
+        let dense = """
+        1. **三种消息副本严格隔离**
+           - **保存态**（`PersistMessages` / `Storage`）：落入数据库作为事实源。
+           - **模型态**（`ModelInput` / `ModelView` / `ContextProvider`）：专供 LLM 推理。
+           - **展示态**（`Display` / `DisplayView` / `Surface`）：面向不同客户端出口。
+        2. **业务判断下沉到能力包，公共层只管机制和时机**
+           - 公共流程（`Handler`、`StreamProcessor`、`eino`）不针对具体业务写 `if/switch` 分支。
+           - 并在 [app/wiring.go](app/wiring.go) 和 [app/profiles/](app/profiles/) 完成接线。
+
+        | 类型 | 字段 |
+        | --- | --- |
+        | 保存态 | `PersistMessages` / `Storage` |
+        """
+        let diagram = #"""
+        ### 单次请求如何流转
+
+        执行入口是 `Runner.Run`。
+
+        ```mermaid
+        flowchart TD
+          S0["1. 接收请求\n校验身份与会话"] --> S1{"2. 是否命中动作？"}
+          S1 -- "命中" --> A1["执行工具"]
+          S1 -- "未命中" --> S2["模型推理<br/>Runner.Run"]
+          A1 --> S3["3. 写入会话记录"]
+          S2 --> S3
+          S3 --> S4["返回结果"]
+        ```
+        """#
+        let answer = switch scene {
+        case "markdown-code": source
+        case "markdown-dense": dense
+        case "markdown-prose": prose
+        case "markdown-diagram-unsupported": "```mermaid\nflowchart TD\n  A --> B\n  classDef accent fill:#abc\n```"
+        case "markdown-diagram": diagram
+        default: table
+        }
         return patched(conversation()) { root in
             root["messages"] = .array([
                 .object(["id": .string("m1"), "role": .string("user"), "text": .string("我们现在的 agent team 有哪些 agent"), "createdAt": .string(stamp.string(from: Date().addingTimeInterval(-1000)))]),
-                .object(["id": .string("m2"), "role": .string("assistant"), "text": .string(code ? source : table), "createdAt": .string(stamp.string(from: Date().addingTimeInterval(-940)))]),
+                .object(["id": .string("m2"), "role": .string("assistant"), "text": .string(answer), "createdAt": .string(stamp.string(from: Date().addingTimeInterval(-940)))]),
             ])
         }
     }

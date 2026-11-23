@@ -80,7 +80,7 @@ struct FileEditorView: View {
         case .done:
             model.editPaths.removeValue(forKey: request.requestId)
             self.request = nil; unknown = false
-            let next = try? await model.preview(reference: edit.reference, root: edit.root)
+            let next = try? await model.preview(reference: edit.reference, root: edit.root, session: edit.sessionId)
             guard model.privateSnapshot.accepts(content) else { if let next { PreviewFiles.discard(next) }; return }
             close(next)
         case let .refused(refusal):
@@ -106,7 +106,7 @@ struct FileEditorView: View {
         let content = model.privateSnapshot.epoch
         loading = true; defer { loading = false }
         do {
-            let item = try await model.preview(reference: edit.reference, root: edit.root)
+            let item = try await model.preview(reference: edit.reference, root: edit.root, session: edit.sessionId)
             guard model.privateSnapshot.accepts(content) else { PreviewFiles.discard(item); return }
             guard let next = item.edit, let latest = item.text else { failure = "这个文件现在不能编辑"; conflict = false; return }
             edit = next; text = latest; base = latest; conflict = false

@@ -4,6 +4,7 @@ import UIKit
 
 /** One prompt and its answer. Prose never folds; a turn's work folds away only once it has answered. */
 struct TurnView: View, Equatable {
+    let session: String
     let turn: PhoneTurn
     let latest: Bool
     let status: String?
@@ -29,7 +30,7 @@ struct TurnView: View, Equatable {
     /** An earlier turn shows its actions once its author line is tapped, as the web's touch layout does. */
     @State private var tapped = false
     nonisolated static func == (a: TurnView, b: TurnView) -> Bool {
-        a.turn == b.turn && a.latest == b.latest && a.status == b.status && a.running == b.running && a.frozen == b.frozen && a.delivery == b.delivery
+        a.session == b.session && a.turn == b.turn && a.latest == b.latest && a.status == b.status && a.running == b.running && a.frozen == b.frozen && a.delivery == b.delivery
             && a.switched == b.switched && a.mark == b.mark && a.engine == b.engine && a.fileScope == b.fileScope
             && a.endSaid == b.endSaid && a.actions == b.actions && a.index == b.index && a.helper == b.helper && a.teamCard == b.teamCard
     }
@@ -64,7 +65,7 @@ struct TurnView: View, Equatable {
                     if !folds || unfolded { VStack(alignment: .leading, spacing: 8) { ForEach(Array(items.enumerated()), id: \.offset) { _, item in WorkRow(item: item, frozen: frozen, person: helper != nil, open: open) } } }
                 case let .prose(message):
                     VStack(alignment: .leading, spacing: 10) {
-                        if !(message["text"].string ?? "").isEmpty { MarkdownView(text: message["text"].string ?? "", streaming: running, open: open).frame(maxWidth: .infinity, alignment: .leading) }
+                        if !(message["text"].string ?? "").isEmpty { ReplyMarkdown(session: session, text: message["text"].string ?? "", streaming: running, open: open).frame(maxWidth: .infinity, alignment: .leading) }
                         ReplyAttachments(message: message, open: open)
                     }
                 case let .note(message) where message["steered"].bool:

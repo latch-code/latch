@@ -5,8 +5,14 @@ import UniformTypeIdentifiers
 
 /** The same copy rule as the conversation's own text: this device only, gone in two minutes. */
 @MainActor enum LocalClipboard {
-    static func copy(_ text: String) {
-        UIPasteboard.general.setItems([[UTType.utf8PlainText.identifier: text]], options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(120)])
+    static func copy(_ text: String, to pasteboard: UIPasteboard = .general) {
+        write([UTType.utf8PlainText.identifier: text], to: pasteboard)
+    }
+    static func copy(png: Data) {
+        write([UTType.png.identifier: png])
+    }
+    private static func write(_ item: [String: Any], to pasteboard: UIPasteboard = .general) {
+        pasteboard.setItems([item], options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(120)])
     }
 }
 

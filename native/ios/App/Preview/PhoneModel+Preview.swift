@@ -24,7 +24,8 @@ extension PhoneModel {
         let content = privateSnapshot.epoch
         let item: PreviewItem
         do {
-            item = try await PreviewFiles.load(reference: reference, root: root, session: sessionId, workspace: workspace, access: access) { [weak self] done, total in
+            let fileAccess = access ?? (root == PreviewFiles.attachmentRoot ? nil : currentFileAccess)
+            item = try await PreviewFiles.load(reference: reference, root: root, session: sessionId, workspace: workspace, access: fileAccess) { [weak self] done, total in
                 Task { @MainActor [weak self] in
                     guard let self, self.generation == current, self.contentGeneration == reading, self.privateSnapshot.accepts(content), self.previewJob == job else { return }
                     self.previewProgress = PhonePreviewProgress(completed: done, total: total)

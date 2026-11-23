@@ -58,8 +58,10 @@ public enum PhoneRichText {
     public static func blocks(_ text: String) -> [PhoneRichBlock]? {
         guard text.utf8.count <= limit, nesting(text) <= maxNesting else { return nil }
         let source = mathFences(text)
+        let diagramLines = source.range(of: "mermaid", options: .caseInsensitive) == nil ? [] :
+            source.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
         let options = AttributedString.MarkdownParsingOptions(allowsExtendedAttributes: false, interpretedSyntax: .full,
-            failurePolicy: .returnPartiallyParsedIfPossible)
+            failurePolicy: .returnPartiallyParsedIfPossible, appliesSourcePositionAttributes: !diagramLines.isEmpty)
         guard let parsed = try? AttributedString(markdown: source, options: options) else { return nil }
         var builder = Builder()
         for run in parsed.runs {
@@ -79,7 +81,9 @@ public enum PhoneRichText {
             guard let leaf = components.first else { continue }
             switch leaf.kind {
             case let .codeBlock(language):
-                builder.code(String(slice.characters), language: language, identity: leaf.identity, depth: depth, quote: quote)
+                let name = language?.split(whereSeparator: \.isWhitespace).first.map(String.init)
+                let open = name?.lowercased() == "mermaid" && !closedDiagramFence(run.markdownSourcePosition, in: diagramLines)
+                builder.code(String(slice.characters), language: name, identity: leaf.identity, depth: depth, quote: quote, open: open)
             case .thematicBreak:
                 builder.rule(identity: leaf.identity, quote: quote)
             case let .header(level):
@@ -96,10 +100,22 @@ public enum PhoneRichText {
             }
         }
         var blocks = builder.finish()
-        if let last = blocks.indices.last, case let .code(language, code, _, depth, quote) = blocks[last], fenceOpen(source) {
+        if let last = blocks.indices.last, case let .code(language, code, _, depth, quote) = blocks[last], language?.lowercased() != "mermaid", fenceOpen(source) {
             blocks[last] = .code(language: language, text: code, open: true, depth: depth, quote: quote)
         }
         return blocks.compactMap(images)
+    }
+
+    /** Foundation also emits a code block when a quote/list ends without a closing fence. Only a real delimiter enables drawing. */
+    private static func closedDiagramFence(_ position: AttributedString.MarkdownSourcePosition?, in lines: [Substring]) -> Bool {
+        guard let position, position.startLine > 0, position.startColumn > 0,
+              position.endLine > position.startLine, position.endLine <= lines.count else { return false }
+        let opening = lines[position.startLine - 1].utf8.dropFirst(position.startColumn - 1)
+        guard let marker = opening.first, marker == 96 || marker == 126 else { return false }
+        let length = opening.prefix { $0 == marker }.count
+        let closing = lines[position.endLine - 1].utf8.drop { $0 == 32 || $0 == 9 || $0 == 62 }
+        let run = closing.prefix { $0 == marker }.count
+        return length >= 3 && run >= length && closing.dropFirst(run).allSatisfy { $0 == 32 || $0 == 9 }
     }
 
     /** A paragraph of nothing but local pictures becomes the pictures; a web picture stays inline as words. */
@@ -128,6 +144,34 @@ public enum PhoneRichText {
         guard !trimmed.isEmpty, !trimmed.hasPrefix("//"), !trimmed.hasPrefix("#"),
               trimmed.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7F && $0 != "\\" }) else { return nil }
         return trimmed.split(separator: "#", maxSplits: 1).first.map(String.init)
+    }
+
+    /** Inline code worth asking the Host about. Only its positive answer makes this a file in the reply. */
+    public static func codeFileCandidate(_ text: String) -> String? {
+        guard (3...512).contains(text.utf16.count),
+              text.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)
+                .union(CharacterSet(charactersIn: #"\"'<>|*?$`{}=;,()[]"#))) == nil,
+              !text.hasPrefix("//") else { return nil }
+        var path = text
+        if text.lowercased().hasPrefix("file:") {
+            guard let url = URLComponents(string: text), url.host == nil || url.host == "" || url.host == "localhost" else { return nil }
+            path = url.percentEncodedPath + (url.percentEncodedFragment.map { "#" + $0 } ?? "")
+        } else if let scheme = text.range(of: #"^[a-z][a-z0-9+.\-]*:"#,
+                             options: [.regularExpression, .caseInsensitive]) {
+            guard let suffix = text.range(of: #":[0-9]+(:[0-9]+)?$"#, options: .regularExpression),
+                  text.index(after: suffix.lowerBound) == scheme.upperBound, text[scheme].contains(".") else { return nil }
+        }
+        if let hash = path.firstIndex(of: "#"), path[hash...].range(of: #"^#L[0-9]+(C[0-9]+)?$"#, options: .regularExpression) == nil {
+            path = String(path[..<hash])
+        }
+        path = path.removingPercentEncoding ?? path
+        guard path.rangeOfCharacter(from: .controlCharacters) == nil,
+              !path.hasSuffix("/") else { return nil }
+        let bare = path.replacingOccurrences(of: #"(#L[0-9]+(C[0-9]+)?|:[0-9]+(:[0-9]+)?)$"#, with: "", options: .regularExpression)
+        let name = bare.split(separator: "/").last.map(String.init) ?? ""
+        guard name.range(of: #"^.+\.[A-Za-z0-9]{1,10}$"#, options: .regularExpression) != nil,
+              name.split(separator: ".").last?.range(of: #"[A-Za-z]"#, options: .regularExpression) != nil else { return nil }
+        return path
     }
 
     /** What a link does when pressed: a web or mail address opens, a project path previews, anything else is words. */
@@ -212,15 +256,14 @@ public enum PhoneRichText {
             if let table { blocks.append(.table(table)) }
             pending = nil; table = nil; tableIdentity = nil; cell = nil; current = nil; htmlOpen = false
         }
-        mutating func code(_ text: String, language: String?, identity: Int, depth: Int, quote: Int) {
+        mutating func code(_ text: String, language: String?, identity: Int, depth: Int, quote: Int, open: Bool = false) {
             if current == identity, case let .code(lang, existing, open, d, q) = blocks.last {
                 blocks[blocks.count - 1] = .code(language: lang, text: existing + text, open: open, depth: d, quote: q); return
             }
             close(); current = identity
             var body = text
             if body.hasSuffix("\n") { body.removeLast() }
-            let name = language?.trimmingCharacters(in: .whitespaces).split(separator: " ").first.map(String.init)
-            blocks.append(.code(language: name?.isEmpty == false ? name : nil, text: body, open: false, depth: depth, quote: quote))
+            blocks.append(.code(language: language, text: body, open: open, depth: depth, quote: quote))
         }
         mutating func rule(identity: Int, quote: Int) {
             guard current != identity else { return }

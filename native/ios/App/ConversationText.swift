@@ -19,8 +19,8 @@ struct ConversationText: UIViewRepresentable {
     /** Off for code: the lines keep their width and the caller scrolls sideways. */
     var wraps = true
     func makeCoordinator() -> Coordinator { Coordinator() }
-    func makeUIView(context: Context) -> LocalTextView {
-        let view = LocalTextView(usingTextLayoutManager: true)
+    func makeUIView(context: Context) -> MarkdownTextView {
+        let view = MarkdownTextView(usingTextLayoutManager: true)
         view.isEditable = false; view.isSelectable = true; view.isScrollEnabled = false
         view.textDragInteraction?.isEnabled = false
         view.backgroundColor = .clear; view.textColor = .label
@@ -33,30 +33,23 @@ struct ConversationText: UIViewRepresentable {
         if #available(iOS 18, *) { view.writingToolsBehavior = .none }
         return view
     }
-    func updateUIView(_ view: LocalTextView, context: Context) {
+    func updateUIView(_ view: MarkdownTextView, context: Context) {
         let coordinator = context.coordinator, trait = context.environment.sizeCategory
         coordinator.links = links; coordinator.onLink = onLink
         if !wraps { view.textContainer.lineBreakMode = .byClipping; view.textContainer.widthTracksTextView = false; view.textContainer.size.width = .greatestFiniteMagnitude }
         if let rich {
             guard coordinator.shownRich.map({ !$0.isEqual(to: rich) }) ?? true || coordinator.category != trait else { return }
             coordinator.shownRich = rich; coordinator.shown = nil; coordinator.category = trait
-            let selected = view.selectedRange
-            view.attributedText = rich
-            restore(selected, in: view)
+            view.display(rich)
             return
         }
         guard coordinator.shown != text || coordinator.category != trait else { return }
         coordinator.shown = text; coordinator.shownRich = nil; coordinator.category = trait
-        let selected = view.selectedRange, scaled = UIFontMetrics(forTextStyle: .body).scaledValue(for: size)
-        view.text = text; view.textColor = .label
-        view.font = monospaced ? UIFont.monospacedSystemFont(ofSize: scaled - 2, weight: .regular) : UIFont.systemFont(ofSize: scaled)
-        restore(selected, in: view)
+        let scaled = UIFontMetrics(forTextStyle: .body).scaledValue(for: size)
+        let font = monospaced ? UIFont.monospacedSystemFont(ofSize: scaled - 2, weight: .regular) : UIFont.systemFont(ofSize: scaled)
+        view.display(NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: UIColor.label]))
     }
-    private func restore(_ selected: NSRange, in view: UITextView) {
-        if selected.location != NSNotFound, selected.location <= view.text.utf16.count,
-           selected.length <= view.text.utf16.count - selected.location { view.selectedRange = selected }
-    }
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView: LocalTextView, context: Context) -> CGSize? {
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: MarkdownTextView, context: Context) -> CGSize? {
         if !wraps {
             let size = uiView.attributedText.boundingRect(with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),
                 options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil).size
@@ -71,19 +64,27 @@ struct ConversationText: UIViewRepresentable {
         var category: ContentSizeCategory?
         var links: [PhoneRichText.LinkTarget] = []
         var onLink: ((PhoneRichText.LinkTarget) -> Void)?
-        private func target(_ item: UITextItem) -> PhoneRichText.LinkTarget? {
-            guard case let .link(url) = item.content, url.scheme == "latch-link", let index = Int(url.absoluteString.dropFirst(11)),
-                  links.indices.contains(index) else { return nil }
+        private func target(_ item: UITextItem, in view: UITextView) -> PhoneRichText.LinkTarget? {
+            let url: URL?
+            if case let .link(link) = item.content { url = link }
+            else {
+                // UIKit can hit the attachment instead of its enclosing link when the file mark itself is pressed.
+                let offset = item.range.location
+                guard offset < view.attributedText.length,
+                      view.attributedText.attribute(.inlineDecoration, at: offset, effectiveRange: nil) != nil else { return nil }
+                url = view.attributedText.attribute(.link, at: offset, effectiveRange: nil) as? URL
+            }
+            guard let url, url.scheme == "latch-link", let index = Int(url.absoluteString.dropFirst(11)), links.indices.contains(index) else { return nil }
             return links[index]
         }
         func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem, defaultAction: UIAction) -> UIAction? {
-            guard let target = target(textItem) else { return nil }
+            guard let target = target(textItem, in: textView) else { return nil }
             if case .text = target { return nil }
             return UIAction { [weak self] _ in self?.onLink?(target) }
         }
         /** No preview, menu or share sheet for a link, and a long press does not open it either: only the press above. */
         func textView(_ textView: UITextView, menuConfigurationFor textItem: UITextItem, defaultMenu: UIMenu) -> UITextItem.MenuConfiguration? {
-            target(textItem) == nil ? nil : UITextItem.MenuConfiguration(menu: UIMenu(children: []))
+            target(textItem, in: textView) == nil ? nil : UITextItem.MenuConfiguration(menu: UIMenu(children: []))
         }
     }
 }

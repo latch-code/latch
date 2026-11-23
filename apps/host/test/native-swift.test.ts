@@ -2768,6 +2768,24 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         ciphertextProtected: true,
         confirmedLocalRemoval: true,
       })
+      const [alpha, beta] = input.profiles
+      const alphaId = `${alpha!.device.hostId}-${deviceId}`
+      const betaId = `${beta!.device.hostId}-${deviceId}`
+      const selection = (change: Record<string, unknown> = {}, folder = 'selection') =>
+        invoke({ operation: 'preferredComputer', key: input.key, directory: join(temporary, folder), ...change })
+      // Each call starts a fresh process. Both signed address books have no routes.
+      expect(await selection({ legacyProfiles: input.profiles })).toEqual({ preferred: alphaId })
+      expect(await selection({ remember: alphaId })).toEqual({ preferred: alphaId })
+      expect(await selection({ remember: betaId })).toEqual({ preferred: betaId })
+      // A book refresh still holds the profile it read before the switch.
+      expect(await selection({ refresh: beta })).toEqual({ preferred: betaId })
+      expect(await selection()).toEqual({ preferred: betaId })
+      expect(await selection({ forget: betaId })).toEqual({ preferred: alphaId })
+      expect(await selection()).toEqual({ preferred: alphaId })
+      expect(await selection({ forget: alphaId })).toEqual({ preferred: '' })
+      expect(await selection()).toEqual({ preferred: '' })
+      await selection({ legacyProfiles: input.profiles, remember: betaId }, 'remove-other')
+      expect(await selection({ forget: alphaId }, 'remove-other')).toEqual({ preferred: betaId })
     } finally {
       await rm(temporary, { recursive: true, force: true })
     }
@@ -3489,7 +3507,13 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           port: host.host.nativePort,
           fileBrowserSession: task.sessionId,
         }),
-      ).toEqual({ oldPanelClosed: true, previewable: true, badFolderRejected: true, wrongRootRejected: true })
+      ).toEqual({
+        inlineFiles: ['资料 + #/验收.md'],
+        oldPanelClosed: true,
+        previewable: true,
+        badFolderRejected: true,
+        wrongRootRejected: true,
+      })
     } finally {
       await host.close()
     }
@@ -3992,9 +4016,40 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.refusal).toBe('Flaky Agent 启动失败：进程退出（退出码 1）')
     expect(result.bare).toEqual([true, true])
   })
+  it('bounds phone diagrams and preserves line breaks inside native flowchart labels', async () => {
+    const flow = String.raw`flowchart TD
+S0["1. 入口接收\nChatCompletions 校验身份与会话"] --> S4{有无动作\n进入分支}
+S4 -->|是\n继续| End["保留\\n"]`
+    const sequence = String.raw`sequenceDiagram
+客户端->>主机: 保留\n原文`
+    const quotedEdge = 'graph LR\nA["示例 -- “内部” -->"] -- "命中「动作」" --> B'
+    const { diagrams } = await invoke({
+      operation: 'phoneRichText',
+      diagrams: [flow, quotedEdge, 'graph LR\nA["第 1 行\n第 2 行"]', sequence, 'flowchart TD\nclick A callback', 'x'.repeat(50_001)],
+    })
+    expect(diagrams).toEqual([
+      flow.replaceAll(/(?<!\\)\\n/gu, '<br/>'),
+      'graph LR\nA["示例 -- “内部” -->"] -->|命中「动作」| B',
+      'graph LR\nA["第 1 行<br/>第 2 行"]',
+      sequence,
+      null,
+      null,
+    ])
+  })
   it('reads a reply’s Markdown as the web’s blocks: tables, tasks, nesting, literal HTML, formulas and safe links', async () => {
     const result = await invoke({
       operation: 'phoneRichText',
+      fileCandidates: [
+        'src/app.GO:12:2',
+        'main.ts#L3C1',
+        'file:///tmp/100%25.md',
+        'v1.2.3',
+        'npm run test',
+        'handler()',
+        'https://x.example/a.js:2',
+        'file://elsewhere/a.ts',
+        'x.go%00.ts',
+      ],
       cases: [
         '会话：\n\n| Agent | 角色 | 状态 |\n|---|:---:|---:|\n| `/root` | 主 **Agent** | 运行中 |\n\n后文',
         '- [ ] 待做\n- [x] 完成 ~~旧~~ *斜*\n  - 嵌套\n\n  续段\n1. 一\n2. 二\n   - 内层',
@@ -4003,6 +4058,9 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         '[链接](https://a.example) ![网图](https://a.example/x.png)\n\n![截图](out/shot.png)',
         '```swift\nlet a = 1\n\n    缩进\n```',
         '文字\n\n```py\n未关\nx=1',
+        '> ```mermaid\n> graph TD\n\n后文',
+        '- ~~~mermaid\n  graph TD\n  ~~~',
+        '````mermaid\ngraph TD\n```',
         '$$\nE=mc^2\n$$',
         `${'>'.repeat(40)} 太深`,
         '    缩进的代码不算嵌套\n' + ' '.repeat(80) + 'x',
@@ -4018,6 +4076,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         'http:///x',
       ],
     })
+    expect(result.fileCandidates).toEqual(['src/app.GO:12:2', 'main.ts#L3C1', '/tmp/100%.md', null, null, null, null, null, null])
     expect(result.cases).toEqual([
       ['p d0 q0: 会话：', 'table lcr q0: Agent | 角色 | 状态 / `/root` | 主 **Agent** | 运行中', 'p d0 q0: 后文'],
       [
@@ -4036,6 +4095,9 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       ['p d0 q0: [链接] ![网图]', 'image d0 q0: out/shot.png (截图)'],
       ['code swift d0 q0: let a = 1\n\n    缩进'],
       ['p d0 q0: 文字', 'code py open d0 q0: 未关\nx=1'],
+      ['code mermaid open d0 q1: graph TD', 'p d0 q0: 后文'],
+      ['code mermaid d1 q0: graph TD'],
+      ['code mermaid open d0 q0: graph TD\n```'],
       ['code math d0 q0: E=mc^2'],
       null,
       ['code - d0 q0: 缩进的代码不算嵌套\n' + ' '.repeat(76) + 'x'],
