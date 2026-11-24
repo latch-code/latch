@@ -9,6 +9,16 @@
       "height": 1200,
       "duration": 13.2,
       "alt": "在 Latch 工作台打开插件市场，查看四个随附插件，打开「上下文」，审阅来源与权限后确认安装。"
+    },
+    "en": {
+      "mp4": "plugin-market-en.d34fc06d.mp4",
+      "mp4Small": "plugin-market-en-sm.14398902.mp4",
+      "poster": "plugin-market-en.de4eb001.webp",
+      "posterAvif": "plugin-market-en.de4eb001.avif",
+      "width": 1920,
+      "height": 1200,
+      "duration": 3.3,
+      "alt": "The Latch workbench opens the plugin marketplace and moves across the four bundled plugins."
     }
   },
   "context-panel": {
@@ -21,6 +31,16 @@
       "height": 1200,
       "duration": 12.7,
       "alt": "在会话旁打开「上下文」面板，逐次查看请求，组成条随之变化，再跳到并展开造成变化的工具结果。"
+    },
+    "en": {
+      "mp4": "context-panel-en.536d1a6a.mp4",
+      "mp4Small": "context-panel-en-sm.0f6df6e7.mp4",
+      "poster": "context-panel-en.d354683a.webp",
+      "posterAvif": "context-panel-en.d354683a.avif",
+      "width": 1920,
+      "height": 1200,
+      "duration": 7.6,
+      "alt": "The Context panel beside a session steps through requests as the composition bars change, down to the largest tool result."
     }
   },
   "pr-follow": {
