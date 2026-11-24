@@ -22,5 +22,6 @@
 - `src/files.ts` 的 `imageDimensions` 只读有界文件头，供 Host 的文件元数据与浏览器头像解码前检查共用。
 - `src/file-refs.ts` 定义显式相对引用；`src/attachments.ts` 仅定义有限的元数据、上传上下文与能力；`AttachmentRef` 不含内容或私有路径，新增字段须同步两个 Harness 的持久化 schema。
 - 文件上下文区分 session 和带 Harness 的 workspace；目录 DTO 不含绝对路径，旧会话 `FileOpenTarget` 继续兼容。
-- `plugin-packages.ts` 定义可编辑插件资产与有限模板；摘要区分草稿、已应用版本及真实不可用原因，不含 Host 私有路径。
+- `pluginCreation` 由 Host 投影；`source.kind` 区分创作包与页面。
+- 插件资产摘要含不可用原因，无私有路径。审阅绑修订与基版。`HostCatalog.workspacePages` 只报告启用的内置页标识与接口版本。
 - 类型：插件页面 `apps.ts` 与 `app-bridge.ts` 不含凭据（[APP-PAGES](../../docs/APP-PAGES.md)）；`terminal.ts` 区分会话和项目，仅 `host.sock`；`git-delivery.ts` 定义交付与历史，`workbench.ts` 定义带时间的摘要。

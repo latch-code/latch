@@ -1,0 +1,87 @@
+---
+import { pluginArtwork } from '../../../../examples/marketplace/artwork.ts'
+import { checklistSample, contextSample, featuredCover, historySample } from '../../../../examples/marketplace/feature-covers.ts'
+import '../../../../examples/marketplace/cover-patterns.css'
+import '../../../../examples/marketplace/feature-covers.css'
+import { COPY, type Lang } from '../i18n'
+
+interface Props { id: string; lang: Lang }
+const { id, lang } = Astro.props
+const cover = featuredCover(id)
+const t = COPY[lang].marketplace.cover
+---
+{cover ? (
+  <div class="market-feature" data-preview={cover} aria-hidden="true">
+    <div class="market-feature-content">
+      {cover === 'document' && (
+        <div class="market-handoff">
+          <div class="market-handoff-note" data-note="done">
+            <span class="market-feature-check"></span><span class="market-handoff-rule"></span>
+            <span class="market-feature-check"></span><span class="market-handoff-rule"></span>
+          </div>
+          <span class="market-handoff-arrow"></span>
+          <div class="market-handoff-note" data-note="next">
+            <strong>{t.next}</strong><span class="market-handoff-rule"></span>
+          </div>
+        </div>
+      )}
+      {cover === 'checklist' && (
+        <div class="market-checklist">
+          <div class="market-checklist-score"><strong>{checklistSample.complete}</strong><span> / {checklistSample.total}</span></div>
+          <div class="market-checklist-body">
+            <div class="market-checklist-progress">
+              {Array.from({ length: checklistSample.total }, (_, i) => <span data-complete={i < checklistSample.complete ? '' : undefined}></span>)}
+            </div>
+            <span class="market-checklist-item">{t.tests}</span>
+            <span class="market-checklist-item">{t.compatibility}</span>
+          </div>
+        </div>
+      )}
+      {cover === 'history' && (
+        <ol class="market-release-track">
+          {historySample.map(({ key, state }) => (
+            <li data-state={state}><span>{t[key]}</span><strong>{t[state]}</strong></li>
+          ))}
+        </ol>
+      )}
+      {cover === 'context' && (
+        <>
+          <div class="market-context-sequence">
+            <ol class="market-context-nodes">
+              {Array.from({ length: contextSample.request }, (_, i) => <li data-selected={i === contextSample.request - 1 ? '' : undefined}></li>)}
+            </ol>
+            <strong>{t.request(contextSample.request)}</strong>
+          </div>
+          <div class="market-context-band">
+            {contextSample.shares.map(percent => <span style={{ flexGrow: percent }}></span>)}
+          </div>
+          <span class="market-context-label">{t.toolSchemas} <strong>{contextSample.shares[0]}%</strong></span>
+        </>
+      )}
+    </div>
+  </div>
+) : (
+  <div class="market-pattern-cover" data-plugin-pattern={pluginArtwork(id).pattern} aria-hidden="true"></div>
+)}
+<style>
+  .market-feature {
+    --feature-ink: var(--color-ink);
+    --feature-muted: var(--color-muted);
+    --feature-line: var(--color-rule-strong);
+    --feature-surface: var(--color-paper-2);
+    --feature-tile: var(--color-paper-3);
+    --feature-small: var(--text-xs);
+    --feature-text: var(--text-sm);
+    --feature-large: var(--text-3xl);
+    --feature-radius: var(--radius-chip);
+    --feature-handoff: #d0b49e;
+    --feature-checklist: #8ccfb4;
+    --feature-history: #9db4cc;
+    --feature-context: #b9a2f0;
+  }
+  .market-pattern-cover {
+    --plugin-art-stroke: var(--color-rule-strong);
+    aspect-ratio: 3 / 2;
+    background-color: var(--color-paper-2);
+  }
+</style>

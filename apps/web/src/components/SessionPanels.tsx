@@ -11,6 +11,7 @@ import { useEffect, useId, useState, type ReactNode, type RefObject } from 'reac
 import {
   escapeSecurityText,
   isUiPanelDocument,
+  type TaskDetail,
   type TaskSummary,
   type UiPanelBlock,
   type UiPanelDocument,
@@ -23,8 +24,10 @@ import { defineCopy } from '../core/i18n.ts'
 import { VisibleText } from './VisibleText.tsx'
 import { ClientPluginPanel } from './ClientPluginPanel.tsx'
 import { PanelAddMenu, PanelEmpty } from '../panel/PanelChoices.tsx'
-import { panelFace, type PanelChoice, type PanelKey } from '../panel/panelTabs.ts'
+import { isBundledContextPanel, panelFace, type PanelChoice, type PanelKey } from '../panel/panelTabs.ts'
 import { referenceIcon } from '../fileReference.ts'
+import { SessionContextPanel } from '../panel/SessionContextPanel.tsx'
+import { useSessionContext } from '../panel/sessionContext.ts'
 
 const COPY = defineCopy(
   {
@@ -63,6 +66,7 @@ const COPY = defineCopy(
 export type PanelSurface =
   | { kind: 'empty' }
   | { kind: 'overview' }
+  | { kind: 'context' }
   | { kind: 'changes' }
   | { kind: 'delivery' }
   | { kind: 'browser' }
@@ -110,6 +114,7 @@ export function SessionPanels({
   addTrigger,
   addShortcut,
   panels = [],
+  panelsVisible = true,
   summary,
   canCompose = false,
   onCompose = () => {},
@@ -122,6 +127,8 @@ export function SessionPanels({
   local = false,
   deviceId,
   detail,
+  onRevealTurn,
+  onRevealTool,
   onFileView,
   fileContext,
   fileRevision,
@@ -180,9 +187,12 @@ export function SessionPanels({
   expanded?: boolean
   local?: boolean
   deviceId?: string
-  detail?: import('@latch/protocol').TaskDetail | null
+  detail?: TaskDetail | null
+  onRevealTurn?: (messageId: string) => void
+  onRevealTool?: (messageId: string) => void
   onFileView?(id: string, view: 'preview' | 'changes'): void
   panels?: UiPanelInfo[]
+  panelsVisible?: boolean
   fileContext?: FileContext
   fileRevision?: string
   treeView?: FileTreeView
@@ -201,23 +211,27 @@ export function SessionPanels({
   onCompose?: (text: string) => void
 }) {
   const id = useId()
-  const offered = summary ? panels.filter(panel => offersPluginPanel(panel, summary)) : []
+  const eligible = summary ? panels.filter(panel => offersPluginPanel(panel, summary)) : []
+  const bundledContext = eligible.find(panel => isBundledContextPanel(panel))
+  const offered = eligible.filter(panel => panel !== bundledContext)
   const content = (key: PanelKey): boolean =>
-    key === 'overview'
-      ? !!overview
-      : key === 'changes'
-        ? !!changes
-        : key === 'delivery'
-          ? !!delivery
-          : key === 'browser'
-            ? !!browser
-            : key === 'device'
-              ? !!device
-              : key === 'terminal'
-                ? !!terminal
-                : key === 'files'
-                  ? !!fileContext
-                  : offered.some(panel => `plugin:${panel.id}` === key)
+    key === 'context'
+      ? !!summary
+      : key === 'overview'
+        ? !!overview
+        : key === 'changes'
+          ? !!changes
+          : key === 'delivery'
+            ? !!delivery
+            : key === 'browser'
+              ? !!browser
+              : key === 'device'
+                ? !!device
+                : key === 'terminal'
+                  ? !!terminal
+                  : key === 'files'
+                    ? !!fileContext
+                    : offered.some(panel => `plugin:${panel.id}` === key)
   const tabsOpen = open.filter(content)
   const selected = activeFile ? undefined : active !== undefined && tabsOpen.includes(active) ? active : tabsOpen[0]
   const showing = (key: PanelKey) => selected === key
@@ -241,7 +255,24 @@ export function SessionPanels({
   const history = activeFile
     ? histories.find(item => item.path === activeFile.target.reference && item.root === activeFile.target.rootId)
     : undefined
-  const plugin = selected?.startsWith('plugin:') ? offered.find(panel => `plugin:${panel.id}` === selected) : undefined
+  const plugin = showing('context')
+    ? bundledContext
+    : selected?.startsWith('plugin:')
+      ? offered.find(panel => `plugin:${panel.id}` === selected)
+      : undefined
+  const clientView =
+    plugin?.moduleHash && summary && (!plugin.context || panelsVisible) ? (
+      <ClientPluginPanel
+        key={`${plugin.id}:${plugin.moduleHash}:${summary.id}:${plugin.context === true}`}
+        panel={plugin}
+        summary={summary}
+        canCompose={canCompose}
+        onCompose={onCompose}
+        detail={detail ?? undefined}
+        onRevealTurn={onRevealTurn}
+        onRevealTool={onRevealTool}
+      />
+    ) : null
   const empty = !activeFile && selected === undefined
   const closable = (name: string) => (onCloseTab ? { closeLabel: COPY.closeTab(name) } : {})
   const tabs: Array<PanelTab<string>> = [
@@ -346,7 +377,13 @@ export function SessionPanels({
         hidden={!inBody}
         role={empty ? undefined : 'tabpanel'}
         id={id}
-        aria-label={empty ? undefined : (activeFile?.file?.name ?? plugin?.title ?? (showing('overview') ? COPY.overview : undefined))}>
+        aria-label={
+          empty
+            ? undefined
+            : (activeFile?.file?.name
+              ?? (showing('context') ? panelFace('context').label : plugin?.title)
+              ?? (showing('overview') ? COPY.overview : undefined))
+        }>
         {activeFile?.target.view === 'changes' ? (
           <FileHistoryPreview
             history={history}
@@ -371,18 +408,20 @@ export function SessionPanels({
             onQuote={canCompose ? onQuote : undefined}
             running={summary?.status === 'running' || summary?.status === 'waiting-approval'}
           />
+        ) : showing('context') && summary && panelsVisible !== false ? (
+          bundledContext ? (
+            clientView
+          ) : detail?.summary.id === summary.id ? (
+            <BuiltInContextPanel key={summary.id} detail={detail} onRevealTurn={onRevealTurn} onRevealTool={onRevealTool} />
+          ) : (
+            <SessionContextPanel />
+          )
         ) : plugin?.moduleHash && summary ? (
           <section className="plugin-panel" aria-label={plugin.title}>
             <p className="plugin-panel-caption">
               <VisibleText text={COPY.providedBy(plugin.pluginName)} />
             </p>
-            <ClientPluginPanel
-              key={`${plugin.id}:${plugin.moduleHash}:${summary.id}`}
-              panel={plugin}
-              summary={summary}
-              canCompose={canCompose}
-              onCompose={onCompose}
-            />
+            {clientView}
           </section>
         ) : plugin && summary ? (
           <PluginPanel key={plugin.id} panel={plugin} summary={summary} />
@@ -399,6 +438,19 @@ export function SessionPanels({
       </div>
     </div>
   )
+}
+
+function BuiltInContextPanel({
+  detail,
+  onRevealTurn,
+  onRevealTool,
+}: {
+  detail: TaskDetail
+  onRevealTurn: ((messageId: string) => void) | undefined
+  onRevealTool: ((messageId: string) => void) | undefined
+}) {
+  const bridge = useSessionContext(detail, onRevealTurn, onRevealTool)
+  return <SessionContextPanel {...bridge} />
 }
 
 function BlockContent({ block }: { block: UiPanelBlock }) {

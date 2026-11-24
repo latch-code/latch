@@ -103,11 +103,13 @@ sources:
 每个插件记录在创建时得到自己的身份（`installId`）。页面开始的会话的 `origin` 与数据目录的 `owner.json` 都记下它。
 
 - 删掉插件再用同一个 ID 创建，新插件拿不到旧插件开始的会话：`lookup` 找不到，`continue`、`last-reply` 拒绝，驱动的请求 ID 也不同。
-- 删除时保留的数据，只有在新插件的页面声明了存储、并且应用的确认里写着「接上保留的数据」时才交给新插件；在那之前读写回答 409 `app-data-unclaimed`。
+- 删除时保留的数据，只有在新插件的页面声明了存储、并且应用或回退的确认里写着「接上保留的数据」时才交给新插件。接管写入结果未知时，可用原请求接着完成，批准只对当时的安装身份和修订有效。在接管前，读写回答 409 `app-data-unclaimed`。
 
 ## 回退
 
-资产记录保留最近 5 个之前应用过的快照（`history`；资产预算不够时先丢最旧的），摘要的 `rollbackRevisions` 列出它们。`POST /plugin-packages/:id/rollback` `{ requestId, revision }` 重新应用其中一个，草稿不变；能力不超过已批准的就不确认，可执行摘要在当初应用时已批准过。数据按「代与迁移」切代。
+资产记录保留最近 5 个之前应用过的快照（`history`，资产预算不够时先丢最旧的），摘要的 `rollbackRevisions` 列出它们。在应用页或插件设置点回退，会先看到当前版本、目标版本、来源和页面能力变化。确认后，`POST /plugin-packages/:id/rollback` 发送 `{ requestId, revision, baseAppliedRevision, reviewedInstallId }`，Host 核对安装实例和已应用修订仍与审阅时一致后重新应用目标修订，保留草稿。
+
+以前应用过的可执行摘要沿用已有批准。页面超出已批准的能力，或需要接管保留数据时，Host 仍要求本机确认。数据按「代与迁移」切代。
 
 ## 会话
 
@@ -194,7 +196,9 @@ sources:
 
 整条路径只在这台 Mac 的桌面端：`host.sock` 上数据范围 `all` 的管理设备，与插件资产管理相同。别的设备只看到已应用的页面。
 
-**让 Agent 起草。** `POST /tasks` 带 `appDraft: true` 开始一个普通的 Agent 会话：不选项目，用会话自己的文件夹。Host 在第一条输入之前写入 `latch-app/latch-app.json` 骨架（`id` 为 `app-<文件夹名>`）、`latch-app/sdk.d.ts`（SDK 的声明）与 `latch-app/README.md`（布局、SDK 与能力的说明）；写不进去回答 409 `app-draft-folder`。
+点「设置 › 插件 › 添加插件…」会打开创造模式的输入框。用户发送第一条消息后，Agent 按创作指引在会话文件夹中编写页面草稿，详见下文「创造会话的插件草稿」。
+
+**显式请求页面骨架。** 旧接口仍接受 `POST /tasks` 带 `appDraft: true` 开始一个普通的 Agent 会话：不选项目，用会话自己的文件夹。Host 在第一条输入之前写入 `latch-app/latch-app.json` 骨架（`id` 为 `app-<文件夹名>`）、`latch-app/sdk.d.ts`（SDK 的声明）与 `latch-app/README.md`（布局、SDK 与能力的说明）；写不进去回答 409 `app-draft-folder`。
 
 **导入。** `POST /plugin-packages/import` `{ requestId, sessionId }` 读会话主文件夹下的 `latch-app/`（`app-import.ts`）：
 
@@ -204,6 +208,12 @@ sources:
 - **限额。** 最多 64 个文件、单个 512 KiB、合计 2 MiB（`app-import-limit`）。看起来含密钥的文件拒绝（`app-import-secret`）；图片按文件头核对（`app-import-image`），以 base64 存进包里。
 - 结果成为资产存储里的草稿修订，记录 `source: { sessionId, dev }`；之后构建只用这份快照，不再读会话文件夹。同一个 ID 已被别的方式建的插件占用时 409 `plugin-package-exists`。审计 `plugin.package.changed`（`operation: import`）。
 - `GET /plugin-packages/session-draft?sessionId=` 回答 `{ present, pluginId? }`：会话文件夹里有没有草稿。
+
+**创造会话的插件草稿。** `POST /tasks` 带 `pluginCreation: true` 创建专用会话。Host 记录其创作身份，普通会话不提供可信模块导入。只有人选择技能或工具草稿时，`POST /plugin-packages/import` 才带 `kind: "plugin"` 并读取独立的 `latch-plugin/latch-plugin.json`、包内 `.mjs`、`.md`、`.txt`。仍执行文件范围、链接、秘密与字节限制。格式 1 至少声明一项技能、Host 模块、面板或数据面板；完整包再经插件资产校验。同 ID 不能覆盖其他创作会话或其他来源类型的插件。`source.kind` 仅这类来源为 `plugin`。开发中自动构建只接受页面。导入回执按设备和请求号绑定会话、类型、修订与安装身份。重试先结算已捕获的导入，再看现在的草稿；源已修改或删除也不另导一份。同 ID 重装的资产不会接收旧回执。两种草稿可以并存，探测返回 `kinds` 和已关联的 `pluginIds`。仅有页面时沿用旧响应。详见[创造模式与插件市场](PLUGIN-DEVELOPMENT.md#创造模式与插件市场)。
+
+**文件导入的页面。** 从文件或市场取得的格式 2 页面同样先保存草稿，再按真实入口判断是否需要构建。包含 TS/TSX 源码的页面在精确修订成功构建后可样例预览和应用；缺少来源会话的包无需伪造一个。可直接导出再导入。
+
+**从市场下载的页面。** 随附目录、npm 仓库、GitHub 或本机来源的页面资产先保存为草稿，继续走相同的构建与应用流程。应用前展示来源、已应用版本与目标版本、各页面声明的能力，以及比当前版本新增或放宽的能力。应用后才切换版本，超出已批准的能力时由 Host 要求本机确认。见 [插件开发](PLUGIN-DEVELOPMENT.md#从-github-或本机添加插件)。
 
 **构建。** `POST /plugin-packages/:id/build` `{ requestId, revision }` 只构建草稿当前的修订；这个修订已有成功的构建时直接回答它。Host 同时只跑一个构建（`app-build.ts`）。esbuild 与 tsc 只解析、不执行输入。
 
@@ -306,7 +316,7 @@ sandbox allow-scripts; default-src 'none'; script-src 'sha256-<runtime>' blob:; 
 ## 壳层
 
 - **入口。** 有未停用的页面时才出现「应用」入口，路由 `apps/<pluginId>/<appId>`；停用后入口、框、端口与订阅立刻消失。页面打开时会话栏不卸载，会话、草稿与阅读位置不变。
-- **页头是壳层的。** 标题、插件名称与版本、重新加载与诊断在框外；这台 Mac 的管理设备另有停用与回退，用插件资产的接口与本机确认。
+- **页头是壳层的。** 标题、插件名称与版本、重新加载与诊断在框外；这台 Mac 的管理设备另有停用与回退，回退先打开插件修订审阅。
 - **安全界面在框外。** 壳层有 `[data-secure]` 界面、打开的对话框或 Toast 时，框设 `inert`（`secureCover.ts`）。设置内的预览由包住它的设置对话框管理焦点；真正盖到预览上的其他对话框、安全界面或 Toast 仍会设 `inert`。`ui` 原语没有 `secure` 变体，也没有对话框、面板、菜单或 Toast。
 - **回到会话时重新待命。** 会话从页面下面回到眼前（页面的 `nav.openSession`、切回 Code、标签页重新显示）时，审批与提问卡重新经过 320 ms 的待命，双击的第二下落不到「允许」上。
 - **框里的按键。** 运行时只转发真实按下的 Cmd/Ctrl 组合键与 Esc；父页面只在框有焦点、没被盖住、不在迁移时收，Cmd/Ctrl 还要有刚发生的用户手势。它们作为调用交给壳层，不在壳层里派发事件：Esc 只是手机上的返回，Cmd/Ctrl 只能开关侧栏或打开设置，从不打开新会话、输入框、命令面板或查找。

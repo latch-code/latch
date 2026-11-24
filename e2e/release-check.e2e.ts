@@ -464,6 +464,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('发布检查 dra
         .click()
       await window.getByRole('button', { name: '作为应用草稿' }).click()
       const settings = window.locator('.settings-page')
+      await settings.getByRole('heading', { name: TITLE, exact: true }).waitFor()
       const card = settings.locator('.new-app-card').filter({ hasText: PLUGIN })
       await card.waitFor()
       await expect.poll(() => card.getAttribute('data-phase')).toBe('draft')
@@ -486,6 +487,10 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('发布检查 dra
       await window.emulateMedia({ colorScheme: 'light' })
 
       await card.getByRole('button', { name: '应用', exact: true }).click()
+      await window
+        .getByRole('dialog', { name: '审阅并应用插件', exact: true })
+        .getByRole('button', { name: '确认安装', exact: true })
+        .click()
       await expect.poll(() => card.getAttribute('data-phase'), SLOW).toBe('applied')
       expect((await owner.json<AppSnapshot>('snapshot')).tasks.length).toBe(before)
       await card.getByRole('button', { name: '打开' }).click()

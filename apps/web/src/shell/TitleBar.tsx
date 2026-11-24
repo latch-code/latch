@@ -1,8 +1,9 @@
 import { SHELL_COPY } from './copy.ts'
 import { useShortcutBindings } from '../core/shortcutBindings.ts'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Store } from 'lucide-react'
 import {
   Count,
+  ChevronLeftGlyph,
   Icon,
   IconButton,
   useLivePrevious,
@@ -150,6 +151,9 @@ export function TitleBar({ shell }: { shell: ShellState }) {
       </div>
       {(!sessions || route.start) && (
         <header ref={setTitleSlot} className="topbar titlebar-page">
+          {shell.marketplace && !shell.marketplaceBackInPage && (
+            <IconButton label={SHELL_COPY.back} icon={ChevronLeftGlyph} onClick={shell.dismissMarketplace} />
+          )}
           {startContext && (
             <div className="work-landing-context">
               <span>
@@ -169,6 +173,15 @@ export function TitleBar({ shell }: { shell: ShellState }) {
       {/* Shut, the sidebar's foot stands here: 设置, 额度与用量 and 检查更新, left of an open right panel. */}
       {sidebarColumn && sidebarCollapsed && (
         <div className="titlebar-foot">
+          {shell.canBrowseMarketplace && (
+            <IconButton
+              label={SHELL_COPY.marketplace}
+              icon={Store}
+              aria-current={shell.marketplace ? 'page' : undefined}
+              data-marketplace-nav=""
+              onClick={shell.openMarketplace}
+            />
+          )}
           {shell.entries.includes('settings') && (
             <IconButton
               label={SHELL_COPY.settings}
@@ -210,6 +223,7 @@ function BoardTitleBar({ shell }: { shell: ShellState }) {
         <WorkbenchComputer shell={shell} />
       </div>
       <div className="titlebar-views">
+        {shell.canBrowseMarketplace && <IconButton label={SHELL_COPY.marketplace} icon={Store} onClick={shell.openMarketplace} />}
         {shell.entries.includes('settings') && (
           <IconButton
             label={SHELL_COPY.settings}

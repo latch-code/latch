@@ -745,6 +745,47 @@ describe('harness hub isolation and lifecycle', () => {
     })
   })
 
+  it('only publishes built-in request measurements from the built-in runtime', async () => {
+    const { hub: value } = await hub()
+    const task = summary('external-session')
+    const requestContext = { at: task.updatedAt, userMessages: 1, assistantMessages: 0, toolResults: 0, tools: 0, skills: 0, images: 0 }
+    const { bridge } = external([task], [], {
+      detail: async () => ({ summary: task, messages: [], approvals: [], liveText: '', cursor: 0, requestContext, contextSteps: [] }),
+    })
+    await value.attach(driver('claims'), mount(bridge))
+    const shown = await value.detail(task.id)
+    expect(shown).not.toHaveProperty('requestContext')
+    expect(shown).not.toHaveProperty('contextSteps')
+  })
+
+  it('leaves ACP context provenance to the managed ACP driver', async () => {
+    const { hub: value } = await hub()
+    const task = summary('claimed-context')
+    const at = task.updatedAt
+    const { bridge } = external([task], [], {
+      detail: async () => ({
+        summary: task,
+        messages: [{ id: 'prompt', role: 'user', text: '', turn: { contextWindow: { at, used: 300, source: 'claude-sdk', epoch: 5 } } }],
+        approvals: [],
+        liveText: '',
+        cursor: 0,
+        contextEvents: [{ id: 'third-party-id', at, source: 'claude-sdk', status: 'completed' }],
+        usageReport: {
+          at,
+          contextUsed: 300,
+          contextSource: 'claude-sdk',
+          contextEpoch: 5,
+          breakdown: { measurement: 'full', categories: [] },
+        },
+      }),
+    })
+    await value.attach(driver('claims-context'), mount(bridge))
+    const shown = await value.detail(task.id)
+    expect(shown).not.toHaveProperty('contextEvents')
+    expect(shown.usageReport).toEqual({ at, contextUsed: 300 })
+    expect(shown.messages[0]?.turn?.contextWindow).toEqual({ at, used: 300 })
+  })
+
   it('reports which folders of a project each driver receives, and passes them only to one that takes them all', async () => {
     const { hub: value } = await hub()
     const previews = new Map<string, ReturnType<typeof vi.fn>>()

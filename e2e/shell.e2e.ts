@@ -854,9 +854,7 @@ describe('the session menu', () => {
     '置顶',
     '标为未读',
     '标签…',
-    '高',
-    '中',
-    '低',
+    '优先级',
     '加入待办…',
     '复制为 Markdown',
     '导出 Markdown',
@@ -958,6 +956,15 @@ describe('the session menu', () => {
         await menu.waitFor()
         const names = await items(menu)
         await shot(state)
+        if (state === 'title-idle') {
+          await menu.getByRole('menuitem', { name: '优先级', exact: true }).click()
+          for (const name of ['高', '中', '低']) {
+            const option = page.getByRole('menuitemradio', { name, exact: true })
+            expect(await option.getAttribute('aria-checked')).toBe(String(name === '中'))
+          }
+          await page.keyboard.press('Escape')
+          await menu.getByRole('menuitem', { name: '优先级', exact: true }).waitFor()
+        }
         await page.keyboard.press('Escape')
         await menu.waitFor({ state: 'hidden' })
         return names

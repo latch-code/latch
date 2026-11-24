@@ -220,7 +220,7 @@
 :is(dialog[data-secure]:not(.ui-modal-page) > .ui-modal-surface, [data-secure] :is(.ui-dialog-surface, .ui-sheet-surface)) {
   box-shadow: var(--sh-dialog) !important;
 }
-.relay-add-dialog[data-secure] > .ui-dialog-surface {
+:is(.relay-add-dialog, .plugin-mutation-dialog)[data-secure] > .ui-dialog-surface {
   background-color: var(--pop) !important;
 }
 [data-secure] :is(.ui-modal-footer:not(.ui-sheet *), .ui-dialog-footer) {

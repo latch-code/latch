@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type RefObject } from 'react'
+import { useEffect, useId, useRef, useState, type RefObject } from 'react'
 import { PlugZap } from 'lucide-react'
 import { AGENT_PRESETS, type AgentPresetSettings, type ModelRef } from '@latch/protocol'
 import { Button, ChevronDownGlyph, Collapse, CopyButton, Hint, ICON_STROKE, Icon, RefreshGlyph, WarningGlyph } from '@latch/ui'
@@ -296,6 +296,7 @@ function HowToInstall({ preset, checking, onRecheck }: { preset: AgentPresetSett
  */
 export function FoundHarnessesCard({ onRecheck }: { onRecheck: () => Promise<void> }) {
   const listId = useId()
+  const list = useRef<HTMLUListElement>(null)
   const [presets, setPresets] = useState<AgentPresetSettings[] | null>(null)
   const [checking, setChecking] = useState(false)
   const [how, setHow] = useState<string | null>(null)
@@ -353,48 +354,55 @@ export function FoundHarnessesCard({ onRecheck }: { onRecheck: () => Promise<voi
   )
   const shown = open ?? (halfway.length > 0 || found.some(({ preset }) => preset.detected?.outdated))
   return (
-    <section className="harness-found" aria-label={COPY.found} data-open={shown ? '' : undefined}>
+    <section
+      className="harness-found"
+      aria-label={COPY.found}
+      data-open={shown ? '' : undefined}
+      data-toggled={open === null ? undefined : ''}>
       <div className="harness-found-head">
         <button
           type="button"
           className="harness-found-toggle"
           aria-expanded={shown}
           aria-controls={listId}
-          onClick={() => {
+          onClick={event => {
+            if (shown && list.current?.contains(document.activeElement)) event.currentTarget.focus({ preventScroll: true })
             setOpen(!shown)
           }}>
           <strong>{COPY.foundCount(found.length)}</strong>
-          {!shown && (
-            <span className="harness-found-marks" aria-hidden="true">
+          <span className="harness-found-indicator" aria-hidden="true">
+            <span className="harness-found-marks">
               {found.slice(0, 3).map(({ preset }) => (
                 <MarkTile key={preset.id} mark={preset.id} size={16} />
               ))}
             </span>
-          )}
-          <Icon icon={ChevronDownGlyph} size={12} className="harness-found-chevron" />
+            <Icon icon={ChevronDownGlyph} size={12} className="harness-found-chevron" />
+          </span>
         </button>
         <Button size="xs" variant="ghost" icon={RefreshGlyph} loading={checking} onClick={recheck}>
           {COPY.recheck}
         </Button>
       </div>
-      <ul id={listId} className="harness-found-list" aria-label={COPY.found} hidden={!shown} tabIndex={0}>
-        {found.map(({ preset, path }) =>
-          preset.detected?.outdated ? (
-            halfRow(preset, COPY.needsUpgrade, preset.detected.outdated.need)
-          ) : (
-            <li key={preset.id} className="harness-found-row">
-              <MarkTile mark={preset.id} size={16} />
-              <span className="harness-found-name">{preset.name}</span>
-              {path && (
-                <code className="harness-found-path" title={path}>
-                  <VisibleText text={middleEllipsis(path, 56)} />
-                </code>
-              )}
-            </li>
-          ),
-        )}
-        {halfway.map(({ preset, program }) => halfRow(preset, COPY.needsAdapter, COPY.missingAdapter(program)))}
-      </ul>
+      <Collapse id={listId} open={shown} className="harness-found-body" inert={!shown} aria-hidden={!shown}>
+        <ul ref={list} className="harness-found-list" aria-label={COPY.found} tabIndex={0}>
+          {found.map(({ preset, path }) =>
+            preset.detected?.outdated ? (
+              halfRow(preset, COPY.needsUpgrade, preset.detected.outdated.need)
+            ) : (
+              <li key={preset.id} className="harness-found-row">
+                <MarkTile mark={preset.id} size={16} />
+                <span className="harness-found-name">{preset.name}</span>
+                {path && (
+                  <code className="harness-found-path" title={path}>
+                    <VisibleText text={middleEllipsis(path, 56)} />
+                  </code>
+                )}
+              </li>
+            ),
+          )}
+          {halfway.map(({ preset, program }) => halfRow(preset, COPY.needsAdapter, COPY.missingAdapter(program)))}
+        </ul>
+      </Collapse>
     </section>
   )
 }

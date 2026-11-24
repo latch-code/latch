@@ -9,6 +9,8 @@ import { fitTabs } from './tabFit.ts'
 export interface TabOption<T extends string> {
   value: T
   label: string
+  /** The id a panel uses to name itself after this tab. */
+  id?: string
   /** The id of the panel this tab shows. */
   controls?: string
   /** A 12px glyph before the label. */
@@ -26,6 +28,7 @@ export function Tabs<T extends string>({
   value,
   options,
   onValueChange,
+  disabled = false,
   actions,
   className,
 }: {
@@ -33,6 +36,7 @@ export function Tabs<T extends string>({
   value: T
   options: ReadonlyArray<TabOption<T>>
   onValueChange: (value: T) => void
+  disabled?: boolean
   actions?: ReactNode
   className?: string
 }) {
@@ -40,6 +44,7 @@ export function Tabs<T extends string>({
   const selected = options.findIndex(option => option.value === value)
 
   const keydown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (disabled) return
     const focused = tabs.current.findIndex(tab => tab === event.target)
     const index = nextIndex(event.key, focused >= 0 ? focused : Math.max(0, selected), options.length, 'horizontal', () => true)
     if (index === undefined) return
@@ -59,13 +64,15 @@ export function Tabs<T extends string>({
               tabs.current[index] = element
             }}
             type="button"
+            id={option.id}
             role="tab"
             className="ui-tab"
             aria-selected={index === selected}
             aria-controls={option.controls}
+            aria-disabled={disabled || undefined}
             tabIndex={index === Math.max(0, selected) ? 0 : -1}
             onClick={() => {
-              if (option.value !== value) onValueChange(option.value)
+              if (!disabled && option.value !== value) onValueChange(option.value)
             }}>
             {option.icon && <Icon icon={option.icon} size={12} />}
             {option.label}

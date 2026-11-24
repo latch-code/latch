@@ -92,6 +92,72 @@ function visibleRatio(locator: Locator) {
       }),
   )
 }
+
+async function disclosureFrames(toggle: Locator, key: 'Enter' | 'Space', growAgain?: { closed: number; open: number }) {
+  const recorder = await toggle.evaluateHandle((button: HTMLButtonElement, reverseAt) => {
+    const card = button.closest('section')!
+    const chevron = button.querySelector('.harness-found-chevron')!
+    const list = card.querySelector<HTMLElement>('.harness-found-list')
+    return {
+      result: new Promise<{ heights: number[]; turns: string[]; reversalHeight: number | null; closingListAcceptedFocus: boolean }>(
+        done => {
+          button.addEventListener(
+            'click',
+            () => {
+              const heights: number[] = []
+              const turns: string[] = []
+              let reversalHeight: number | null = null
+              let closingListAcceptedFocus = false
+              const until = performance.now() + 400
+              const sample = (now: number) => {
+                const height = card.getBoundingClientRect().height
+                const { transform, rotate } = getComputedStyle(chevron)
+                if (heights.length === 0 && button.getAttribute('aria-expanded') === 'false') {
+                  list?.focus({ preventScroll: true })
+                  closingListAcceptedFocus = document.activeElement === list
+                }
+                heights.push(height)
+                turns.push(transform + rotate)
+                if (reverseAt && reversalHeight === null && height > reverseAt.closed + 5 && height < reverseAt.open - 5) {
+                  reversalHeight = height
+                  button.click()
+                }
+                if (now < until) requestAnimationFrame(sample)
+                else done({ heights, turns, reversalHeight, closingListAcceptedFocus })
+              }
+              requestAnimationFrame(sample)
+            },
+            { once: true },
+          )
+        },
+      ),
+    }
+  }, growAgain)
+  try {
+    await toggle.press(key)
+    return await recorder.evaluate(state => state.result)
+  } finally {
+    await recorder.dispose()
+  }
+}
+
+async function expectImmediateDisclosure(toggle: Locator, list: Locator) {
+  const before = await toggle.evaluate(button => {
+    const { transform, rotate } = getComputedStyle(button.querySelector('.harness-found-chevron')!)
+    return { height: button.closest('section')!.getBoundingClientRect().height, turn: transform + rotate }
+  })
+  expect(before.height).toBeGreaterThan(0)
+  const opening = await disclosureFrames(toggle, 'Enter')
+  expect(await toggle.getAttribute('aria-expanded')).toBe('true')
+  expect(await list.isVisible()).toBe(true)
+  const closing = await disclosureFrames(toggle, 'Space')
+  expect(await toggle.getAttribute('aria-expanded')).toBe('false')
+  expect(await list.isVisible()).toBe(false)
+  expect(opening.heights.at(-1)).toBeGreaterThan(before.height)
+  expect(closing.heights.at(-1)).toBe(before.height)
+  expect(new Set([...opening.heights, ...closing.heights])).toEqual(new Set([before.height, opening.heights.at(-1)]))
+  expect(new Set([...opening.turns, ...closing.turns])).toEqual(new Set([before.turn, opening.turns.at(-1)]))
+}
 async function enroll(page: Page) {
   page.setDefaultTimeout(15_000)
   await page.getByRole('button', { name: '继续', exact: true }).click()
@@ -271,12 +337,14 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         application = await launch(host, join(directory, 'electron'))
         const page = await application.firstWindow()
         await resize(application, page, 1280, 640)
+        await page.emulateMedia({ reducedMotion: 'no-preference' })
         await enroll(page)
         const found = page.getByRole('region', { name: '找到的 Harness', exact: true })
         const summary = `在这台 Mac 上找到 ${AGENT_PRESETS.length} 个 Harness`
         const toggle = found.getByRole('button', { name: summary, exact: true })
         const composer = page.locator('.workbench-home form.composer')
         const list = found.getByRole('list')
+        const recheck = found.getByRole('button', { name: '重新检测', exact: true })
         // One line: how many, their marks, and the way to open the list.
         expect(await toggle.getAttribute('aria-expanded')).toBe('false')
         expect(await list.isVisible()).toBe(false)
@@ -286,11 +354,30 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         expect(await visibleRatio(composer)).toBe(1)
         await mkdir('test-results/desktop-first-use', { recursive: true })
         await page.screenshot({ path: 'test-results/desktop-first-use/found-many-1280x640.png', animations: 'disabled' })
-        await toggle.click()
-        await list.waitFor()
+        const closed = (await found.boundingBox())!.height
+        const opening = await disclosureFrames(toggle, 'Enter')
+        const open = opening.heights.at(-1)!
+        expect(opening.heights.some(height => height > closed + 5 && height < open - 5)).toBe(true)
+        expect(await toggle.getAttribute('aria-expanded')).toBe('true')
+        await recheck.press('Tab')
+        expect(await list.evaluate(element => element === document.activeElement)).toBe(true)
         expect(await visibleRatio(composer)).toBe(1)
         await noHorizontalOverflow(page)
         await page.screenshot({ path: 'test-results/desktop-first-use/found-many-open-1280x640.png', animations: 'disabled' })
+
+        const closing = await disclosureFrames(toggle, 'Space')
+        expect(closing.heights.some(height => height > closed + 5 && height < open - 5)).toBe(true)
+        expect(closing.closingListAcceptedFocus).toBe(false)
+        expect(await toggle.getAttribute('aria-expanded')).toBe('false')
+        expect(await list.isVisible()).toBe(false)
+        await toggle.click()
+        await expect.poll(async () => (await found.boundingBox())!.height).toBe(open)
+        const reversed = await disclosureFrames(toggle, 'Space', { closed, open })
+        expect(reversed.reversalHeight).not.toBeNull()
+        expect(Math.min(...reversed.heights)).toBeGreaterThan(closed)
+        expect(reversed.heights.at(-1)).toBe(open)
+        expect(await toggle.getAttribute('aria-expanded')).toBe('true')
+        expect(await list.isVisible()).toBe(true)
 
         // At a shorter height the rows scroll, but the card, its header and the composer stay whole.
         await resize(application, page, 1280, 480)
@@ -318,7 +405,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
 
         // A fresh check can show an upgrade action in a row, and the card still folds from its header.
         needsUpgrade = true
-        await found.getByRole('button', { name: '重新检测', exact: true }).click()
+        await recheck.click()
         await lastRow.getByText('需要升级', { exact: true }).waitFor()
         await lastRow.getByRole('button', { name: `怎么升级 ${lastPreset.name}`, exact: true }).click()
         await lastRow.getByText(upgrade.upgrade, { exact: true }).waitFor()
@@ -327,6 +414,17 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await list.waitFor({ state: 'hidden' })
         expect(await marks.count()).toBeGreaterThan(1)
         expect(await visibleRatio(composer)).toBe(1)
+
+        // The system and the device setting each remove both the height animation and the arrow's turn.
+        await expectImmediateDisclosure(toggle, list)
+        await page.emulateMedia({ reducedMotion: 'no-preference' })
+        const settings = await openSettings(page)
+        await openSection(settings, '外观')
+        await settings.getByRole('radiogroup', { name: '动效', exact: true }).getByRole('radio', { name: '减弱', exact: true }).click()
+        await page.locator('html[data-motion="reduce"]').waitFor({ state: 'attached' })
+        await closeSettings(settings)
+        await reachable(toggle)
+        await expectImmediateDisclosure(toggle, list)
       } finally {
         await application?.close()
         await host.close()

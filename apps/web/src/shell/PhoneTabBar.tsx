@@ -5,7 +5,7 @@ import { waitingCount } from '../sessions.ts'
 import type { ShellEntry } from './routes.ts'
 import type { ShellState } from './useShellLayout.tsx'
 
-const TABS: Record<ShellEntry, IconComponent> = {
+const TABS: Record<Exclude<ShellEntry, 'marketplace'>, IconComponent> = {
   sessions: CodeGlyph,
   agents: AgentsGlyph,
   apps: PluginsGlyph,

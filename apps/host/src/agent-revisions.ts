@@ -10,7 +10,12 @@ export function agentPluginRevision(bundle: PluginPackageBundle): string {
       host: manifest.host,
       config: manifest.config,
       skills: manifest.skills,
-      panels: (manifest.panels ?? []).map(panel => ({ id: panel.id, entry: panel.entry, harnessIds: panel.harnessIds ?? [] })),
+      panels: (manifest.panels ?? []).map(panel => ({
+        id: panel.id,
+        entry: panel.entry,
+        harnessIds: panel.harnessIds ?? [],
+        ...(panel.context ? { context: true } : {}),
+      })),
       files: bundle.files,
     }),
   )

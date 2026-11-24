@@ -244,12 +244,14 @@
 .sidebar-nav-row:active {
   background: var(--press);
 }
-.sidebar-nav-row[aria-pressed='true'] {
+.sidebar-nav-row:is([aria-pressed='true'], [aria-current='page']),
+.workbench-tablet-rail [data-marketplace-nav][aria-current='page'],
+.titlebar-foot [data-marketplace-nav][aria-current='page'] {
   background: var(--selected);
   box-shadow: var(--selected-ring);
   color: var(--ink);
 }
-.sidebar-nav-row[aria-pressed='true'] > svg {
+.sidebar-nav-row:is([aria-pressed='true'], [aria-current='page']) > svg {
   color: var(--ink);
 }
 /* Drawn with the Button primitive for its key caps, laid out as a row: words from the start, no press scale. */

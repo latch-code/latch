@@ -311,7 +311,7 @@ describe('Claude through the Agent SDK', () => {
       locations: [{ path: '/work/a.txt', line: 1 }],
     })
     expect(updates(h, 'tool_call_update')[0]).toMatchObject({ toolCallId: 'toolu_1', status: 'completed' })
-    expect(updates(h, 'usage_update').at(-1)).toEqual({
+    expect(updates(h, 'usage_update').at(-1)).toMatchObject({
       sessionUpdate: 'usage_update',
       used: 4321,
       size: 200_000,
@@ -534,7 +534,9 @@ describe('Claude through the Agent SDK', () => {
       usage: { input_tokens: 1, output_tokens: 1 },
     })
     await answered
-    expect(updates(h, 'usage_update').at(-1)).toEqual({ sessionUpdate: 'usage_update', used: 4321, size: 200_000 })
+    const usage = updates(h, 'usage_update').at(-1)
+    expect(usage).toMatchObject({ sessionUpdate: 'usage_update', used: 4321, size: 200_000 })
+    expect(usage).not.toHaveProperty('cost')
   })
 })
 

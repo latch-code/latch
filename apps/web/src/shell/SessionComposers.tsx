@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { FAILURE_ACTION_LABEL, failureAction, type FailureStep } from '../conversation/failureAction.ts'
 import { Eraser, GitFork } from 'lucide-react'
 import { NOT_ACCEPTED_5XX, type ModelRef, type SessionConfigOption, type TaskSummary } from '@latch/protocol'
-import { Button, Collapse, Hint, Icon, InlineNotice, FolderGlyph, HistoryGlyph, ShieldAlertGlyph, Drawer } from '@latch/ui'
+import { Button, Collapse, Hint, Icon, InlineNotice, FolderGlyph, HistoryGlyph, ShieldAlertGlyph, Drawer, ValuePicker } from '@latch/ui'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import {
   draftConfig,
@@ -89,6 +89,15 @@ const COMPOSER_COPY = defineCopy(
     skipProject: '不选项目直接开始',
     pickProject: '选一个项目',
     place: '在哪里开始',
+    purpose: '模式',
+    browsePlugins: '浏览插件',
+    regular: '常规',
+    creation: '创造模式',
+    creatorTitle: '想为 Latch 做什么？',
+    creatorScope: '在专用文件夹以 Agent 模式开发；插件经你审阅和启用后生效。',
+    creatorHelp: '用对话制作插件、界面，或组合技能和工具。在专用文件夹以 Agent 模式开发。',
+    creatorUnsupported: '请选择支持创造模式的 Harness。',
+    creatorPrompt: '描述想要的功能、界面或工作方法',
     busy: '正在切换，请稍后。',
     files: '输入消息 · @ 引用文件',
     commands: '输入消息 · / 选择命令',
@@ -107,6 +116,15 @@ const COMPOSER_COPY = defineCopy(
     skipProject: 'Start without a project',
     pickProject: 'Choose a project',
     place: 'Where it starts',
+    purpose: 'Mode',
+    browsePlugins: 'Browse plugins',
+    regular: 'Standard',
+    creation: 'Creation mode',
+    creatorTitle: 'What should we make for Latch?',
+    creatorScope: 'Develop in Agent mode in a dedicated folder. Review and enable the plugin when it is ready.',
+    creatorHelp: 'Create plugins, interfaces or combinations of skills and tools with an agent in a dedicated folder.',
+    creatorUnsupported: 'Choose a Harness that supports creation mode.',
+    creatorPrompt: 'Describe the feature, interface or workflow you want',
     busy: 'Switching. Try again in a moment.',
     files: 'Message · @ mention files',
     commands: 'Message · / commands',
@@ -134,6 +152,13 @@ function HomeHeadline({ shell }: { shell: ShellState }) {
   const { catalog, choice, newChoicesLocked, access, owner, openSettings, createProject, projectAsk, chooseProject } = shell
   // Going on with another Harness is not a new question: the conversation so far stands where the headline would.
   if (!catalog || shell.submission.fork?.moved) return null
+  if (shell.creator)
+    return (
+      <div className="home-headline" data-backdrop-clear="">
+        <h2 className="home-headline-ask">{COMPOSER_COPY.creatorTitle}</h2>
+        <p className="home-headline-sub">{COMPOSER_COPY.creatorScope}</p>
+      </div>
+    )
   const project = catalog.workspaces.find(item => item.id === choice.workspaceId && item.id !== 'default')
   const name = project ? escapeHiddenCharacters(project.name || basename(project.path)) : undefined
   const picker = (face: string | undefined) => (
@@ -757,7 +782,40 @@ export function SessionComposer({
   const homePlace = home ? (
     <div className="home-place" role="group" aria-label={COMPOSER_COPY.place}>
       <StartComputer hostId={hostView(base.snapshot)?.hostId} disabled={newChoicesLocked} />
-      {worktreeOffer && (
+      {(base.creatorAvailable || base.creator) && !submission.fork && !base.board && (
+        <span>
+          <ValuePicker
+            label={COMPOSER_COPY.purpose}
+            value={base.creator ? 'creator' : 'regular'}
+            size="xs"
+            width="lg"
+            align="start"
+            disabled={newChoicesLocked}
+            onValueChange={next => {
+              base.chooseCreator(next === 'creator')
+            }}
+            options={[
+              { value: 'regular', label: COMPOSER_COPY.regular },
+              {
+                value: 'creator',
+                label: COMPOSER_COPY.creation,
+                description: COMPOSER_COPY.creatorHelp,
+                ...(!base.creatorAvailable || !chosenHarness?.pluginCreation || !chosenHarness.modes.includes('agent')
+                  ? { disabledReason: COMPOSER_COPY.creatorUnsupported }
+                  : base.creatorBlockedReason
+                    ? { disabledReason: base.creatorBlockedReason }
+                    : {}),
+              },
+            ]}
+          />
+        </span>
+      )}
+      {base.canBrowseMarketplace && !base.board && (
+        <Button variant="ghost" size="xs" data-marketplace-nav="" onClick={base.openMarketplace}>
+          {COMPOSER_COPY.browsePlugins}
+        </Button>
+      )}
+      {!base.creator && worktreeOffer && (
         <FolderControl
           project={worktreeOffer}
           worktree={submission.worktree}
@@ -794,6 +852,7 @@ export function SessionComposer({
     && (!shell.active || canQueue)
   const canSend =
     !offline
+    && !(home && base.creator && base.creatorBlocked)
     && gate.kind === 'open'
     && (selectedId === null ? block === null : sessionBlock === undefined)
     && !sideBlocked
@@ -864,7 +923,11 @@ export function SessionComposer({
         showSlashButton={speaker === undefined}
         textareaRef={composerRef}
         lastPrompt={current?.messages.findLast(message => message.role === 'user')?.text}
-        attachments={catalog?.features?.attachments === true && gate.kind === 'open' && !answer ? attachmentDraft : undefined}
+        attachments={
+          !(home && base.creator) && catalog?.features?.attachments === true && gate.kind === 'open' && !answer
+            ? attachmentDraft
+            : undefined
+        }
         fileMentions={mentionChoice}
         members={
           choices && catalog
@@ -917,7 +980,7 @@ export function SessionComposer({
         templates={templates}
         variant={selectedId === null ? 'new' : 'session'}
         label={noteComposer ? APPROVAL_COPY.rejectPlaceholder : selectedId === null ? SHELL_COPY.message : SHELL_COPY.continueChat}
-        placeholder={inputHint}
+        placeholder={home && base.creator ? COMPOSER_COPY.creatorPrompt : inputHint}
         draft={submission.draft}
         onDraft={setSubmissionDraft}
         pending={submission.pending}
@@ -955,7 +1018,13 @@ export function SessionComposer({
         abandonHeld={submission.sendingElsewhere ? SHELL_COPY.retryElsewhere : undefined}
         pendingNote={pendingQueued === 'waiting' ? SHELL_COPY.queued : pendingQueued === 'parked' ? SHELL_COPY.parked : undefined}
         canSend={canSend}
-        blockReason={offline ? CONNECTION_COPY.offline : (block?.message ?? sessionBlock ?? sideBlocked)}
+        blockReason={
+          offline
+            ? CONNECTION_COPY.offline
+            : home && base.creator && base.creatorBlocked
+              ? COMPOSER_COPY.creatorUnsupported
+              : (block?.message ?? sessionBlock ?? sideBlocked)
+        }
         readOnly={
           gate.kind === 'read-only'
             ? gate.text
@@ -1171,6 +1240,9 @@ export function SessionComposer({
   if (!home || pendingInTranscript)
     return (
       <>
+        {!home && visible && shell.showCreatorDraft && !(shell.panelVisible && shell.panelSelected === 'changes') && (
+          <div data-draft-place="conversation" ref={shell.setCreatorDraftTarget} />
+        )}
         {composer}
         {replacement && mayAskSide && sidePanel && (
           <ReplaceSideQuestionDialog

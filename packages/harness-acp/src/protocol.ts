@@ -1,5 +1,6 @@
 /** The subset of ACP v1 that Latch reads. Everything from the agent is untrusted and parsed tolerantly. */
 import { z } from 'zod'
+import { contextBreakdown, contextCompactionMetrics } from './context-telemetry.ts'
 
 export const PROTOCOL_VERSION = 1
 /** Wire-to-runtime metadata; native paths never belong to this update. */
@@ -237,6 +238,18 @@ export const infoUpdate = z.object({ title: optionalText })
 export const usageUpdate = z.object({
   used: z.number().nonnegative().finite().optional().catch(undefined),
   size: z.number().positive().finite().optional().catch(undefined),
+  _meta: z
+    .object({
+      latchClaudeContext: z
+        .object({
+          turnId: z.string().max(128).optional().catch(undefined),
+          breakdown: contextBreakdown.optional().catch(undefined),
+        })
+        .optional(),
+      latchCodexContext: z.object({ turnId: z.string().max(128).optional() }).optional(),
+    })
+    .optional()
+    .catch(undefined),
   cost: z
     .object({ amount: z.number().nonnegative().finite(), currency: z.string().regex(/^[A-Z]{3}$/u) })
     .nullish()
@@ -253,6 +266,10 @@ export const noticeUpdate = z.object({
 export const compactionUpdate = z.object({
   compactionId: z.string().min(1).max(256),
   status: z.string().max(64),
+  latchClaudeCompaction: contextCompactionMetrics
+    .extend({ turnId: z.string().max(128).optional().catch(undefined) })
+    .optional()
+    .catch(undefined),
   summary: z.array(z.unknown()).nullish(),
   error: z.string().nullish(),
 })
@@ -288,6 +305,10 @@ export type TurnTokens = z.infer<typeof turnTokens>
 export const TOKENS_UPDATE = '_latch_tokens'
 export const tokensUpdate = turnTokens.extend({
   scope: z.enum(['session', 'turn']),
+  /** Latch's user message, when the wire matched the report's native turn. */
+  turnId: z.string().max(128).optional(),
+  /** This is the previous native turn's total, before the named Latch input. */
+  beforeTurnId: z.string().max(128).optional(),
   /** This turn's output that streamed as text and reasoning, and for how long by the Harness's own times. */
   stream: z.object({ outputTokens: z.number().positive().finite(), ms: z.number().positive().finite() }).optional().catch(undefined),
 })

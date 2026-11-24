@@ -5,7 +5,7 @@ export type { FileMention } from './file-refs.ts'
 export type { AttachmentRef } from './attachments.ts'
 
 export type { SkillInfo, UiPanelInfo, UiPanelBlock, UiPanelDocument } from './ui.ts'
-export type { HostFeatures, SearchHit, SearchResults, SessionBatchResult } from './features.ts'
+export type { BundledWorkspacePage, HostFeatures, SearchHit, SearchResults, SessionBatchResult } from './features.ts'
 export type { AgentQuestion, QuestionAnswer, QuestionSubmission, QuestionReceipt, QuestionResult } from './questions.ts'
 
 export type * from './sessions.ts'
@@ -36,3 +36,4 @@ export type * from './app-bridge.ts'
 export type * from './native-approvals.ts'
 export type * from './computers.ts'
 export type * from './extensions.ts'
+export type * from './plugin-packages.ts'

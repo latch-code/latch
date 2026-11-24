@@ -1,4 +1,5 @@
-import type { PluginInfo, PluginPackageBundle, PluginPackageManifest } from '@latch/protocol'
+import type { AppSnapshot, PluginInfo, PluginPackageBundle, PluginPackageManifest } from '@latch/protocol'
+import type { DeviceAccess } from '../core/permissions.ts'
 import { PLUGIN_REACH_COPY } from '../core/securityCopy.ts'
 import { MessageError } from '../core/api.ts'
 import { defineCopy } from '../core/i18n.ts'
@@ -16,6 +17,19 @@ const COPY = defineCopy(
 
 const fail = () => new MessageError(COPY.badBundle)
 
+export function canEditPluginPackages(snapshot: AppSnapshot, access: DeviceAccess): boolean {
+  return snapshot.catalog?.features?.pluginPackages === true && access.local && access.admin && access.device?.dataScope === 'all'
+}
+
+export function downloadPluginBundle(id: string, bundle: PluginPackageBundle): void {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = id + '.latch-plugin.json'
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 /** Bounded renderable import. The Host validates the full contract before saving or importing code. */
 export function readPluginBundle(text: string): PluginPackageBundle {
   if (new TextEncoder().encode(text).length > 8 * 1024 * 1024) throw fail()
@@ -30,7 +44,7 @@ export function readPluginBundle(text: string): PluginPackageBundle {
     manifest = bundle.manifest
   if (
     !manifest
-    || manifest.formatVersion !== 1
+    || (manifest.formatVersion !== 1 && manifest.formatVersion !== 2)
     || typeof manifest.id !== 'string'
     || !/^[A-Za-z0-9_-]{1,64}$/u.test(manifest.id)
     || typeof manifest.name !== 'string'
@@ -63,7 +77,22 @@ export function readPluginBundle(text: string): PluginPackageBundle {
       ))
   )
     throw fail()
+  if (
+    manifest.apps !== undefined
+    && (manifest.formatVersion !== 2
+      || !Array.isArray(manifest.apps)
+      || manifest.apps.length > 4
+      || !manifest.apps.every(
+        page => page && typeof page.id === 'string' && typeof page.title === 'string' && typeof page.entry === 'string',
+      ))
+  )
+    throw fail()
   return bundle as PluginPackageBundle
+}
+
+/** A TS/TSX entry must go through the Host builder before it can be applied. */
+export function needsPageBuild(manifest?: PluginPackageManifest): boolean {
+  return Array.isArray(manifest?.apps) && manifest.apps.some(page => typeof page?.entry === 'string' && /\.tsx?$/iu.test(page.entry))
 }
 
 /** Preserve contributions the simple form does not know about. */
@@ -99,14 +128,22 @@ export interface PluginReach {
   body: string
 }
 
-type ReachParts = Record<PluginReach['id'], boolean>
+type ReachParts = Record<PluginReach['id'] | 'context', boolean>
 
 function reach(parts: ReachParts): PluginReach[] {
-  return (['page', 'host', 'text'] as const).filter(part => parts[part]).map(part => ({ id: part, ...PLUGIN_REACH_COPY[part] }))
+  return (['page', 'host', 'text'] as const)
+    .filter(part => parts[part])
+    .map(part => {
+      const copy = PLUGIN_REACH_COPY[part]
+      return part === 'page' && parts.context
+        ? { id: part, ...copy, body: copy.body + ' ' + PLUGIN_REACH_COPY.context }
+        : { id: part, ...copy }
+    })
 }
 
 const manifestParts = (manifest: PluginPackageManifest): ReachParts => ({
   page: (manifest.panels?.length ?? 0) > 0,
+  context: Array.isArray(manifest.panels) && manifest.panels.some(panel => panel?.context === true),
   host: (manifest.host?.length ?? 0) > 0,
   text: (manifest.skills?.length ?? 0) > 0 || (manifest.dataPanels?.length ?? 0) > 0,
 })
@@ -115,6 +152,7 @@ function capabilityParts(capabilities: readonly string[]): ReachParts {
   const kinds = new Set(capabilities.map(capability => capability.split(':')[0]))
   return {
     page: kinds.has('ui'),
+    context: kinds.has('ui-context'),
     host: ['tool', 'harness', 'provider', 'transport'].some(kind => kinds.has(kind)),
     text: kinds.has('skill') || kinds.has('data'),
   }
@@ -149,7 +187,12 @@ export function pluginReach(plugin: Pick<PluginInfo, 'capabilities'>): PluginRea
  * delivers.
  */
 export function packageReach(manifest: PluginPackageManifest | undefined, running: Pick<PluginInfo, 'capabilities'>): PluginReach[] {
-  const declared = manifest ? manifestParts(manifest) : { page: false, host: false, text: false }
+  const declared = manifest ? manifestParts(manifest) : { page: false, host: false, text: false, context: false }
   const loaded = capabilityParts(running.capabilities)
-  return reach({ page: declared.page || loaded.page, host: declared.host || loaded.host, text: declared.text || loaded.text })
+  return reach({
+    page: declared.page || loaded.page,
+    host: declared.host || loaded.host,
+    text: declared.text || loaded.text,
+    context: declared.context || loaded.context,
+  })
 }

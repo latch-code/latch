@@ -681,6 +681,13 @@ describe('pending submissions', () => {
     })
     writePending('k', submission)
     expect(readPending('k')).toEqual(submission)
+    // Reloading an uncertain creator start must retain its intent and its exact request ID.
+    const creation = { requestId: 'create-id', prompt: 'make a plugin', mode: 'agent', harnessId: 'fake', pluginCreation: true } as const
+    writePending('k', creation)
+    expect(readPending('k')).toEqual(creation)
+    expect(submissionRequest(readPending('k')!)).toEqual({ path: 'tasks', body: creation })
+    writePending('k', { ...creation, workspaceId: 'previous-project' })
+    expect(readPending('k')).toBeNull()
     // A worktree belongs to a new session only.
     store.set('k', JSON.stringify({ requestId: 'r1', prompt: 'p', sessionId: 's', worktree: true }))
     expect(readPending('k')).toBeNull()

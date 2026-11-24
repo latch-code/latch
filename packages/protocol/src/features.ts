@@ -1,6 +1,19 @@
 import type { HarnessLoginStatus } from './harnesses.ts'
 import type { TokenUsage } from './types.ts'
 
+/** Metadata for a workspace view compiled into both the Host and Web distributions. */
+export interface BundledWorkspacePage {
+  pluginId: string
+  pageId: string
+  version: number
+}
+
+export const PLUGIN_MARKETPLACE_PAGE = {
+  pluginId: 'latch-workspace:marketplace',
+  pageId: 'marketplace',
+  version: 1,
+} as const satisfies BundledWorkspacePage
+
 /** Optional feature discovery; older Hosts omit these fields. */
 export interface HostFeatures {
   /** 设置 › MCP: Latch's own MCP servers (`/mcp/servers`). */
@@ -22,6 +35,11 @@ export interface HostFeatures {
   fileContentSearch?: true
   fileTree?: true
   pluginPackages?: true
+  /** This Host supports a locally approved registry for previewing and staging npm releases. */
+  pluginNpmRegistry?: true
+  pluginExternalSources?: true
+  /** This computer can prepare a fresh session with offline plugin-authoring material. */
+  pluginCreation?: true
   filePreview?: true
   nativeBulk?: true
   nativeBulkStream?: true

@@ -44,7 +44,7 @@
     background-color var(--m-micro) var(--e-micro),
     color var(--m-micro) var(--e-micro);
 }
-.ui-tab:hover:not([aria-selected='true'], [aria-pressed='true']) {
+.ui-tab:hover:not([aria-selected='true'], [aria-pressed='true'], [aria-disabled='true']) {
   background: var(--hover);
   color: var(--ink-2);
 }
@@ -52,6 +52,9 @@
 .ui-tab[aria-pressed='true'] {
   background: var(--hover);
   color: var(--ink);
+}
+.ui-tab[aria-disabled='true'] {
+  opacity: 0.45;
 }
 @media (max-width: 767.98px) {
   .ui-tab-list,

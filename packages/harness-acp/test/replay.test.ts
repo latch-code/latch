@@ -131,6 +131,16 @@ const SCENARIOS: Record<string, (detail: DriverTaskDetail, transcript: Transcrip
   },
   compaction(detail) {
     expect(detail.summary.status).toBe('idle')
+    expect(detail.contextEvents).toEqual([
+      {
+        id: expect.stringMatching(/^[a-f\d]{64}$/u),
+        at: expect.any(String),
+        status: 'completed',
+        source: 'acp',
+        turnId: detail.messages[0]?.id,
+      },
+    ])
+    expect(detail.messages[0]?.turn?.contextWindow).toMatchObject({ used: 1950, size: 272000, source: 'acp', epoch: 1 })
     const rows = detail.messages.map((message: Message) => `${message.role}:${message.text}`)
     // One row, between the text before it and the text after it, with its final state.
     expect(rows).toEqual([
@@ -157,6 +167,7 @@ const SCENARIOS: Record<string, (detail: DriverTaskDetail, transcript: Transcrip
   },
   compact_failed(detail) {
     expect(detail.summary.status).toBe('idle')
+    expect(detail.contextEvents).toMatchObject([{ status: 'failed', source: 'acp', turnId: detail.messages[2]?.id }])
     expect(detail.messages.map((message: Message) => `${message.role}:${message.text}`).slice(2)).toEqual([
       'user:/compact',
       'system:pi 压缩上下文失败：Nothing to compact (session too small)',
@@ -165,6 +176,7 @@ const SCENARIOS: Record<string, (detail: DriverTaskDetail, transcript: Transcrip
   // One of pi's extensions cancelled it.
   compact_cancelled(detail) {
     expect(detail.summary.status).toBe('idle')
+    expect(detail.contextEvents).toMatchObject([{ status: 'cancelled', source: 'acp', turnId: detail.messages[2]?.id }])
     expect(detail.messages.map((message: Message) => `${message.role}:${message.text}`).slice(2)).toEqual([
       'user:/compact Drop the tool output',
       'system:pi 已取消压缩上下文',

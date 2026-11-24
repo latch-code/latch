@@ -101,7 +101,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 | 模块边界、Harness 路由、持久化、HTTP API、路径与项目目录、各功能的安全规则 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | ACP Agent 接入、项目配置、权限模式读回、取消与恢复 | [docs/HARNESSES.md](docs/HARNESSES.md) |
 | SSE、fetch 事件流、重连、消息身份、审批顺序、取消、阅读位置 | [docs/STREAMING.md](docs/STREAMING.md) |
-| Provider、Tool（风险分级）、插件生命周期、HarnessDriver | [docs/PLUGIN-DEVELOPMENT.md](docs/PLUGIN-DEVELOPMENT.md) |
+| Provider、Tool（风险分级）、插件生命周期、创造模式与市场、HarnessDriver | [docs/PLUGIN-DEVELOPMENT.md](docs/PLUGIN-DEVELOPMENT.md) |
 | 布局、配色、图标、组件与交互，设备与权限界面 | [docs/DESIGN.md](docs/DESIGN.md) |
 | 选择测试范围、编写测试、测试 Host 与共享向量、仓库检查 | [docs/TESTING.md](docs/TESTING.md) |
 | MCP 服务器与 `latch-mcp` | [docs/MCP.md](docs/MCP.md) |

@@ -11,6 +11,32 @@ export const LANGS: Record<Lang, { tag: string; og: string; prefix: string; name
 export const href = (lang: Lang, path: string) => `${LANGS[lang].prefix}${path}`
 
 const en = {
+  marketplace: {
+    title: 'Plugin marketplace',
+    browse: 'Browse plugins',
+    previewLink: 'Explore release check history',
+    cover: {
+      next: 'Next step',
+      tests: 'Tests passed',
+      compatibility: 'Compatibility checked',
+      version: 'Version',
+      changelog: 'Changelog',
+      passed: 'Passed',
+      pending: 'Needs review',
+      request: (n: number) => `Request ${n}`,
+      toolSchemas: 'Tool definitions',
+    },
+    metaTitle: 'Plugin marketplace | Latch',
+    metaDescription:
+      'Browse Latch plugins for release reviews, team handoffs and session panels. See what each adds to your workbench and your agent, then download it for your Mac.',
+    intro:
+      'Open Plugin marketplace in the Latch sidebar. To install a downloaded file on your Mac, choose Settings → Plugins → Import file…, then review and apply it.',
+    author: 'Make and share a plugin',
+    use: 'Where to use it',
+    agent: 'What the agent gets',
+    access: 'Access',
+    download: 'Download plugin',
+  },
   meta: {
     homeTitle: 'Latch | One workbench for the agents on your computer',
     homeDescription:
@@ -201,6 +227,31 @@ const en = {
 export type Copy = typeof en
 
 const zh: Copy = {
+  marketplace: {
+    title: '插件市场',
+    browse: '浏览插件',
+    previewLink: '查看发布检查记录',
+    cover: {
+      next: '下一步',
+      tests: '测试通过',
+      compatibility: '兼容性已核对',
+      version: '版本号',
+      changelog: '变更记录',
+      passed: '通过',
+      pending: '待核对',
+      request: (n: number) => `第 ${n} 次请求`,
+      toolSchemas: '工具定义',
+    },
+    metaTitle: '插件市场｜Latch',
+    metaDescription:
+      '浏览发布检查、交接清单和会话面板等 Latch 插件，查看它们能为工作台和 Agent 添加什么能力、在哪里使用、需要哪些权限，再下载到自己的 Mac。',
+    intro: '在 Latch 侧栏打开「插件市场」。也可以下载插件文件，在 Mac 上从「设置 › 插件 › 导入文件…」打开，查看内容后再应用。',
+    author: '制作与分享插件',
+    use: '在哪里使用',
+    agent: 'Agent 能做什么',
+    access: '运行权限',
+    download: '下载插件',
+  },
   meta: {
     homeTitle: 'Latch | 把电脑上的 Agent 放进同一个工作台',
     homeDescription: 'Latch 在你的 Mac 上让 Codex、Claude Code 等编程 Agent 组队干活，iPhone 和 iPad 打开同一段对话，随时查看与批准。',

@@ -46,13 +46,14 @@ import {
   OfflineGlyph,
 } from '@latch/ui'
 import type { AppDiagnostic, AppMigrationLease, AppSummary, PluginPackageDetail } from '@latch/protocol'
-import { api, inlineError, isUncertain, newRequestId } from '../core/api.ts'
+import { api, inlineError, isUncertain, newRequestId, type ApiOptions } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { NavTop, NewSessionRow, ShellNewAgent, ShellNavFoot, shellSpaces } from '../shell/SpaceNav.tsx'
 import { SidebarComputer } from '../shell/WorkbenchNav.tsx'
 import { settingsSections } from '../settings/SettingsPage.tsx'
+import { PluginMutationDialog, reviewedPluginMutation, type PluginMutationTarget } from '../settings/PluginMutationReview.tsx'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { AppTarget } from '../shell/routes.ts'
 import { AppFrame, hostInfo, reportDiagnostic, type FrameOutcome } from './AppFrame.tsx'
@@ -86,6 +87,8 @@ const COPY = defineCopy(
     usingOld: '新版本没有打开，正在显示上一个版本',
     reading: '正在读取…',
     noDiagnostics: '没有诊断',
+    unknownChange: '修改结果尚未确认。',
+    retrySame: '重试同一请求',
     plugin: (name: string, version?: string) => `插件 · ${name}${version ? ` ${version}` : ''}`,
     rollback: (version: string) => `回退到 ${version}`,
     editOn: (computer: string) => `在 ${computer} 上修改`,
@@ -115,6 +118,8 @@ const COPY = defineCopy(
     usingOld: 'The new version couldn’t open. Showing the previous version.',
     reading: 'Loading…',
     noDiagnostics: 'No diagnostics',
+    unknownChange: 'The outcome is unknown.',
+    retrySame: 'Retry same request',
     plugin: (name: string, version?: string) => `Plugin · ${name}${version ? ` ${version}` : ''}`,
     rollback: (version: string) => `Roll back to ${version}`,
     editOn: (computer: string) => `Edit on ${computer}`,
@@ -300,9 +305,8 @@ type Phase = { kind: 'loading' } | { kind: 'ready' } | { kind: 'failed' } | { ki
 
 /** Pending management changes keep their request ID until the Host has answered. */
 interface PendingChange {
-  kind: 'disable' | 'rollback'
-  requestId: string
-  revision?: string
+  path: string
+  options: ApiOptions
 }
 
 /** One page: its header (title, 「插件 · 名称 版本」, ⋯) over the frame, or the state that stands in for it. */
@@ -322,6 +326,7 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
   const [lease, setLease] = useState<AppMigrationLease | undefined>()
   const [detail, setDetail] = useState<PluginPackageDetail | undefined>()
   const [pending, setPending] = useState<PendingChange | null>(null)
+  const [reviewTarget, setReviewTarget] = useState<PluginMutationTarget | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const retry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -443,22 +448,12 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
   }, [version, attempt, page.status, canRun, online, page.bundleHash])
 
   const change = async (next: PendingChange) => {
-    if (busy) return
+    if (busy || (pending && next !== pending) || !manager || !online) return
     setBusy(true)
     setError('')
     setPending(next)
-    const id = encodeURIComponent(page.pluginId)
     try {
-      await withConfirmation(confirmation =>
-        api(next.kind === 'disable' ? `plugin-packages/${id}/enabled` : `plugin-packages/${id}/rollback`, {
-          method: 'POST',
-          body:
-            next.kind === 'disable'
-              ? { requestId: next.requestId, enabled: false }
-              : { requestId: next.requestId, revision: next.revision },
-          ...(confirmation ? { confirmation } : {}),
-        }),
-      )
+      await withConfirmation(confirmation => api(next.path, { ...next.options, ...(confirmation ? { confirmation } : {}) }))
       setPending(null)
       await shell.refresh()
       reload()
@@ -469,17 +464,17 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
       setBusy(false)
     }
   }
-  const previous = detail?.rollbackRevisions?.[0]
+  const previous = detail?.appliedRevision === page.revision ? detail.rollbackRevisions?.[0] : undefined
+  const manageLocked = busy || pending !== null || !online || reviewTarget !== null
   const disable = () => {
-    void change(pending?.kind === 'disable' ? pending : { kind: 'disable', requestId: newRequestId() })
+    void change({
+      path: `plugin-packages/${encodeURIComponent(page.pluginId)}/enabled`,
+      options: { method: 'POST', body: { requestId: newRequestId(), enabled: false } },
+    })
   }
   const rollback = () => {
-    if (!previous) return
-    void change(
-      pending?.kind === 'rollback' && pending.revision === previous.revision
-        ? pending
-        : { kind: 'rollback', requestId: newRequestId(), revision: previous.revision },
-    )
+    if (!previous || manageLocked || !manager) return
+    setReviewTarget({ operation: 'rollback', id: page.pluginId, name: page.pluginName, revision: previous.revision })
   }
   const sections: ActionMenuSection[] = [
     {
@@ -500,10 +495,8 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
           {
             id: 'manage',
             items: [
-              { id: 'disable', label: COPY.disable, disabled: busy || !online, onSelect: disable },
-              ...(previous
-                ? [{ id: 'rollback', label: COPY.rollback(previous.version), disabled: busy || !online, onSelect: rollback }]
-                : []),
+              { id: 'disable', label: COPY.disable, disabled: manageLocked, onSelect: disable },
+              ...(previous ? [{ id: 'rollback', label: COPY.rollback(previous.version), disabled: manageLocked, onSelect: rollback }] : []),
             ],
           },
         ]
@@ -524,11 +517,11 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
   }
   const manageActions = manager && (
     <>
-      <Button variant="outline" disabled={busy || !online} onClick={disable}>
+      <Button variant="outline" disabled={manageLocked} onClick={disable}>
         {COPY.disable}
       </Button>
       {previous && (
-        <Button variant="outline" disabled={busy || !online} onClick={rollback}>
+        <Button variant="outline" disabled={manageLocked} onClick={rollback}>
           {COPY.rollback(previous.version)}
         </Button>
       )}
@@ -574,7 +567,7 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
           <>
             {showDiagnostics}
             {manager && previous && (
-              <Button variant="outline" disabled={busy || !online} onClick={rollback}>
+              <Button variant="outline" disabled={manageLocked} onClick={rollback}>
                 {COPY.rollback(previous.version)}
               </Button>
             )}
@@ -671,6 +664,18 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
           {error}
         </InlineNotice>
       )}
+      {manager && pending && !busy && (
+        <InlineNotice
+          tone="warn"
+          className="app-page-error"
+          action={
+            <Button disabled={!online} onClick={() => void change(pending)}>
+              {COPY.retrySame}
+            </Button>
+          }>
+          {COPY.unknownChange}
+        </InlineNotice>
+      )}
       {fallback && (
         <InlineNotice
           tone="warn"
@@ -684,6 +689,17 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
         </InlineNotice>
       )}
       <div className="app-page-body">{body}</div>
+      {manager && online && reviewTarget && (
+        <PluginMutationDialog
+          target={reviewTarget}
+          onClose={() => setReviewTarget(null)}
+          onConfirm={review => {
+            const request = reviewedPluginMutation(reviewTarget, review)
+            setReviewTarget(null)
+            void change(request)
+          }}
+        />
+      )}
       {diagnostics && (
         <DiagnosticsDialog
           page={page}

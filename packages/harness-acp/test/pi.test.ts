@@ -705,6 +705,54 @@ describe('pi over its own RPC', () => {
     expect(JSON.stringify(detail)).not.toContain(KEY)
   })
 
+  it('keeps separate compaction boundaries after resuming the same pi session and when a start is missing', async () => {
+    const compactedReply = (text: string, used: number, start: boolean): ReplayEntry[] => [
+      out('prompt', { message: text }),
+      answer('prompt', { disposition: 'started' }),
+      event('agent_start'),
+      ...(start ? [event('compaction_start', { reason: 'threshold' })] : []),
+      event('compaction_end', { reason: 'threshold', aborted: false, willRetry: false }),
+      event('agent_end', { messages: [], willRetry: false }),
+      event('agent_settled', { aborted: false }),
+      out('get_session_stats'),
+      answer('get_session_stats', { contextUsage: { tokens: used, contextWindow: 200_000 } }),
+    ]
+    const path = await transcript(
+      'repeat_compaction_after_resume',
+      [
+        { step: 'prompt', text: 'First' },
+        { step: 'settle' },
+        { step: 'reopen' },
+        { step: 'prompt', text: 'Second' },
+        { step: 'settle' },
+        { step: 'prompt', text: 'Third' },
+        { step: 'settle' },
+      ],
+      [
+        ...opened,
+        ...compactedReply('First', 30, true),
+        { type: 'runtime_exit' },
+        ...opened.slice(0, 4),
+        out('switch_session', { sessionPath: FILE }),
+        answer('switch_session', { cancelled: false }),
+        ...opened.slice(4),
+        ...compactedReply('Second', 20, true),
+        ...compactedReply('Third', 10, false),
+      ],
+    )
+    const { detail, status } = await replayTranscript(path, cleanups)
+    expect(status?.failure).toBeUndefined()
+    expect(status?.starts).toHaveLength(2)
+    const users = detail.messages.filter(message => message.role === 'user')
+    expect(detail.contextEvents).toMatchObject(users.map(user => ({ turnId: user.id, status: 'completed', source: 'acp' })))
+    expect(new Set(detail.contextEvents?.map(event => event.id)).size).toBe(3)
+    expect(users.map(user => user.turn?.contextWindow)).toMatchObject([
+      { used: 30, epoch: 1 },
+      { used: 20, epoch: 2 },
+      { used: 10, epoch: 3 },
+    ])
+  })
+
   describe("a fork of a pi session, in pi's own record", () => {
     const T0 = Date.parse('2026-01-01T00:00:00.000Z')
     const at = (seconds: number) => new Date(T0 + seconds * 1000).toISOString()

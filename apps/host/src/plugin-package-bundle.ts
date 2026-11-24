@@ -1,10 +1,11 @@
 import { z } from 'zod'
 import type { PluginPackageBundle } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
-import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
+import { canonicalJson, containsSecret, maskKnownSecrets, sha256Hex } from '@latch/core/node-kit'
 import { pluginManifestSchema } from './plugin-packages.ts'
 
 export const PLUGIN_PACKAGE_BYTES = 8 * 1024 * 1024
+export const containsPluginSourceSecret = (text: string): boolean => containsSecret(text) || maskKnownSecrets(text) !== text
 const inputSchema = z.strictObject({
   manifest: pluginManifestSchema,
   files: z.array(z.strictObject({ path: z.string(), content: z.string() })).max(128),
@@ -105,6 +106,7 @@ export function checkedPluginBundle(input: unknown): { bundle: PluginPackageBund
           id: panel.id,
           entry: panel.entry,
           ...(panel.harnessIds ? { harnessIds: panel.harnessIds } : {}),
+          ...(panel.context ? { context: true } : {}),
         })),
         config: manifest.host.length ? manifest.config : {},
         files: bundle.files.filter(file => code.has(file.path) || /\.mjs$/iu.test(file.path) || !skills.has(file.path)),

@@ -36,6 +36,7 @@ const manifestFields = {
           description: z.string().max(240).optional(),
           harnessIds: z.array(id).max(32).optional(),
           entry: z.string().min(1),
+          context: z.literal(true).optional(),
         })
         .strict(),
     )
@@ -120,7 +121,10 @@ export async function loadPluginPackage(path: string): Promise<HarnessPlugin> {
   const manifest = parsed.data
   const skills = await Promise.all(manifest.skills.map(async ({ file, ...skill }) => ({ ...skill, content: await contents(file, 32_000) })))
   const panels = await Promise.all(
-    manifest.panels.map(async ({ entry, ...panel }) => ({ ...panel, source: await contents(entry, 1_000_000) })),
+    manifest.panels.map(async ({ entry, ...panel }) => {
+      if (panel.context && !entry.endsWith('.mjs')) throw invalid('读取上下文统计的界面入口必须是 .mjs 模块。')
+      return { ...panel, source: await contents(entry, 1_000_000) }
+    }),
   )
   const modules: HostModule[] = []
   for (const file of manifest.host) {

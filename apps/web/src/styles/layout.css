@@ -148,9 +148,52 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
  * A page covers the session's columns; they stay laid out, so nothing about them moves. A protected approval card sets
  * its own visibility, so the covered surface is also made transparent: its card must not show through 设置 or 我的 Agent.
  */
-.app-shell:not([data-entry='sessions']) :is(.sidebar, .workspace, .inspector-column, .inspector-resize, .phone-list) {
+.app-shell:not([data-entry='sessions']) :is(.workspace, .inspector-column, .inspector-resize, .phone-list),
+.app-shell:not([data-entry='sessions'], [data-entry='marketplace']) .sidebar {
   visibility: hidden;
   opacity: 0;
+}
+
+.marketplace-workspace {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  grid-area: 2 / 2 / -1 / -1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--canvas);
+}
+.marketplace-workspace[hidden] {
+  display: none;
+}
+.marketplace-workspace:focus {
+  outline: none;
+}
+.marketplace-workspace :is(.marketplace-workspace-controls, .marketplace-workspace-status) {
+  width: min(100%, 1440px);
+  flex: none;
+  margin-inline: auto;
+  padding: var(--sp-8) clamp(var(--sp-16), 4%, var(--sp-48));
+}
+.marketplace-workspace-status {
+  display: grid;
+  justify-items: start;
+}
+@media (min-width: 768px) and (max-width: 1023.98px) {
+  .marketplace-workspace {
+    grid-row-start: 1;
+  }
+}
+@media (max-width: 767.98px) {
+  .marketplace-workspace {
+    position: absolute;
+    z-index: 2;
+    inset: 0;
+  }
+  .app-shell[data-entry='marketplace'] .phone-tabs {
+    display: none;
+  }
 }
 
 .sidebar {
@@ -830,11 +873,13 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
  * surface under it, so both follow the device palette.
  */
 .harness-found {
+  --harness-found-head-height: 36px;
+
   display: flex;
   flex-direction: column;
   container: harness-found / inline-size;
   min-width: 0;
-  min-height: 0;
+  min-height: var(--harness-found-head-height);
   padding: var(--sp-6);
   border-radius: var(--r-16);
   background: var(--work-composer);
@@ -854,12 +899,13 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
   flex: none;
   align-items: center;
   gap: var(--sp-8);
-  min-height: 36px;
+  min-height: var(--harness-found-head-height);
   padding: 0 var(--sp-4) 0 var(--sp-10);
+  border-bottom: 1px solid transparent;
 }
 .harness-found[data-open] .harness-found-head {
   padding-block: var(--sp-4);
-  border-bottom: 1px solid var(--work-line);
+  border-bottom-color: var(--work-line);
 }
 .harness-found-head > .ui-button {
   flex: none;
@@ -888,7 +934,16 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-/* What was found, as their marks in a row: the list itself opens under them. */
+/* Shrink the marks' column so the chevron moves with them when the list opens. */
+.harness-found-indicator {
+  display: inline-grid;
+  grid-template-columns: 1fr 12px;
+  align-items: center;
+  min-width: 12px;
+}
+.harness-found[data-open] .harness-found-indicator {
+  grid-template-columns: 0fr 12px;
+}
 .harness-found-marks {
   display: inline-flex;
   align-items: center;
@@ -896,10 +951,16 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
   min-width: 0;
   overflow: hidden;
 }
+.harness-found-marks > :last-child {
+  margin-inline-end: var(--sp-10);
+}
+.harness-found[data-open] .harness-found-marks {
+  opacity: 0;
+  visibility: hidden;
+}
 .harness-found-chevron {
-  flex: none;
+  grid-column: 2;
   color: var(--muted);
-  transition: transform var(--m-micro) var(--e-micro);
 }
 .harness-found:not([data-open]) .harness-found-chevron {
   transform: rotate(-90deg);
@@ -913,6 +974,14 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
 .harness-found-count {
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
+}
+/* Let the disclosure shrink in a short window while only its list scrolls. */
+.harness-found-body {
+  min-height: 0;
+}
+.harness-found-body > .ui-collapse-inner {
+  display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
 }
 .harness-found-list {
   min-height: 0;

@@ -1,4 +1,5 @@
 import { useShortcutBindings } from '../core/shortcutBindings.ts'
+import { Store } from 'lucide-react'
 import type { ComponentProps } from 'react'
 import {
   Button,
@@ -28,6 +29,7 @@ import { UsageEntry } from '../usage/UsageEntry.tsx'
 import { ShellUpdateCheck } from './UpdateCheck.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 import { defineCopy } from '../core/i18n.ts'
+import { SHELL_COPY } from './copy.ts'
 
 const COPY = defineCopy(
   {
@@ -61,7 +63,10 @@ export function TabletRail({ shell }: { shell: ShellState }) {
   const inAgents = spaces?.space === 'agents'
   return (
     // Under a page the rail's column is the page's own list: nothing here is in the focus order then.
-    <nav className="workbench-tablet-rail" aria-label={COPY.nav} inert={shell.route.entry !== 'sessions' || shell.board || undefined}>
+    <nav
+      className="workbench-tablet-rail"
+      aria-label={COPY.nav}
+      inert={(shell.route.entry !== 'sessions' && !shell.marketplace) || shell.board || undefined}>
       <span className="workbench-rail-brand">
         <BrandMark size={24} />
       </span>
@@ -75,6 +80,15 @@ export function TabletRail({ shell }: { shell: ShellState }) {
       <IconButton label={COPY.search} icon={SearchGlyph} onClick={shell.openSearch} />
       {shell.catalog?.features?.automations && (
         <IconButton label={COPY.scheduled} icon={ScheduleGlyph} onClick={() => shell.openMyAgent({ id: 'general', tab: 'schedules' })} />
+      )}
+      {shell.canBrowseMarketplace && (
+        <IconButton
+          label={SHELL_COPY.marketplace}
+          icon={Store}
+          aria-current={shell.marketplace ? 'page' : undefined}
+          data-marketplace-nav=""
+          onClick={shell.openMarketplace}
+        />
       )}
       <IconButton
         ref={shell.sidebarToggle}

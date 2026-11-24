@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { canDelegate } from '../agents/model.ts'
 import { Radio, Blocks, Cable, Database, Palette } from 'lucide-react'
-import type { AppSnapshot } from '@latch/protocol'
+import type { AppSnapshot, PluginPackageBundle } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
 import { defineCopy } from '../core/i18n.ts'
 import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
@@ -292,6 +292,12 @@ export function SettingsPage({
   access: given,
   section: chosen = null,
   initialProjectId,
+  initialPluginId,
+  initialPluginBundle,
+  onMarketplace,
+  onAddPlugin,
+  onCreatePlugin,
+  creatorBlockedReason,
   initialAgent,
   onClose,
   onSection,
@@ -304,6 +310,12 @@ export function SettingsPage({
   /** The chosen section; absent, a wide window shows the first and a phone shows the list. */
   section?: SettingsSection | null
   initialProjectId?: string
+  initialPluginId?: string | undefined
+  initialPluginBundle?: PluginPackageBundle | undefined
+  onMarketplace?: () => void
+  onAddPlugin?: () => void
+  onCreatePlugin?: (query?: string) => void
+  creatorBlockedReason?: string | undefined
   initialAgent?: AgentPageTarget
   /** Closes the settings panel, returning to the underlying workbench. */
   onClose: () => void
@@ -569,6 +581,17 @@ export function SettingsPage({
                       )}
                       {panel === 'plugins' && (
                         <PluginsSettings
+                          key={
+                            initialPluginBundle
+                              ? `review:${initialPluginBundle.manifest.id}`
+                              : initialPluginId && `package:${initialPluginId}`
+                          }
+                          initialPluginBundle={initialPluginBundle}
+                          {...(onMarketplace ? { onMarketplace } : {})}
+                          {...(onAddPlugin ? { onAddPlugin } : {})}
+                          {...(onCreatePlugin ? { onCreatePlugin } : {})}
+                          creatorBlockedReason={creatorBlockedReason}
+                          {...(initialPluginId ? { initialPluginId } : {})}
                           snapshot={snapshot}
                           access={access}
                           onChanged={onChanged}

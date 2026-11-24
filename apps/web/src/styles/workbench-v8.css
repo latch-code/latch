@@ -650,15 +650,15 @@
 .code-home-input:has(.harness-found[data-open]) {
   max-height: 100%;
 }
-.code-home-notices:has(> .harness-found[data-open]) {
+.code-home-notices:has(> .harness-found) {
   display: flex;
   flex-direction: column;
 }
-.code-home-notices:has(> .harness-found[data-open]) > :not(.harness-found) {
+.code-home-notices:has(> .harness-found) > :not(.harness-found) {
   flex: none;
 }
 /* A login notice may fill this area by itself. Let it scroll past a complete card before scrolling the list inside. */
-.code-home-notices > :not(.harness-found) ~ .harness-found[data-open] {
+.code-home-notices > :not(.harness-found) ~ .harness-found {
   flex: none;
   max-height: 100%;
 }
@@ -675,6 +675,61 @@
     margin-bottom: var(--sp-8);
     padding-bottom: var(--sp-4);
   }
+}
+/* The start page makes room for the list as it grows. Keep that change in step with the disclosure. */
+@media (prefers-reduced-motion: no-preference) {
+  .code-home:has(.harness-found[data-toggled]) {
+    --harness-found-transition: calc(var(--m-panel) * 0.7) var(--e-exit);
+    transition:
+      padding-block-start var(--harness-found-transition),
+      padding-block-end var(--harness-found-transition);
+  }
+  .code-home:has(.harness-found[data-toggled][data-open]) {
+    --harness-found-transition: var(--m-panel) var(--e-panel);
+  }
+  .code-home-input:has(.harness-found[data-toggled]) {
+    transition: max-height var(--harness-found-transition);
+  }
+  .code-home-notices:has(> .harness-found[data-toggled]) {
+    transition:
+      margin-block-end var(--harness-found-transition),
+      padding-block-end var(--harness-found-transition);
+  }
+  .harness-found[data-toggled] {
+    transition:
+      padding-block-start var(--harness-found-transition),
+      padding-block-end var(--harness-found-transition),
+      background-color var(--harness-found-transition),
+      box-shadow var(--harness-found-transition);
+  }
+  .harness-found[data-toggled] .harness-found-head {
+    transition:
+      padding-block-start var(--harness-found-transition),
+      padding-block-end var(--harness-found-transition),
+      border-bottom-color var(--harness-found-transition);
+  }
+  .harness-found[data-toggled] .harness-found-indicator {
+    transition: grid-template-columns var(--harness-found-transition);
+  }
+  .harness-found[data-toggled] .harness-found-marks {
+    transition:
+      opacity var(--harness-found-transition),
+      visibility var(--harness-found-transition);
+  }
+  .harness-found[data-toggled] .harness-found-chevron {
+    transition: transform var(--harness-found-transition);
+  }
+}
+/* The device setting gives transitions a nonzero duration globally, so also disable the properties here. */
+:root[data-motion='reduce']
+  :is(
+    .code-home:has(.harness-found),
+    .code-home-input:has(.harness-found),
+    .code-home-notices:has(> .harness-found),
+    .harness-found,
+    .harness-found :is(.harness-found-head, .harness-found-body, .harness-found-indicator, .harness-found-marks, .harness-found-chevron)
+  ) {
+  transition-property: none;
 }
 .code-home .workbench-home-composer .composer-input {
   --prompt-max-height: min(232px, 24dvh);
@@ -1126,13 +1181,13 @@
    * rail then keeps only its mark, in the title row as the lead does on wider windows: its buttons and its ground would
    * show through the list.
    */
-  .app-shell:not([data-entry='sessions']) .workbench-tablet-rail {
+  .app-shell:not([data-entry='sessions'], [data-entry='marketplace']) .workbench-tablet-rail {
     grid-row: 1 / 2;
     overflow: hidden;
     border-right-color: transparent;
     background: transparent;
   }
-  .app-shell:not([data-entry='sessions']) .workbench-tablet-rail > :not(.workbench-rail-brand) {
+  .app-shell:not([data-entry='sessions'], [data-entry='marketplace']) .workbench-tablet-rail > :not(.workbench-rail-brand) {
     visibility: hidden;
   }
   .app-shell:not([data-inspector='open']) .workspace .topbar {

@@ -248,7 +248,7 @@ describe('segmented control', () => {
   })
 })
 
-function Sections() {
+function Sections({ tabsDisabled = false }: { tabsDisabled?: boolean }) {
   const [tab, setTab] = useState<'args' | 'output'>('args')
   const [filter, setFilter] = useState<'all' | 'chat' | 'agent'>('all')
   return (
@@ -256,13 +256,14 @@ function Sections() {
       <Tabs
         label="工具详情"
         value={tab}
+        disabled={tabsDisabled}
         onValueChange={setTab}
         options={[
-          { value: 'args', label: '参数', controls: 'panel' },
-          { value: 'output', label: '输出', controls: 'panel' },
+          { value: 'args', label: '参数', id: 'args-tab', controls: 'panel' },
+          { value: 'output', label: '输出', id: 'output-tab', controls: 'panel' },
         ]}
       />
-      <div id="panel" />
+      <div role="tabpanel" id="panel" aria-labelledby={tab + '-tab'} />
       <FilterPills
         label="筛选会话"
         value={filter}
@@ -286,6 +287,8 @@ describe('tabs and filter pills', () => {
     await userEvent.keyboard('{ArrowRight}')
     const output = screen.getByRole('tab', { name: '输出' })
     await expect.element(output).toHaveAttribute('aria-selected', 'true')
+    await expect.element(output).toHaveAttribute('aria-controls', 'panel')
+    await expect.element(screen.getByRole('tabpanel', { name: '输出' })).toHaveAttribute('id', 'panel')
     await expect.element(output).toHaveFocus()
     const tab = output.element()
     expect(list.element().querySelector('.ui-tab-fill')).toBeNull()
@@ -296,6 +299,20 @@ describe('tabs and filter pills', () => {
       .toEqual([24, 'rgba(18, 18, 28, 0.05)', 'rgb(23, 23, 26)', '6px'])
     expect(style(screen.getByRole('tab', { name: '参数' }).element()).color).toBe('rgb(86, 86, 95)')
     expect(style(tab).textDecorationLine).toBe('none')
+  })
+
+  it('keeps a disabled tab list in the tab order and blocks keyboard and pointer selection', async () => {
+    const screen = await render(<Sections tabsDisabled />)
+    const args = screen.getByRole('tab', { name: '参数' })
+    const output = screen.getByRole('tab', { name: '输出' })
+    await userEvent.tab()
+    await expect.element(args).toHaveFocus()
+    await expect.element(output).toBeDisabled()
+    await userEvent.keyboard('{ArrowRight}{End}')
+    await expect.element(args).toHaveFocus()
+    press(output)
+    await expect.element(args).toHaveAttribute('aria-selected', 'true')
+    await expect.element(output).toHaveAttribute('aria-selected', 'false')
   })
 
   it('makes filters pressed toggle buttons, not tabs, that share one tab stop', async () => {

@@ -477,7 +477,7 @@ export class PluginRegistry implements RuntimeRegistry {
       title: panel.title,
       ...(panel.description === undefined ? {} : { description: panel.description }),
       ...(panel.harnessIds === undefined ? {} : { harnessIds: [...panel.harnessIds] }),
-      ...('hash' in panel ? { moduleHash: panel.hash } : {}),
+      ...('hash' in panel ? { moduleHash: panel.hash, ...(panel.context ? { context: true } : {}) } : {}),
     }
   }
 
@@ -526,7 +526,7 @@ export class PluginRegistry implements RuntimeRegistry {
         ...e.harnesses.map(h => `harness:${h.id}`),
         ...e.transports.map(driver => `transport:${driver.id}`),
         ...e.panels.map(panel => `${panel.listed === false ? 'data' : 'ui'}:${panel.id}`),
-        ...e.clientPanels.map(panel => `ui:${panel.id}`),
+        ...e.clientPanels.flatMap(panel => [`ui:${panel.id}`, ...(panel.context ? [`ui-context:${panel.id}`] : [])]),
         ...e.skills.map(skill => `skill:${skill.id}`),
       ],
       ...(e.managed ? { managed: e.managed } : {}),

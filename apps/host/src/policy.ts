@@ -6,8 +6,10 @@ import { z } from 'zod'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
 import type { AuditActor, AuditLog, StepupMethod } from './audit.ts'
+import { npmRegistrySchema } from './npm-source.ts'
 
 const FILE = 'policy.json'
+const INITIAL_NPM_REGISTRY_REVISION = '0'.repeat(64)
 
 const HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u
 
@@ -82,6 +84,8 @@ export const policySchema = z.strictObject({
     .max(256)
     .refine(list => new Set(list).size === list.length, '已确认的模型服务地址不能重复')
     .optional(),
+  /** One confirmed credential-free npm registry. Absent is equivalent to disabled. */
+  pluginNpmRegistry: npmRegistrySchema.optional(),
   keyBackend: z.literal('file'),
   /** Scheduled runs enforce this ceiling, idle limit and approval TTL; no automatic approvals. */
   unattended: z.strictObject({
@@ -151,6 +155,10 @@ export function isLowering(prev: Policy, next: Policy): boolean {
       case 'confirmedAddresses':
         if (!isSubset(next.confirmedAddresses ?? [], prev.confirmedAddresses ?? [])) return false
         break
+      case 'pluginNpmRegistry.registry':
+      case 'pluginNpmRegistry.revision':
+        if (next.pluginNpmRegistry?.registry != null) return false
+        break
       default:
         return false
     }
@@ -177,6 +185,11 @@ export class PolicyStore {
   /** The file predates `confirmedAddresses`; the Host fills it once from the saved providers. */
   get needsAddressMigration(): boolean {
     return this.policy.confirmedAddresses === undefined
+  }
+  get pluginNpmRegistry(): NonNullable<Policy['pluginNpmRegistry']> {
+    return this.policy.pluginNpmRegistry
+      ? { ...this.policy.pluginNpmRegistry }
+      : { registry: null, revision: INITIAL_NPM_REGISTRY_REVISION }
   }
 
   private constructor(

@@ -55,6 +55,8 @@ import { RunSilence, SILENCE_THRESHOLDS, type LiveRun } from './run-silence.ts'
  * also receives the project ID, so suggestions from different projects never share a scope; its files remain `cwd` alone.
  */
 export interface HubCreateInput extends CreateTaskInput {
+  /** Host-only key of the registered authoring directory; never forwarded to a driver. */
+  authoringSource?: string
   harnessId?: string
   /** The project the Host expanded `cwd` from; kept in the Host's session metadata. */
   workspaceId?: string
@@ -683,16 +685,40 @@ export class HarnessHub implements Bridge {
             ...(meta.imported.truncated ? { truncated: true as const } : {}),
           }
         : undefined
+    const acp = member.trust.kind === 'acp'
+    const standard = member.trust.kind === 'builtin' && member.driver.id === 'standard'
+    const { skills: reportedSkills, skillsTruncated, requestContext, contextSteps, contextEvents, usageReport, ...rest } = detail
     const messages =
-      fork || rebuilt
-        ? detail.messages.map((message, index) =>
-            index === firstUser ? { ...message, ...(fork ? { forkContext: fork } : { importContext: rebuilt! }) } : message,
-          )
+      fork || rebuilt || member.trust.kind === 'plugin'
+        ? detail.messages.map((message, index) => {
+            const window = message.turn?.contextWindow
+            const shown =
+              !acp && window
+                ? { ...message, turn: { ...message.turn, contextWindow: { at: window.at, used: window.used, size: window.size } } }
+                : message
+            return (fork || rebuilt) && index === firstUser
+              ? { ...shown, ...(fork ? { forkContext: fork } : { importContext: rebuilt! }) }
+              : shown
+          })
         : detail.messages
-    const { skills: reportedSkills, skillsTruncated, ...withoutSkills } = detail
+    const usage =
+      usageReport
+      && (acp
+        ? usageReport
+        : {
+            at: usageReport.at,
+            contextUsed: usageReport.contextUsed,
+            contextSize: usageReport.contextSize,
+            configuredContextSize: usageReport.configuredContextSize,
+            cost: usageReport.cost,
+          })
     const skills = readSessionSkills(reportedSkills)
     return {
-      ...withoutSkills,
+      ...rest,
+      ...(standard && requestContext ? { requestContext } : {}),
+      ...(standard && contextSteps ? { contextSteps } : {}),
+      ...(acp && contextEvents ? { contextEvents } : {}),
+      ...(usage ? { usageReport: usage } : {}),
       ...(skills ? { skills, ...(skillsTruncated === true ? { skillsTruncated: true as const } : {}) } : {}),
       messages,
       summary: this.present(member.driver.id, detail.summary),
@@ -706,6 +732,7 @@ export class HarnessHub implements Bridge {
       workspaceId,
       folders,
       sessionFolder,
+      authoringSource,
       worktree,
       firstStart,
       forkOf,
@@ -796,6 +823,7 @@ export class HarnessHub implements Bridge {
             ? { extensionReportSource: true as const }
             : {}),
           ...(sessionFolder ? { sessionFolder } : {}),
+          ...(input.pluginCreation && authoringSource ? { pluginCreation: authoringSource } : {}),
           ...(worktree
             ? {
                 worktree: {
@@ -808,7 +836,10 @@ export class HarnessHub implements Bridge {
           ...(firstStart ? { firstStart } : {}),
         }))
         .finally(settleReportSource)
-        .catch(error => this.log(`会话 ${result.sessionId} 的项目记录写入失败：${message(error)}`))
+        .catch(error => {
+          if (input.pluginCreation) throw new AppError(503, 'plugin-creation-unknown', '创造会话的归属尚未确认，请重试同一次提交。')
+          this.log(`会话 ${result.sessionId} 的项目记录写入失败：${message(error)}`)
+        })
     if (forkOf)
       await this.meta.update(result.sessionId, current => {
         if (current.forkOf && (current.forkOf.taskId !== forkOf.taskId || current.forkOf.upToMessageId !== forkOf.upToMessageId))
@@ -888,6 +919,11 @@ export class HarnessHub implements Bridge {
   workProposalsOf(sessionId: string): boolean {
     return this.workProposalSessions.has(sessionId) || this.meta.get(sessionId)?.workProposals === true
   }
+  /** Only a Host-recorded authoring session can offer an executable plugin draft for review. */
+  pluginCreationOf(sessionId: string): string | undefined {
+    return this.meta.get(sessionId)?.pluginCreation
+  }
+
   /** Started from a 待办 whose 要求 came from outside content: what its context proposes is external. */
   outsideStartOf(sessionId: string): boolean {
     const meta = this.meta.get(sessionId)
@@ -1593,6 +1629,7 @@ export class HarnessHub implements Bridge {
       archived: _archived,
       level: _level,
       sessionFolder: _sessionFolder,
+      pluginCreation: _pluginCreation,
       worktree: _worktree,
       firstStart: _firstStart,
       forkOf: _forkOf,
@@ -1651,6 +1688,7 @@ export class HarnessHub implements Bridge {
       ...(this.generalChatOf(summary.id) && !agent ? { generalChat: true as const } : {}),
       ...(meta?.origin ? { origin: { app: meta.origin.app, requestId: meta.origin.requestId } } : {}),
       ...(meta?.sessionFolder && SESSION_FOLDER_NAME.test(meta.sessionFolder) ? { sessionFolder: true as const } : {}),
+      ...(meta?.pluginCreation ? { pluginCreation: true as const } : {}),
       ...(meta?.worktree
         ? {
             worktree: {
@@ -1753,6 +1791,7 @@ export class HarnessHub implements Bridge {
       modes: [...(declared?.modes ?? ['chat', 'agent'])],
       ...(driver.agentContext ? { agentContext: driver.agentContext } : {}),
       ...(driver.skills ? { skills: driver.skills } : {}),
+      ...(driver.pluginCreation ? { pluginCreation: true as const } : {}),
       ...(declared?.attachments ? { attachments: structuredClone(declared.attachments) } : {}),
       ...(reported ? { attachmentsReported: { images: reported.images === true, text: reported.text === true } } : {}),
       level: entry.trust.level,

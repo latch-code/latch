@@ -18,6 +18,7 @@ import { redactKnownSecrets } from '@latch/core/node-kit'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
 import { ClaudeStore, type ClaudeSettings } from '../claude-store.ts'
 import { CAPTURE_BYTES } from '../history.ts'
+import { claudeCompactionMetrics, claudeContextBreakdown } from '../context-telemetry.ts'
 import {
   AUTH_STATUS_METHOD,
   commandsUpdate,
@@ -329,6 +330,7 @@ class Inbox implements AsyncIterable<unknown> {
 /** The prompt being run, answered once its result came and, after a cancel, once `claude` acknowledged the interrupt. */
 interface Turn {
   uuid: string
+  messageId?: string
   resolve(result: unknown): void
   reject(error: Error): void
   cancelled: boolean
@@ -410,6 +412,10 @@ interface Session {
   given: Set<string>
   /** Prompt IDs sent on this session: one is never sent twice. */
   sent: Map<string, true>
+  contextReads?: number
+  contextReported?: number
+  /** A query spanning a compaction cannot be attributed to either side of that boundary. */
+  contextGeneration?: number
 }
 
 const remember = <K, V>(map: Map<K, V>, key: K, value: V) => {
@@ -1027,7 +1033,7 @@ export class ClaudeWire implements AgentWire {
     const uuid = mine && UUID.test(mine) && !session.sent.has(mine) ? mine : randomUUID()
     remember(session.sent, uuid, true)
     const done = new Promise<unknown>((resolve, reject) => {
-      this.turn = { uuid, resolve, reject, cancelled: false }
+      this.turn = { uuid, messageId: mine, resolve, reject, cancelled: false }
     })
     done.catch(() => {})
     session.inbox.push({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, uuid })
@@ -1260,6 +1266,17 @@ export class ClaudeWire implements AgentWire {
   }
 
   private onSystem(session: Session, message: Record<string, unknown>): void {
+    if (message.subtype === 'compact_boundary') {
+      if (message.parent_tool_use_id != null || typeof message.uuid !== 'string' || !UUID.test(message.uuid)) return
+      session.contextGeneration = (session.contextGeneration ?? 0) + 1
+      this.update(session, {
+        sessionUpdate: 'compaction_update',
+        compactionId: message.uuid,
+        status: 'completed',
+        latchClaudeCompaction: { ...claudeCompactionMetrics(message.compact_metadata), turnId: this.turn?.messageId },
+      })
+      return
+    }
     if (message.subtype === 'permission_denied' && typeof message.tool_use_id === 'string') {
       // Refused by Claude's own rules, mode or classifier before it ran: said the way the adapter says it (`readDenial`).
       const owner = session.toolUses.get(message.tool_use_id)?.sessionId ?? session.id
@@ -1335,7 +1352,7 @@ export class ClaudeWire implements AgentWire {
   }
 
   /** What the turn used: its tokens for the answer, the context in use and the session's cost as an update. */
-  private async reportUsage(session: Session, message: Record<string, unknown>): Promise<TurnTokens | undefined> {
+  private async reportUsage(session: Session, message: Record<string, unknown>, turnId?: string): Promise<TurnTokens | undefined> {
     const read = resultUsage.safeParse(message.usage)
     const tokens: TurnTokens | undefined = read.success
       ? {
@@ -1346,20 +1363,26 @@ export class ClaudeWire implements AgentWire {
           ...(read.data.cache_creation_input_tokens != null ? { cachedWriteTokens: read.data.cache_creation_input_tokens } : {}),
         }
       : undefined
-    const context = contextUsage.safeParse(
-      await this.withTimeout(session.query.getContextUsage(), CONTEXT_TIMEOUT_MS).catch(() => undefined),
-    )
+    const generation = session.contextGeneration
+    const readNumber = (session.contextReads = (session.contextReads ?? 0) + 1)
+    const sample = await this.withTimeout(session.query.getContextUsage(), CONTEXT_TIMEOUT_MS).catch(() => undefined)
+    if (readNumber <= (session.contextReported ?? 0)) return tokens
+    const context = generation === session.contextGeneration ? contextUsage.safeParse(sample).data : undefined
     const cost =
       typeof message.total_cost_usd === 'number' && Number.isFinite(message.total_cost_usd) && !this.route
         ? message.total_cost_usd
         : undefined
-    if (context.success || cost !== undefined)
+    if (context || cost !== undefined) {
+      session.contextReported = readNumber
       this.update(session, {
         sessionUpdate: 'usage_update',
-        ...(context.success ? { used: context.data.totalTokens } : {}),
-        ...(context.success && context.data.maxTokens ? { size: context.data.maxTokens } : {}),
+        ...(context
+          ? { used: context.totalTokens, _meta: { latchClaudeContext: { turnId, breakdown: claudeContextBreakdown(sample) } } }
+          : {}),
+        ...(context?.maxTokens ? { size: context.maxTokens } : {}),
         ...(cost !== undefined ? { cost: { amount: cost, currency: 'USD' } } : {}),
       })
+    }
     return tokens
   }
 
@@ -1367,7 +1390,7 @@ export class ClaudeWire implements AgentWire {
     if (this.turn !== turn) return
     this.turn = undefined
     const session = this.session
-    const usage = session ? await this.reportUsage(session, message) : undefined
+    const usage = session ? await this.reportUsage(session, message, turn.messageId) : undefined
     const withUsage = usage ? { usage } : {}
     // A cancel, or a choice that stops the turn (keep planning), ends it as cancelled, as on the adapter.
     if (turn.cancelled || turn.stopped) return turn.resolve({ stopReason: 'cancelled', ...withUsage })

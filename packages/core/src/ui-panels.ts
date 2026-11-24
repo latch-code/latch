@@ -15,6 +15,7 @@ const metadataSchema = z
   })
   .strict()
 const documentSchema = z.custom<UiPanelDocument>(isUiPanelDocument)
+const clientMetadataSchema = metadataSchema.extend({ context: z.literal(true).optional() })
 
 /** Capture metadata and the callback so later writes to the plugin's declaration cannot change a published view. */
 export function checkedUiPanel(input: UiPanelDefinition): UiPanelDefinition {
@@ -28,7 +29,7 @@ export function checkedClientPanel(input: ClientPanelDefinition): ClientPanelDef
   if (typeof source !== 'string' || !source.trim() || source.length > 1_000_000) {
     throw new AppError(400, 'ui-panel-invalid', '界面模块必须是已经构建的 ESM 文件，且不超过 1 MB。')
   }
-  return { ...metadataSchema.parse(metadata), source }
+  return { ...clientMetadataSchema.parse(metadata), source }
 }
 
 /** Validate data panels before they cross the wire, including their total size. */

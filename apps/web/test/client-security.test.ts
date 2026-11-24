@@ -817,6 +817,30 @@ describe('local confirmation', () => {
     expect(ui.views.at(-1)).toBe('closed')
   })
 
+  it('stops a confirmation when its scope ends even if approval has reached the client', async () => {
+    const scope = new AbortController()
+    const ui = presenter()
+    const sends = vi.fn(async (confirmation?: string) => {
+      if (!confirmation) throw stepup()
+      return 'never'
+    })
+    const request = vi.fn(async (_path, _options) => {
+      scope.abort()
+      return { confirmation: ticket('approved') }
+    })
+    await expect(
+      withConfirmation(sends, {
+        signal: scope.signal,
+        presenter: ui.value,
+        api: request as never,
+        sleep: instant,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(request).toHaveBeenCalledExactlyOnceWith('confirmations/cfm_1', { signal: scope.signal })
+    expect(sends).toHaveBeenCalledExactlyOnceWith()
+    expect(ui.views).toEqual(['waiting', 'closed'])
+  })
+
   it('cancels the ticket on the Host when the dialog is cancelled', async () => {
     const ui = presenter()
     const calls: string[] = []

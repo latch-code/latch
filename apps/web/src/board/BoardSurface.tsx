@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { CARD_NOTE_CHARS, escapeSecurityText, type TaskSummary, type WorkItemSummary } from '@latch/protocol'
-import { Button, EditGlyph, FilterPills, MessageGlyph, NewSessionGlyph, PromptDialog, SegmentedControl, TrashGlyph } from '@latch/ui'
-import { ListTodo, StickyNote } from 'lucide-react'
+import {
+  Button,
+  EditGlyph,
+  FilterPills,
+  IconButton,
+  MessageGlyph,
+  NewSessionGlyph,
+  PromptDialog,
+  SegmentedControl,
+  TrashGlyph,
+} from '@latch/ui'
+import { ListTodo, StickyNote, Store } from 'lucide-react'
+import { SHELL_COPY } from '../shell/copy.ts'
 import type { SendingMessage } from '../core/sendingMessage.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { ConfirmDialog, type MenuSection } from '../components/overlays.tsx'
@@ -617,6 +628,9 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
           />
           <div className="work-board-phone-actions">
             <AllFilters options={options} filters={filters} onFilters={setFilters} />
+            {shell.canBrowseMarketplace && (
+              <IconButton label={SHELL_COPY.marketplace} icon={Store} data-marketplace-nav="" onClick={shell.openMarketplace} />
+            )}
             <span className="work-board-phone-todo">
               {phoneGroup === 'todo' && startAll}
               <Button

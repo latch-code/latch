@@ -174,7 +174,12 @@ const CREATED_TTL_MS = 60 * 60_000
 const REQUEST_LIMIT = 512
 const ATTEMPTS = 16
 const RECORD_FILE = 'session-folders.json'
-const storedFolderSchema = z.object({ name: z.string().regex(SESSION_FOLDER_NAME), rootHash: z.string().regex(/^[a-f0-9]{64}$/u) }).strict()
+const storedFolderSchema = z.strictObject({
+  name: z.string().regex(SESSION_FOLDER_NAME),
+  rootHash: rootHashSchema,
+  /** Only creator workspaces are import sources. Bind the start directory and the allocated folder together. */
+  authoringIdentity: rootHashSchema.optional(),
+})
 const recordsSchema = z
   .object({
     version: z.literal(1),
@@ -226,6 +231,7 @@ interface RequestFolder {
   /** Settles once the folder exists; a failed make leaves the map. */
   made: Promise<{ name: string; path: string }>
   path?: string
+  authoringIdentity?: string
   created: boolean
   /** A driver is creating the session in it now; it never expires meanwhile. */
   starting?: boolean
@@ -688,8 +694,31 @@ export class SessionFolders {
     await write
   }
 
+  private async authoringIdentity(name: string): Promise<{ path: string; hash: string }> {
+    const root = await realpath(this.options.root)
+    if ((await canonicalPath(root)) !== this.options.canonicalRoot) throw unavailable()
+    const path = join(root, name)
+    const directory = await lstat(path, { bigint: true })
+    if (!privateDirectoryOf(directory) || (await realpath(path)) !== path) throw unavailable()
+    const parent = await rootIdentityOf(root)
+    return { path, hash: sha256Hex([this.options.canonicalRoot, parent.dev, parent.ino, directory.dev, directory.ino].join(':')) }
+  }
+
+  /** The exact private directory allocated for this creator start, independent of paths a Driver reports. */
+  async authoringFolder(requestHash: string): Promise<string> {
+    await this.start()
+    const record = this.recorded.get(requestHash)
+    const current = record?.authoringIdentity ? await this.authoringIdentity(record.name).catch(() => undefined) : undefined
+    if (!current || current.hash !== record?.authoringIdentity)
+      throw new AppError(409, 'app-draft-missing', '这个创作会话原来的专用文件夹已变化，请检查本机文件。')
+    return current.path
+  }
+
   /** The folder for a start request: made on the first ask, the same one for a retry with the same request ID. */
-  async allocate(requestId: string): Promise<{ name: string; path: string }> {
+  async allocate(
+    requestId: string,
+    prepare?: (folder: { path: string; name: string }) => Promise<void>,
+  ): Promise<{ name: string; path: string }> {
     await this.start()
     // Expired requests leave the map before the lookup, which no await separates from the insertion below.
     const stale = this.expire()
@@ -709,7 +738,25 @@ export class SessionFolders {
       this.requests.set(requestId, { at: this.options.now(), made: Promise.resolve(folder), path: folder.path, created: true })
       return folder
     }
-    const entry: RequestFolder = { at: this.options.now(), made: removing.then(() => this.make()), created: false }
+    const entry: RequestFolder = {
+      at: this.options.now(),
+      created: false,
+      made: removing.then(async () => {
+        const folder = await this.make()
+        try {
+          if (prepare) {
+            const source = await this.authoringIdentity(folder.name)
+            await prepare(folder)
+            if ((await this.authoringIdentity(folder.name)).hash !== source.hash) throw unavailable()
+            entry.authoringIdentity = source.hash
+          }
+        } catch (cause) {
+          await rmdir(folder.path).catch(() => {})
+          throw cause
+        }
+        return folder
+      }),
+    }
     this.requests.set(requestId, entry)
     try {
       const folder = await entry.made
@@ -732,7 +779,11 @@ export class SessionFolders {
     const write = this.writes.then(async () => {
       if (this.recorded.has(hash)) return
       const next = new Map(this.recorded)
-      next.set(hash, { name, rootHash: sha256Hex(this.options.canonicalRoot) })
+      next.set(hash, {
+        name,
+        rootHash: sha256Hex(this.options.canonicalRoot),
+        ...(entry.authoringIdentity ? { authoringIdentity: entry.authoringIdentity } : {}),
+      })
       if (this.options.dataDir) await writeFileAtomic(join(this.options.dataDir, RECORD_FILE), this.recordText(next, this.homes))
       this.recorded = next
     })

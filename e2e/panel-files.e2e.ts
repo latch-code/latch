@@ -172,7 +172,7 @@ describe('the right panel', () => {
           await page.keyboard.press('Enter')
           const menu = page.getByRole('menu', { name: '打开面板', exact: true })
           // A browser page has neither the desktop's browser nor this Mac's terminal: they are left out, not greyed.
-          expect(await menu.getByRole('menuitem').allTextContents()).toEqual(['文件F', '改动D', '交付P', '概要O'])
+          expect(await menu.getByRole('menuitem').allTextContents()).toEqual(['文件F', '改动D', '交付P', '概要O', '上下文C'])
           await settleShell(page)
           await shot(page, 'add-menu', width, theme)
           await page.keyboard.press('f')

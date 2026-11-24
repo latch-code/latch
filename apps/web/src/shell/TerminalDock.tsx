@@ -82,8 +82,8 @@ export function TerminalDock({ shell }: { shell: ShellState }) {
       id="terminal-dock"
       className="terminal-dock"
       aria-label={COPY.terminal}
-      hidden={!terminalOpen || shell.board}
-      inert={shell.board || undefined}>
+      hidden={!terminalOpen || shell.board || shell.marketplace}
+      inert={shell.board || shell.marketplace || undefined}>
       {terminalOpen && dockLimit >= DOCK_MIN && (
         <ResizeHandle
           className="terminal-resize"

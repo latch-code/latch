@@ -4,4 +4,5 @@ export const LINKS = {
   mac: '',
   ios: '',
   github: 'https://github.com/latch-code/latch',
+  pluginGuide: 'https://github.com/latch-code/latch/blob/main/docs/PLUGIN-DEVELOPMENT.md',
 }

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   browserDraftStorage,
   DRAFT_EXPIRY_MS,
+  PLUGIN_CREATION_DRAFT,
   draftsKey,
   forgetStoredDrafts,
   holdsExcerpt,
@@ -128,6 +129,7 @@ describe('session text drafts kept in browser storage', () => {
     page.save('deleted', 'gone', false)
     page.save('listed', 'kept', false)
     page.save('', 'new', false)
+    page.save(PLUGIN_CREATION_DRAFT, 'my plugin', false)
     page.remove('deleted')
     expect(new SessionDrafts(storage).read('deleted', true)).toBe('')
     page.save('elsewhere', 'deleted on another device', false)
@@ -136,6 +138,8 @@ describe('session text drafts kept in browser storage', () => {
     expect(reloaded.read('elsewhere', true)).toBe('')
     expect(reloaded.read('listed', true)).toBe('kept')
     expect(reloaded.read('', true)).toBe('new')
+    expect(reloaded.read(PLUGIN_CREATION_DRAFT, true)).toBe('my plugin')
+    expect(reloaded.read(PLUGIN_CREATION_DRAFT, false)).toBe('')
     page.clear()
     expect(storage.value).toBeNull()
   })

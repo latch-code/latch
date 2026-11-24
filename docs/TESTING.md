@@ -111,6 +111,18 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 - 升级 Vitest、移动或改名测试文件时，比较前后的用例集合（文件加完整用例名），每个消失或新增的用例都要说明原因。
 - 集合用 `pnpm exec vitest list --config <配置> --staticParse=false --json=<文件>` 取得。不加 `--staticParse=false` 的结果不能用来比较：静态解析不展开 `it.each`，还会把辅助函数调用当成用例。
 
+## 插件创作与市场的验收
+
+`apps/host/test/plugin-authoring.test.ts` 检查引导确实抵达模型、专用目录与进入条件。`apps/host/test/app-build.test.ts` 检查草稿读取与代码信任。浏览器与隔离 Electron 的实际动线在 `e2e/app-build.e2e.ts`、`e2e/desktop-plugins.e2e.ts`、`e2e/release-check.e2e.ts`。官网市场下载从真实 Astro 产物检查文件版本与 SHA-256。假 Agent 的确定性产物验证交付路径；模型理解需求、选择插件类型和产物实用性需要人工任务评测。
+
+`apps/host/test/plugin-npm.test.ts` 用注入的 npm 版本响应与 USTAR 压缩包覆盖来源、出站限制、压缩包与修订校验、精确更新和改动冲突。`apps/host/test/plugin-assets.test.ts` 验证未知结果的下载只凭原设备和原请求结算。测试不登录或发布到仓库。
+
+`apps/host/test/plugin-package-api.test.ts` 验证 Host 审阅随附包、本机权限、精确暂存、草稿冲突、已应用基版过期时的拒绝与恢复。资产用例用两个随附版本验证 SemVer、来源与本机改稿保护，以及下载后已应用版本继续运行。
+
+`apps/host/test/plugin-external-api.test.ts` 用临时插件文件验证外部来源只限本机完整管理权限、预览与暂存之间的内容复查、来源和安装冲突、持久化回执及带内容摘要文件名的目录更新。
+
+`e2e/app-build.e2e.ts` 验证只读电脑与 Android 浏览器的工作区市场、关键词和贡献类型筛选、进入详情后返回以及未发送草稿保留。用 iPhone 与桌面模式的 iPad 浏览器身份检查导航、输入框、设置和市场深链接均不提供入口，仍可接续会话。`e2e/desktop-plugin-registry.e2e.ts` 从桌面侧栏打开完整市场页，验证左栏可继续操作，停用和重新启用工作区插件可撤回和恢复入口，再经测试确认设置带路径的 HTTPS npm 源，下载并应用草稿，然后用已安装条目检查更新。测试在临时目录生成版本归档，经 `ServerOptions.pluginRegistryFetch` 提供 npm 元数据和归档。更新草稿保存后模拟回执丢失，重载页面并原样重试，请求沿用原编号和 Host 的回执。测试也检查窄窗预览的版本与下载按钮，以及本地草稿有改动时的导出入口和替换确认。下载和重试期间旧版继续运行，审阅后点应用才切换到新版本。
+
 ## 按改动选择回归
 
 验证分两档，规则都在 `scripts/verify-plan.ts`：
@@ -150,6 +162,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | 输入框（块、原子删除、撤销、输入法、粘贴与拖入） | `apps/web/test/prompt-editor.test.ts`、`prompt-tokens.test.ts`、`e2e/prompt-marks.e2e.ts`（Chromium 与 WebKit）；成员块见 `e2e/teams.e2e.ts` |
 | 团队（开始、停止、交回与页面） | `apps/host/test/teams.test.ts`、`apps/web/test/teams.test.ts`、`e2e/teams.e2e.ts`；改 Codex 委派入口时加 `e2e/codex-team.e2e.ts` |
 | 插件页面框 | `app-frame.test.ts`、`app-pages.test.ts`（Host 与 `apps/web/test/` 各一份）、`apps/desktop/test/desktop-frames.test.ts`、`e2e/app-pages.e2e.ts` |
+| 会话上下文图表 | `tests/runtime.test.ts`、`tests/agent-context.test.ts`、`packages/harness-acp/test/acp.test.ts`、`apps/web/test/components-panel.test.ts`、`apps/web/test/context-tools.test.ts` 与 `e2e/context.e2e.ts`；两轮多步输入的组成、历史选择、原对话定位与外部窗口分别验收 |
 | 插件资产与生命周期 | `plugin-assets.test.ts`、`plugin-packages.test.ts`、`tests/registry.test.ts` |
 | Harness 扩展报告 | `extensions.test.ts`、`packages/harness-acp/test/pi-plugins.test.ts`、`command-cache.test.ts`（ACP）和 `e2e/harness-extensions.e2e.ts` |
 | MCP 与工具网关 | `mcp-remote.test.ts`、`mcp-oauth.test.ts`、`tool-gateway.test.ts`、`browser-broker.test.ts` |

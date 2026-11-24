@@ -181,6 +181,8 @@ export interface ClientPanelDefinition {
   title: string
   description?: string
   harnessIds?: string[]
+  /** The client supplies only the current session's context measurements and local turn navigation. */
+  context?: true
   source: string
 }
 export interface ClientPanelLease {

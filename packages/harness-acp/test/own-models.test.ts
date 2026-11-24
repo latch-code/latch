@@ -5,6 +5,10 @@ import { presetOffer } from '../src/index.ts'
 const offer = (id: string) => presetOffer(AGENT_PRESETS.find(preset => preset.id === id)!)
 
 describe('which harnesses Latch never forwards to a model service', () => {
+  it('offers creation mode before an installed preset is first registered as a Harness', () => {
+    expect(offer('dsh').pluginCreation).toBe(true)
+  })
+
   it('says so of the vendor agents that keep to their own login', () => {
     expect(offer('cursor').capabilities.models).toMatchObject({ wires: [], ownOnly: true })
   })

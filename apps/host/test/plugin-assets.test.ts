@@ -3,14 +3,24 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createPluginPackageTemplate, type PluginPackageBundle } from '@latch/protocol'
+import { createPluginPackageTemplate, type PluginCatalogStage, type PluginNpmStage, type PluginPackageBundle } from '@latch/protocol'
 import { PluginRegistry } from '@latch/core'
 import { AppError, type HarnessPlugin } from '@latch/sdk'
-import { PluginAssets, pluginTrustRequestId, type PluginAssetActor } from '../src/plugin-assets.ts'
+import {
+  PluginAssets,
+  describePluginAsset,
+  installIdOf,
+  pluginApplyPayload,
+  pluginTrustRequestId,
+  type PluginAssetActor,
+} from '../src/plugin-assets.ts'
 import { checkedPluginBundle } from '../src/plugin-package-bundle.ts'
+import { catalogUpdate } from '../src/plugin-catalog.ts'
+import { pluginReviewSource, reviewPluginPackage } from '../src/plugin-package-review.ts'
 import { loadPluginPackage } from '../src/plugin-packages.ts'
 import { cleanupPluginGenerations } from '../scripts/cleanup-plugin-generations.ts'
 import { acquireDataDirLock } from '../src/host-state.ts'
+import { agentPluginRevision } from '../src/agent-revisions.ts'
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
@@ -26,6 +36,132 @@ async function fixture(
   return { path, store, actor }
 }
 const rid = () => randomUUID()
+it('updates only the same unmodified bundled release at a newer SemVer and stages without reapplying', async () => {
+  const { store, actor } = await fixture()
+  const id = 'catalog-example'
+  const candidate = (version: string, text: string) => {
+    const bundle = createPluginPackageTemplate('skill', id)
+    bundle.manifest.version = version
+    bundle.files[0]!.content = text
+    return checkedPluginBundle(bundle)
+  }
+  const one = candidate('1.9.0', 'First'),
+    two = candidate('1.10.0', 'Second')
+  await store.stageCatalog({ pluginId: id, revision: one.revision, requestId: rid() }, one, actor)
+  await store.apply(id, one.revision, rid(), actor, async (_, commit) => commit())
+  const installed = store.get(id)
+  const old = describePluginAsset(installed)
+  const update = { installId: installIdOf(installed), baseRevision: one.revision }
+  expect(catalogUpdate(candidate('1.9.0+rebuilt', 'changed'), old)).toBe('same-version-changed')
+  expect(catalogUpdate(candidate('1.8.0', 'earlier'), old)).toBe('older')
+  expect(catalogUpdate(two, old)).toBe('available')
+  await expect(
+    store.stageCatalog(
+      { pluginId: id, revision: two.revision, requestId: rid(), update: { ...update, baseRevision: '1'.repeat(64) } },
+      two,
+      actor,
+    ),
+  ).rejects.toMatchObject({ code: 'plugin-package-changed' })
+
+  const request = { pluginId: id, revision: two.revision, requestId: rid(), update }
+  await store.stageCatalog(request, two, actor)
+  expect((await store.replayCatalog(request, actor))?.replay).toBe(true)
+  const saved = store.get(id)
+  expect(saved).toMatchObject({
+    revision: two.revision,
+    appliedRevision: one.revision,
+    enabled: true,
+    catalog: { version: '1.10.0', revision: two.revision },
+  })
+  expect(pluginReviewSource(saved, one.revision)).toEqual({ kind: 'catalog', version: '1.9.0' })
+
+  const edited = candidate('1.10.0', 'Local edit')
+  await store.save(edited.bundle, rid(), actor, two.revision)
+  const three = candidate('2.0.0', 'Third')
+  await expect(
+    store.stageCatalog(
+      {
+        pluginId: id,
+        revision: three.revision,
+        requestId: rid(),
+        update: { installId: installIdOf(saved), baseRevision: edited.revision },
+      },
+      three,
+      actor,
+    ),
+  ).rejects.toMatchObject({ code: 'plugin-catalog-local-changes' })
+  expect(store.get(id).bundle.files).toEqual(edited.bundle.files)
+})
+
+it('shows real app grants and broader capabilities alongside Code and Host warnings even when code was already approved', () => {
+  const bundle = createPluginPackageTemplate('tool', 'review-risk')
+  bundle.manifest.formatVersion = 2
+  bundle.manifest.panels = [{ id: 'panel', title: 'Panel', entry: 'panel.mjs', context: true }]
+  bundle.manifest.apps = [
+    {
+      id: 'actions',
+      title: 'Actions',
+      entry: 'actions.js',
+      dataVersion: 1,
+      capabilities: {
+        'tasks.start': { projects: ['a'] },
+        storage: ['plugin'],
+      },
+    },
+  ]
+  bundle.files.push({ path: 'actions.js', content: '' }, { path: 'panel.mjs', content: '' })
+  const earlier = checkedPluginBundle(bundle)
+  const updated = structuredClone(bundle)
+  updated.manifest.apps![0]!.capabilities = {
+    'tasks.start': { projects: ['a', 'b'] },
+    'tasks.continue': true,
+    'tasks.readOwn': true,
+    storage: ['plugin', 'project'],
+  }
+  const candidate = checkedPluginBundle(updated)
+  const result = reviewPluginPackage(
+    candidate,
+    { kind: 'local' },
+    {
+      appliedBundle: earlier.bundle,
+      appliedRevision: earlier.revision,
+      approvedApps: { actions: bundle.manifest.apps![0]!.capabilities },
+      trusted: [earlier.executionHash!],
+    },
+    true,
+  )
+  expect(result).toMatchObject({
+    baseAppliedRevision: earlier.revision,
+    comparison: { changedExecution: false, expandedPageCapabilities: true, manifestChanged: true, changedFiles: [] },
+    pages: [
+      {
+        id: 'actions',
+        approved: bundle.manifest.apps![0]!.capabilities,
+        addedCapabilities: {
+          'tasks.start': { projects: ['b'] },
+          'tasks.continue': true,
+          'tasks.readOwn': true,
+          storage: ['project'],
+        },
+      },
+    ],
+    adoptsData: true,
+    confirmationRequired: true,
+  })
+  expect(result.findings.map(item => item.kind)).toEqual(
+    expect.arrayContaining([
+      'host-access',
+      'workbench-access',
+      'context-statistics',
+      'tool-registration',
+      'starts-sessions',
+      'continues-sessions',
+      'reads-own-replies',
+      'writes-storage',
+    ]),
+  )
+})
+
 describe('editable local plugin assets', () => {
   it('cleans only owned orphan source generations at the locked startup boundary and preserves durable assets', async () => {
     const { store, actor, path } = await fixture(),
@@ -124,6 +260,45 @@ describe('editable local plugin assets', () => {
     duplicate.manifest.dataPanels!.push(duplicate.manifest.dataPanels![0]!)
     expect(() => checkedPluginBundle(duplicate)).toThrow()
   })
+  it('confirms a newly declared Context projection and restores it on client modules only', async () => {
+    const { store, actor } = await fixture()
+    const bundle = createPluginPackageTemplate('react-ui', 'context-fixture')
+    const ordinary = checkedPluginBundle(bundle)
+    const originalAgentRevision = agentPluginRevision(ordinary.bundle)
+    bundle.manifest.panels![0]!.context = true
+    const context = checkedPluginBundle(bundle)
+    expect(context.executionHash).not.toBe(ordinary.executionHash)
+    expect(agentPluginRevision(context.bundle)).not.toBe(originalAgentRevision)
+    expect(checkedPluginBundle(context.bundle)).toEqual(context)
+    expect(() =>
+      checkedPluginBundle({
+        ...bundle,
+        manifest: {
+          ...bundle.manifest,
+          panels: [],
+          dataPanels: [{ id: 'data', title: 'Data', context: true, document: { blocks: [] } }],
+        },
+      }),
+    ).toThrow()
+    await store.save(ordinary.bundle, rid(), actor)
+    await store.trust(bundle.manifest.id, ordinary.executionHash!, pluginTrustRequestId(rid()), actor)
+    await store.save(context.bundle, rid(), actor, ordinary.revision)
+    await expect(store.apply(bundle.manifest.id, context.revision, rid(), actor, async () => {})).rejects.toMatchObject({
+      code: 'plugin-package-untrusted',
+    })
+    await store.trust(bundle.manifest.id, context.executionHash!, pluginTrustRequestId(rid()), actor)
+    const generation = await store.materialize(store.get(bundle.manifest.id))
+    cleanups.push(generation.release)
+    const registry = new PluginRegistry()
+    cleanups.push(() => registry.close())
+    const plugin = await loadPluginPackage(generation.path)
+    registry.register(plugin)
+    await registry.enable(plugin.id)
+    expect(registry.uiPanels()).toMatchObject([{ context: true }])
+    expect(registry.list().find(item => item.id === plugin.id)?.capabilities).toContain('ui-context:' + bundle.manifest.panels![0]!.id)
+    await registry.disable(plugin.id)
+    expect(registry.uiPanels()).toEqual([])
+  })
   it('separates drafts and application snapshots, enforces revision conflicts and binds mutation receipts to their device and payload', async () => {
     const { store, actor } = await fixture(),
       bundle = createPluginPackageTemplate('skill'),
@@ -202,6 +377,179 @@ describe('editable local plugin assets', () => {
     expect(store.list()).toEqual([])
     expect(JSON.stringify(audit.mock.calls)).not.toContain('工作方法')
   })
+  it('settles an uncertain import using the first snapshot, bound to its device, session and kind, including after restart', async () => {
+    let interrupt = true
+    const options = {
+      audit: { append: vi.fn(async () => ({ seq: 1, hash: 'a'.repeat(64) })) },
+      atomicFs: {
+        open: (...args: Parameters<typeof open>) => open(...args),
+        rename: async (from: string, to: string) => {
+          await rename(from, to)
+          if (interrupt) {
+            interrupt = false
+            throw new Error('directory sync unknown')
+          }
+        },
+      },
+    }
+    const { store, actor, path } = await fixture(options)
+    const first = createPluginPackageTemplate('skill', 'receipt-draft')
+    const request = rid(),
+      session = 'creator-session',
+      revision = checkedPluginBundle(first).revision
+    await expect(store.importDraft(first, session, request, actor, 'plugin')).rejects.toMatchObject({
+      code: 'plugin-package-write-unknown',
+    })
+    await expect(store.replayImport('another-session', 'plugin', request, actor)).rejects.toMatchObject({ code: 'request-conflict' })
+    await expect(store.replayImport(session, 'app', request, actor)).rejects.toMatchObject({ code: 'request-conflict' })
+    const other = { ...actor, actor: { ...actor.actor, deviceId: 'dev_' + 'b'.repeat(22) } }
+    await expect(store.replayImport(session, 'plugin', request, other)).rejects.toMatchObject({ code: 'plugin-package-write-unknown' })
+    first.files[0]!.content = 'the Agent revised the source'
+    const settled = await store.replayImport(session, 'plugin', request, actor)
+    expect(settled).toMatchObject({ replay: true, importedRevision: revision, record: { revision } })
+    expect(settled?.record?.bundle.files[0]?.content).not.toBe(first.files[0]?.content)
+    expect(options.audit.append).toHaveBeenCalledTimes(1)
+    expect(await store.replayImport(session, 'plugin', request, other)).toBeUndefined()
+    const next = (await store.importDraft(first, session, rid(), actor, 'plugin')).record!
+    const reopened = await PluginAssets.open(path, options)
+    cleanups.push(() => reopened.close())
+    expect(await reopened.replayImport(session, 'plugin', request, actor)).toMatchObject({
+      replay: true,
+      importedRevision: revision,
+      record: { revision: next.revision },
+    })
+    await reopened.remove(next.id, next.revision, rid(), actor, async (_state, commit) => commit())
+    await reopened.importDraft(first, session, rid(), actor, 'plugin')
+    await expect(reopened.replayImport(session, 'plugin', request, actor)).rejects.toMatchObject({ status: 410 })
+  })
+  it.each(['npm', 'catalog'] as const)('recovers an uncertain %s stage from its exact device and intent', async source => {
+    let interrupt = true
+    const options = {
+      audit: { append: vi.fn(async () => ({ seq: 1, hash: 'a'.repeat(64) })) },
+      atomicFs: {
+        open: (...args: Parameters<typeof open>) => open(...args),
+        rename: async (from: string, to: string) => {
+          await rename(from, to)
+          if (interrupt) {
+            interrupt = false
+            throw new Error('directory sync unknown')
+          }
+        },
+      },
+    }
+    const { store, actor, path } = await fixture(options)
+    const bundle = createPluginPackageTemplate('skill', 'staged-receipt')
+    const downloaded = checkedPluginBundle(bundle)
+    const input: PluginCatalogStage = { requestId: rid(), revision: downloaded.revision, pluginId: bundle.manifest.id }
+    const release: PluginNpmStage['release'] = {
+      registry: 'https://registry.example.test/',
+      name: 'npm-receipt',
+      version: bundle.manifest.version,
+      integrity: `sha512-${Buffer.alloc(64).toString('base64')}`,
+    }
+    const stage = (assets: PluginAssets, requestId: string) =>
+      source === 'npm'
+        ? assets.stageNpm({ requestId, revision: input.revision, release }, downloaded, actor)
+        : assets.stageCatalog({ ...input, requestId }, downloaded, actor)
+    const replay = (assets: PluginAssets, device = actor, revision = input.revision) =>
+      source === 'npm'
+        ? assets.replayNpm({ requestId: input.requestId, revision, release }, device)
+        : assets.replayCatalog({ ...input, revision }, device)
+    await expect(stage(store, input.requestId)).rejects.toMatchObject({ code: 'plugin-package-write-unknown' })
+    const other = { ...actor, actor: { ...actor.actor, deviceId: 'dev_' + 'b'.repeat(22) } }
+    await expect(replay(store, other)).rejects.toMatchObject({ code: 'plugin-package-write-unknown' })
+    await expect(replay(store, actor, 'a'.repeat(64))).rejects.toMatchObject({ code: 'request-conflict' })
+    expect(await replay(store)).toMatchObject({ replay: true, record: { enabled: false, revision: downloaded.revision } })
+    expect(options.audit.append).toHaveBeenCalledTimes(1)
+    const restarted = await PluginAssets.open(path, options)
+    cleanups.push(() => restarted.close())
+    expect(await replay(restarted)).toMatchObject({
+      replay: true,
+      record: source === 'npm' ? { npm: release } : { catalog: { version: release.version, revision: input.revision } },
+    })
+    await restarted.remove(bundle.manifest.id, downloaded.revision, rid(), actor, async (_state, commit) => commit())
+    await stage(restarted, rid())
+    await expect(replay(restarted)).rejects.toMatchObject({ code: 'plugin-package-removed' })
+    expect(restarted.list()).toHaveLength(1)
+  })
+
+  it('keeps approved data adoption on the original receipt and never carries it to a replacement installation', async () => {
+    let interrupt = false
+    const { store, actor, path } = await fixture({
+      audit: { append: async () => ({ seq: 1, hash: 'a'.repeat(64) }) },
+      atomicFs: {
+        open: (...args: Parameters<typeof open>) => open(...args),
+        rename: async (from, to) => {
+          await rename(from, to)
+          if (interrupt) {
+            interrupt = false
+            throw new Error('directory sync unknown')
+          }
+        },
+      },
+    })
+    const id = 'data-adoption'
+    const bundle: PluginPackageBundle = {
+      manifest: {
+        formatVersion: 2,
+        id,
+        name: 'Data',
+        version: '1.0.0',
+        description: '',
+        apps: [
+          {
+            id: 'view',
+            title: 'Data',
+            entry: 'view.js',
+            dataVersion: 1,
+            capabilities: { storage: ['plugin'] },
+          },
+        ],
+      },
+      files: [{ path: 'view.js', content: '' }],
+    }
+    const { revision } = checkedPluginBundle(bundle)
+    const approve = { view: bundle.manifest.apps![0]!.capabilities }
+    await store.save(bundle, rid(), actor)
+    const request = rid()
+    const commit = async (_state: unknown, publish: () => Promise<void>) => publish()
+    interrupt = true
+    await expect(store.apply(id, revision, request, actor, commit, approve, { baseAppliedRevision: null }, true)).rejects.toMatchObject({
+      code: 'plugin-package-write-unknown',
+    })
+    expect(store.pendingAdoption(id, revision, request, actor)).toBe(true)
+    expect(store.pendingAdoption(id, revision, rid(), actor)).toBe(false)
+    const applied = await store.apply(id, revision, request, actor, commit, approve, { baseAppliedRevision: null }, true)
+    expect(applied.adoptOwner).toBe(installIdOf(applied.record!))
+
+    const restarted = await PluginAssets.open(path, { audit: { append: async () => ({ seq: 1, hash: 'a'.repeat(64) }) } })
+    cleanups.push(() => restarted.close())
+    const replay = () => restarted.replay(id, 'apply', request, pluginApplyPayload(revision, { baseAppliedRevision: null }), actor)
+    expect(replay()).toMatchObject({ adoptOwner: applied.adoptOwner, replay: true })
+    await restarted.remove(id, revision, rid(), actor, commit)
+    await restarted.save(bundle, rid(), actor)
+    await restarted.apply(id, revision, rid(), actor, commit, approve)
+    expect(replay()?.adoptOwner).toBeUndefined()
+  })
+
+  it('matches receipts from before imports kept their captured revision by the historical intent hash', async () => {
+    const { store, path, actor } = await fixture()
+    const sample = createPluginPackageTemplate('skill', 'older-import')
+    const request = rid()
+    const imported = await store.importDraft(sample, 'old-session', request, actor)
+    const file = join(store.directory, 'assets.json')
+    const data = JSON.parse(await readFile(file, 'utf8')) as { receipts: Record<string, { imported?: unknown }> }
+    for (const receipt of Object.values(data.receipts)) delete receipt.imported
+    await writeFile(file, JSON.stringify(data))
+    const reopened = await PluginAssets.open(path, { audit: { append: async () => ({ seq: 1, hash: 'a'.repeat(64) }) } })
+    cleanups.push(() => reopened.close())
+    expect(await reopened.replayImport('old-session', 'app', request, actor)).toMatchObject({
+      replay: true,
+      importedRevision: imported.record?.revision,
+    })
+    expect(await reopened.replayImport('other-session', 'app', request, actor)).toBeUndefined()
+  })
+
   it('keeps uncertain atomic writes bound to the original request and re-runs an application effect before acknowledging it', async () => {
     let afterRename = false
     const { store, actor } = await fixture({

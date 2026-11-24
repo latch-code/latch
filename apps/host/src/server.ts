@@ -38,6 +38,7 @@ import {
   isMcpToolOn,
   onModelChoice,
   parseModelChoice,
+  PLUGIN_MARKETPLACE_PAGE,
   refusedBeforeAccepting,
   runsPresetFallback,
   type AgentExecutionContext,
@@ -395,6 +396,8 @@ import { createDemoPlugin } from './plugins/providers/demo/index.ts'
 import { createToolsPlugin } from './plugins/tools/safe-tools/index.ts'
 import { standardHarnessDriver } from './plugins/standard/index.ts'
 import { createWorkspacePlugin } from './plugins/tools/workspace-files/index.ts'
+import { createMarketplacePlugin } from './plugins/workspace/marketplace/index.ts'
+import type { BundledWorkspacePage } from '@latch/protocol'
 import { PromptTemplateStore } from './prompt-templates.ts'
 import { CustomizationStore } from './customization.ts'
 import { ShortcutsStore } from './shortcuts.ts'
@@ -407,10 +410,12 @@ import { AppDataStore } from './app-data.ts'
 import { AppDiagnostics } from './app-diagnostics.ts'
 import { AppBuilds } from './app-builds.ts'
 import { buildPages, hostBuildTools } from './app-build.ts'
-import { APP_DRAFT_DIRECTORY, APP_DRAFT_MANIFEST, readSessionDraft } from './app-import.ts'
+import { APP_DRAFT_DIRECTORY, APP_DRAFT_MANIFEST, readSessionDraft, sessionDraftKinds } from './app-import.ts'
 import { APP_GUIDE, APP_SDK_DTS, appSkeleton } from './app-sdk-types.ts'
+import { writePluginAuthoring } from './plugin-authoring.ts'
 import { capabilityLines, capabilitySummary } from './app-capabilities.ts'
 import { createPluginPackageRoutes, installedAssetPlugin } from './plugin-package-routes.ts'
+import { NPM_MIRROR_CDN, NPM_MIRROR_REGISTRY, npmRegistryChanged } from './npm-source.ts'
 import { createRoutes } from './routes/index.ts'
 import type { GitRouteOptions } from './routes/git.ts'
 import { TerminalService, type TerminalServiceOptions } from './terminal/service.ts'
@@ -509,6 +514,7 @@ const createTaskSchema = promptSchema.extend({
   prompt: z.string().trim().max(16_000).default(''),
   /** 让 Agent 做: an Agent session in its own folder, where the Host writes a page draft's skeleton before the first input. */
   appDraft: z.literal(true).optional(),
+  pluginCreation: z.literal(true).optional(),
   forkOf: z
     .object({
       taskId: z.string().min(1).max(256),
@@ -931,6 +937,8 @@ export interface ServerOptions {
    * asked and nothing is read. `fetch` and `claudeDir` replace the outbound fetch and Claude's directory, for tests only.
    */
   harnessUpdates?: { home: string; fetch?: FetchLike; claudeDir?: string }
+  /** Tests only: replaces the transport for npm registries and public GitHub plugin sources. */
+  pluginRegistryFetch?: FetchLike
   /**
    * The home directory whose DeepSeek Harness session logs the Host may read for the token counts of turns it ran
    * there (`cli-usage.ts`). The start script passes the person's home; left out, as in tests, no CLI record is read.
@@ -2382,8 +2390,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const workspaceFiles = createWorkspacePlugin({ protectedPaths: guardedPaths })
     /** Latch's own optional plugins, as 设置 › 扩展 tells them from ones a developer added. */
     const builtInPlugins = new Set<string>()
+    const workspacePages = new Set<BundledWorkspacePage>()
+    // Explicit legacy modules had no ID syntax check. Keep loading one that already owns this internal ID.
+    const marketplaceBundled = !options.plugins?.some(plugin => plugin.id === PLUGIN_MARKETPLACE_PAGE.pluginId)
     const optional = [
       isWithin(realWorkspace, realDataDir) ? guardDataDir(workspaceFiles, realDataDir, realWorkspace) : workspaceFiles,
+      ...(marketplaceBundled
+        ? [
+            createMarketplacePlugin(page => {
+              workspacePages.add(page)
+              return () => {
+                workspacePages.delete(page)
+              }
+            }),
+          ]
+        : []),
       ...(options.demo ? [createToolsPlugin(), createDemoPlugin()] : []),
       ...(options.plugins ?? []),
     ]
@@ -2842,13 +2863,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     /**
      * Whether a listing holds every session there is: compared with what is configured, not only with what mounted. Every
      * saved Agent (an Agent turned off lists nothing), every Harness of an enabled plugin, and every applied plugin asset
-     * must be mounted and listed; an asset turned off, held after an update or that failed to load, and any built-in
-     * plugin turned off, might own sessions nobody listed.
+     * must be mounted and listed. A disabled plugin that could register a Harness might own sessions nobody listed.
      */
     function wholeListing(listing: { complete: boolean; listed: ReadonlySet<string> }): boolean {
       if (!listing.complete) return false
       const settings = config.settings()
-      if (settings.plugins.disabled.length) return false
+      if (settings.plugins.disabled.some(id => !marketplaceBundled || id !== PLUGIN_MARKETPLACE_PAGE.pluginId)) return false
       if (settings.agents.some(agent => !listing.listed.has(agent.id))) return false
       if (registry.harnesses().some(driver => !listing.listed.has(driver.id))) return false
       return pluginAssets
@@ -5066,8 +5086,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       return registry.list().map(plugin => {
         const sessions = pluginHarnesses(plugin.id).reduce((sum, id) => sum + (running.get(id) ?? 0), 0)
+        const pages = plugin.enabled ? [...workspacePages].filter(page => page.pluginId === plugin.id) : []
         return {
           ...plugin,
+          capabilities: [...plugin.capabilities, ...pages.map(page => `workspace:${page.pageId}`)],
           activeRuns: plugin.activeRuns + sessions,
           ...(pluginAssets.has(plugin.id) ? { editable: true as const } : {}),
           ...(builtInPlugins.has(plugin.id) ? { builtIn: true as const } : {}),
@@ -7122,21 +7144,77 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
     const pluginPackageRoutes = createPluginPackageRoutes<Caller>({
       assets: pluginAssets,
+      external: { fetch: options.pluginRegistryFetch ?? egressFetch, dataDir, home, protectedPaths: guardedPaths },
+      npm: {
+        fetch: options.pluginRegistryFetch ?? egressFetch,
+        settings: () => policy.pluginNpmRegistry,
+        async configure(req, caller, actor, input) {
+          const { registry, baseRegistry, baseRevision, requestId } = input
+          // Persist the request's generation alongside its URL. Returning to a previous URL never returns to its generation.
+          const revision = sha256Hex(canonicalJson(['npm-registry', actor.actor.deviceId, requestId, baseRevision, baseRegistry, registry]))
+          const expected = () => {
+            const current = policy.pluginNpmRegistry
+            if (current.revision === revision) return false
+            if (current.revision !== baseRevision || current.registry !== baseRegistry) throw npmRegistryChanged()
+            return current.registry !== registry
+          }
+          if (!expected()) return { audited: true }
+          const baseHash = policy.hash()
+          const settings = { registry, revision }
+          let stepup: StepupMethod = 'none'
+          if (registry !== null) {
+            const next = { ...policy.get(), pluginNpmRegistry: settings }
+            stepup = await confirm(
+              req,
+              caller,
+              'policy.change',
+              { baseHash, nextHash: sha256Hex(canonicalJson(next)) },
+              { form: 'origin.confirm', slots: { target: new URL(registry).host } },
+              [
+                { label: 'npm 仓库', value: registry },
+                ...(registry === NPM_MIRROR_REGISTRY ? [{ label: '压缩包分发地址', value: NPM_MIRROR_CDN }] : []),
+              ],
+            )
+          }
+          const written = await serial(caller, 'admin', () => {
+            actor.authorize()
+            if (!expected()) return Promise.resolve({ audited: true })
+            const next = { ...policy.get(), pluginNpmRegistry: settings }
+            return policy.update(next, actor.actor, stepup, registry === null ? policy.hash() : baseHash)
+          })
+          refresh()
+          return written
+        },
+      },
       registry,
       installedIds: assetPluginIds,
       held: heldPlugins,
       builds: appBuilds,
       // The tools never read the Host's own data, wherever it lives.
       build: bundle => buildPages(bundle, hostBuildTools(), { hidden: [dataDir] }),
-      readDraft: async sessionId => readSessionDraft(await draftFolder(sessionId)),
-      async hasDraft(sessionId) {
+      async readDraft(sessionId, kind) {
+        const source = hub.pluginCreationOf(sessionId)
+        if (source) {
+          const folder = await ownFolders.authoringFolder(source)
+          const draft = await readSessionDraft(folder, kind, folder)
+          if (source !== hub.pluginCreationOf(sessionId) || (await ownFolders.authoringFolder(source)) !== folder) throw workspaceChanged()
+          return draft
+        }
+        if (kind === 'plugin') throw new AppError(403, 'app-import-code', '请在创造模式会话中审阅并导入插件草稿。')
+        return readSessionDraft(await draftFolder(sessionId), kind)
+      },
+      async draftKinds(sessionId) {
+        const source = hub.pluginCreationOf(sessionId)
+        if (source) {
+          const folder = await ownFolders.authoringFolder(source).catch(() => undefined)
+          if (!folder) return []
+          const kinds = await sessionDraftKinds(folder, true)
+          return source === hub.pluginCreationOf(sessionId) && (await ownFolders.authoringFolder(source).catch(() => undefined)) === folder
+            ? kinds
+            : []
+        }
         const folder = await draftFolder(sessionId).catch(() => undefined)
-        if (!folder) return false
-        const directory = await lstat(join(folder, APP_DRAFT_DIRECTORY)).catch(() => undefined)
-        const manifest = directory?.isDirectory()
-          ? await lstat(join(folder, APP_DRAFT_DIRECTORY, APP_DRAFT_MANIFEST)).catch(() => undefined)
-          : undefined
-        return manifest?.isFile() === true
+        return folder ? sessionDraftKinds(folder, false) : []
       },
       async auditBuild(actor, id, detail) {
         try {
@@ -7184,6 +7262,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return { actor: { ...actorOf(caller), deviceId: caller.device.id }, authorize }
       },
       async confirm(req, caller, input) {
+        const name = redactKnownSecrets(input.name)
         await confirm(
           req,
           caller,
@@ -7191,6 +7270,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           {
             id: input.id,
             revision: input.revision,
+            installId: input.installId,
+            ...(input.baseAppliedRevision !== undefined ? { baseAppliedRevision: input.baseAppliedRevision } : {}),
+            ...(input.reviewedInstallId !== undefined ? { reviewedInstallId: input.reviewedInstallId } : {}),
             ...(input.executionHash ? { executionHash: input.executionHash } : {}),
             ...(input.capabilitiesHash ? { capabilitiesHash: input.capabilitiesHash } : {}),
             ...(input.adoptsData ? { adoptsData: true } : {}),
@@ -7198,15 +7280,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           input.apps
             ? {
                 form: 'plugin.package.apply-pages',
-                slots: { plugin: input.name, capabilities: capabilitySummary(input.apps, input.adoptsData === true) },
+                slots: { plugin: name, capabilities: capabilitySummary(input.apps, input.adoptsData === true) },
               }
-            : { form: 'plugin.package.apply', slots: { plugin: input.name } },
+            : { form: 'plugin.package.apply', slots: { plugin: name } },
           [
-            { label: '插件', value: input.name },
+            { label: '插件', value: name },
+            { label: '版本', value: redactKnownSecrets(input.version) },
+            { label: '完整修订摘要', value: input.revision },
             ...(input.executionHash
               ? [
                   { label: 'Host 模块', value: String(input.hostModules) },
                   { label: 'React 面板', value: String(input.clientPanels) },
+                  ...(input.contextPanels ? [{ label: '读取会话上下文统计的面板', value: String(input.contextPanels) }] : []),
                   { label: '可执行内容摘要', value: input.executionHash },
                 ]
               : []),
@@ -7214,8 +7299,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ...(input.adoptsData ? [{ label: '保存的数据', value: '接上之前删除的同 ID 插件留下的数据' }] : []),
           ],
           [
-            ...(input.executionHash ? ['插件是可信本机代码，可访问 Host 进程的数据；客户端模块具有当前页面权限。'] : []),
-            ...(input.apps ? ['页面只能经 Host 使用上面列出的能力；开始的会话用项目的默认权限。这不是系统隔离。'] : []),
+            ...(input.hostModules ? ['Host 模块可访问本机文件和 Host 进程的数据、启动程序或联网。'] : []),
+            ...(input.clientPanels ? ['React 面板与当前工作台同权，可读取界面数据或以当前设备身份调用工作台。'] : []),
+            ...(input.apps ? ['隔离页面经 Host 使用上面列出的能力。页面开始的会话用项目的默认权限。'] : []),
           ],
         )
       },
@@ -8425,6 +8511,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // Only a device that may save a definition is offered one; everyone else keeps what is defined.
       const mayDefine = caller.device?.scopes.includes('admin') === true && isLocalListener(caller.connection.listener)
       const offers = mayDefine ? presetsToOffer() : []
+      const pages =
+        !caller.nativeOpening && caller.device?.scopes.includes('view')
+          ? [...workspacePages].filter(page => pluginInfo(page.pluginId)?.enabled)
+          : []
       return {
         promptTemplatesVersion: templateStore.revision(),
         features: {
@@ -8441,6 +8531,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           sessionBatch: true,
           promptTemplates: true,
           pluginPackages: true,
+          pluginNpmRegistry: true,
+          pluginExternalSources: true,
+          ...(makeOwnFolders ? { pluginCreation: true as const } : {}),
           singleAgentChat: true,
           usage: true,
           modelUsage: true,
@@ -8477,6 +8570,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         providers: usableProviders().map(providerSummary),
         unusableProviders: unusableProviders(),
         uiPanels: registry.uiPanels(),
+        ...(pages.length ? { workspacePages: pages } : {}),
         skills: registry.skills(),
         // Disabled workspaces are listed with their reason for settings; session pickers skip any entry marked unavailable.
         workspaces: await projectInfos(),
@@ -9467,7 +9561,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       try {
         await ownFolders.starting(requestId)
         before?.()
-        const created = await hub!.createTask(task)
+        const source = task.pluginCreation ? sha256Hex(requestId) : undefined
+        if (source) {
+          await ownFolders.authoringFolder(source)
+          before?.()
+        }
+        const created = await hub!.createTask(source ? { ...task, authoringSource: source } : task)
         ownFolders.created(requestId)
         return created
       } catch (error) {
@@ -9605,6 +9704,23 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return
       }
       const input = createTaskSchema.parse(body)
+      if (input.pluginCreation) {
+        requireScope(caller, 'admin')
+        requireDesktop(caller)
+        if (caller.device.dataScope !== 'all')
+          throw new AppError(403, 'plugin-package-scope', '请在拥有完整数据范围的本机管理设备上制作插件。')
+        if (
+          !makeOwnFolders
+          || input.appDraft
+          || input.customAgentId
+          || input.forkOf
+          || input.editOf
+          || input.worktree
+          || input.mode === 'chat'
+          || (input.workspaceId !== undefined && input.workspaceId !== 'default')
+        )
+          throw new AppError(409, 'app-draft-folder', '创造模式使用新 Agent 会话自己的文件夹。')
+      }
       if (!input.customAgentId) {
         json(res, await startPersonSession(req, caller, input, res), 201)
         return
@@ -10221,7 +10337,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ? await prepareHelperHome(customAgentId ?? GENERAL_AGENT_ID, agentAccess(caller, true))
             : undefined
         const ownFolder = makeOwnFolders && !chosen && mode === 'agent' && !forkFolder && !helperHome
-        if (input.appDraft) {
+        if (input.pluginCreation && !harness.pluginCreation) throw new AppError(409, 'mode-unsupported', '当前 Harness 不支持创造模式。')
+        if (input.appDraft || input.pluginCreation) {
           // The page pipeline is this Mac's: the desktop's admin device with all data, as for the plugin assets.
           requireScope(caller, 'admin')
           requireDesktop(caller)
@@ -10353,6 +10470,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(startRefs.length ? { fileRefs: startRefs } : {}),
           ...(attachments.length ? { attachments } : {}),
           requestId: input.requestId,
+          ...(input.pluginCreation ? { pluginCreation: true as const } : {}),
           ...(agentContext ? { agentContext } : {}),
           ...(generalChat ? { generalChat: true as const } : {}),
           // Its agent may propose for the board, where the Harness takes the tools; never a plugin page's session.
@@ -10403,6 +10521,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             recheck(caller, 'view')
             if (!projectFiles(caller)) throw new AppError(403, 'file-scope', '此设备不能查看项目文件。')
           }
+          if (input.pluginCreation) {
+            recheck(caller, 'admin')
+            if (devices.get(caller.device.id)?.dataScope !== 'all')
+              throw new AppError(403, 'plugin-package-scope', '本机管理设备的数据范围已变化。')
+          }
           if (customAgentId) {
             agentAccess(caller, true)
             if (customAgents.definitionHash(customAgentId) !== agentContext?.revision)
@@ -10432,7 +10555,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         const startBuiltin = async () => {
           if (ownFolder) {
-            const own = await ownFolders.allocate(folderRequest)
+            const own = await ownFolders.allocate(folderRequest, input.pluginCreation ? writePluginAuthoring : undefined)
             if (input.appDraft) await writeAppDraft(own.path, own.name)
             return await respondCreated(
               await acceptCreate(() => createInOwnFolder({ ...task, cwd: own.path, sessionFolder: own.name }, folderRequest, checkStart)),
@@ -10471,7 +10594,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           throw new AppError(409, 'workspace-inside-data', '该工作区位于数据目录内，迁出之前只能使用内置 Harness')
         if (workspaceId === 'default' && defaultFlags.codeRoot)
           throw new AppError(409, 'workspace-code-root', '该目录与 Latch 程序目录重叠，不能作为项目')
-        const own = ownFolder ? await ownFolders.allocate(folderRequest) : undefined
+        const own = ownFolder
+          ? await ownFolders.allocate(folderRequest, input.pluginCreation ? writePluginAuthoring : undefined)
+          : undefined
         if (own && input.appDraft) await writeAppDraft(own.path, own.name)
         // A worktree's project configuration is read there, now that it exists: it is what the session will run with.
         const cwd = await realpath(made?.path ?? helperHome?.path ?? own?.path ?? forkFolder ?? chosen?.folders[0].path ?? workspaceRoot)
@@ -10483,10 +10608,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               ? chosen.folders.map(({ id, path }) => ({ id, path }))
               : [{ id: 'default', path: workspaceRoot }]
         const promptHash = sha256Hex(
-          attachments.length || fileRefs.length || agentContext?.brief || agentContext?.skillBodies || seed
+          attachments.length || fileRefs.length || agentContext?.brief || agentContext?.skillBodies || seed || input.pluginCreation
             ? canonicalJson({
                 prompt,
                 ...(seed ? { seed } : {}),
+                ...(input.pluginCreation ? { pluginCreation: true } : {}),
                 // The block goes out with the prompt, so what the record names includes it.
                 ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
                 ...(agentContext?.skillBodies ? { skills: agentContext.skillBodies } : {}),
@@ -13110,6 +13236,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const sessionId = safeDecode(panelRoute[1]!)
         const panelId = safeDecode(panelRoute[2]!)
         if (sessionId.length > 256 || panelId.length > 256) throw new AppError(400, 'invalid-input', '会话或面板标识过长。')
+        checkPrivateSession(caller, sessionId)
         const controller = new AbortController()
         const abort = () => {
           controller.abort()
@@ -13119,6 +13246,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           res.once('close', abort)
           const { summary } = await hub!.detail(sessionId)
           recheck(caller, 'view')
+          privateAccess(caller, summary)
           if (
             (summary.personal && !summary.pluginIds?.includes(lease.info.pluginId))
             || (summary.agent && summary.pluginIds && !summary.pluginIds.includes(lease.info.pluginId))
@@ -13129,6 +13257,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           }
           const panel = await lease.render({ session: summary, signal: controller.signal })
           recheck(caller, 'view')
+          checkPrivateSession(caller, sessionId)
           json(res, { panel })
         } finally {
           res.removeListener('close', abort)

@@ -866,6 +866,12 @@
 }
 
 /* 改动's 「作为应用草稿」, above the scope row. */
+[data-draft-place='conversation']:not(:empty) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+  padding-bottom: var(--sp-8);
+}
 .changes-app-draft {
   display: flex;
   align-items: center;

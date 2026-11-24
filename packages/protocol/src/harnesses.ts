@@ -222,6 +222,8 @@ export interface HarnessInfo {
   agentContext?: 'private' | 'first-turn'
   /** How an agent's skills reach it: loaded natively, or fetched from a read-only server. Absent: they do not. */
   skills?: 'native' | 'server'
+  /** The driver passes the Host's authoring guide to the model in an explicit creation session. */
+  pluginCreation?: true
   attachments?: { images?: boolean; text?: boolean; textBytes?: number }
   /**
    * What an agent said it takes in a prompt when it last started for its current definition: a session, a read before

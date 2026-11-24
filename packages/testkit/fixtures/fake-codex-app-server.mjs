@@ -318,6 +318,12 @@ async function play(text) {
     if (word === 'auto-compact-complete') notify('item/completed', { threadId: thread.id, turnId: turn.id, item })
     return reply('Ordinary turn completed.')
   }
+  if (word === 'late-usage') {
+    reportTokenUsage(thread.turns.at(-1)?.id, 1, { extraInput: 5, used: 35 })
+    await reply('Previous usage arrived.')
+    while (!turn.cancelled && !existsSync(join(thread.cwd, 'release-token-usage'))) await sleep(10)
+    return turn.cancelled ? 'interrupted' : undefined
+  }
   if (word === 'echo') return reply(`echo: ${text}`)
   // `image <result|saved|failed|big|bad|two> [WxH]`: Codex's image tool as 0.170 reports it (`imageGeneration`). Each
   // picture is also saved under FAKE_CODEX_IMAGE_DIR, as Codex keeps them in its home; `saved` sends only that path,
@@ -1076,6 +1082,34 @@ async function play(text) {
   return reply(`echo: ${text}`)
 }
 
+// The thread's whole count grows by one model call a turn; each call after the first reads 16 of its 20 from the cache.
+function reportTokenUsage(turnId, calls, { used = 30, extraInput = 0 } = {}) {
+  notify('thread/tokenUsage/updated', {
+    threadId: thread.id,
+    ...(turnId ? { turnId } : {}),
+    tokenUsage: {
+      total: {
+        totalTokens: 30 * calls + extraInput,
+        inputTokens: 20 * calls + extraInput,
+        cachedInputTokens: 16 * (calls - 1),
+        cacheWriteInputTokens: 0,
+        outputTokens: 10 * calls,
+        reasoningOutputTokens: 0,
+      },
+      last: {
+        totalTokens: used,
+        inputTokens: used - 10,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        outputTokens: 10,
+        reasoningOutputTokens: 0,
+      },
+      // The thread's configured window; FAKE_CODEX_NO_CONTEXT_WINDOW: none reported, as for a model Codex cannot size.
+      ...(env.FAKE_CODEX_NO_CONTEXT_WINDOW === '1' ? {} : { modelContextWindow: threadWindow ?? 200000 }),
+    },
+  })
+}
+
 async function runTurn(input, clientId = null) {
   const text = input.flatMap(part => (part.type === 'text' ? [part.text] : [])).join('\n')
   if (text === 'skills-changed') notify('skills/changed', {})
@@ -1100,32 +1134,20 @@ async function runTurn(input, clientId = null) {
     outcome = { status: 'failed', error: { message: String(error) } }
   }
   if (turn.cancelled && outcome === undefined) outcome = 'interrupted'
-  // The thread's whole count grows by one model call a turn; each call after the first reads 16 of its 20 from the cache.
   const calls = thread.turns.length + 1
-  notify('thread/tokenUsage/updated', {
-    threadId: thread.id,
-    turnId: turn.id,
-    tokenUsage: {
-      total: {
-        totalTokens: 30 * calls,
-        inputTokens: 20 * calls,
-        cachedInputTokens: 16 * (calls - 1),
-        cacheWriteInputTokens: 0,
-        outputTokens: 10 * calls,
-        reasoningOutputTokens: 0,
-      },
-      last: {
-        totalTokens: 30,
-        inputTokens: 20,
-        cachedInputTokens: 0,
-        cacheWriteInputTokens: 0,
-        outputTokens: 10,
-        reasoningOutputTokens: 0,
-      },
-      // The thread's configured window; FAKE_CODEX_NO_CONTEXT_WINDOW: none reported, as for a model Codex cannot size.
-      ...(env.FAKE_CODEX_NO_CONTEXT_WINDOW === '1' ? {} : { modelContextWindow: threadWindow ?? 200000 }),
-    },
-  })
+  const late = text === 'late-usage'
+  const lateAfter = text === 'late-usage-after'
+  reportTokenUsage(text === 'legacy-usage' ? undefined : turn.id, calls, { extraInput: late || lateAfter ? 5 : 0 })
+  if (late) {
+    reportTokenUsage(thread.turns.at(-1)?.id, calls, { extraInput: 7, used: 35 })
+    reportTokenUsage(thread.turns.at(-1)?.id, 1, { extraInput: 5, used: 35 })
+  }
+  if (lateAfter) {
+    await reply('Current usage arrived.')
+    while (!turn.cancelled && !existsSync(join(thread.cwd, 'release-token-usage'))) await sleep(10)
+    reportTokenUsage('other-older-turn', 1, { extraInput: 8, used: 38 })
+    reportTokenUsage(thread.turns.at(-1)?.id, 1, { extraInput: 5, used: 35 })
+  }
   const status = outcome === 'interrupted' ? 'interrupted' : typeof outcome === 'object' ? outcome.status : 'completed'
   thread.turns.push({ id: turn.id, items: turn.items, status })
   thread.preview ||= text.slice(0, 80)
