@@ -1,10 +1,16 @@
-import { lstat, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, open, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { writeFileAtomic } from '@latch/core/node-kit'
 import { AttachmentStore, ATTACHMENT_CLAIM_TTL, ATTACHMENT_TTL, attachmentFileName, attachmentKind } from '../src/attachments.ts'
+vi.mock('node:fs/promises', async original => {
+  const fs = await original<typeof import('node:fs/promises')>()
+  return { ...fs, mkdir: vi.fn(fs.mkdir), open: vi.fn(fs.open) }
+})
+const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+const cleanups: Array<() => Promise<void>> = []
 const directories: string[] = []
 const directory = async () => {
   const path = await mkdtemp(join(tmpdir(), 'latch-attachments-'))
@@ -12,6 +18,10 @@ const directory = async () => {
   return path
 }
 afterEach(async () => {
+  for (const close of cleanups.splice(0).reverse()) await close()
+  vi.restoreAllMocks()
+  vi.mocked(mkdir).mockReset().mockImplementation(actual.mkdir)
+  vi.mocked(open).mockReset().mockImplementation(actual.open)
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })))
 })
 const input = (text = 'ordinary text', extra: Partial<Parameters<AttachmentStore['add']>[0]> = {}) => ({
@@ -68,6 +78,94 @@ describe('what an attachment is', () => {
   })
 })
 describe('private attachment store', () => {
+  const deliveries = ['reader', 'read', 'materialize'] as const
+  async function delivered(method: (typeof deliveries)[number], store: AttachmentStore, ref: Awaited<ReturnType<AttachmentStore['add']>>) {
+    if (method === 'materialize') return readFile(await store.materialize(ref, 'session-1'))
+    if (method === 'read') return Buffer.from((await store.read(ref)).data)
+    const reader = await store.reader(ref)
+    try {
+      return await reader.read(0, ref.size)
+    } finally {
+      await reader.close()
+    }
+  }
+  it.each(deliveries)('%s waits for a binding already publishing the draft before opening its content', async method => {
+    const path = await directory()
+    let binding = false
+    let entered!: () => void, release!: () => void
+    const arrived = new Promise<void>(resolve => (entered = resolve))
+    const released = new Promise<void>(resolve => (release = resolve))
+    const pending: Promise<unknown>[] = []
+    cleanups.push(async () => {
+      release()
+      await Promise.allSettled(pending)
+    })
+    const store = await AttachmentStore.open(path, {
+      persist: async (file, text) => {
+        if (binding) {
+          entered()
+          await released
+        }
+        await writeFileAtomic(file, text)
+      },
+    })
+    const ref = await store.add(input('retained bytes'))
+    binding = true
+    const bound = store.bind('device-a', [ref.id], 'session-1')
+    pending.push(bound)
+    await arrived
+    vi.mocked(open).mockClear()
+    vi.mocked(mkdir).mockClear()
+    const content = delivered(method, store, ref)
+    pending.push(content)
+    // The old draft will disappear when this publication finishes; do not capture it while waiting for the queue.
+    expect(open).not.toHaveBeenCalled()
+    expect(mkdir).not.toHaveBeenCalled()
+    release()
+    await bound
+    expect(await content).toEqual(Buffer.from('retained bytes'))
+    expect(store.get(ref.id)?.taskId).toBe('session-1')
+  })
+  it.each(deliveries)('%s finishes checking its open draft before binding can unlink it', async method => {
+    const path = await directory()
+    const store = await AttachmentStore.open(path)
+    const ref = await store.add(input('retained bytes'))
+    const draft = join(path, 'attachments', '_drafts', ref.id)
+    let entered!: () => void, release!: () => void
+    const arrived = new Promise<void>(resolve => (entered = resolve))
+    const released = new Promise<void>(resolve => (release = resolve))
+    const pending: Promise<unknown>[] = []
+    cleanups.push(async () => {
+      release()
+      await Promise.allSettled(pending)
+    })
+    vi.mocked(open).mockImplementation(async (...args) => {
+      const file = await actual.open(...args)
+      if (args[0] === draft) {
+        const inspect = file.stat.bind(file)
+        vi.spyOn(file, 'stat').mockImplementationOnce(async () => {
+          const before = await inspect()
+          entered()
+          await released
+          return before
+        })
+      }
+      return file
+    })
+    const content = delivered(method, store, ref)
+    pending.push(content)
+    await arrived
+    vi.mocked(mkdir).mockClear()
+    const bound = store.bind('device-a', [ref.id], 'session-1')
+    pending.push(bound)
+    // bind enters mutate on the next microtask. Unlinking now would change this descriptor's captured ctime.
+    await Promise.resolve()
+    expect(mkdir).not.toHaveBeenCalled()
+    release()
+    expect(await content).toEqual(Buffer.from('retained bytes'))
+    await bound
+    await expect(stat(draft)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
   it('reads ranges and copies a sent file without holding it whole, and refuses one that changed', async () => {
     const path = await directory(),
       store = await AttachmentStore.open(path)
