@@ -1,6 +1,6 @@
 {
   "hero-mac-first": {
-    "file": "hero-mac-first.61e0cee0",
+    "file": "hero-mac-first.3370876c",
     "widths": [
       800,
       1200,
@@ -12,7 +12,7 @@
     "height": 1964
   },
   "hero-phone-first": {
-    "file": "hero-phone-first.94815a15",
+    "file": "hero-phone-first.65d8c463",
     "widths": [
       360,
       540,
@@ -22,7 +22,7 @@
     "height": 2532
   },
   "hero-mac-needs": {
-    "file": "hero-mac-needs.454e242c",
+    "file": "hero-mac-needs.5b002009",
     "widths": [
       800,
       1200,
@@ -34,7 +34,7 @@
     "height": 1964
   },
   "hero-phone-needs": {
-    "file": "hero-phone-needs.253080a3",
+    "file": "hero-phone-needs.389ab77b",
     "widths": [
       360,
       540,
@@ -44,7 +44,7 @@
     "height": 2532
   },
   "hero-mac-done": {
-    "file": "hero-mac-done.e809d17f",
+    "file": "hero-mac-done.394d923b",
     "widths": [
       800,
       1200,
@@ -56,7 +56,7 @@
     "height": 1964
   },
   "hero-phone-done": {
-    "file": "hero-phone-done.3e52a162",
+    "file": "hero-phone-done.9106fc05",
     "widths": [
       360,
       540,

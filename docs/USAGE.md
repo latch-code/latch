@@ -279,7 +279,7 @@ pnpm stop -- --reason restart           # 告诉手机与浏览器原因：resta
 - **Windows**：Host 依赖的每用户运行目录（`host.sock`）尚未实现，Host 无法启动。
 - **安装包与自动更新**：可生成供本机验收的 ad-hoc 签名应用；`--release` 用你的 Developer ID 签名并公证，尚未实际运行过。公证下载包与已签名的更新源尚未提供。
 - **中继**：没有官方中继，用[自己的中继](RELAY.md)（Linux 服务器或自己的 Cloudflare 账户）。
-- **插件**：在线安装尚未实现，只加载本机的目录或模块。
+- **插件**：没有在线的插件目录或搜索；可从 npm 包、公开的 GitHub 仓库或本机路径添加（见「插件市场」）。
 - **iPhone 与 iPad**：从源码签名安装。为 Host 配置 APNs 后，可在已配对设备上开启待处理提醒。签名真机的投递、锁屏与灵动岛交互待验收。[配置和验收步骤](IOS-NOTIFICATIONS.md)
 - **设备预览**：只列出与操作这台 Mac 上的 iOS 模拟器，不支持 Android 与真机；点按与键入要你自己装的 `idb_companion`；中文等非 ASCII 文字的键入与两指捏合不可用；手机与其他电脑上没有入口。
 - **终端**：只在这台 Mac 的桌面端；用 `setsid`、`nohup` 或 `disown` 留在后台的程序在关闭终端后继续运行。

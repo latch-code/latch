@@ -1,35 +1,152 @@
 {
-  "duration": 11.738,
+  "duration": 31.986,
   "marks": {
     "typing": 0.25,
     "typed": 1.35,
     "sent": 1.7,
     "team": 2.9,
-    "running": 2.937,
-    "codex_done": 4.437,
-    "sync_done": 5.037,
-    "needs": 5.737,
-    "approval_shown": 6.337,
-    "hold_start": 7.037,
-    "tap": 8.037,
-    "allowed": 8.438,
-    "handed_back": 9.038,
-    "closing_done": 10.138,
-    "settled": 10.738,
-    "end": 11.738
+    "running": 3.143,
+    "codex_done": 4.643,
+    "sync_done": 5.243,
+    "needs": 5.943,
+    "approval_shown": 6.543,
+    "hold_start": 7.243,
+    "tap": 8.243,
+    "allowed": 8.316,
+    "handed_back": 8.916,
+    "closing_done": 10.016,
+    "settled": 10.616,
+    "end": 11.616,
+    "review_start": 11.616,
+    "review_open": 13.116,
+    "review_menu": 14.216,
+    "review_pick": 15.116,
+    "review_base": 15.416,
+    "review_end": 17.416,
+    "pr_start": 17.416,
+    "pr_tab_click": 18.616,
+    "pr_tab": 18.686,
+    "pr_create": 19.786,
+    "pr_open": 20.786,
+    "pr_follow": 22.486,
+    "pr_end": 23.986,
+    "fb_start": 23.986,
+    "fb_closed": 24.986,
+    "fb_notice": 25.486,
+    "fb_open": 27.386,
+    "fb_shown": 28.786,
+    "fb_quoted": 30.086,
+    "fb_end": 31.986
   },
   "mac": {
-    "mp4": "hero-mac.a88ad7b5.mp4",
-    "mp4Small": "hero-mac-sm.5881c69c.mp4"
+    "mp4": "hero-mac.751a870c.mp4",
+    "mp4Small": "hero-mac-sm.881a7594.mp4"
   },
   "phone": {
-    "mp4": "hero-phone.43fb756b.mp4",
-    "mp4Small": "hero-phone-sm.70d1b03e.mp4"
+    "mp4": "hero-phone.edc0a636.mp4",
+    "mp4Small": "hero-phone-sm.b30c6db5.mp4"
   },
   "allow": {
     "left": 51.026,
-    "top": 67.062,
+    "top": 68.009,
     "width": 39.744,
     "height": 5.213
-  }
+  },
+  "steps": [
+    {
+      "id": "ask",
+      "at": 0
+    },
+    {
+      "id": "team",
+      "at": "team"
+    },
+    {
+      "id": "needs",
+      "at": "needs",
+      "hold": true
+    },
+    {
+      "id": "allow",
+      "at": "tap"
+    },
+    {
+      "id": "done",
+      "at": "handed_back"
+    },
+    {
+      "id": "review",
+      "at": "review_start",
+      "label": {
+        "en": "Review the diff",
+        "zh": "审阅改动"
+      }
+    },
+    {
+      "id": "pr",
+      "at": "pr_start",
+      "label": {
+        "en": "Open the PR",
+        "zh": "创建 PR"
+      }
+    },
+    {
+      "id": "feedback",
+      "at": "fb_start",
+      "label": {
+        "en": "Review feedback",
+        "zh": "评审反馈"
+      }
+    }
+  ],
+  "segments": [
+    {
+      "from": 0.0,
+      "to": 11.616,
+      "mac": {
+        "mp4": "hero-mac.751a870c.mp4",
+        "mp4Small": "hero-mac-sm.881a7594.mp4"
+      },
+      "phone": {
+        "mp4": "hero-phone.edc0a636.mp4",
+        "mp4Small": "hero-phone-sm.b30c6db5.mp4"
+      }
+    },
+    {
+      "from": 11.616,
+      "to": 17.416,
+      "mac": {
+        "mp4": "hero-mac-2.992ddda4.mp4",
+        "mp4Small": "hero-mac-2-sm.e45d7ace.mp4"
+      },
+      "phone": {
+        "mp4": "hero-phone-2.583cf27b.mp4",
+        "mp4Small": "hero-phone-2-sm.7e8ae5e4.mp4"
+      }
+    },
+    {
+      "from": 17.416,
+      "to": 23.986,
+      "mac": {
+        "mp4": "hero-mac-3.da995d99.mp4",
+        "mp4Small": "hero-mac-3-sm.f4a691d6.mp4"
+      },
+      "phone": {
+        "mp4": "hero-phone-3.31e061fe.mp4",
+        "mp4Small": "hero-phone-3-sm.1f668348.mp4"
+      }
+    },
+    {
+      "from": 23.986,
+      "to": 31.986,
+      "mac": {
+        "mp4": "hero-mac-4.25ee3ab0.mp4",
+        "mp4Small": "hero-mac-4-sm.4753b622.mp4"
+      },
+      "phone": {
+        "mp4": "hero-phone-4.132f74dc.mp4",
+        "mp4Small": "hero-phone-4-sm.b7576f7c.mp4"
+      }
+    }
+  ]
 }

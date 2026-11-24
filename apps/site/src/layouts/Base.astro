@@ -3,6 +3,7 @@ import '../styles/site.css'
 import { COPY, LANGS, href, type Lang } from '../i18n'
 import { LINKS } from '../config'
 import GitHubLink from '../components/GitHubLink.astro'
+import SoonLink from '../components/SoonLink.astro'
 
 interface Props {
   lang: Lang
@@ -21,6 +22,7 @@ const canonical = url(lang)
 const other: Lang = lang === 'en' ? 'zh' : 'en'
 const ogImage = new URL(`${base}og/${lang}.jpg`, site).href
 const onDownload = path.startsWith('/download')
+const onPlugins = path.startsWith('/plugins')
 const switchHref = href(other, noindex ? '/' : path)
 
 const jsonld = [
@@ -106,6 +108,7 @@ const redirect = `(function(){try{var s=localStorage.getItem('latch-lang');if(!s
         <span>Latch</span>
       </a>
       <div class="nav__end">
+        <a class="lang nav__link" href={href(lang, '/plugins/')} aria-current={onPlugins ? 'page' : undefined}>{t.nav.plugins}</a>
         <a class="lang" href={switchHref} hreflang={LANGS[other].tag} lang={LANGS[other].tag} aria-label={t.nav.switchLabel} data-lang-link={other}>{t.nav.switchTo}</a>
         <GitHubLink class="nav__gh" label={t.nav.githubLabel} soon={t.cta.soon} iconOnly />
         <a class="btn btn--panel btn--sm" href={href(lang, '/download/')} aria-current={onDownload ? 'page' : undefined}>{t.nav.download}</a>
@@ -126,10 +129,15 @@ const redirect = `(function(){try{var s=localStorage.getItem('latch-lang');if(!s
       <nav class="foot__cols" aria-label={t.foot.label}>
         <div>
           <p class="foot__h">{t.foot.get}</p>
-          <a href={href(lang, '/plugins/')}>{t.marketplace.title}</a>
           <a href={`${href(lang, '/download/')}#mac`}>{t.foot.mac}</a>
           <a href={`${href(lang, '/download/')}#ios`}>{t.foot.ios}</a>
           <a href={`${href(lang, '/download/')}#later`}>{t.foot.later}</a>
+        </div>
+        <div>
+          <p class="foot__h">{t.foot.plugins}</p>
+          <a href={href(lang, '/plugins/')}>{t.foot.market}</a>
+          <SoonLink class="foot__link" href={LINKS.pluginPublish} soon={t.cta.soon}>{t.foot.publish}</SoonLink>
+          <SoonLink class="foot__link" href={LINKS.pluginGuide} soon={t.cta.soon}>{t.foot.guide}</SoonLink>
         </div>
         <div>
           <p class="foot__h">{t.foot.open}</p>
