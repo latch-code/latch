@@ -51,30 +51,11 @@ const WAY_ICONS = [
         <GitHubLink class="btn btn--quiet" href={LINKS.pluginPublish} label={t.publish} soon={all.cta.soon} />
       </div>
     </div>
-
-    <div class="wrap gallery">
-      <h2 class="visually-hidden" id="gallery-title">{t.galleryTitle}</h2>
-      <ul class="gallery__list" aria-labelledby="gallery-title">
-        {downloads.map(({ entry, version, facets: provides }) => (
-          <li class="card">
-            <div class="card__cover"><MarketplaceCover id={entry.id} lang={lang} /></div>
-            <div class="card__body">
-              <h3 class="card__name"><a class="card__link" href={`#${entry.id}`}>{entry[lang].name}</a></h3>
-              <p class="card__summary">{entry[lang].summary}</p>
-              <div class="card__foot">
-                <ul class="chips">{provides.map((f) => <li>{t.facets[f]}</li>)}</ul>
-                <span class="card__version">v{version}</span>
-              </div>
-            </div>
-          </li>
-        ))}
-      </ul>
-    </div>
   </section>
 
-  <section class="band plugins" aria-labelledby="details-title">
+  <section class="plugins" aria-labelledby="details-title">
     <div class="wrap">
-      <h2 id="details-title" class="features__title">{t.detailsTitle}</h2>
+      <h2 id="details-title" class="visually-hidden">{t.detailsTitle}</h2>
       {facets.map((f) => <span class="facet-target" id={`provides-${f}`}></span>)}
       <div class="filter" data-filter data-one={t.countOne} data-many={t.countMany}>
         <div class="pills" role="group" aria-label={t.filterLabel}>
@@ -87,26 +68,20 @@ const WAY_ICONS = [
       <div class="details">
         {downloads.map(({ entry, name, version, href: bundle, facets: provides, access }) => (
           <article id={entry.id} class="plugin" data-facets={provides.join(' ')}>
-            <div class="plugin__side">
-              <div class="plugin__cover"><MarketplaceCover id={entry.id} lang={lang} /></div>
-              <dl class="plugin__meta">
-                <div><dt>{t.version}</dt><dd>{version}</dd></div>
-                <div><dt>{t.source}</dt><dd><a href={`${LINKS.github}/tree/main/examples/${entry.folder}`} rel="noopener">examples/{entry.folder}</a></dd></div>
-              </dl>
-              <a class="btn btn--quiet plugin__download" href={bundle} download={name + '.latch-plugin.json'} aria-label={`${t.download} · ${entry[lang].name}`}>
-                <Fragment set:html={download} /><span>{t.download}</span>
-              </a>
-            </div>
-            <div class="plugin__main">
-              <ul class="chips">{provides.map((f) => <li>{t.facets[f]}</li>)}</ul>
+            <div class="plugin__cover"><MarketplaceCover id={entry.id} lang={lang} /></div>
+            <div class="plugin__body">
               <h3 class="plugin__name">{entry[lang].name}</h3>
               <p class="plugin__summary">{entry[lang].summary}</p>
+              <ul class="chips">{provides.map((f) => <li>{t.facets[f]}</li>)}</ul>
+              <p class="plugin__tier" data-tier={access.tier}>
+                <svg class="i" viewBox="0 0 16 16" aria-hidden="true" set:html={TIER_ICONS[access.tier]} />
+                <span>{t.tiers[access.tier].name}</span>
+                <span class="plugin__version">v{version}</span>
+              </p>
+            </div>
+            <details class="plugin__more">
+              <summary><span>{t.more}</span><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.25 8 10.25l4-4" /></svg></summary>
               <div class="access" data-tier={access.tier}>
-                <p class="access__label">{t.access}</p>
-                <p class="access__tier">
-                  <svg class="i" viewBox="0 0 16 16" aria-hidden="true" set:html={TIER_ICONS[access.tier]} />
-                  <strong>{t.tiers[access.tier].name}</strong>
-                </p>
                 <p class="access__note">{t.tiers[access.tier].note}</p>
                 {access.capabilities.length > 0 && (
                   <ul class="access__caps">{access.capabilities.map((c) => <li><Fragment set:html={check} />{capability(c)}</li>)}</ul>
@@ -117,8 +92,12 @@ const WAY_ICONS = [
               <dl class="plugin__facts">
                 <dt>{t.use}</dt><dd>{entry[lang].use}</dd>
                 <dt>{t.agent}</dt><dd>{entry[lang].agent}</dd>
+                <dt>{t.source}</dt><dd><a href={`${LINKS.github}/tree/main/examples/${entry.folder}`} rel="noopener">examples/{entry.folder}</a></dd>
               </dl>
-            </div>
+              <a class="btn btn--quiet plugin__download" href={bundle} download={name + '.latch-plugin.json'} aria-label={`${t.download} · ${entry[lang].name}`}>
+                <Fragment set:html={download} /><span>{t.download}</span>
+              </a>
+            </details>
           </article>
         ))}
       </div>
@@ -179,53 +158,19 @@ const WAY_ICONS = [
   </section>
 </Base>
 <style>
-  /* Hero: the home page's idiom, then the four plugins Latch ships, large, with their live covers. */
+  /* Hero, then every plugin as a small card: cover, what it is, what it provides and where its code runs. The rest of
+     what a person checks before adding one opens inside the card, so the list stays short however many there are. */
   .market { padding-bottom: 0; }
-  .gallery { margin-top: var(--space-3xl); }
-  .gallery__list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-lg);
-  }
-  .card {
-    position: relative;
-    display: grid;
-    grid-template-rows: auto 1fr;
-    overflow: hidden;
-    border-radius: 20px;
-    background: var(--color-paper-2);
-    box-shadow: 0 0 0 1px var(--color-rule);
-    transition: box-shadow var(--dur-short) var(--ease-out), transform var(--dur-short) var(--ease-out);
-  }
-  .card:hover { box-shadow: 0 0 0 1px var(--color-rule-strong), 0 40px 80px -50px var(--color-shot-shadow); }
-  .card:has(.card__link:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: 3px; }
-  .card__cover, .plugin__cover { container-type: inline-size; }
-  .card__cover :global(.market-feature), .plugin__cover :global(.market-feature) { aspect-ratio: 16 / 9; min-block-size: 0; }
-  .card__cover :global(.market-pattern-cover), .plugin__cover :global(.market-pattern-cover) { aspect-ratio: 16 / 9; }
-  @container (min-width: 380px) { :global(.market-feature-content) { zoom: 1.3; } }
-  @container (min-width: 500px) { :global(.market-feature-content) { zoom: 1.6; } }
-  .card__body { display: flex; flex-direction: column; gap: var(--space-xs); padding: var(--space-lg); border-top: 1px solid var(--color-rule); }
-  .card__name { font-size: var(--text-xl); letter-spacing: -0.02em; line-height: 1.2; max-width: none; }
-  .card__link { text-decoration: none; color: inherit; }
-  .card__link:focus-visible { outline: none; }
-  .card__link::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
-  .card__summary { color: var(--color-muted); max-width: 36em; }
-  .card__foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); margin-top: auto; padding-top: var(--space-xs); }
-  .card__version, .chips li { font-variant-numeric: tabular-nums; }
-  .card__version { color: var(--color-faint); font-size: var(--text-sm); }
+  .plugins { padding-top: var(--space-2xl); }
   .chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2xs); }
   .chips li {
     display: inline-flex; align-items: center; min-height: 24px; padding: 0 var(--space-xs);
     border-radius: var(--radius-chip); background: var(--color-paper-3); color: var(--color-ink-2);
     font-size: var(--text-xs); font-weight: 500; white-space: nowrap;
   }
-
-  /* Every plugin in detail, filtered by what it provides. Without scripting the pills are links and :target filters. */
+  /* Without scripting the pills are links and :target filters. */
   .facet-target { display: block; position: relative; top: calc(-1 * var(--space-xl)); }
-  .filter { display: grid; justify-items: center; margin-top: var(--space-xl); }
+  .filter { display: grid; justify-items: center; }
   html:not(.js) .facet-target:target ~ .filter .tab[data-facet='all'] { color: var(--color-muted); background: transparent; }
   html:not(.js) .filter .tab[data-facet='all'],
   html:not(.js) #provides-skill:target ~ .filter .tab[data-facet='skill'],
@@ -236,57 +181,64 @@ const WAY_ICONS = [
   html:not(.js) #provides-panel:target ~ .details .plugin:not([data-facets~='panel']),
   html:not(.js) #provides-app:target ~ .details .plugin:not([data-facets~='app']),
   html:not(.js) #provides-tool:target ~ .details .plugin:not([data-facets~='tool']) { display: none; }
-  .details { margin-top: var(--space-xl); border-bottom: 1px solid var(--color-rule); }
+  .details {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(272px, 1fr));
+    gap: var(--space-md);
+    align-items: start;
+    margin-top: var(--space-xl);
+  }
   .plugin[hidden] { display: none; }
   .plugin {
     display: grid;
-    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-    gap: var(--space-2xl);
-    padding-block: var(--space-2xl);
-    border-top: 1px solid var(--color-rule);
-    scroll-margin-top: calc(var(--nav-height) + var(--space-md));
-  }
-  .plugin:target .plugin__cover { box-shadow: 0 0 0 1px var(--color-ink-2); }
-  .plugin__side { display: grid; gap: var(--space-md); align-content: start; position: sticky; top: calc(var(--nav-height) + var(--space-lg)); align-self: start; }
-  .plugin__cover { overflow: hidden; border-radius: var(--radius-card); box-shadow: 0 0 0 1px var(--color-rule-strong); transition: box-shadow var(--dur-long) var(--ease-out); }
-  .plugin__meta { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-2xs) var(--space-lg); margin: 0; font-size: var(--text-sm); }
-  .plugin__meta div { display: contents; }
-  .plugin__meta dt { color: var(--color-faint); }
-  .plugin__meta dd { margin: 0; color: var(--color-ink-2); font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }
-  .plugin__meta a { color: inherit; text-decoration-color: var(--color-rule-strong); }
-  .plugin__meta a:hover { text-decoration-color: currentColor; }
-  .plugin__download { justify-self: start; }
-  .plugin__main { display: grid; gap: var(--space-md); align-content: start; }
-  .plugin__name { font-size: var(--text-2xl); letter-spacing: -0.025em; line-height: 1.12; }
-  .plugin__summary { color: var(--color-ink-2); font-size: var(--text-lead); line-height: 1.5; max-width: 34em; }
-
-  /* What it can access: the plugin's trust in one block, scannable before the prose. */
-  .access {
-    display: grid;
-    gap: var(--space-xs);
-    margin-top: var(--space-xs);
-    padding: var(--space-lg);
+    min-width: 0;
+    overflow: hidden;
     border-radius: var(--radius-card);
     background: var(--color-paper-2);
     box-shadow: 0 0 0 1px var(--color-rule);
+    scroll-margin-top: calc(var(--nav-height) + var(--space-md));
+    transition: box-shadow var(--dur-short) var(--ease-out);
   }
-  .access__label { color: var(--color-faint); font-size: var(--text-sm); }
-  .access__tier { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--text-lg); }
-  .access__tier .i { width: 20px; height: 20px; color: var(--color-ink-2); }
-  .access__tier strong { font-weight: 600; letter-spacing: -0.01em; }
-  .access[data-tier='host'] .access__tier .i,
-  .access[data-tier='panel'] .access__tier .i { color: var(--color-wait); }
+  .plugin:hover, .plugin:target { box-shadow: 0 0 0 1px var(--color-rule-strong); }
+  .plugin__cover { container-type: inline-size; border-bottom: 1px solid var(--color-rule); }
+  .plugin__cover :global(.market-feature) { aspect-ratio: 16 / 9; min-block-size: 0; }
+  .plugin__cover :global(.market-pattern-cover) { aspect-ratio: 16 / 9; }
+  .plugin__body { display: grid; gap: var(--space-xs); align-content: start; padding: var(--space-md); }
+  .plugin__name { font-size: var(--text-title); letter-spacing: -0.015em; line-height: 1.25; }
+  .plugin__summary { color: var(--color-muted); font-size: var(--text-sm); line-height: 1.5; min-height: 3lh; }
+  .plugin__tier { display: flex; align-items: center; gap: var(--space-xs); margin-top: var(--space-2xs); color: var(--color-ink-2); font-size: var(--text-sm); }
+  .plugin__tier .i { flex: none; width: 14px; height: 14px; }
+  .plugin__tier[data-tier='host'] .i,
+  .plugin__tier[data-tier='panel'] .i { color: var(--color-wait); }
+  .plugin__version { margin-left: auto; color: var(--color-faint); font-variant-numeric: tabular-nums; }
+  .plugin__more { border-top: 1px solid var(--color-rule); }
+  .plugin__more summary {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm);
+    min-height: 44px; padding: 0 var(--space-md);
+    color: var(--color-ink-2); font-size: var(--text-sm); font-weight: 500; cursor: pointer; list-style: none;
+  }
+  .plugin__more summary::-webkit-details-marker { display: none; }
+  .plugin__more summary:hover { color: var(--color-ink); }
+  .plugin__more summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; border-radius: var(--radius-chip); }
+  .plugin__more summary .i { width: 14px; height: 14px; transition: transform var(--dur-short) var(--ease-out); }
+  .plugin__more[open] summary .i { transform: rotate(180deg); }
+  .plugin__more > :not(summary) { margin-inline: var(--space-md); }
+  .plugin__more > :last-child { margin-bottom: var(--space-md); }
+  .access { display: grid; gap: var(--space-xs); font-size: var(--text-sm); }
   .access__note { color: var(--color-ink-2); }
-  .access__caps { list-style: none; margin: var(--space-2xs) 0; padding: 0; display: grid; gap: var(--space-2xs); }
-  .access__caps li { display: flex; gap: var(--space-xs); align-items: baseline; color: var(--color-ink); font-size: var(--text-sm); }
+  .access__caps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2xs); }
+  .access__caps li { display: flex; gap: var(--space-xs); align-items: baseline; color: var(--color-ink); }
   .access__caps .i { flex: none; width: 14px; height: 14px; transform: translateY(2px); color: var(--color-ink-2); }
-  .access__text { color: var(--color-muted); font-size: var(--text-sm); line-height: 1.55; padding-top: var(--space-xs); border-top: 1px solid var(--color-rule); }
-  .access__confirm { display: flex; gap: var(--space-xs); align-items: baseline; color: var(--color-ink-2); font-size: var(--text-sm); }
+  .access__text { color: var(--color-muted); line-height: 1.55; }
+  .access__confirm { display: flex; gap: var(--space-xs); align-items: baseline; color: var(--color-ink-2); }
   .access__confirm .i { flex: none; width: 14px; height: 14px; transform: translateY(2px); }
-  .plugin__facts { margin: var(--space-xs) 0 0; display: grid; gap: var(--space-2xs); }
-  .plugin__facts dt { font-weight: 600; color: var(--color-ink); margin-top: var(--space-sm); }
+  .plugin__facts { margin: var(--space-md) 0 0; display: grid; gap: var(--space-2xs); font-size: var(--text-sm); }
+  .plugin__facts dt { font-weight: 600; color: var(--color-ink); margin-top: var(--space-xs); }
   .plugin__facts dt:first-child { margin-top: 0; }
-  .plugin__facts dd { margin: 0; color: var(--color-muted); max-width: 40em; }
+  .plugin__facts dd { margin: 0; color: var(--color-muted); overflow-wrap: anywhere; }
+  .plugin__facts a { color: inherit; text-decoration-color: var(--color-rule-strong); }
+  .plugin__facts a:hover { text-decoration-color: currentColor; }
+  .plugin__download { display: flex; margin-top: var(--space-md); }
 
   /* Three ways in, then making one. */
   .section-title {
@@ -352,24 +304,12 @@ const WAY_ICONS = [
   .dev a:hover { color: var(--color-ink); text-decoration-color: currentColor; }
 
   @media (max-width: 64rem) {
-    .plugin { grid-template-columns: minmax(0, 1fr); gap: var(--space-xl); }
-    .plugin__side { position: static; }
     .market-trust__inner { grid-template-columns: minmax(0, 1fr); gap: var(--space-xl); }
     .ways__list { grid-template-columns: minmax(0, 1fr); gap: var(--space-md); }
     .create__tile { grid-template-columns: minmax(0, 1fr); gap: var(--space-xl); padding: var(--space-xl); }
   }
   @media (max-width: 40rem) {
-    .gallery__list { grid-template-columns: minmax(0, 1fr); gap: var(--space-md); }
-    .gallery { margin-top: var(--space-2xl); }
-    .card__body { padding: var(--space-md); }
-    .card__name { font-size: var(--text-lg); }
-    .plugin { padding-block: var(--space-xl); }
-    .plugin__name { font-size: var(--text-xl); }
-    .plugin__download { justify-self: stretch; }
-    .access { padding: var(--space-md); }
     .create__tile { padding: var(--space-lg); }
-    .plugin__main { order: -1; }
-    .plugin__cover { display: none; }
     .filter .pills { justify-self: stretch; }
   }
 </style>
