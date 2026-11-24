@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { GitPrFollow, PrFollowRestriction } from '@latch/protocol'
-import { Button } from '@latch/ui'
+import { Button, WaitingGlyph } from '@latch/ui'
 import { api, errorMessage, isUncertain, newRequestId } from '../../core/api.ts'
 import { defineCopy } from '../../core/i18n.ts'
 
@@ -22,7 +22,8 @@ const COPY = defineCopy(
     retry: '重试同一请求',
     open: '查看反馈',
     detail: '关闭面板后，Latch 会继续跟进这个 PR。有新评审、评论或检查失败时，你会在这条会话里收到提醒。',
-    notice: (comments: number, failures: number) => `PR 有新反馈 · ${comments} 条评审或评论 · ${failures} 项检查失败`,
+    notice: (comments: number) => `PR 有新反馈 · ${comments} 条评审或评论`,
+    failures: (failures: number) => `${failures} 项检查失败`,
   },
   {
     harness: 'This harness cannot enforce the unattended tool policy. Notifications are available.',
@@ -42,7 +43,8 @@ const COPY = defineCopy(
     retry: 'Retry same request',
     open: 'Review feedback',
     detail: 'Latch keeps following this PR after you close the panel. New reviews, comments and failed checks appear in this conversation.',
-    notice: (comments: number, failures: number) => `PR update · ${comments} reviews or comments · ${failures} failed checks`,
+    notice: (comments: number) => `PR update · ${comments} reviews or comments`,
+    failures: (failures: number) => `${failures} failed checks`,
   },
 )
 
@@ -131,14 +133,17 @@ export function PrFollowNotice({ sessionId, open }: { sessionId: string; open: (
   }, [sessionId])
   if (!notice || dismissed === notice.at) return null
   return (
-    <div className="delivery-section-head" role="status">
+    // A pending notice above the input, in the composer's column like the other stops there.
+    <div className="composer-stop" data-tone="warn" role="status">
+      <WaitingGlyph size={14} aria-hidden="true" />
       <span>
-        {COPY.notice(notice.comments, notice.failures)}
+        {COPY.notice(notice.comments)}
+        {' · '}
+        <span data-tone={notice.failures > 0 ? 'err' : undefined}>{COPY.failures(notice.failures)}</span>
         {notice.outcome && ` · ${COPY[notice.outcome]}`}
       </span>
       <Button
         size="xs"
-        variant="ghost"
         onClick={() => {
           setDismissed(notice.at)
           open()
