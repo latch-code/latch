@@ -81,10 +81,14 @@ it('creates a PR through a fake gh, binds an open one instead of a second, and b
   const home = join(scratch, 'home')
   await mkdir(home)
   const gh = await installFakeGh(join(scratch, 'gh'))
+  let pollFollow!: () => Promise<void>
   const host = await startTestHost({
     demo: false,
     gitDelivery: {
       home,
+      registerPoll: poll => {
+        pollFollow = poll
+      },
       // Tokens the Host holds never reach gh: the fake records a violation if they do.
       hostEnv: { HOME: home, USER: 'tester', PATH: '/usr/bin:/bin', TMPDIR: scratch, GH_TOKEN: 'ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
       shell: gh.shell,
@@ -170,6 +174,10 @@ it('creates a PR through a fake gh, binds an open one instead of a second, and b
     expect(await creates()).toBe(1)
     await choose(page, first)
     await openDelivery(page)
+    await section.getByRole('button', { name: '后台提醒', exact: true }).click()
+    await section.getByRole('button', { name: '停止跟进', exact: true }).waitFor()
+    await page.getByRole('button', { name: '侧边面板', exact: true }).first().click()
+    await panel.waitFor({ state: 'hidden' })
 
     // A failing check: its log, read on request, and into the draft fenced with the check's name; nothing is sent.
     const head = git('rev-parse', 'HEAD')
@@ -224,6 +232,15 @@ it('creates a PR through a fake gh, binds an open one instead of a second, and b
         },
       ]
     })
+    await pollFollow()
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    const feedback = page.getByRole('button', { name: '查看反馈', exact: true })
+    await feedback.waitFor()
+    await shots(page, 'follow-when-panel-closed', true)
+    await feedback.click()
+    await panel.waitFor()
+    await section.getByRole('button', { name: '停止跟进', exact: true }).click()
+    await section.getByRole('button', { name: '后台提醒', exact: true }).waitFor()
     await section.getByRole('button', { name: '刷新' }).click()
     const failing = section.locator('.delivery-check[data-state="fail"]')
     await failing.getByText('test (node 24)').waitFor()

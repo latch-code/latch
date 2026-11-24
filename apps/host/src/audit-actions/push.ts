@@ -1,3 +1,3 @@
-import type { ZodType } from 'zod'
+import { z } from 'zod'
 
-export const PUSH_ACTIONS = {} as const satisfies Record<string, ZodType>
+export const PUSH_ACTIONS = { 'native.push.changed': z.strictObject({ enabled: z.boolean() }) } as const

@@ -32,6 +32,7 @@ final class PhoneAppDelegate: NSObject, UIApplicationDelegate {
     private let notices = PhoneNoticeDelegate()
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = notices
+        PhonePush.shared.launch()
         return true
     }
     func applicationWillResignActive(_ application: UIApplication) {
@@ -49,7 +50,10 @@ final class PhoneAppDelegate: NSObject, UIApplicationDelegate {
     }
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         // The token is private input for the encrypted registration hook, never a notification body or log value.
-        NotificationCenter.default.post(name: .latchPushToken, object: nil, userInfo: ["token": deviceToken])
+        PhonePush.shared.received(deviceToken)
+    }
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        PhonePush.shared.failed()
     }
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
@@ -59,6 +63,5 @@ final class PhoneAppDelegate: NSObject, UIApplicationDelegate {
     }
 }
 extension Notification.Name {
-    static let latchPushToken = Notification.Name("app.latch.private-push-token")
     static let latchStatusHint = Notification.Name("app.latch.status-hint")
 }

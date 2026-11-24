@@ -279,6 +279,7 @@ export interface ChangesPanelProps {
   canRun: boolean
   /** The device's data scope covers the session's folders; the routes refuse it otherwise. */
   canRead: boolean
+  canChooseComparisonBase: boolean
   stagingWrites: ReturnType<typeof useStagingWrites>
   phone: boolean
   /** The Host's computer by the name it reports (`Snapshot.hostName`), for where to grant access. */
@@ -766,6 +767,7 @@ function ReadableChanges({
   engine,
   local,
   canRun,
+  canChooseComparisonBase,
   phone,
   hostName,
   offline,
@@ -1184,9 +1186,11 @@ function ReadableChanges({
         />
       ) : git ? (
         <GitHistoryView
+          key={JSON.stringify([summary.id, canChooseComparisonBase])}
           sessionId={summary.id}
           root={primaryRoot}
           mode={git.mode}
+          canChooseComparisonBase={canChooseComparisonBase}
           layout={layout}
           phone={phone}
           poke={`${summary.status}:${summary.runId ?? ''}`}

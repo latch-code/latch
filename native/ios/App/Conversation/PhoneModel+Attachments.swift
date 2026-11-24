@@ -14,7 +14,7 @@ extension PhoneModel {
     static func topicTray(_ owner: String) -> String { PhoneAttachments.topicKey(owner) }
     func tray(_ key: String) -> PhoneAttachTray { attachTrays[key] ?? PhoneAttachTray() }
     /** While its message is being sent or is unconfirmed, a place's attachments stay as they are. */
-    func attachLocked(_ key: String) -> Bool { PhoneAttachments.locked(key: key, pending: pending, sending: attachSending.contains(key)) }
+    func attachLocked(_ key: String) -> Bool { PhoneAttachments.locked(key: key, pending: pending, sending: attachSending[key] != nil) }
     func attachState(_ key: String) -> PhoneAttachState { attachStates[key] ?? PhoneAttachState() }
     /** The selection an upload in a session is checked against: that session's own Harness and project. */
     func attachSelection(_ key: String) -> NativeJSON? {
@@ -23,6 +23,18 @@ extension PhoneModel {
         guard let harnessId = summary["harnessId"].string ?? (detail["summary"]["id"].string == key ? detail["summary"]["harnessId"].string : nil) else { return nil }
         return PhoneAttachments.selection(harnessId: harnessId, workspaceId: summary["workspaceId"].string,
             model: PhoneAgentChat.model(snapshot, task: summary))
+    }
+    /** A picker or Paste can return after this iPad shows a different conversation or reopens its content window. */
+    func acceptsAttachmentIntake(_ key: String, selection: NativeJSON?, host: UUID, reading: UUID) -> Bool {
+        generation == host && contentGeneration == reading && hasContentWindow && canRun && transportReady &&
+            (sessionOf(key) == nil || (key == sessionId && selection == attachSelection(key)))
+    }
+    @discardableResult func finishAttachmentIntake(_ key: String?, selection: NativeJSON?, host: UUID, reading: UUID, window: UUID,
+        pick: PhoneAttachPick, picked: [PhonePicked], active: Bool = true) -> Bool {
+        let sameTarget = active && key.map { acceptsAttachmentIntake($0, selection: selection, host: host, reading: reading) } == true
+        guard let files = PhoneAttachments.takePicked(picked, window: window, currentWindow: privateSnapshot.epoch, sameTarget: sameTarget), let key else { return false }
+        addAttachments(key, pick: pick, picked: files, selection: selection)
+        return true
     }
     /** Places that start a session (the sheet, a new topic) have no session ID yet. */
     private func sessionOf(_ key: String) -> String? { key.hasPrefix("\u{0}") ? nil : key }
@@ -37,7 +49,7 @@ extension PhoneModel {
         let selected = (try? selection.encoded()).flatMap { String(data: $0, encoding: .utf8) } ?? ""
         let wanted = selected + "|" + PhoneAttachments.revision(harness)
         var state = attachState(key)
-        guard state.revision != wanted || (state.caps == nil && !state.failed) else { return }
+        guard state.revision != wanted || (state.caps == nil && (asked || !state.failed)) else { return }
         // A new selection starts unknown; the same one read again keeps what it knew until the answer comes.
         if !state.revision.hasPrefix(selected + "|") { state.caps = nil }
         state.revision = wanted; state.failed = false; attachStates[key] = state
@@ -57,7 +69,6 @@ extension PhoneModel {
         attachTrays[key, default: PhoneAttachTray()].note = PhoneAttachments.unavailable(caps: attachState(key).caps, harness: harness, failed: attachState(key).failed)
         guard attachState(key).caps == nil else { return }
         // Not read yet, or the read failed: read now, and say what the Host answers.
-        if attachState(key).failed { attachStates[key]?.revision = "" }
         Task {
             await loadAttachCaps(key, selection: selection, harness: harness, asked: true)
             if attachTrays[key]?.note != nil, let caps = attachState(key).caps { attachTrays[key]?.note = caps.any ? nil : PhoneAttachments.unavailable(caps: caps, harness: harness, failed: false) }
@@ -161,16 +172,22 @@ extension PhoneModel {
      * waited for. Afterwards the IDs go only to that same place with every one of those rows; otherwise the reason is said.
      * The caller ends it with `endAttachmentSend` whatever happens.
      */
-    func attachmentsToSend(_ key: String, target: String?) async -> Result<[String], PhoneAttachBlock> {
-        let plan = PhoneAttachSend(target: target, tray: tray(key))
-        attachSending.insert(key)
+    func attachmentsToSend(_ key: String, target: String?, owner: UUID) async -> Result<[String], PhoneAttachBlock> {
+        let plan = PhoneAttachSend(target: target, tray: tray(key)), host = generation, window = privateSnapshot.epoch
+        attachSending[key] = owner
         for job in plan.rows.compactMap({ uploadJobs[$0] }) { await job.value }
+        guard generation == host, attachSending[key] == owner else { return .failure(.reason(PhoneAttachSend.movedWords)) }
+        if !privateSnapshot.accepts(window) {
+            let words = "验证窗口已更新，请重新发送。"
+            if hasContentWindow, attachTrays[key] != nil { attachTrays[key]?.note = words }
+            return .failure(.reason(words))
+        }
         let current = key.hasPrefix("\u{0}") ? nil : sessionId
         let result = plan.finish(current: current, tray: tray(key), caps: attachState(key).caps)
         if case let .failure(.reason(words)) = result { attachTrays[key, default: PhoneAttachTray()].note = words }
         return result
     }
-    func endAttachmentSend(_ key: String) { attachSending.remove(key) }
+    func endAttachmentSend(_ key: String, owner: UUID) { PhoneAttachments.releaseSend(key, owner: owner, locks: &attachSending) }
     /** A place's composer went away: its uploads stop, and the Host's unsent drafts are dropped. */
     func dropAttachments(_ key: String) {
         guard let tray = attachTrays[key] else { return }
@@ -190,7 +207,7 @@ extension PhoneModel {
     /** Staged files go with the window, the computer or the lock; the Host's drafts expire there on their own. */
     func clearAttachments() {
         for job in uploadJobs.values { job.cancel() }
-        uploadJobs = [:]; uploadTail = nil; attachTrays = [:]; attachStates = [:]; attachSending = []
+        uploadJobs = [:]; uploadTail = nil; attachTrays = [:]; attachStates = [:]; attachSending = [:]
         PhoneAttachStage.purge(); PhonePictures.clear()
     }
 }

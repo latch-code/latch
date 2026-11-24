@@ -481,6 +481,21 @@ export function worktreeStartOf(value: unknown): true | WorktreeStart | undefine
   const item = value as Record<string, unknown>
   const text = (field: unknown) => typeof field === 'string' && field.length > 0 && field.length <= 200
   if (item.from === 'head') return { from: 'head' }
+  if (
+    item.from === 'pr'
+    && typeof item.repository === 'string'
+    && item.repository.length > 0
+    && item.repository.length <= 512
+    && typeof item.commit === 'string'
+    && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(item.commit)
+    && typeof item.number === 'number'
+    && Number.isInteger(item.number)
+    && item.number > 0
+    && item.number < 1_000_000_000
+    && typeof item.proof === 'string'
+    && /^[0-9a-f]{64}$/u.test(item.proof)
+  )
+    return { from: 'pr', number: item.number, repository: item.repository, commit: item.commit, proof: item.proof }
   if (item.from === 'commit' && text(item.ref)) return { from: 'commit', ref: item.ref as string }
   if (item.from === 'branch' && text(item.branch)) return { from: 'branch', branch: item.branch as string }
   if (item.from === 'reuse' && typeof item.name === 'string' && /^\d{8}-[0-9a-f]{4}$/u.test(item.name))

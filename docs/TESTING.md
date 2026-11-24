@@ -144,7 +144,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | 助手身份、工作电脑与原回执 | `agent-routes.test.ts` 检查绑定、拒绝来源、发送前改绑、重启后重试；`automations.test.ts` 检查定时授权；`e2e/multi-host-list.e2e.ts` 用两台临时 Host 验证目标运行与失效路径；`e2e/helper-chat.e2e.ts` 核对身份草稿和技能、工具选择。原生对应 `native-swift.test.ts` 与 `e2e/ios-screens.e2e.ts`。 |
 | ACP 进程：环境白名单、启动指纹、权限模式、子 Agent | `packages/harness-acp/test/` 的 `acp.test.ts`、`subagents.test.ts`、`replay.test.ts`；Cursor 的 SDK 路线是 `cursor-sdk.test.ts`（假 SDK 模块 `fixtures/fake-cursor-sdk.mjs`，从不连 Cursor） |
 | 模型服务、密钥与网关 | `providers.test.ts`、`config.test.ts`、`model-gateway.test.ts`；定义变量里的密钥是 `agent-env-secrets.test.ts` |
-| Git 受限运行器、工作树与交付 | `changes-git.test.ts`、`worktrees.test.ts`、`git-delivery.test.ts`、`git-hunks.test.ts`、`git-pr.test.ts`、`git-routes.test.ts`、`git-sync.test.ts`（获取、拉取、中止）、`git-clone.test.ts`（克隆，经假 `ssh`）、`branch-switch.test.ts` 与 `branch-routes.test.ts`（切换分支；`e2e/branch-switch.e2e.ts`） |
+| Git 受限运行器、工作树与交付 | `changes-git.test.ts`、`worktrees.test.ts`、`git-delivery.test.ts`、`git-hunks.test.ts`、`git-pr.test.ts`、`git-routes.test.ts`、`git-sync.test.ts`（获取、拉取、中止）、`git-clone.test.ts`（克隆，经假 `ssh`）、`branch-switch.test.ts` 与 `branch-routes.test.ts`（切换分支；`e2e/branch-switch.e2e.ts`）、`native.test.ts`（PR 自动续办的原生验证窗口与会话引用限制） |
 | 待办投递、来源与证据 | `work-threads.test.ts`（原请求、同轮提问与私有范围）、`native.test.ts`（正文窗口、PR 评论响应字节预算）、`apps/web/test/workbench-evidence.test.ts`（SHA）、`e2e/task-flow.e2e.ts`（浏览器、假 ACP 与假 GitHub CLI） |
 | 会话文件与预览 | `files.test.ts`、`file-content.test.ts`、`file-outside.test.ts`、`file-tree.test.ts` |
 | 输入框（块、原子删除、撤销、输入法、粘贴与拖入） | `apps/web/test/prompt-editor.test.ts`、`prompt-tokens.test.ts`、`e2e/prompt-marks.e2e.ts`（Chromium 与 WebKit）；成员块见 `e2e/teams.e2e.ts` |
@@ -239,8 +239,11 @@ pnpm exec vitest run --config e2e/vitest.config.ts e2e/harness-acceptance.e2e.ts
 | 无 | `e2e/ios-app.e2e.ts` | 用临时 DerivedData 构建真实 App，禁用签名，不启动；核对 `Latch.app` 不含 Live 标记与软件密钥符号 |
 | `LATCH_IOS_SCREENS=1` | `e2e/ios-screens.e2e.ts` | 构建 `LatchScreens`，在自己新建的模拟器上按 `-LatchScene` 截固定样本场景的浅深色，不连 Host |
 | `LATCH_IOS_LIVE=1` | `e2e/ios-live.e2e.ts` | `LatchScreens` 的 Live 模式连接 `startTestHost` 的临时 Host，供人在模拟器里实走 |
+| `LATCH_IOS_QUEUE_UI=<新建的临时目录>` | `e2e/ios-live.e2e.ts` | 在 `LATCH_IOS_LIVE_DEVICE` 指定的已启动专用模拟器，用预装的 `LatchScreens` Live 模式验证截图排队 |
 | `LATCH_IOS_CLIPBOARD_TEST_DEVICE=<UDID>` | `e2e/ios-clipboard.e2e.ts` | 默认只用随机命名的独立 pasteboard；设置后在自有模拟器上验证公开标记的往返与清空 |
 | `LATCH_IOS_STAGE_PROBE=<前缀>` | `e2e/ios-pairing-stage.e2e.ts` | 只读的公开阶段探针，不操作模拟器、剪贴板或产品状态 |
+
+截图排队的 Live 用例会让测试模型停在第一轮。出现 `host-ready` 后，在临时目录创建空文件 `pair`，通过原生入口配对，打开「截图排队验收」。先只加一张测试截图并排队，再用另一张图配上 `Check the screenshot before changing the layout.` 排队。用宽、高都超过 400 像素的测试图片。确认列表中有两项后创建空文件 `drain`。用例释放第一轮，将队列和模型实收结果写入同一目录。无界面的 Swift 互操作用例另行核对空说明、切换会话、重绘后的 PNG 字节和重试去重。iOS 27.2 模拟器可能在配对落盘时拒绝 Vault 的 Class A 设置；使用单独的测试存储时要注明这一差异，文件保护留到真机验收。
 
 `ios-screens` 与 `ios-live` 需要已安装的 iOS 模拟器运行时。`ios-screens` 的选项：`LATCH_IOS_SCENES`（逗号分隔的场景前缀）、`LATCH_IOS_SCREENS_DIR`、`LATCH_IOS_SCREENS_DEVICE=<udid>`（只在这台已有模拟器上截）、`LATCH_IOS_SCREENS_KEEP_RUNNING=1`（仅与前者一起，截图后留下夹具 App）。
 
@@ -267,6 +270,8 @@ pnpm exec vitest run --config e2e/vitest.config.ts e2e/harness-acceptance.e2e.ts
 - **网络。** Host 的原生监听绑定默认路由接口的私网地址，只在这次运行期间存在、局域网可达，连接仍需连接码。测试 Host 不发布 Bonjour，配对码的局域网提示 2 分钟后失效。
 
 原生会话首屏用 `ios-screens` 的 `inbox-first-rows` 场景验收。夹具先提供会话摘要，测试从模拟器截图中确认项目行已经出现，再放行团队关系，核对同一成员只出现一次并缩进到带队会话下。
+
+`native-push.test.ts` 用本地 HTTP/2 假 Apple 服务和临时密钥检查签名、投递、失效令牌回退及待办撤回。`ios-screens` 的 `push-approval` 场景检查原生待审批界面。要验收手机锁屏时的真实投递和灵动岛入口，需要匹配签名的 iPhone、Apple 推送凭据和发出审批的测试 Host，见[手机通知说明](IOS-NOTIFICATIONS.md)。
 
 原生待办的投影、旧窗口、确切问答或审批和提交版本由 `native-swift.test.ts` 编排。交付与原回合的组合读取经实际原生连接换路用例核对，复用原正文租约时拒绝旧连接的下一次读取和发布。缓存回归暂停旧 Vault，检查快速重开时的新资料库会等待收尾，离线只读到已撤下私有项的快照。用 `ios-screens` 的 `work-`、`review` 场景查看任务列表、来源、同 SHA 证据和文件栏布局。回复排版、消息图片与团队看 `markdown`、`markdown-code`、`markdown-prose`、`markdown-dense`、`markdown-diagram`、`pictures`、`team-results`、`team-graph` 场景，Markdown 分块、团队结果的读取与团队分工卡的位置和末端由 `native-swift.test.ts` 核对。实走「待办 → 原回合 → 回到待办」在本次创建的模拟器及临时 Host 上做，覆盖较窄权限、锁屏和断连。审阅还检查 iPad 横竖屏、分屏、辅助使用字号、长路径与过期警告。
 

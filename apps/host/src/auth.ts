@@ -110,6 +110,8 @@ const storedDevice = z.strictObject({
   fingerprint: z.string(),
   scopes: z.array(scopeEnum).max(6),
   scopesBeforeReview: z.array(scopeEnum).optional(),
+  /** Rotates atomically with a reduction of PR-follow authority, so a later expansion cannot revive an earlier grant. */
+  prFollowEpoch: z.string().uuid().optional(),
   dataScope: z.enum(DATA_SCOPES),
   pairedBy: z.strictObject({
     method: z.enum(['lpc', 'offline', 'invitation', 'migration']),
@@ -333,6 +335,7 @@ function sameBase(device: StoredDevice, base: DeviceScopeBase): boolean {
 
 /** View only until an admin restores it; the previous scopes are kept for that. */
 function demote(device: StoredDevice): void {
+  if (device.scopes.includes('run')) device.prFollowEpoch = randomUUID()
   device.status = 'review'
   device.scopesBeforeReview = device.scopes
   device.scopes = ['view']
@@ -357,6 +360,7 @@ export class DeviceStore {
   private readonly lastPersistedSeen = new Map<string, number>()
   /** The revocation log may end in an unterminated fragment that could not be repaired yet; fixed before the next append. */
   private revocationsTorn = false
+  private readonly prAuthorityListeners: Array<(deviceId: string) => void> = []
   private readonly revocationListeners: Array<(deviceId: string) => void> = []
   private closed = false
 
@@ -431,6 +435,7 @@ export class DeviceStore {
             for (const device of this.state.devices)
               if (device.native && device.status !== 'revoked') {
                 const removed = device.scopes.filter(scope => scope !== 'view')
+                if (removed.includes('run')) device.prFollowEpoch = randomUUID()
                 device.scopes = ['view']
                 delete device.scopesBeforeReview
                 if (removed.length) loweredByPause.push({ deviceId: device.id, removed })
@@ -859,6 +864,24 @@ export class DeviceStore {
       pending = this.queue
       await pending
     } while (pending !== this.queue)
+  }
+
+  prFollowEpoch(deviceId: string): string | undefined {
+    return this.find(deviceId)?.prFollowEpoch
+  }
+
+  onPrAuthorityReduced(listener: (deviceId: string) => void): void {
+    this.prAuthorityListeners.push(listener)
+  }
+
+  private prAuthorityReduced(deviceId: string): void {
+    for (const listener of this.prAuthorityListeners) {
+      try {
+        listener(deviceId)
+      } catch {
+        /* A notification cannot undo the durable reduction. */
+      }
+    }
   }
 
   /** Called synchronously after every revocation (including replay revocations), before it is audited. */
@@ -1319,12 +1342,15 @@ export class DeviceStore {
         if (raising || !(error instanceof AppError && error.code === 'audit-unavailable')) throw error
         audited = false
       }
+      const lostFollowAuthority = removed.includes('run') || removed.includes('view') || widensDataScope(dataScope, device.dataScope)
       const before = {
+        prFollowEpoch: device.prFollowEpoch,
         scopes: device.scopes,
         dataScope: device.dataScope,
         status: device.status,
         scopesBeforeReview: device.scopesBeforeReview,
       }
+      if (lostFollowAuthority) device.prFollowEpoch = randomUUID()
       device.scopes = scopes
       device.dataScope = dataScope
       if (device.status === 'review' && added.length) {
@@ -1337,6 +1363,7 @@ export class DeviceStore {
         Object.assign(device, before)
         throw error
       }
+      if (lostFollowAuthority) this.prAuthorityReduced(deviceId)
       return { device: publicDevice(device), audited }
     })
   }
@@ -1392,6 +1419,7 @@ export class DeviceStore {
       if (item.native) cascadeNative(item, now)
       else demote(item)
     }
+    for (const changed of [device, ...cascaded]) this.prAuthorityReduced(changed.id)
     for (const listener of this.revocationListeners) {
       for (const id of [device.id, ...cascaded.filter(item => item.native).map(item => item.id)]) {
         try {

@@ -1,3 +1,4 @@
+import { approvalPresentation, NativePush, pushChange, pushLookup, type PendingPush } from './native-push.ts'
 import { ConfigRequests, notSentConfig, type ConfigBegin } from './config-requests.ts'
 import {
   HeldPlugins,
@@ -40,6 +41,7 @@ import {
   refusedBeforeAccepting,
   runsPresetFallback,
   type AgentExecutionContext,
+  type PrFollowOutcome,
   type AgentHome,
   type AgentNote,
   type AutomationConfig,
@@ -48,6 +50,13 @@ import {
 import { readPreviewFrame, WORKER_CSP } from './preview-frames.ts'
 import { readAppFrame } from './app-frame.ts'
 import { readUiBuild } from './ui-build.ts'
+import {
+  ConversationReferences,
+  mentionsConversationReference,
+  privateReferenceSource,
+  REFERENCE_TOOL,
+  unavailableReference,
+} from './conversation-references.ts'
 import { PromptQueues, type QueueActor } from './prompt-queues.ts'
 import { Questions } from './questions.ts'
 import { createQuestionsPlugin } from './plugins/tools/questions/index.ts'
@@ -133,6 +142,7 @@ import {
   type TokenUsage,
 } from '@latch/protocol'
 import {
+  type PromptOptions,
   AppError,
   type AskUserInput,
   type HarnessHostOptions,
@@ -533,6 +543,13 @@ const createTaskSchema = promptSchema.extend({
     .union([
       z.literal(true),
       z.strictObject({ from: z.literal('head') }),
+      z.strictObject({
+        from: z.literal('pr'),
+        number: z.number().int().min(1).max(999_999_999),
+        repository: z.string().min(1).max(512),
+        commit: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u),
+        proof: z.string().regex(/^[0-9a-f]{64}$/u),
+      }),
       z.strictObject({ from: z.literal('commit'), ref: z.string().min(1).max(200) }),
       z.strictObject({ from: z.literal('branch'), branch: z.string().min(1).max(200) }),
       z.strictObject({ from: z.literal('reuse'), name: z.string().regex(WORKTREE_NAME) }),
@@ -562,7 +579,11 @@ type SessionStart = z.infer<typeof createTaskSchema> & {
   withoutDeviceGrant?: true
 }
 /** Devices other than the sender whose words an input carries; see `sendPrompt`. */
-type TurnWriters = { coauthors?: readonly string[]; narrower?: boolean }
+type TurnWriters = {
+  coauthors?: readonly string[]
+  narrower?: boolean
+  followGuard?: () => Promise<NonNullable<PromptOptions['authorizeUnattended']>>
+}
 const taskPatchSchema = z
   .object({
     title: z.string().trim().min(1).max(120).nullable().optional(),
@@ -1777,6 +1798,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       ...(options.mcpLoginTtlMs !== undefined ? { ttlMs: options.mcpLoginTtlMs } : {}),
     })
     startupCleanup.push(() => mcpOAuth.close())
+    let nativePush: NativePush | undefined
     let hub: HarnessHub | undefined
     const presence = new PresenceService({
       backend: options.presence ?? createPresenceBackend({ codeRoot, policy }),
@@ -1960,6 +1982,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       await config.updateSettings(draft => {
         draft.boundKey = randomBytes(32).toString('hex')
       })
+    const followEpoch = randomUUID()
     const boundKey = config.settings().boundKey!
     /**
      * The last computed state of each saved project. A project is usable only while every folder passes R1–R7 and the
@@ -2269,6 +2292,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       await registry.enable(DEVICE_PLUGIN)
     }
     /** The class each session's browser call got right before it ran: main gets the class the call was approved at. */
+    const conversationRefs = await ConversationReferences.open(dataDir)
+    startupCleanup.push(() => conversationRefs.close())
     const browserRisks = new Map<string, { key: string; risk: RiskLevel }>()
     registry.register(createBrowserToolsPlugin({ call: (tool, args, context) => browserCall(tool, args, context) }), {
       managed: 'core',
@@ -2288,6 +2313,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             // The simulator tools join while the last list found Xcode on this Mac.
             tools: sessionId =>
               [
+                REFERENCE_TOOL,
                 ...BROWSER_TOOL_DEFINITIONS,
                 ...(simulators.ready
                   ? DEVICE_TOOL_DEFINITIONS.filter(
@@ -2302,7 +2328,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 description,
                 inputSchema: parameters,
               })),
-            call: input => (isDeviceTool(input.tool) ? gatewayDeviceCall(input) : gatewayBrowserCall(input)),
+            call: async input => {
+              if (input.tool !== REFERENCE_TOOL.name) return isDeviceTool(input.tool) ? gatewayDeviceCall(input) : gatewayBrowserCall(input)
+              if (input.context.turn !== 'running' || !input.context.runId) throw unavailableReference()
+              const text = await readConversationReference(input.sessionId, input.context.runId, input.args, input.signal)
+              return { content: [{ type: 'text', text }] }
+            },
             mcp: mcpGateway(),
             log,
           })
@@ -2860,7 +2891,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         startRequests.has(`${deviceId}:${requestId}`)
         || turnRequests.some(key => key.endsWith(`:${deviceId}:${requestId}`))
         // A queue's receipt of the same request: it may be sent from the queue later.
-        || promptQueues.knowsRequest(deviceId, requestId)
+        || promptQueues.holdsUpload(deviceId, requestId)
       )
     }
     async function unusedReservations(deviceId: string, reserved: ReturnType<AttachmentStore['reserved']>): Promise<ReadonlySet<string>> {
@@ -3042,6 +3073,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       memoryRefusals.delete(id)
       await keepWorktreePrivacy(id)
       await harnessHub.remove(id, options)
+      await conversationRefs.forget(id)
       await promptQueues.forgetSession(id)
       await questions.forgetSession(id)
       fileRoutes.forgetSession(id)
@@ -3100,18 +3132,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
     for (const driver of registry.harnesses()) await mount(driver, driver.id === requiredHarness)
     await questions.reconcile(id => harnessHub.detail(id))
-    if (attachmentStore.hasDrafts()) {
-      // Only sessions a mounted Harness listed and whose messages were read here: one whose Harness is off or failed to
-      // list is absent, so its reserved drafts are kept.
-      const listed = new Map<string, ReadonlySet<string>>()
-      for (const task of await hub!.listTasks()) {
-        const refs = (await hub!.detail(task.id)).messages.flatMap(message => message.attachments ?? [])
-        if (refs.length) await attachmentStore.recoverSession(task.id, refs)
-        listed.set(task.id, new Set(refs.map(ref => ref.id)))
-      }
-      await attachmentStore.pruneAbandonedClaims(listed)
-    }
-    await attachmentStore.prune()
 
     let revision = 0
     const streams = new Map<ServerResponse, EventStream>()
@@ -3145,6 +3165,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       now,
       detail: id => harnessHub.detail(id),
       check: checkQueuedPrompt,
+      async holdAttachments(actor, sessionId, ids, requestId, model) {
+        const harnessId = await harnessHub.harnessOf(sessionId)
+        await promptAttachments(queuedCaller(actor), ids, { harnessId, ...(model ? { model } : {}) }, sessionId, requestId)
+        await attachmentStore.claim(actor.deviceId, ids, requestId, sessionId)
+      },
+      releaseAttachments: (actor, sessionId, ids, requestId) => attachmentStore.releaseClaim(actor.deviceId, ids, requestId, sessionId),
       async prepare(actor, sessionId, model) {
         await checkQueuedPrompt(actor, sessionId, model, undefined, true)
         const turn = await queuedAgentTurn(sessionId, actor.dataScope)
@@ -3186,16 +3212,41 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const turn = await queuedAgentTurn(sessionId, actor.dataScope)
         if (turn?.binding !== input.binding) throw queueContextChanged()
         const agentContext = turn?.agentContext
+        const reference = mentionsConversationReference(input.text)
+        const attachments = input.attachmentIds?.length
+          ? await promptAttachments(
+              queuedCaller(actor),
+              input.attachmentIds,
+              {
+                harnessId: await harnessHub.harnessOf(sessionId),
+                ...(input.model ? { model: input.model } : {}),
+              },
+              sessionId,
+              input.attachmentRequestId ?? input.requestId,
+            )
+          : undefined
+        if (attachments) {
+          await checkQueuedPrompt(actor, sessionId, input.model, input.binding)
+          await input.authorize?.()
+          checkPrivateSession(queuedCaller(actor), sessionId, true)
+          if (input.editor) checkPrivateSession(queuedCaller(input.editor), sessionId, true)
+        }
         await withSimulatorPrompt(
           [actor.deviceId, ...(input.editor ? [input.editor.deviceId] : []), ...(input.coauthors ?? [])],
-          actor.dataScope !== 'all' || (input.editor !== undefined && input.editor.dataScope !== 'all'),
+          reference || actor.dataScope !== 'all' || (input.editor !== undefined && input.editor.dataScope !== 'all'),
           () =>
             harnessHub.prompt(sessionId, input.text, input.requestId, {
               ...(agentContext ? { agentContext } : {}),
               ...(input.model ? { model: input.model } : {}),
               ...(input.queuedAt ? { queuedAt: input.queuedAt } : {}),
+              ...(attachments ? { attachments } : {}),
+              ...(reference ? { outsideContent: true as const } : {}),
             }),
         )
+        if (input.attachmentIds)
+          await attachmentStore.bind(actor.deviceId, input.attachmentIds, sessionId).catch(() => {
+            throw new AppError(503, 'attachment-publish-unknown', '会话已开始，附件记录尚未确认。请重试同一次提交。')
+          })
         if (input.itemId) queueAudits.delete(input.itemId)
         // Only now is it the person's message in the session; a withdrawn one never gets here.
         await rememberFromPerson(
@@ -3249,6 +3300,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       changed: id => refresh(id),
     })
     startupCleanup.push(() => promptQueues.close())
+    if (attachmentStore.hasDrafts()) {
+      // Only sessions a mounted Harness listed and whose messages were read here: one whose Harness is off or failed to
+      // list is absent, so its reserved drafts are kept.
+      const listed = new Map<string, ReadonlySet<string>>()
+      for (const task of await hub!.listTasks()) {
+        const refs = (await hub!.detail(task.id)).messages.flatMap(message => message.attachments ?? [])
+        if (refs.length) await attachmentStore.recoverSession(task.id, refs)
+        listed.set(task.id, new Set([...refs.map(ref => ref.id), ...promptQueues.heldAttachmentIds(task.id)]))
+      }
+      await attachmentStore.pruneAbandonedClaims(listed)
+    }
+    await attachmentStore.prune()
     const configRequests = new ConfigRequests(harnessHub.receipts, now)
     let commitTimer: ReturnType<typeof setTimeout> | undefined
     /** A window that ran out (unrenewed, or committed and not followed by a stop): starts and terminals open again, the plugin plan goes, on record. */
@@ -3332,6 +3395,20 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       board: boardDelivery,
       guardedPaths,
       sessionRoots,
+      prFollowBasis: async (id, device) => {
+        try {
+          return { basis: (await prContinuationPlan(id, device)).basis }
+        } catch (cause) {
+          const code = cause instanceof AppError ? cause.code : undefined
+          if (code === 'pr-follow-harness' || code === 'automation-level') return { reason: 'harness' }
+          if (code === 'automation-owner') return { reason: 'scope' }
+          if (code === 'pr-follow-policy') return { reason: 'session' }
+          return { reason: 'configuration' }
+        }
+      },
+      continuePr,
+      reviewProof,
+      worktreeSource: reviewSource,
       async assertSessionInput(caller, sessionId) {
         recheck(caller, 'run')
         await assertSessionAccess(caller, sessionId)
@@ -4210,7 +4287,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return !device || !device.scopes.includes('run') ? '允许它的设备已移除或不能运行会话。' : undefined
     }
     /** Manual runs need the caller's current authority; background grants also need the unattended ceiling and activity. */
-    function authorizeAutomation(deviceId: string, definition: AutomationConfig, trigger: 'schedule' | 'manual'): void {
+    function authorizeAutomation(
+      deviceId: string,
+      definition: Pick<AutomationConfig, 'customAgentId'>,
+      trigger: 'schedule' | 'manual',
+    ): void {
       const device = devices.get(deviceId),
         current = policy.get()
       const harnessId = definition.customAgentId ? customAgents.get(definition.customAgentId).harnessId : 'standard'
@@ -4231,6 +4312,121 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           level ? `这个 Harness 是 ${level}，后台运行最高 ${current.unattended.maxLevel}。` : '这个 Harness 现在不可用，不能后台运行。',
         )
     }
+    async function prContinuationPlan(id: string, deviceId: string) {
+      const task = await hub!.summary(id)
+      const checkAuthority = () => {
+        authorizeAutomation(deviceId, {}, 'schedule')
+        if (task.harnessId !== STANDARD || hub!.trustOf(task.harnessId)?.kind !== 'builtin')
+          throw new AppError(403, 'pr-follow-harness', '此 Harness 无法限制无人值守一轮的工具权限。')
+        if (
+          task.mode !== 'agent'
+          || task.archived
+          || hub!.pageOriginOf(id)
+          || hub!.agentOf(id)
+          || hub!.unattended(id)
+          || hub!.personalOf(id)
+          || hub!.generalChatOf(id)
+        ) {
+          throw new AppError(403, 'pr-follow-policy', '此会话不支持按 PR 反馈自动运行。')
+        }
+      }
+      checkAuthority()
+      const definition = {
+        ...(task.workspaceId && task.workspaceId !== 'default' ? { projectId: task.workspaceId } : {}),
+        ...(task.providerId && task.model
+          ? { model: { providerId: task.providerId, model: task.model, ...(task.effort ? { effort: task.effort } : {}) } }
+          : {}),
+      }
+      const plan = () => {
+        checkAuthority()
+        const execution = agentPlans.automation(definition)
+        const basis = sha256Hex(
+          canonicalJson([
+            execution.basis,
+            execution.persistent ? null : followEpoch,
+            mcpStore
+              .records()
+              .filter(mcpConfirmed)
+              .map(record => [record.id, record.specHash])
+              .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+          ]),
+        )
+        return { execution, basis }
+      }
+      return { ...plan(), recheck: plan }
+    }
+
+    async function continuePr(
+      id: string,
+      deviceId: string,
+      basis: string,
+      requestId: string,
+      prompt: string,
+      current: () => boolean,
+      matchesHead: () => Promise<boolean>,
+    ): Promise<PrFollowOutcome> {
+      const device = devices.get(deviceId)
+      if (!device) return 'policy'
+      try {
+        const window = hub!.prFollow(id)?.nativeWindowHash
+        const caller = queuedCaller({
+          deviceId,
+          listener: device.listener,
+          dataScope: 'all',
+          ...(window ? { nativeWindowHash: window } : {}),
+        })
+        const checked = await prContinuationPlan(id, deviceId)
+        if (checked.basis !== basis) return 'changed'
+        const task = await hub!.summary(id)
+        if (
+          task.status !== 'idle'
+          || questions.view(id).length
+          || promptQueues.view(id).length
+          || promptQueues.pendingIn(id)
+          || turnRequests.someInFlight(key => key.startsWith(`${id}:`))
+        )
+          return 'busy'
+        await assertChatMovable(id)
+        const pr = hub!.prOf(id)
+        if (!pr || !current() || !(await matchesHead())) return 'changed'
+        await audited({
+          action: 'git.pr.continue',
+          actor: { deviceId, listener: 'host' },
+          target: id,
+          detail: { sessionId: id, number: pr.number, requestHash: sha256Hex(requestId) },
+        })
+        const followGuard = async () => {
+          const latest = await prContinuationPlan(id, deviceId)
+          if (!(await matchesHead())) throw new AppError(409, 'pr-follow-changed', '工作树已不在该 PR 的提交上。')
+          await assertChatMovable(id)
+          if ((await hub!.summary(id)).status !== 'idle' || questions.view(id).length)
+            throw new AppError(409, 'task-running', '请先处理当前会话。')
+          return () => {
+            recheck(caller, 'run')
+            if (!current() || basis !== latest.recheck().basis) throw new AppError(409, 'pr-follow-changed', '自动运行授权已改变。')
+            const expected = latest.execution.agentContext?.expectedRevisions
+            if (!latest.execution.model || !expected || Object.keys(expected).length === 0)
+              throw new AppError(409, 'pr-follow-changed', '执行版本无法核对。')
+            return {
+              revisions: expected,
+              model: latest.execution.model,
+              approvalTtlMs: policy.get().unattended.approvalTtlHours.standard * 3_600_000,
+            }
+          }
+        }
+        await sendPrompt(caller, id, queuedPromptSchema.parse({ requestId, prompt }), true, true, { narrower: true, followGuard }, true)
+        return 'sent'
+      } catch (cause) {
+        if (cause instanceof AppError) {
+          if (cause.code === 'agent-chat-move-pending' || cause.code === 'task-running') return 'busy'
+          if (cause.code === 'pr-follow-changed' || cause.code === 'plugin-revision-changed' || cause.code === 'background-model-changed')
+            return 'changed'
+          if (refusedBeforeAccepting(cause.status, cause.code)) return 'policy'
+        }
+        return 'unknown'
+      }
+    }
+
     const automations = await Automations.open({
       dataDir,
       audit,
@@ -4736,6 +4932,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         tls: tlsOrigin ? { origin: tlsOrigin } : null,
         native: {
           enabled: nativeRoutes.enabled(),
+          ...(nativePush ? { attentionPush: true as const, attentionPreview: true as const } : {}),
           discoveryEpoch: discoveryEpoch(),
           directoryEpoch: relayDirectory.epoch(),
         },
@@ -6209,7 +6406,62 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * servers it names as `mcp:<server ID>`. Each call is R2 (the classifier), checked against the definition again, on
      * record before it is sent, and its answer masked.
      */
-    async function builtinMcpTools({ sessionId, signal }: { sessionId: string; signal: AbortSignal }): Promise<ToolDefinition[]> {
+    const referenceIsPrivate = (summary: TaskSummary) => privateReferenceSource(summary, id => harnessHub.agentPrivate(id))
+    function supportsConversationReference(summary: TaskSummary): boolean {
+      if (summary.mode !== 'agent' || summary.archived || summary.personal || summary.origin || summary.automationId) return false
+      return summary.harnessId === STANDARD ? toolOwner(REFERENCE_TOOL.name) === undefined : toolGateway?.hasToolLease(summary.id) === true
+    }
+    function authorizeConversationReference(caller: DeviceCaller, source: string, target: string): void {
+      recheck(caller, 'view')
+      recheck(caller, 'run')
+      checkPrivateSession(caller, source)
+      checkPrivateSession(caller, target, true)
+      if (hub!.agentPrivate(source) && !hub!.agentPrivate(target)) throw unavailableReference()
+    }
+    async function readConversationReference(target: string, runId: string, args: unknown, signal: AbortSignal): Promise<string> {
+      const checkTurn = (summary: TaskSummary) => {
+        if (
+          harnessHub.unattended(target)
+          || summary.runId !== runId
+          || !ACTIVE_STATUSES.has(summary.status)
+          || !supportsConversationReference(summary)
+        )
+          throw unavailableReference()
+      }
+      const destination = await harnessHub.detail(target)
+      checkTurn(destination.summary)
+      const prompt = destination.messages.findLast(message => message.role === 'user' && !message.steered)
+      if (!prompt || prompt.turnId !== runId) throw unavailableReference()
+      const { ref, offset } = conversationRefs.forRead(target, args, prompt.text)
+      const check = () => {
+        signal.throwIfAborted()
+        const caller = queuedCaller(ref.actor)
+        authorizeConversationReference(caller, ref.source, target)
+        return caller
+      }
+      check()
+      const source = await harnessHub.detail(ref.source)
+      privateAccess(check(), source.summary)
+      await audited({ action: 'task.conversation-reference.read', actor: { listener: 'host' }, detail: { source: ref.source, target } })
+      await harnessHub.markOutsideContent(target)
+      const currentSource = await harnessHub.detail(ref.source)
+      const latest = await harnessHub.summary(target)
+      checkTurn(latest)
+      const currentCaller = check()
+      privateAccess(currentCaller, currentSource.summary)
+      privateAccess(currentCaller, latest)
+      if ((ref.sourcePrivate || referenceIsPrivate(currentSource.summary)) && !referenceIsPrivate(latest)) throw unavailableReference()
+      if (!harnessHub.ownerOf(ref.source) || !harnessHub.ownerOf(target)) throw unavailableReference()
+      conversationRefs.forRead(target, args, prompt.text)
+      return redactKnownSecrets(conversationRefs.page(ref, shownDetail(currentCaller, currentSource).messages, offset))
+    }
+
+    async function builtinMcpTools({
+      sessionId,
+      signal,
+      runId,
+      unattended,
+    }: Parameters<NonNullable<HarnessHostOptions['mcpTools']>>[0]): Promise<ToolDefinition[]> {
       const summary = await hub!
         .detail(sessionId)
         .then(detail => detail.summary)
@@ -6261,7 +6513,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           }
         }),
       )
-      return lists.flatMap(({ record, key, tools }) =>
+      const remote = lists.flatMap(({ record, key, tools }) =>
         tools.flatMap((tool): ToolDefinition[] => {
           const name = builtinToolName(record.id, record.name, tool.name)
           if (taken.has(name)) return []
@@ -6318,6 +6570,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ]
         }),
       )
+      if (!runId || unattended !== false || !conversationRefs.has(sessionId)) return remote
+      return [
+        ...remote,
+        {
+          ...REFERENCE_TOOL,
+          kind: 'read',
+          title: '读取引用的会话',
+          requiresApproval: false,
+          execute: async (args, context) => ({ text: await readConversationReference(sessionId, runId, args, context.signal) }),
+        },
+      ]
     }
 
     /** How Latch's text meets the driver's own: tests run the A/B through `computerDriver.guide`. */
@@ -7138,6 +7401,30 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     /** A saved project with one folder: the only kind a Latch worktree is made from. */
+    async function reviewSource(workspaceId: string) {
+      const record = worktreeProject(workspaceId)
+      await assertWorkspaceUsable(record)
+      const folder = record.folders[0]
+      const directory = await lstat(folder.path, { bigint: true })
+      const gitEntry = await lstat(join(folder.path, '.git'), { bigint: true })
+      const identity = sha256Hex(
+        canonicalJson([folder, String(directory.dev), String(directory.ino), String(gitEntry.dev), String(gitEntry.ino)]),
+      )
+      return { path: folder.path, identity }
+    }
+    function reviewProof(
+      deviceId: string,
+      workspaceId: string,
+      identity: string,
+      number: number,
+      repository: string,
+      commit: string,
+    ): string {
+      return createHmac('sha256', boundKey)
+        .update(canonicalJson(['pr-review-head-v1', deviceId, workspaceId, identity, repository, number, commit]))
+        .digest('hex')
+    }
+
     function worktreeProject(id: string): WorkspaceRecord {
       const record = requireProject(id)
       if (record.folders.length !== 1)
@@ -8143,6 +8430,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         features: {
           agentProbe: true,
           queue: true,
+          queueAttachments: true,
           queueControl: true,
           questions: true,
           messageIdentity: true,
@@ -8231,11 +8519,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     async function decoratedDetail(sessionId: string): Promise<TaskDetail> {
       const detail = await hub!.detail(sessionId)
+      const { canReferenceConversation: _driverClaim, ...content } = detail
       const level = hub!.levelOf(detail.summary.harnessId)
       return {
-        ...detail,
+        ...content,
         summary: questionSummary(detail.summary),
         queue: promptQueues.view(sessionId),
+        ...(supportsConversationReference(detail.summary) ? { canReferenceConversation: true as const } : {}),
         questions: questions.view(sessionId),
         ...(memoryRefusals.get(sessionId)?.length ? { memoryRefusals: memoryRefusals.get(sessionId)! } : {}),
         // Cards go only into topics of 我的 Agent, which are private: only a device with the full data scope reads them.
@@ -8462,6 +8752,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         at,
       }
       await keepReceipt(approval.sessionId, recorded)
+      nativePush?.schedule()
       json(res, { accepted: true, receipt: approvalReceipt(recorded) })
     }
 
@@ -8844,6 +9135,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     function refresh(sessionId?: string): void {
+      nativePush?.schedule()
       nativeRoutes.reconcile()
       const nextRevision = ++revision
       if (sessionId) pendingTasks.set(sessionId, nextRevision)
@@ -8852,6 +9144,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     function refreshPrivate(): void {
+      nativePush?.schedule()
       nativeRoutes.reconcile()
       ++revision
       pendingPrivate = true
@@ -8878,6 +9171,69 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       else refresh()
       // A private 待办's change touches no visible session: those are not refreshed, so their streams hear nothing of it.
       for (const id of sessionIds) if (!isPrivate || hub!.agentPrivate(id)) refresh(id)
+    }
+    nativePush = await NativePush.open(dataDir, {
+      active(id) {
+        const device = devices.get(id)
+        if (
+          closing
+          || device?.status !== 'active'
+          || devices.nativeStatus(id)?.input !== 'ready'
+          || !device.scopes.includes('view')
+          || !device.scopes.some(scope => scope === 'run' || scope === 'approve:standard' || scope === 'approve:elevated')
+        )
+          return undefined
+        return { private: device.dataScope === 'all', scopes: device.scopes }
+      },
+      privateNow: id => harnessHub.agentPrivate(id),
+      settledApproval: id => harnessHub.receipts.approval(id) !== undefined,
+      async pending() {
+        const { tasks, complete } = await harnessHub.listTasksProven()
+        if (!complete) throw new Error('incomplete-list')
+        const listed = harnessHub.approvals()
+        const reported = new Set(listed.map(approval => approval.sessionId))
+        // Some drivers publish their pending decision only in detail(), never in the global approvals list.
+        for (const task of tasks) {
+          if (task.archived || task.status !== 'waiting-approval' || reported.has(task.id) || questions.view(task.id).length) continue
+          const detail = await harnessHub.detail(task.id)
+          listed.push(...detail.approvals.filter(approval => approval.sessionId === task.id))
+        }
+        const approvals = await decorateAll(listed, tasks)
+        const items: PendingPush[] = []
+        for (const task of tasks) {
+          if (task.archived || !ACTIVE_STATUSES.has(task.status)) continue
+          const owner = { sessionId: task.id, private: privateSession(task) || harnessHub.agentPrivate(task.id) }
+          const agent = !owner.private && config.settings().agents.find(record => record.id === task.harnessId)
+          const preset = agent && agent.enabled && agent.confirmedCommand && runsPresetCommand(agent) ? agent.presetId : undefined
+          for (const a of approvals) {
+            if (a.sessionId !== task.id) continue
+            const presentation = owner.private
+              ? undefined
+              : approvalPresentation(a, preset, task.harnessId === STANDARD && isBuiltinWrite(a.toolName))
+            items.push({
+              ...owner,
+              id: a.id,
+              kind: 'approval',
+              scope: a.advisory ? 'run' : a.risk === 'R2' ? 'approve:elevated' : 'approve:standard',
+              approvalPreview: presentation?.preview,
+              ...(presentation ? { sessionPreview: { title: task.title, fileName: presentation.fileName } } : {}),
+            })
+          }
+          for (const q of questions.view(task.id))
+            if (q.state === 'pending') items.push({ ...owner, id: q.id, kind: 'question', scope: 'run' })
+        }
+        return items
+      },
+    }).catch(() => {
+      log('Apple 推送配置或登记文件无法使用，后台通知已停用。')
+      return undefined
+    })
+    if (nativePush) {
+      devices.onRevoked(id => {
+        void nativePush?.remove(id).catch(() => {})
+      })
+      nativePush.schedule()
+      startupCleanup.push(() => nativePush?.close())
     }
     const unsubscribe = harnessHub.subscribe(refresh)
     const heartbeat = setInterval(() => {
@@ -9938,6 +10294,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (fileRefs.length && !projectFiles(caller)) throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
         let startRefs = fileRefs
         if (input.worktree && chosen) {
+          if (input.worktree !== true && input.worktree.from === 'pr') {
+            const { number, repository, commit, proof } = input.worktree
+            recheck(caller, 'view')
+            if (
+              !projectFiles(caller)
+              || proof !== reviewProof(caller.device.id, chosen.id, (await reviewSource(chosen.id)).identity, number, repository, commit)
+            )
+              throw new AppError(409, 'pr-head-unverified', '此设备尚未核对这个项目的 PR 提交，请重新获取。')
+            recheck(caller, 'run')
+            if (!projectFiles(caller)) throw new AppError(403, 'file-scope', '此设备不能查看项目文件。')
+          }
           made = await worktrees.create({
             source: chosen.folders[0].path,
             requestId: folderRequest,
@@ -9993,6 +10360,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           // A fork's first message holds the source's record: outside content when that record carries any tool output,
           // or when the source itself ran unwatched or started from outside content.
           ...(outsideStart
+          || (input.worktree && input.worktree !== true && input.worktree.from === 'pr')
           || (fork
             && (fork.outside
               || fork.source.automationId !== undefined
@@ -10031,6 +10399,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         const checkStart = () => {
           recheck(caller, 'run')
+          if (input.worktree && input.worktree !== true && input.worktree.from === 'pr') {
+            recheck(caller, 'view')
+            if (!projectFiles(caller)) throw new AppError(403, 'file-scope', '此设备不能查看项目文件。')
+          }
           if (customAgentId) {
             agentAccess(caller, true)
             if (customAgents.definitionHash(customAgentId) !== agentContext?.revision)
@@ -10377,7 +10749,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (writers.narrower && (input.queue || input.steer))
         throw new AppError(409, 'queue-writers-unknown', '这条消息带有无法核对来源的内容，不能排队或追加，请等本轮结束后发送。')
       if (input.queue || input.steer) await assertQueueable(id, input.prompt)
-      if (input.steer && !input.model && input.prompt) {
+      if (input.steer && !input.model && input.prompt && !mentionsConversationReference(input.prompt)) {
         recheck(caller, 'run')
         const steered = await hub!.steer(
           id,
@@ -10437,15 +10809,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (agentTurn) agentAccess(caller, true)
         await withSimulatorPrompt(
           [caller.device.id, ...coauthors],
-          withoutPrivateContext || caller.device.dataScope !== 'all' || writers.narrower === true,
-          () =>
+          mentionsConversationReference(input.prompt)
+            || withoutPrivateContext
+            || caller.device.dataScope !== 'all'
+            || writers.narrower === true,
+          async () =>
             hub!.prompt(id, input.prompt, input.requestId, {
               ...(agentTurn ? { agentContext: agentTurn } : {}),
+              ...(writers.followGuard ? { authorizeUnattended: await writers.followGuard() } : {}),
               ...(fileRefs.length ? { fileRefs } : {}),
               ...(input.model ? { model: input.model } : {}),
               ...(attachments.length ? { attachments } : {}),
               ...(input.freshContext ? { freshContext: true as const } : {}),
-              ...(outsideContent ? { outsideContent: true as const } : {}),
+              ...(outsideContent || mentionsConversationReference(input.prompt) ? { outsideContent: true as const } : {}),
               ...(unattended ? { unattended: true as const } : {}),
             }),
         )
@@ -10765,6 +11141,70 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       method: string,
     ): Promise<boolean> {
       if (id.length > 256) throw new AppError(400, 'invalid-session', '会话标识过长')
+      if (action === 'conversation-references' && (method === 'GET' || method === 'DELETE')) {
+        requireScope(caller, 'run')
+        const check = () => {
+          recheck(caller, 'run')
+          recheck(caller, 'view')
+          checkPrivateSession(caller, id)
+        }
+        check()
+        if (method === 'GET') {
+          const references = conversationRefs
+            .owned(id, caller.device.id)
+            .map(ref =>
+              (ref.sourcePrivate || hub!.agentPrivate(ref.source)) && !fullData(caller)
+                ? { reference: ref.reference }
+                : { reference: ref.reference, source: ref.source },
+            )
+          json(res, { references })
+        } else {
+          const { reference } = z
+            .strictObject({ reference: z.string().uuid(), requestId: z.string().uuid().optional() })
+            .parse(await jsonBody(req, TASK_BODY_LIMIT))
+          await conversationRefs.revoke(id, caller.device.id, reference, check)
+          json(res, { revoked: true })
+        }
+        return true
+      }
+      if (method === 'POST' && action === 'conversation-references') {
+        requireScope(caller, 'run')
+        const input = z
+          .strictObject({ source: z.string().min(1).max(256), requestId: z.string().uuid() })
+          .parse(await jsonBody(req, TASK_BODY_LIMIT))
+        authorizeConversationReference(caller, input.source, id)
+        await routeContext.assertSessionInput(caller, id)
+        const destination = await harnessHub.summary(id)
+        privateAccess(caller, destination)
+        if (!supportsConversationReference(destination)) throw unavailableReference()
+        const source = await harnessHub.detail(input.source)
+        const check = () => {
+          authorizeConversationReference(caller, input.source, id)
+          privateAccess(caller, source.summary)
+          privateAccess(caller, destination)
+        }
+        check()
+        const privateOrigin = referenceIsPrivate(source.summary)
+        if (privateOrigin && !referenceIsPrivate(destination)) throw unavailableReference()
+        const visible = shownDetail(caller, source)
+        await audited({
+          action: 'task.conversation-reference.created',
+          actor: actorOf(caller),
+          detail: { source: input.source, target: id },
+        })
+        const reference = await conversationRefs.add(
+          queueActor(caller),
+          id,
+          input.source,
+          input.requestId,
+          visible.messages,
+          check,
+          privateOrigin,
+        )
+        check()
+        json(res, { reference })
+        return true
+      }
       if (method === 'GET' && !action) {
         requireScope(caller, 'view')
         const detailRevision = revision
@@ -10868,8 +11308,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           return true
         }
         const input = queuedPromptSchema.parse(body)
-        if ((input.queue || input.steer) && (input.attachmentIds?.length || input.fileRefs?.length))
-          throw new AppError(400, 'queue-attachments-unsupported', '附件暂不支持排队，请等本轮结束后发送')
+        if ((input.steer && input.attachmentIds?.length) || ((input.queue || input.steer) && input.fileRefs?.length))
+          throw new AppError(400, 'queue-attachments-unsupported', '文件引用不能排队，附件只能排到下一轮。')
         if (input.freshContext && (input.queue || input.steer))
           throw new AppError(400, 'fresh-context-queued', '清空上下文的消息不能排队或追加，请等本轮结束后发送。')
         const moved = await movedChatInput(caller, id, input)
@@ -12356,6 +12796,42 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (hub!.agentPrivate(taskId)) agentAccess(caller)
       }
       if (await routes.route(authenticated)) return
+      if ((path === '/link/api/native/attention-subscription' || path === '/link/api/native/attention-target') && method === 'POST') {
+        requireScope(caller, 'view')
+        if (!nativeOpening || nativeOpening.pairing || nativeOpening.deviceId !== caller.device.id)
+          throw new AppError(403, 'native-push-device', '请在已配对的 iPhone 或 iPad 上设置通知。')
+        if (!nativePush) throw new AppError(409, 'push-unavailable', '这台电脑未配置 Apple 推送。')
+        const verify = () => {
+          recheck(caller, 'view')
+        }
+        verify()
+        limits.classC.take(caller.device.id)
+        const input = await jsonBody(req, 4096)
+        verify()
+        if (path.endsWith('-target')) {
+          const target = await nativePush.resolve(caller.device.id, pushLookup.parse(input), verify)
+          json(res, { target: target ? { session: target.sessionId, id: target.id, kind: target.kind } : null })
+        } else {
+          const change = pushChange.parse(input)
+          const seq = await audited(
+            {
+              action: 'native.push.changed',
+              actor: actorOf(caller),
+              target: caller.device.id,
+              detail: { enabled: !('disabled' in change) },
+            },
+            'disabled' in change ? res : undefined,
+          )
+          try {
+            await nativePush.change(caller.device.id, change, verify)
+          } catch (error) {
+            auditFailed(seq, caller)
+            throw error
+          }
+          json(res, { saved: true })
+        }
+        return
+      }
       if (path === '/link/api/snapshot' && method === 'GET') {
         requireScope(caller, 'view')
         const snapshotRevision = revision
@@ -12714,7 +13190,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { state: configRequests.state(id, caller.device.id, configRequest[2]!) })
         return
       }
-      const task = path.match(/^\/link\/api\/tasks\/([^/]+)(?:\/(prompt|cancel|keep-waiting|config|stop-subagent|attend|computer-stop))?$/)
+      const task = path.match(
+        /^\/link\/api\/tasks\/([^/]+)(?:\/(prompt|cancel|keep-waiting|config|stop-subagent|attend|computer-stop|conversation-references))?$/,
+      )
       if (task && (await handleTask(req, res, caller, safeDecode(task[1]!), task[2], method))) return
       const approval = path.match(/^\/link\/api\/approvals\/([^/]+)$/)
       if (approval && method === 'POST') {
@@ -13080,6 +13558,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       close() {
         return (shutdown ??= (async () => {
           closing = true
+          await nativePush?.close()
           clearTimeout(boardWarm)
           modelRequests.close()
           // First, while the engines still answer: a check made against a closing Host would pause on its way out.
@@ -13101,6 +13580,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             () => changes,
             () => configRequests.close(),
             () => promptQueues.close(),
+            () => conversationRefs.close(),
             () => agentProbes.close(),
             () => harnessHub.close(),
             () => modelGateway.close(),

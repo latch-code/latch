@@ -171,7 +171,10 @@ export class AgentPlans {
   }
 
   /** Only a scheduled dispatch is unattended; an explicit manual run keeps its caller's normal session authority. */
-  automation(config: AutomationConfig, trigger: 'schedule' | 'manual' = 'schedule'): AutomationPlan {
+  automation(
+    config: AutomationConfig | Pick<AutomationConfig, 'customAgentId' | 'model' | 'projectId'>,
+    trigger: 'schedule' | 'manual' = 'schedule',
+  ): AutomationPlan {
     const agent = config.customAgentId ? this.options.agents.get(config.customAgentId) : undefined
     const workspaceId = config.projectId
     const harnessId = agent?.harnessId ?? STANDARD

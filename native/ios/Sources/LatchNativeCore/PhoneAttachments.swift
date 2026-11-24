@@ -567,6 +567,14 @@ public enum PhoneAttachLoader {
         guard let prepared = try? PhoneImagePrep.prepare(url: url, limit: limit) else { return PhonePicked(name: name, kind: .image, file: nil, size: size, failure: unreadable) }
         return staged(prepared, name: name, size: size, temporary: temporary)
     }
+    /** A data-backed paste has already arrived from the item provider. Check its encoded length before touching its contents. */
+    public static func image(data: Data, name: String, limit: Int, temporary: URL = FileManager.default.temporaryDirectory) -> PhonePicked {
+        guard data.count <= PhoneImagePrep.sourceBytes else { return PhonePicked(name: name, kind: .image, file: nil, size: data.count) }
+        guard let prepared = try? PhoneImagePrep.prepare(data: data, limit: limit) else {
+            return PhonePicked(name: name, kind: .image, file: nil, size: data.count, failure: unreadable)
+        }
+        return staged(prepared, name: name, size: data.count, temporary: temporary)
+    }
     /** The camera's photo: only its pixels, never its metadata dictionary. */
     public static func camera(_ encoded: Data?, limit: Int, temporary: URL = FileManager.default.temporaryDirectory) -> PhonePicked {
         guard let encoded, let prepared = try? PhoneImagePrep.prepare(data: encoded, limit: limit) else {
@@ -621,6 +629,18 @@ public enum PhoneAttachLoader {
 
 /** Which composer a write's attachments came from, and when that composer's attachments may not change. */
 extension PhoneAttachments {
+    /** A late picker must remove its staged bytes, even when the new verification window shows the same conversation. */
+    public static func takePicked(_ picked: [PhonePicked], window: UUID, currentWindow: UUID, sameTarget: Bool) -> [PhonePicked]? {
+        guard window == currentWindow, sameTarget else {
+            for item in picked { PhoneAttachStage.remove(item.file) }
+            return nil
+        }
+        return picked
+    }
+    /** A caller finishing after renewal may release its own lock, but never a subsequent sender's lock. */
+    public static func releaseSend(_ key: String, owner: UUID, locks: inout [String: UUID]) {
+        if locks[key] == owner { locks[key] = nil }
+    }
     public static let newSessionKey = "\u{0}new"
     public static func topicKey(_ owner: String) -> String { "\u{0}topic:" + owner }
     public static let lockedWords = "这条消息正在发送，附件确认前不能更改。"

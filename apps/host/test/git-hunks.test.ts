@@ -960,6 +960,18 @@ describe('history views', () => {
     await f.commit({ 'c.txt': 'c\n' }, 'elsewhere')
     const stray = f.git('rev-parse', 'HEAD')
     f.git('checkout', '-q', 'feature')
+    for (const base of [stray, 'elsewhere']) {
+      expect(await delivery.treeDiff(f.repo, { base })).toMatchObject({ parent: stray, sha: f.git('rev-parse', 'HEAD') })
+      expect(await delivery.treeFile(f.repo, { base, path: 'c.txt' })).toMatchObject({ file: { status: 'D' } })
+    }
+    for (const base of ['HEAD~1', 'main^{tree}', '--all']) {
+      expect(await failure(delivery.treeDiff(f.repo, { base }))).toMatchObject({ code: 'git-compare-base' })
+    }
+    f.git('branch', '-D', 'elsewhere')
+    expect(await failure(delivery.treeDiff(f.repo, { base: stray }))).toMatchObject({ code: 'git-compare-base' })
+    f.git('update-ref', 'refs/remotes/origin/review', stray)
+    expect(await delivery.treeDiff(f.repo, { base: 'origin/review' })).toMatchObject({ base: 'origin/review', parent: stray })
+    expect(await delivery.treeDiff(f.repo, { base: stray })).toMatchObject({ parent: stray })
     expect(await failure(delivery.treeDiff(f.repo, { sha: stray }))).toMatchObject({
       status: 404,
       code: 'git-commit-not-found',

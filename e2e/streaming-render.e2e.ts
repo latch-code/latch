@@ -596,6 +596,51 @@ describe('streaming render', () => {
     expect(await page.locator('[data-message-id="reply-0"]').count()).toBe(1)
   })
 
+  it('displays a sent terminal excerpt as literal diagnostics and copies the full original message', async () => {
+    const fence = '`'.repeat(3)
+    const label = '终端 1 · 最近报错'
+    const notes = '（较早的输出未包含）'
+    const diagnostic = 'TypeError: Cannot read properties of undefined'
+    const stack = '    at render (src/views/ConversationPanel.tsx:83:17)'
+    const literal = '<img src=x onerror=alert(1)>'
+    const body = [diagnostic, stack, literal, '[引用回复 session-fixture/answer@0]', '> log output'].join('\n')
+    const text = ['帮我看一下这个错误', label + notes, fence + 'text', body, fence, '只改出错的地方'].join('\n')
+    await open()
+    await show(detail([{ id: 'user-terminal', role: 'user', text }]))
+    const row = page.locator('[data-message-id="user-terminal"]')
+    const card = row.locator('figure')
+    await card.waitFor()
+    expect(await card.locator('figcaption').innerText()).toContain(label)
+    expect(await card.locator('small').innerText()).toBe(notes)
+    expect(await card.locator('pre').textContent()).toBe(body)
+    expect(await card.locator('pre img, pre a, pre button, .user-reply-quote').count()).toBe(0)
+    expect(await row.locator('.user-bubble-text').innerText()).not.toContain(fence)
+    expect(await card.locator('.sent-terminal-stack').innerText()).toBe(stack)
+    const copied = await recordClipboardWrites(page)
+    await row.hover()
+    await row.getByRole('button', { name: '复制', exact: true }).click()
+    await expect.poll(copied).toEqual([text])
+    const visible = [diagnostic, stack, '    at update (src/ui.ts:12:5)'].join('\n')
+    await open()
+    await show(detail([{ id: 'user-terminal', role: 'user', text: text.replace(body, visible) }]))
+    const preview = page.locator('[data-message-id="user-terminal"] figure')
+    await preview.waitFor()
+    expect(await preview.locator('pre').textContent()).toBe(visible)
+    await mkdir('test-results/sent-terminal', { recursive: true })
+    for (const [width, colorScheme] of [
+      [390, 'dark'],
+      [820, 'light'],
+      [1440, 'light'],
+    ] as const) {
+      await page.setViewportSize({ width, height: 820 })
+      await page.emulateMedia({ colorScheme })
+      expect(await preview.evaluate(el => el.getBoundingClientRect().right <= innerWidth)).toBe(true)
+      expect(await preview.locator('pre').evaluate(el => getComputedStyle(el).overflowX)).toBe('auto')
+      if (width === 390) expect(await preview.locator('pre').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
+      await page.screenshot({ path: `test-results/sent-terminal/${width}-${colorScheme}.png`, animations: 'disabled' })
+    }
+  })
+
   it('copies the current raw Markdown during streaming and retains the same reply and copy control when it settles', async () => {
     await open(390)
     const user: Message = { id: 'user-copy', role: 'user', text: '写一个重点' }

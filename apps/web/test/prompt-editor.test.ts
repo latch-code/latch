@@ -75,6 +75,32 @@ function mount(initial: string, overrides: Partial<PromptEditorProps> = {}) {
 }
 
 describe('the prompt editor', () => {
+  it('keeps a terminal error editable with its indentation and literal tokens, while hiding its Markdown delimiters', () => {
+    const draft = [
+      '请用 $lark-apps 检查',
+      '终端 1 · 最近报错',
+      '```text',
+      'TypeError: $lark-apps',
+      '    at render (app.ts:5:2)',
+      '```',
+      '再试一次',
+    ].join('\n')
+    const { view, input, state, render, key, chips } = mount(draft)
+    expect(view.contentDOM.querySelector('.terminal-excerpt-heading')?.textContent).toBe('终端 1 · 最近报错')
+    expect(view.contentDOM.querySelector('.terminal-excerpt-detail')?.textContent).toBe('    at render (app.ts:5:2)')
+    expect(view.contentDOM.textContent).not.toContain('```')
+    expect(chips()).toEqual([['skill', 'lark-apps']])
+    expect(input().value).toBe(draft)
+    const index = draft.indexOf('render')
+    act(() => view.dispatch({ changes: { from: index, to: index + 6, insert: 'load' }, userEvent: 'input.type' }))
+    expect(input().value).toBe(draft.replace('render', 'load'))
+    key('z', mod)
+    expect(input().value).toBe(draft)
+    state.draft = '另一个草稿'
+    render()
+    expect(view.contentDOM.querySelector('.terminal-excerpt')).toBeNull()
+  })
+
   it('holds the draft as its document and draws every kind of token as a chip, in Chinese and over lines', () => {
     const text = '/compact 看看 @src 和 @default:src/vitest.browser.config.ts\n请 @输出-1 @输出-4 用 $lark-apps 检查\n\n结尾 $lark-apps。'
     const { view, input, chips } = mount(text)

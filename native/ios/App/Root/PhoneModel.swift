@@ -43,6 +43,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     @Published var selectedHost: RegisteredHost?
     @Published var snapshot = NativeJSON.null { didSet { shelfCache = nil } }
     @Published private(set) var questionAttention: PhoneQuestionAttention?
+    @Published var pushFocus: (target: PhonePushTarget, reject: Bool)?
     @Published var questionTopic: String?
     private var pendingQuestionLink: (computer: String?, expires: Date)?
     @Published var detail = NativeJSON.null { didSet { detailCached = false; if detail != .null { detailFailed = nil }; subagentStops.observe(detail) } }
@@ -169,7 +170,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     var uploadJobs: [UUID: Task<Void, Never>] = [:]
     var uploadTail: Task<Void, Never>?
     /** Places whose message with attachments is being sent now; their attachments are locked. */
-    @Published var attachSending: Set<String> = []
+    @Published var attachSending: [String: UUID] = [:]
     /** A start's text the Host proved was not delivered (its attachments were released), by the place that takes it back. */
     @Published var returnedText: [String: String] = [:]
     /** Unsent text the composer took off the screen with a closed window, back when the next window opens. In memory only. */
@@ -1390,6 +1391,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         guard store === currentStore, storageAvailable else { return false }
         if !saved.contains(where: { $0.id == host.id }) {
             hosts.removeAll { $0.id == host.id }
+            PhonePush.shared.forget(host)
             QuotaWidgetWriter.forget()
             if let draft, draft.keys.connectionTag == host.keys.connectionTag,
                draft.keys.verificationTag == host.keys.verificationTag { self.draft = nil }
@@ -1421,6 +1423,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     private func clearPrivateContent() {
         if questionAttention != nil { questionAttention = nil }
         questionTopic = nil
+        pushFocus = nil
         resumeAfterListing = nil
         privateSnapshot.clear()
         clearWorkContent()

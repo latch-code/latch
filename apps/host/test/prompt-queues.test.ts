@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -117,6 +117,56 @@ describe('persistent Host prompt queues', () => {
     expect(queue.view('task')).toHaveLength(5)
     expect(JSON.stringify(queue.view('task'))).not.toContain('deviceId')
     expect((await stat(join(dataDir, 'queues.json'))).mode & 0o777).toBe(0o600)
+  })
+  it('keeps reserved uploads recoverable when the queue write fails after the reservation', async () => {
+    const { queue, dataDir, options } = await fixture()
+    options.holdAttachments = vi.fn(async () => {})
+    options.releaseAttachments = vi.fn(async () => {})
+    const body = { ...input('later'), attachmentIds: ['A'.repeat(22)] }
+    const file = join(dataDir, 'queues.json')
+    await mkdir(file)
+    await expect(queue.submit(actor, 'task', body)).rejects.toMatchObject({ code: 'queue-save-unknown' })
+    expect(queue.view('task')).toMatchObject([{ state: 'parked', attachmentCount: 1 }])
+    expect(queue.holdsUpload(actor.deviceId, body.requestId)).toBe(true)
+    expect(options.releaseAttachments).not.toHaveBeenCalled()
+    await rm(file, { recursive: true })
+    await queue.submit(actor, 'task', body)
+    expect(options.holdAttachments).toHaveBeenCalledTimes(1)
+    expect((await PromptQueues.open(options)).view('task')).toMatchObject([{ state: 'parked', attachmentCount: 1 }])
+    await queue.remove('task', queue.view('task')[0]!.id)
+    expect(options.releaseAttachments).toHaveBeenCalledTimes(1)
+    expect(queue.holdsUpload(actor.deviceId, body.requestId)).toBe(false)
+  })
+  it('retains attachment-only input across restart and sends edited text with the original upload claim', async () => {
+    const { queue, detail, options } = await fixture()
+    options.holdAttachments = vi.fn(async () => {})
+    options.releaseAttachments = vi.fn(async () => {})
+    const attachmentIds = ['A'.repeat(22)]
+    const body = { ...input(''), attachmentIds }
+    await queue.submit(actor, 'task', body)
+    const [item] = queue.view('task')
+    expect(item).toMatchObject({ text: '', attachmentCount: 1 })
+    expect(item!.canSteer).toBeUndefined()
+    await expect(queue.submit(actor, 'task', { ...body, attachmentIds: ['B'.repeat(22)] })).rejects.toMatchObject({
+      code: 'request-conflict',
+    })
+    expect(options.holdAttachments).toHaveBeenCalledTimes(1)
+    await queue.edit('task', item!.id, 'Check the screenshot', actor)
+    await queue.close()
+    const resumed = await PromptQueues.open(options)
+    expect(resumed.heldAttachmentIds('task')).toEqual(attachmentIds)
+    completed(detail)
+    await resumed.send('task', item!.id)
+    expect(options.send).toHaveBeenCalledWith(
+      expect.anything(),
+      'task',
+      expect.objectContaining({ text: 'Check the screenshot', attachmentIds, attachmentRequestId: body.requestId }),
+    )
+    expect(resumed.heldAttachmentIds('task')).toEqual([])
+    const other = { ...input('remove'), attachmentIds }
+    await resumed.submit(actor, 'task', other)
+    await resumed.remove('task', resumed.view('task')[0]!.id)
+    expect(options.releaseAttachments).toHaveBeenCalledWith(expect.objectContaining(actor), 'task', attachmentIds, other.requestId)
   })
   it('drains FIFO one successful run at a time, passing the original request identity and queue timestamp', async () => {
     const { queue, detail, options } = await fixture()

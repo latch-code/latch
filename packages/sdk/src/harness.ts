@@ -282,8 +282,9 @@ export interface HarnessHostOptions {
    * The built-in harness: the tools of the session's remote MCP servers (Latch's, used in the session now), read when a
    * run of an agent session begins. The Host is their client; each call is audited before it is sent and the Host's
    * classifier makes every one R2. Rejects or answers nothing when there are none; a run never fails over them.
+   * Standard supplies the live run ID and whether the turn runs unattended.
    */
-  mcpTools?(input: { sessionId: string; signal: AbortSignal }): Promise<ToolDefinition[]>
+  mcpTools?(input: { sessionId: string; signal: AbortSignal; runId?: string; unattended?: boolean }): Promise<ToolDefinition[]>
   /**
    * A session whose context has `proposals` (one of 我的 Agent's, or a conversation with 通用): its agent proposed a
    * memory. The Host keeps it pending for the person and never saves it by itself; it finds the owner from its own

@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react'
 import type { FileMention, SessionCommand, SessionSkill } from '@latch/protocol'
+import { replyQuotes } from '../conversation/replyQuote.ts'
 import { mentionRanges } from '../fileMentions.ts'
 
 /** A token of the draft that the current Harness's catalogue names; the draft itself stays plain text. */
 export interface PromptMark {
   start: number
   end: number
-  kind: 'skill' | 'command' | 'member'
+  kind: 'skill' | 'command' | 'member' | 'conversation' | 'quote'
   name: string
   description?: string
   /** A member's mark: its Harness's mark, drawn where the `@` is. */
@@ -101,7 +102,16 @@ export function promptChips(text: string, catalogue: PromptCatalogue, refs: read
       path: ref.path,
     })),
   )
-  const all = [...promptMarks(text, catalogue), ...files].sort((a, b) => a.start - b.start || b.end - a.end)
+  const references: PromptMark[] = []
+  if (text.includes('[conversation-ref:')) {
+    for (const match of text.matchAll(/\[conversation-ref:[a-f0-9-]{36}\] ([^\n]{1,500}?) · read_conversation_reference/gu))
+      references.push({ start: match.index, end: match.index + match[0].length, kind: 'conversation', name: match[1]!, description: '' })
+  }
+  if (text.includes('[引用回复 ')) {
+    for (const { from, quote } of replyQuotes(text))
+      references.push({ start: from, end: text.indexOf('\n', from), kind: 'quote', name: '', description: quote.text })
+  }
+  const all = [...promptMarks(text, catalogue), ...files, ...references].sort((a, b) => a.start - b.start || b.end - a.end)
   const chips: PromptChip[] = []
   for (const chip of all) if (chip.end > chip.start && (!chips.length || chip.start >= chips.at(-1)!.end)) chips.push(chip)
   return chips

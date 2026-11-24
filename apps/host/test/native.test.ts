@@ -37,7 +37,7 @@ import type {
   WorkPostReplyAnswer,
   WorkThreadAnswer,
 } from '@latch/protocol'
-import type { Bridge, HarnessPlugin } from '@latch/sdk'
+import type { Bridge, HarnessPlugin, ModelProvider } from '@latch/sdk'
 import type { PresenceBackend } from '../src/presence.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { NATIVE_BULK, startNativeHost, type NativeOpening } from '../src/native.ts'
@@ -46,6 +46,7 @@ import { NativeReplay } from '../src/native-replay.ts'
 import { FileDirectoryReader } from '../src/files/directory.ts'
 import { buildFilesHelper } from '../scripts/build-files.ts'
 import { GitDelivery } from '../src/git-delivery.ts'
+import { REFERENCE_TOOL } from '../src/conversation-references.ts'
 import { messageCarrierFixture } from './helpers/message-carrier.ts'
 import { connectPluginTransport } from '../src/native-transports.ts'
 
@@ -165,6 +166,113 @@ async function verifyDevice(
   return { ...receipt, appOpenId: challenge.appOpenId }
 }
 describe('native Host entry with existing authorization', () => {
+  it(
+    'keeps conversation references out of automatic PR turns and rechecks the phone window at acceptance',
+    { timeout: 20_000 },
+    async () => {
+      let time = Date.now()
+      let poll!: () => Promise<void>
+      const turns: Array<{ prompt: string; canReadReference: boolean }> = []
+      const provider: ModelProvider = {
+        id: 'pr-fixture',
+        name: 'PR fixture',
+        model: 'fake',
+        async *stream({ messages, tools }) {
+          turns.push({
+            prompt: messages.findLast(message => message.role === 'user')!.content,
+            canReadReference: tools.some(tool => tool.name === REFERENCE_TOOL.name),
+          })
+          yield { type: 'text', text: 'Reviewed' }
+          yield { type: 'finish', reason: 'stop' }
+        },
+      }
+      const host = await startTestHost({
+        native: { host: '127.0.0.1', port: 0 },
+        now: () => time,
+        providerId: provider.id,
+        plugins: [
+          {
+            id: 'pr-fixture',
+            name: 'PR fixture',
+            version: '1',
+            description: '',
+            activate(ctx) {
+              ctx.registerProvider(provider)
+            },
+          },
+        ],
+        gitDelivery: {
+          registerPoll: tick => {
+            poll = tick
+          },
+        },
+      })
+      cleanup.push(() => host.close())
+      const owner = await desktopOf(host)
+      const phone = await pair(host, owner)
+      const verified = await verifyDevice(host, phone.client, phone.deviceId, phone.verification.privateKey)
+      const settled = async (id: string) =>
+        expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${id}`)).summary.status).toBe('idle')
+      const start = async (prompt: string) => {
+        const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+          method: 'POST',
+          body: { requestId: randomUUID(), prompt, mode: 'agent', workspaceId: 'default' },
+        })
+        await settled(sessionId)
+        return sessionId
+      }
+      const source = await start('Reference material')
+      const target = await start('Initial work')
+      const path = `tasks/${target}/git/pr/follow`
+      const binding = { number: 7, url: 'https://github.com/acme/widgets/pull/7', base: 'main', head: 'feature' }
+      await host.host.bridge.bindPr(target, binding)
+      await owner.json(`tasks/${target}/conversation-references`, { method: 'POST', body: { requestId: randomUUID(), source } })
+
+      const state: GitPrState = {
+        pr: { ...binding, headSha: 'a'.repeat(40), title: 'Review', state: 'open', draft: false },
+        checks: [],
+        discussion: [],
+      }
+      vi.spyOn(GitDelivery.prototype, 'prState').mockImplementation(async () => structuredClone(state))
+      const matchesHead = vi.spyOn(GitDelivery.prototype, 'matchesPrHead').mockResolvedValue(true)
+      expect(
+        body(
+          await phone.client.request('POST', '/link/api/' + path, {
+            requestId: randomUUID(),
+            revision: null,
+            number: 7,
+            enabled: true,
+            automatic: true,
+          }),
+        ),
+      ).toMatchObject({ follow: { automatic: true } })
+
+      state.discussion!.push({ kind: 'comment', body: 'First review', author: 'reviewer' })
+      await poll()
+      await settled(target)
+      expect(await owner.json(path)).toMatchObject({ follow: { notice: { outcome: 'sent' } } })
+      expect(turns.at(-1)).toMatchObject({ prompt: expect.stringContaining('First review'), canReadReference: false })
+
+      await owner.json(`tasks/${target}/prompt`, { method: 'POST', body: { requestId: randomUUID(), prompt: 'Manual follow-up' } })
+      await settled(target)
+      expect(turns.at(-1)).toMatchObject({ prompt: 'Manual follow-up', canReadReference: true })
+
+      state.discussion!.push({ kind: 'comment', body: 'Later review', author: 'reviewer' })
+      matchesHead
+        .mockClear()
+        .mockResolvedValueOnce(true)
+        .mockImplementationOnce(async () => {
+          time = Date.parse(verified.verifiedUntil) + 1
+          return true
+        })
+      await poll()
+      expect(matchesHead).toHaveBeenCalledTimes(2)
+      expect(await owner.json(path)).toMatchObject({ follow: { notice: { outcome: 'policy' } } })
+      const task = await owner.json<TaskDetail>(`tasks/${target}`)
+      expect(task.messages.some(message => message.role === 'user' && message.text.includes('Later review'))).toBe(false)
+    },
+  )
+
   it('fits the newest PR discussion within the native JSON budget after checking the current scope', { timeout: 20_000 }, async () => {
     const limit = 960 * 1024
     let time = Date.now()

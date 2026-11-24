@@ -43,7 +43,7 @@ import {
 } from '@latch/sdk'
 import { notSentConfig } from './config-requests.ts'
 import { harnessFacts, trustOf, type HarnessKind, type HarnessTrust } from './harness-trust.ts'
-import { RUN_ID, SessionMetaStore, type ImportedMeta, type PageOrigin, type SessionReceipts } from './session-meta.ts'
+import { RUN_ID, SessionMetaStore, type ImportedMeta, type PageOrigin, type SessionReceipts, type StoredPrFollow } from './session-meta.ts'
 import { SESSION_FOLDER_NAME } from './session-folders.ts'
 import { BranchReader } from './branch-reader.ts'
 import type { BoardAttended } from './board.ts'
@@ -1048,16 +1048,38 @@ export class HarnessHub implements Bridge {
     return pr && { ...pr }
   }
 
+  followedPrs(): string[] {
+    return this.meta.followedPrs()
+  }
+  prFollow(sessionId: string): StoredPrFollow | undefined {
+    return this.meta.get(sessionId)?.prFollow
+  }
+  async changePrFollow(
+    sessionId: string,
+    update: (value: StoredPrFollow | undefined, pr: GitPrBinding | undefined) => StoredPrFollow | undefined,
+  ): Promise<void> {
+    await this.meta.update(sessionId, current => {
+      const value = update(current.prFollow, current.archived ? undefined : current.pr)
+      if (!value) return current
+      return { ...current, prFollow: value }
+    })
+  }
+
   /** Settles when the session metadata holds it; only a session the Host knows. */
   async bindPr(sessionId: string, pr: GitPrBinding): Promise<void> {
     await this.route(sessionId)
-    await this.meta.update(sessionId, current => ({ ...current, pr: { ...pr } }))
+    await this.meta.update(sessionId, current => {
+      const next = { ...current, pr: { ...pr } }
+      if (current.pr?.url !== pr.url) delete next.prFollow
+      return next
+    })
   }
 
   async unbindPr(sessionId: string): Promise<void> {
     await this.meta.update(sessionId, current => {
       const next = { ...current }
       delete next.pr
+      delete next.prFollow
       return next
     })
   }
@@ -1410,8 +1432,10 @@ export class HarnessHub implements Bridge {
         else delete next.pinned
       }
       if (patch.archived !== undefined) {
-        if (patch.archived) next.archived = true
-        else delete next.archived
+        if (patch.archived) {
+          next.archived = true
+          delete next.prFollow
+        } else delete next.archived
       }
       if (patch.tags !== undefined) {
         if (patch.tags?.length) next.tags = [...patch.tags]

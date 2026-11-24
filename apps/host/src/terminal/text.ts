@@ -216,10 +216,29 @@ function looksRisky(text: string): boolean {
   return false
 }
 
-/** What 「加入对话」 attaches: at most `maxLines` lines and ATTACH_CHARACTER_LIMIT characters, the newest kept. */
-export function attachmentText(raw: string, maxLines = ATTACH_LINE_LIMIT): TerminalText {
+// PTYs mix stdout and stderr. Recognise diagnostic headers instead of treating every line after a failure as an error.
+const DIAGNOSTIC =
+  /^(?:(?:[\w.]+(?:Error|Exception)|exception|error(?:\[[^\]]+\]| TS\d+)?|fatal(?: error)?|panic|错误|异常)[:：]|\[error\]|Traceback \(most recent call last\):|(?:npm (?:error|ERR!)|ERR_PNPM_[A-Z_]+|FAIL(?:ED)?)\s|(?:bash|zsh|sh): .*(?:not found|denied|such file)|[^\s]+(?:\(\d+,\d+\)|:\d+(?::\d+)?):\s*(?:fatal )?error\b)/iu
+const DIAGNOSTIC_DETAIL =
+  /^(?:\s+(?:at\s|File "|\d+\s*\||\||\^|--> |Expected|Received)|(?:Caused by|Expected|Received):|\s*[>^~]+\s*(?:\d+\s*\|.*)?$)/u
+
+function recentDiagnostic(lines: string[]): string[] {
+  const start = lines.findLastIndex(line => DIAGNOSTIC.test(line.trimStart()))
+  if (start === -1) return []
+  let end = start + 1
+  while (end < lines.length && end - start < 20 && DIAGNOSTIC_DETAIL.test(lines[end]!)) end++
+  // Python prints its frames before the exception. Only include them when the traceback header is still in this block.
+  let before = start
+  while (before > 0 && start - before < 18 && /^\s+\S/u.test(lines[before - 1]!)) before--
+  if (before > 0 && lines[before - 1]!.trim() === 'Traceback (most recent call last):') return lines.slice(before - 1, end)
+  return lines.slice(start, end)
+}
+
+/** Redact the entire buffer before selecting a diagnostic or cutting it to the requested size. */
+export function attachmentText(raw: string, maxLines = ATTACH_LINE_LIMIT, errorOnly = false): TerminalText {
   // Over every line, before the window to return: a key's armour may lie outside it.
-  const { lines: all, redacted: multiline } = redactLineSecrets(plainLines(raw).map(line => line.replace(INVISIBLE, '').trimEnd()))
+  const clean = redactLineSecrets(plainLines(raw).map(line => line.replace(INVISIBLE, '').trimEnd()))
+  const all = errorOnly ? recentDiagnostic(clean.lines) : clean.lines
   let first = 0
   let last = all.length
   while (first < last && all[first] === '') first++
@@ -229,7 +248,7 @@ export function attachmentText(raw: string, maxLines = ATTACH_LINE_LIMIT): Termi
   const plain = lines.join('\n')
   // Redacted before the cut to the character limit, so a cut never leaves a secret without the prefix that marks it.
   let text = redactKnownSecrets(plain)
-  const redacted = multiline || text !== plain
+  const redacted = clean.redacted || text !== plain
   if (text.length > ATTACH_CHARACTER_LIMIT) {
     text = text.slice(text.length - ATTACH_CHARACTER_LIMIT)
     const lineStart = text.indexOf('\n')

@@ -66,6 +66,8 @@ export function startWords(start: WorktreeStart, base: WorktreeBase | undefined)
   switch (start.from) {
     case 'head':
       return base && baseWords(base)
+    case 'pr':
+      return `PR #${start.number} · ${start.commit.slice(0, 12)}`
     case 'commit': {
       const branch = base?.branches?.find(item => item.name === start.ref)
       return branch ? COPY.fromBranch(branch.name, branch.commit.slice(0, 7)) : COPY.fromRef(start.ref)
@@ -195,6 +197,8 @@ export function FolderControl({
       panel={
         choosing ? (
           <WorktreeStartPanel
+            key={project.id}
+            projectId={project.id}
             base={base}
             current={worktree}
             onBack={() => {

@@ -28,7 +28,7 @@ export interface HostView {
     reason?: Extract<PresenceAvailability, { status: 'unavailable' }>['reason']
   }
   tls: { origin: string } | null
-  native?: { enabled: boolean; discoveryEpoch?: string; directoryEpoch?: string }
+  native?: { enabled: boolean; attentionPush?: true; attentionPreview?: true; discoveryEpoch?: string; directoryEpoch?: string }
 }
 
 /** What a device may choose when it starts a session. */

@@ -148,6 +148,13 @@ func phoneActionsFixture(_ input: [String: Any]) throws -> [String: Any] {
             return ["allow": gate.canAllow ? gate.allowLabel : "", "option": gate.allowOption ?? "", "more": gate.more.map { "\($0.id):\($0.label):\($0.allows)" },
                     "hidden": gate.hidden, "places": approval["tool"]["locations"].array.compactMap(\.string).map(PhoneConversation.visible)]
         },
+        "approvalPresentations": value["approvalPresentations"].array.map { approval -> [String: Any] in
+            let command = PhoneConversation.approvalCommand(approval), tool = approval["tool"]
+            let stat = PhoneConversation.diffStat(tool, requireComplete: true)
+            return ["command": command?.text ?? "", "directory": command?.directory ?? "", "grant": command?.grant?.rawValue ?? "", "details": command?.details ?? "",
+                    "edit": PhoneConversation.isApprovalFileEdit(approval), "hidden": PhoneConversation.hidesText(approval),
+                    "stat": stat.map { [$0.add, $0.del] } ?? []]
+        },
     ]
 }
 

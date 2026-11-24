@@ -1,4 +1,5 @@
 import { chromium, type Locator, type Page } from '@playwright/test'
+import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
@@ -6,10 +7,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import { AGENT_PRESETS, type AppSnapshot, type TaskDetail } from '@latch/protocol'
-import { FAKE_ACP_AGENT } from '@latch/testkit'
+import { FAKE_ACP_AGENT, installFakeGh } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, tooltipText } from './helpers/layout.ts'
+import { phoneStartScreen, noHorizontalOverflow, tooltipText } from './helpers/layout.ts'
 import { promptValue } from './helpers/prompt.ts'
 
 const OUT = 'test-results/worktrees'
@@ -233,3 +234,140 @@ it('starts a session in a new worktree from the draft, keeps showing it, and say
     await rm(directory, { recursive: true, force: true })
   }
 }, 180_000)
+
+it('starts a PR review from the verified fork head and binds its selection to one device and project', { timeout: 180_000 }, async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-e2e-pr-')))
+  const home = join(root, 'home'),
+    project = join(root, 'widgets'),
+    other = join(root, 'elsewhere')
+  await Promise.all([home, project, other].map(path => mkdir(path)))
+  const env = { ...process.env, HOME: home, GIT_CONFIG_NOSYSTEM: '1' }
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.invalid', ...args], { cwd, env, stdio: 'pipe' })
+      .toString('utf8')
+      .trim()
+  git(project, 'init', '-q', '-b', 'main')
+  git(project, 'commit', '--allow-empty', '-qm', 'main')
+  const main = git(project, 'rev-parse', 'HEAD')
+  const remote = join(root, 'remote.git')
+  git(root, 'init', '-q', '--bare', remote)
+  git(project, 'branch', 'feature')
+  git(project, 'switch', '-q', '-c', 'pr-source')
+  await writeFile(join(project, 'review.txt'), 'Only in the fork PR\n')
+  git(project, 'add', 'review.txt')
+  git(project, 'commit', '-qm', 'fork head')
+  const commit = git(project, 'rev-parse', 'HEAD')
+  git(project, 'push', '-q', remote, 'HEAD:refs/pull/17/head')
+  git(project, 'switch', '-q', 'main')
+  git(project, 'branch', '-D', 'pr-source')
+  git(project, 'remote', 'add', 'origin', 'git@github.com:acme/widgets.git')
+  git(other, 'init', '-q', '-b', 'main')
+  git(other, 'commit', '--allow-empty', '-qm', 'other')
+  const fakeSsh = join(root, 'ssh')
+  await writeFile(fakeSsh, `#!/bin/sh\nexec git upload-pack '${remote.replaceAll("'", "'\\''")}'\n`, { mode: 0o700 })
+  git(home, 'config', '--global', 'core.sshCommand', fakeSsh)
+  const row = {
+    number: 17,
+    url: 'https://github.com/acme/widgets/pull/17',
+    title: 'Fork review',
+    state: 'OPEN' as const,
+    isDraft: false,
+    reviewDecision: '',
+    headRefName: 'feature',
+    baseRefName: 'main',
+    headRefOid: commit,
+    isCrossRepository: true,
+    headRepositoryOwner: { login: 'contributor' },
+    headRepository: { name: 'widgets' },
+    statusCheckRollup: [],
+    reviews: [],
+    comments: [],
+    lineComments: [],
+  }
+  const gh = await installFakeGh(join(root, 'gh'), { prs: [row] })
+  const host = await startTestHost({
+    worktreesDir: join(root, 'trees'),
+    gitDelivery: { home, hostEnv: { HOME: home, USER: 'tester', PATH: '/usr/bin:/bin' }, shell: gh.shell },
+  })
+  const browser = await chromium.launch(browserLaunchOptions())
+  try {
+    const owner = await host.enroll({ listener: 'unix' }),
+      another = await host.enroll({ listener: 'loopback-tcp', scopes: ['run', 'view'], dataScope: 'all' })
+    const add = async (path: string) =>
+      ((await (await owner.addFolders({ paths: [path] })).json()) as { workspace: { id: string } }).workspace.id
+    const projectId = await add(project)
+    const start = await owner.json<{ proof: string; commit: string; baseRepository: string }>(`workspaces/${projectId}/review-head`, {
+      method: 'POST',
+      body: { requestId: randomUUID(), number: 17 },
+    })
+    const selected = { from: 'pr', number: 17, repository: start.baseRepository, commit: start.commit, proof: start.proof }
+    const request = (device: typeof owner, workspaceId: string, commit: string) =>
+      device.request('tasks', {
+        method: 'POST',
+        body: {
+          harnessId: 'standard',
+          mode: 'agent',
+          workspaceId,
+          requestId: randomUUID(),
+          prompt: 'hello',
+          worktree: { ...selected, commit },
+        },
+      })
+    expect(await (await request(another, projectId, commit)).json()).toMatchObject({ error: 'pr-head-unverified' })
+    expect(await (await request(owner, projectId, main)).json()).toMatchObject({ error: 'pr-head-unverified' })
+    const openReview = async (width: number, colorScheme: 'light' | 'dark') => {
+      const page = await browser.newPage({ locale: 'zh-CN', viewport: { width, height: 900 }, colorScheme })
+      page.setDefaultTimeout(10_000)
+      await enrollBrowser(page, host, { name: `PR review ${width}`, dataScope: 'all' })
+      await connected(page)
+      await phoneStartScreen(page)
+      await page
+        .getByRole('button', { name: /^项目：/u })
+        .first()
+        .click()
+      await choice(page, /widgets/u).click()
+      await page
+        .getByRole('button', { name: /^文件夹：/u })
+        .first()
+        .click()
+      await page.getByText('其他起点…', { exact: true }).click()
+      await page.getByRole('radio', { name: 'PR', exact: true }).click()
+      await page
+        .getByRole('searchbox', { name: 'GitHub PR 编号' })
+        .or(page.getByRole('textbox', { name: 'GitHub PR 编号' }))
+        .fill('17')
+      const fetched = page.waitForResponse(response => response.url().endsWith('/review-head'))
+      await page.getByRole('button', { name: '获取 PR 提交' }).click()
+      const response = await fetched
+      expect(await response.json()).toMatchObject({ repository: 'contributor/widgets', fork: true, commit })
+      const startButton = page.getByRole('button', { name: '从此提交新建工作树' })
+      await startButton.waitFor()
+      expect(await page.locator('.worktree-start-list').innerText()).toContain('contributor/widgets')
+      expect(await page.locator('.worktree-start-list').innerText()).toContain('来自 fork')
+      await mkdir(OUT, { recursive: true })
+      await page.screenshot({ path: `${OUT}/pr-review-${width}.png` })
+      await noHorizontalOverflow(page)
+      return page
+    }
+    for (const width of [768, 390]) {
+      const preview = await openReview(width, 'dark')
+      await preview.close()
+    }
+    const page = await openReview(1280, 'light')
+    await page.getByRole('button', { name: '从此提交新建工作树' }).click()
+    const prompt = page.getByRole('textbox', { name: '新会话消息', exact: true })
+    await prompt.fill('hello')
+    await prompt.press('Enter')
+    await page.locator('.topbar-crumb-worktree').waitFor()
+    const task = (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => task.workspaceId === projectId && task.worktree)
+    expect(task?.cwd).toBeTruthy()
+    expect(git(task!.cwd!, 'rev-parse', 'HEAD')).toBe(commit)
+    expect(git(project, 'rev-parse', 'feature')).toBe(main)
+    expect(await (await request(owner, await add(other), commit)).json()).toMatchObject({ error: 'pr-head-unverified' })
+    expect(await gh.violations()).toEqual([])
+  } finally {
+    await browser.close()
+    await host.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})

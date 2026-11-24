@@ -183,6 +183,7 @@ export interface WorkspaceInfo {
 export type WorktreeStart =
   | { from: 'head' }
   | { from: 'commit'; ref: string }
+  | { from: 'pr'; number: number; repository: string; commit: string; proof: string }
   | { from: 'branch'; branch: string }
   | { from: 'reuse'; name: string }
 

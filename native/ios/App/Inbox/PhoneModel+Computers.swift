@@ -189,6 +189,13 @@ final class PhoneNoticeDelegate: NSObject, UNUserNotificationCenterDelegate {
         [.banner, .list, .sound]
     }
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        if response.notification.request.trigger is UNPushNotificationTrigger {
+            let info = response.notification.request.content.userInfo
+            if let route = info["route"] as? String, let ticket = info["ticket"] as? String, let hint = PhonePushHint(route: route, ticket: ticket, reject: response.actionIdentifier == "latch.review-rejection") {
+                await PhonePush.shared.visit(hint)
+            }
+            return
+        }
         let id = response.notification.request.identifier
         await MainActor.run {
             guard let target = PhoneComputerNotices.target(id) else { return }

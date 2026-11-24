@@ -16,13 +16,17 @@ struct PromptComposer: View {
     let engine: String
     var person: Bool = false
     var newTopic: ((String) -> Void)? = nil
-    private var draftText: Binding<String> {
+    private var rawDraft: Binding<String> {
         let opening = drafts.opening, window = model.privateSnapshot.epoch, id = draftId
         func visible() -> Bool {
             drafts.opening == opening && model.sessionId == id && model.hasContentWindow && model.privateSnapshot.accepts(window)
         }
         return Binding(get: { drafts.text(for: id, visible: visible()) },
             set: { drafts.set($0, for: id, opening: opening, permitted: visible()) })
+    }
+    private var draftText: Binding<String> {
+        let raw = rawDraft
+        return Binding(get: { PhoneInputReferences(raw.wrappedValue).display }, set: { raw.wrappedValue = PhoneInputReferences(raw.wrappedValue).restore($0) })
     }
     private var text: String {
         get { draftText.wrappedValue }
@@ -34,9 +38,12 @@ struct PromptComposer: View {
     @State private var settled: String?
     @AppStorage(PhoneFaceID.key) private var faceID = false
     /** The picker opened from the input menu. */
+    @State private var choosingReference = false
     @State private var attachSource: AttachSource?
-    /** Waiting for uploads before the message goes. */
-    @State private var sending = false
+    /** Held from the tap through upload and the Host's receipt; a second tap cannot create another request. */
+    @State private var sendID: UUID?
+    private var sending: Bool { sendID != nil }
+    @State private var pasteID: UUID?
     @StateObject private var slash = SlashComposerState()
     @State private var slashSpace: CGFloat = 198
     @State private var slashControl: SlashControlRequest?
@@ -72,7 +79,8 @@ struct PromptComposer: View {
     private var attachKey: String? { draftId.flatMap { model.sessionId == $0 ? $0 : nil } }
     private var attachments: PhoneAttachTray { attachKey.map { model.tray($0) } ?? PhoneAttachTray() }
     private var heldBack: String? {
-        PhoneAttachments.heldBack(followUp, running: running && rejecting == nil, count: attachments.items.count)
+        if followUp == .queue && model.canQueueAttachments { return nil }
+        return PhoneAttachments.heldBack(followUp, running: running && rejecting == nil, count: attachments.items.count)
     }
     private var running: Bool { ["running", "waiting-approval"].contains(model.currentSummary["status"].string ?? "") }
     /** The drawer above already holds the answers, stop among them where it cannot be allowed. */
@@ -87,19 +95,21 @@ struct PromptComposer: View {
     private var noteTooLong: Bool { rejecting != nil && PhoneConversation.rejectionNoteTooLong(text) }
     /** While a turn runs: 追加 where the Harness takes more text now, else 排队 where the Host queues. */
     private var followUp: PhoneFollowUp {
-        PhoneFollowUp.of(detail: model.detail, status: model.currentSummary["status"].string, queues: model.canQueueCurrent)
+        let mode = PhoneFollowUp.of(detail: model.detail, status: model.currentSummary["status"].string, queues: model.canQueueCurrent)
+        if mode == .steer, (((!attachments.isEmpty || pasteID != nil) && model.canQueueAttachments) || (rawDraft.wrappedValue.contains("[conversation-ref:") && model.canQueueCurrent)) { return .queue }
+        return mode
     }
     private var controls: [PhoneConfigControl] {
         guard model.sessionId != nil, model.detail["summary"]["id"].string == model.sessionId else { return [] }
         return PhoneSessionConfig.controls(model.detail, harness: model.engineInfo(model.currentSummary["harnessId"].string))
     }
     private var canSend: Bool {
-        guard model.transportReady else { return false }
+        guard model.transportReady, !sending, pasteID == nil, attachKey.map({ !model.attachLocked($0) }) ?? true else { return false }
         if rejecting == nil, PhoneSlash.actionOf(text) != nil {
             if case .open = PhoneSlash.action(text, context: slashContext) { return !slash.composing }; return false
         }
         let attached = !attachments.isEmpty && rejecting == nil
-        return (!trimmed.isEmpty || attached) && model.canRun && !model.busy && !sending && !slash.composing && model.pending.isEmpty && !noteTooLong
+        return (!trimmed.isEmpty || attached) && model.canRun && !model.busy && !slash.composing && model.pending.isEmpty && !noteTooLong
             && (!running || rejecting != nil || followUp != .none) && heldBack == nil
     }
     var body: some View {
@@ -127,6 +137,9 @@ struct PromptComposer: View {
             }
             if let attachKey, gate == nil {
                 AttachmentRows(key: attachKey, selection: model.attachSelection(attachKey))
+                if pasteID != nil {
+                    ProgressView("正在添加图片…").font(PhoneTheme.caption).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
+                }
                 if let heldBack {
                     Text(heldBack).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
                 }
@@ -156,15 +169,18 @@ struct PromptComposer: View {
         .onAppear { insert() }
         // 加入对话 and 带入输入框 put text after what is written, never send it.
         .onChange(of: draftId.flatMap { model.draftInserts[$0] }) { _, value in if value != nil { insert() } }
-        .onDisappear { slash.clear() }
+        .onDisappear { pasteID = nil; slash.clear() }
         .onChange(of: text) { _, value in slash.changed(value) }
-        .onChange(of: model.privateSnapshot.epoch) { _, _ in slash.clear(); slashControl = nil; slashStart = nil }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in sendID = nil; pasteID = nil; choosingReference = false; slash.clear(); slashControl = nil; slashStart = nil }
         .task(id: slashRead) { await slash.load(model, key: slashRead) }
+        .sheet(isPresented: $choosingReference) {
+            if let id = draftId, model.hasContentWindow, model.detail["canReferenceConversation"].bool { ConversationReferenceSources(target: id) }
+        }
         .sheet(item: $slashControl) { SlashControlSheet(request: $0, nextModel: $nextModel) }
         .sheet(item: $slashStart) { NewSessionSheet(fork: $0.fork, initialChoice: $0.choice, initialPrompt: $0.prompt).presentationCornerRadius(28) }
         // An iPad keeps this composer while the session beside the list changes.
         .onChange(of: draftId) { _, _ in
-            nextModel = nil
+            sendID = nil; pasteID = nil; choosingReference = false; nextModel = nil
             slash.clear(); slashControl = nil; slashStart = nil
         }
         .onChange(of: model.selectedHost?.id) { _, _ in nextModel = nil }
@@ -174,7 +190,7 @@ struct PromptComposer: View {
     }
     private func insert() {
         guard let added = model.takeInsert(for: draftId) else { return }
-        text = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? added : text + "\n\n" + added
+        rawDraft.wrappedValue = rawDraft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? added : rawDraft.wrappedValue + "\n\n" + added
     }
     private func gateLine(_ words: String) -> some View {
         HStack(spacing: 10) {
@@ -190,6 +206,9 @@ struct PromptComposer: View {
     static let closedWindow = "查看内容后可以回复"
     private var inputMenu: some View {
         ComposerMenu(key: attachKey, harness: harness, selection: attachKey.flatMap { model.attachSelection($0) }, source: $attachSource) {
+            if model.detail["canReferenceConversation"].bool && model.canRun && model.hasContentWindow {
+                Button("引用另一条会话", systemImage: "text.bubble") { choosingReference = true }
+            }
             if canQueueInstead {
                 Button("排到下一轮", systemImage: "text.badge.plus") { send(queueInstead: true) }.disabled(!canSend)
             }
@@ -208,16 +227,61 @@ struct PromptComposer: View {
             Color.clear.onChange(of: proxy.frame(in: .global).minY, initial: true) { _, value in slashSpace = max(0, value - proxy.safeAreaInsets.top - 12) }
         })
     }
+    private var imagePasteHandler: (@MainActor ([NSItemProvider]) async -> Void)? {
+        guard let key = attachKey, rejecting == nil, gate == nil else { return nil }
+        let host = model.generation, reading = model.contentGeneration, window = model.privateSnapshot.epoch
+        return { providers in
+            guard model.generation == host, model.contentGeneration == reading, model.privateSnapshot.accepts(window), model.sessionId == key else { return }
+            await pasteImages(providers)
+        }
+    }
     private var editor: some View {
-        LocalTextEditor(text: draftText, placeholder: hint, maximumLines: slashMenu == nil ? 6 : 3, focused: $focused,
+        let input = LocalTextEditor(text: draftText, placeholder: hint, maximumLines: slashMenu == nil ? 6 : 3, focused: $focused,
             selection: $slash.selection, composing: $slash.composing, selectionRequest: $slash.selectionRequest,
             commandKeys: slashKeys, onCommand: slashKey,
-            suffixHint: slash.hint(text, commands: slashCommands, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending))
-            .overlay(alignment: .topLeading) { if text.isEmpty { PromptHint(text: hint) } }
+            suffixHint: slash.hint(text, commands: slashCommands, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending),
+            onPasteImages: imagePasteHandler)
+        return input.overlay(alignment: .topLeading) { if text.isEmpty { PromptHint(text: hint) } }
     }
-    /** Empty while a turn runs, the circle stops it; with text it queues. */
+    private func pasteImages(_ providers: [NSItemProvider]) async {
+        guard pasteID == nil, let key = attachKey, let selection = model.attachSelection(key),
+              gate == nil, rejecting == nil, model.canRun, model.hasContentWindow, model.transportReady else { return }
+        guard !model.attachLocked(key) else { model.attachTrays[key, default: PhoneAttachTray()].note = PhoneAttachments.lockedWords; return }
+        let id = UUID(), host = model.generation, reading = model.contentGeneration, window = model.privateSnapshot.epoch, driver = harness
+        pasteID = id
+        defer { if pasteID == id { pasteID = nil } }
+        let current = { pasteID == id && model.privateSnapshot.accepts(window) && model.acceptsAttachmentIntake(key, selection: selection, host: host, reading: reading) }
+        guard current() else { return }
+        if model.attachState(key).caps == nil { await model.loadAttachCaps(key, selection: selection, harness: driver, asked: true) }
+        guard current() else { return }
+        guard let caps = model.attachState(key).caps else {
+            model.attachTrays[key, default: PhoneAttachTray()].note = "没能读取这个会话能收的附件，请再粘贴一次。"
+            return
+        }
+        let count = model.tray(key).items.count
+        if let reason = PhoneAttachments.admit(kind: .image, name: "截图", size: 1, count: count, caps: caps) {
+            model.attachTrays[key, default: PhoneAttachTray()].note = reason; return
+        }
+        let remaining = PhoneAttachments.perMessage - count
+        var picked: [PhonePicked] = []
+        for (index, provider) in providers.prefix(remaining).enumerated() {
+            guard current() else { break }
+            picked.append(await pickedImage(provider, name: provider.suggestedName ?? "截图 \(index + 1)", limit: PhoneAttachments.limit(.image, caps), paste: true))
+        }
+        let before = model.tray(key).items.count
+        guard model.finishAttachmentIntake(key, selection: selection, host: host, reading: reading, window: window, pick: .files(picked.count),
+            picked: picked, active: pasteID == id) else { return }
+        if providers.count > remaining {
+            let tray = model.tray(key), added = max(0, tray.items.count - before)
+            let reason = tray.note ?? PhoneAttachments.tooMany
+            model.attachTrays[key, default: PhoneAttachTray()].note = "已添加 \(added) 张图片，\(providers.count - added) 张未添加。\(reason)"
+        }
+    }
+    /** Stop remains the primary action only while there is nothing this phone can send to the next turn. */
     @ViewBuilder private var action: some View {
-        if running && trimmed.isEmpty { stopButton(quiet: drawerOpen) }
+        if sending {
+            ProgressView().controlSize(.small).frame(width: 44, height: 44).accessibilityLabel("正在提交")
+        } else if running && trimmed.isEmpty && (rejecting != nil || !model.canQueueAttachments || (attachments.isEmpty && pasteID == nil)) { stopButton(quiet: drawerOpen) }
         else if running && rejecting == nil && followUp != .none && PhoneSlash.actionOf(text) == nil {
             let steer = followUp == .steer
             Button { send() } label: {
@@ -227,12 +291,10 @@ struct PromptComposer: View {
             }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(steer ? "追加到本轮" : "排队发送")
         } else {
             Button { send() } label: {
-                Group {
-                    if sending { ProgressView().controlSize(.small).tint(Color.white) }
-                    else { Image(systemName: "arrow.up").font(.system(size: 15, weight: .semibold)).foregroundStyle(canSend ? Color.white : PhoneTheme.faint) }
-                }.frame(width: 36, height: 36).background(canSend || sending ? PhoneTheme.accent : PhoneTheme.bubble, in: Circle())
+                Image(systemName: "arrow.up").font(.system(size: 15, weight: .semibold)).foregroundStyle(canSend ? Color.white : PhoneTheme.faint)
+                    .frame(width: 36, height: 36).background(canSend ? PhoneTheme.accent : PhoneTheme.bubble, in: Circle())
                     .frame(width: 44, height: 44).contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(sending ? "等待附件上传" : running ? "排队发送" : "发送")
+            }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(running ? "排队发送" : "发送")
         }
     }
     /** While a drawer waits on you, stop steps back without going away. */
@@ -265,29 +327,36 @@ struct PromptComposer: View {
             case let .open(action, argument): runSlash(action, argument: argument); return
             }
         }
-        let input = text, reject = rejecting, next: PhoneFollowUp = queueInstead ? .queue : followUp
+        let input = rawDraft.wrappedValue, reject = rejecting, next: PhoneFollowUp = queueInstead ? .queue : followUp
         let queue = running && reject == nil && next == .queue, steer = running && reject == nil && next == .steer
         // The send's target is fixed now: after waiting for uploads it goes to this session or nowhere.
         let chosen = nextModel, key = attachKey
-        let host = model.generation, reading = model.contentGeneration
+        let host = model.generation, reading = model.contentGeneration, window = model.privateSnapshot.epoch
+        let submission = UUID()
+        sendID = submission
         Task {
-            guard model.generation == host, model.contentGeneration == reading, model.sessionId == target else { return }
+            var lockedTray: String?
+            defer {
+                if let lockedTray { model.endAttachmentSend(lockedTray, owner: submission) }
+                if sendID == submission { sendID = nil }
+            }
+            guard sendID == submission, model.generation == host, model.contentGeneration == reading, model.sessionId == target else { return }
             let sent: Bool
             if let reject { sent = await model.mutate(.post, path: PhoneModel.approvalPath(reject), fields: ["decision": .string("reject"), "note": .string(input)]) }
             else {
-                // A send waits for the uploads still on their way; one that cannot go keeps the message here.
                 var ids: [String] = []
                 if let key, !model.tray(key).isEmpty {
-                    sending = true
-                    let ready = await model.attachmentsToSend(key, target: target)
-                    sending = false
-                    guard case let .success(value) = ready else { model.endAttachmentSend(key); return }
+                    lockedTray = key
+                    let ready = await model.attachmentsToSend(key, target: target, owner: submission)
+                    guard sendID == submission, model.generation == host, model.contentGeneration == reading, model.privateSnapshot.accepts(window),
+                          model.sessionId == target, case let .success(value) = ready else { return }
                     ids = value
                 }
                 sent = await model.send(text: input, queue: queue, steer: steer, nextModel: chosen, attachments: ids, target: .some(target))
-                if let key { model.endAttachmentSend(key) }
             }
-            if sent, model.generation == host, model.contentGeneration == reading, model.sessionId == target, text == input { text = "" }
+            if sent, sendID == submission, model.generation == host, model.contentGeneration == reading, model.sessionId == target, rawDraft.wrappedValue == input {
+                rawDraft.wrappedValue = ""
+            }
         }
     }
     private var slashKeys: [String] {

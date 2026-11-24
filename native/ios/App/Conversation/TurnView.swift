@@ -4,6 +4,7 @@ import UIKit
 
 /** One prompt and its answer. Prose never folds; a turn's work folds away only once it has answered. */
 struct TurnView: View, Equatable {
+    @EnvironmentObject private var model: PhoneModel
     let session: String
     let turn: PhoneTurn
     let latest: Bool
@@ -65,7 +66,8 @@ struct TurnView: View, Equatable {
                     if !folds || unfolded { VStack(alignment: .leading, spacing: 8) { ForEach(Array(items.enumerated()), id: \.offset) { _, item in WorkRow(item: item, frozen: frozen, person: helper != nil, open: open) } } }
                 case let .prose(message):
                     VStack(alignment: .leading, spacing: 10) {
-                        if !(message["text"].string ?? "").isEmpty { ReplyMarkdown(session: session, text: message["text"].string ?? "", streaming: running, open: open).frame(maxWidth: .infinity, alignment: .leading) }
+                        if !(message["text"].string ?? "").isEmpty { ReplyMarkdown(session: session, text: message["text"].string ?? "", streaming: running, open: open)
+                            .environment(\.replyCitation, citation(for: message)).frame(maxWidth: .infinity, alignment: .leading) }
                         ReplyAttachments(message: message, open: open)
                     }
                 case let .note(message) where message["steered"].bool:
@@ -78,6 +80,17 @@ struct TurnView: View, Equatable {
                 }
             }
             if !running { footer }
+        }
+    }
+    private func citation(for message: NativeJSON) -> ReplyCitation? {
+        guard !running, model.canRun, model.hasContentWindow, !model.currentSummary["archived"].bool, model.currentSummary["personal"] == .null, !model.detailCached, let row = message["id"].string else { return nil }
+        let generation = model.generation, reading = model.contentGeneration
+        return ReplyCitation { selected, block, offset in
+            guard model.generation == generation, model.contentGeneration == reading, model.sessionId == session, model.canRun, model.hasContentWindow,
+                  let current = model.detail["messages"].array.first(where: { $0["id"].string == row && $0["role"].string == "assistant" }),
+                  let body = current["text"].string, body == message["text"].string,
+                  let text = PhoneReplyQuote.create(session: session, message: row, selected: selected, body: body, block: block, blockOffset: offset) else { return }
+            model.addToDraft(text + "\n\n", session: session)
         }
     }
     @ViewBuilder private var footer: some View {
@@ -102,6 +115,8 @@ struct TurnView: View, Equatable {
 extension NativeJSON { var path: String { self["path"].string ?? "" } }
 
 private struct UserBubble: View {
+    @EnvironmentObject private var model: PhoneModel
+    @State private var original: PhoneReplyQuote?
     let message: NativeJSON
     let delivery: String?
     var open: ((String, String?) -> Void)? = nil
@@ -128,7 +143,12 @@ private struct UserBubble: View {
                         }.buttonStyle(.plain).accessibilityValue(unfolded ? "已展开" : "已折叠")
                         if unfolded { ConversationText(text: PhoneConversation.visible(fold.context), monospaced: true, size: 14) }
                     }
-                    if !text.isEmpty || fold != nil { ConversationText(text: text) }
+                    if !text.isEmpty || fold != nil { ConversationText(text: PhoneInputReferences(text).display) }
+                    if text.contains("[引用回复 ") {
+                        ForEach(PhoneReplyQuote.parse(text).filter { $0.session == model.sessionId }) { quote in
+                            Button("查看引用原文") { original = quote }.font(PhoneTheme.caption)
+                        }
+                    }
                     if !chips.isEmpty {
                         VStack(alignment: .leading, spacing: 6) { ForEach(chips) { chip in SentAttachmentChip(chip: chip) { open?(chip.id, PreviewFiles.attachmentRoot) } } }
                     }
@@ -140,6 +160,8 @@ private struct UserBubble: View {
             let line = [time, delivery].compactMap { $0 }.joined(separator: " · ")
             if !line.isEmpty { Text(line).font(.system(size: 12)).foregroundStyle(PhoneTheme.faint) }
         }.frame(maxWidth: .infinity, alignment: .trailing)
+        .sheet(item: $original) { OriginalReplyPassage(quote: $0) }
+        .onChange(of: model.contentGeneration) { _, _ in original = nil }
     }
 }
 

@@ -5,6 +5,8 @@ import { Columns2, MessageSquarePlus, PanelBottom, PanelRight, RotateCcw, Rows2,
 import { TERMINALS_PER_SESSION, type TerminalSize, type TerminalSummary, type TerminalTarget } from '@latch/protocol'
 import {
   Button,
+  AlertGlyph,
+  SearchGlyph,
   CloseGlyph,
   ConfirmDialog,
   CopyGlyph,
@@ -51,6 +53,8 @@ import {
   type SplitDirection,
 } from './panes.ts'
 import { TerminalLink } from './link.ts'
+import { TerminalFind } from './TerminalFind.tsx'
+import { findTerminalLine } from './find.ts'
 import { loginRuns, useRevealedLogin } from './loginRuns.ts'
 import { terminalTheme } from './theme.ts'
 import { useTerminals } from './useTerminals.ts'
@@ -66,6 +70,11 @@ const COPY = defineCopy(
     stacked: '上下分屏',
     terminal: '终端',
     noOutput: '没有可以加入的输出',
+    errorToDraft: '把最近报错加入草稿',
+    quoteError: '引用报错',
+    noDiagnostic: '没有识别到报错。可以选中输出，再点「加入对话」。',
+    errorLabel: (name: string) => `${name} · 最近报错`,
+    find: '查找终端输出',
     possibleSecret: '加入的内容可能含密钥，发送前检查草稿',
     cannotSplit: '现在不能分屏',
     crossed: '一个标签的窗格只排一个方向',
@@ -101,6 +110,11 @@ const COPY = defineCopy(
     stacked: 'Split top and bottom',
     terminal: 'Terminal',
     noOutput: 'No output to add',
+    errorToDraft: 'Add latest error to draft',
+    quoteError: 'Quote error',
+    noDiagnostic: 'No error found. Select some output and choose Add to chat.',
+    errorLabel: (name: string) => `${name} · Latest error`,
+    find: 'Find terminal output',
     possibleSecret: 'The added content may contain secret keys. Check the draft before sending.',
     cannotSplit: 'This terminal can’t be split now',
     crossed: 'Panes in a tab can only line up in one direction',
@@ -296,6 +310,7 @@ export function TerminalPanel({
   const [confirm, setConfirm] = useState<{ ids: string[]; name: string; program?: string }>()
   const [notice, setNotice] = useState<{ tone: 'warn' | 'error'; text: string }>()
   const [attaching, setAttaching] = useState(false)
+  const [findIn, setFindIn] = useState<string>()
   const [connection, setConnection] = useState<Record<string, 'live' | 'reconnecting'>>({})
   const [focusScreen, setFocusScreen] = useState(false)
 
@@ -402,18 +417,20 @@ export function TerminalPanel({
     return tab ? tabName(tab) : COPY.terminal
   }
 
-  const attach = async (item: string | undefined = current?.id) => {
+  const attach = async (item: string | undefined = current?.id, errorOnly = false) => {
     const tab = tabs.find(entry => entry.id === item)
     if (!tab || !onCompose) return
     setAttaching(true)
     setNotice(undefined)
     try {
-      const extract = await terminals.extract(tab.id, selection[tab.id] ?? '')
+      const extract = await terminals.extract(tab.id, selection[tab.id] ?? '', errorOnly)
+      if (!usableCompose.current) return
       if (!extract.text.trim()) {
-        setNotice({ tone: 'warn', text: COPY.noOutput })
+        setNotice({ tone: 'warn', text: errorOnly ? COPY.noDiagnostic : COPY.noOutput })
         return
       }
-      usableCompose.current?.(draftText(`终端 ${tab.number}`, extract))
+      const excerpt = draftText(errorOnly ? COPY.errorLabel(tabName(tab)) : tabName(tab), extract)
+      usableCompose.current(errorOnly ? excerpt + '\n' : excerpt)
       if (extract.mayContainSecret) setNotice({ tone: 'warn', text: COPY.possibleSecret })
     } catch (cause) {
       setNotice({ tone: 'error', text: errorMessage(cause) })
@@ -540,7 +557,17 @@ export function TerminalPanel({
   const placed = [...tabs.map(tab => tab.id), ...[...replacing].filter(item => !tabs.some(tab => tab.id === item))]
 
   return (
-    <section className="terminal-panel" aria-label={COPY.terminal} data-secure="">
+    <section
+      className="terminal-panel"
+      aria-label={COPY.terminal}
+      data-secure=""
+      onKeyDownCapture={event => {
+        if (event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f' && current && !current.summary.login) {
+          event.preventDefault()
+          event.stopPropagation()
+          setFindIn(current.id)
+        }
+      }}>
       <PanelTabs
         label={COPY.terminal}
         className="terminal-tabs"
@@ -585,6 +612,21 @@ export function TerminalPanel({
               <Button
                 size="xs"
                 variant="ghost"
+                icon={AlertGlyph}
+                aria-label={COPY.errorToDraft}
+                tooltip={COPY.errorToDraft}
+                disabled={attaching}
+                onClick={() => void attach(current.id, true)}>
+                <span className="terminal-error-label">{COPY.quoteError}</span>
+              </Button>
+            )}
+            {current && !current.summary.login && (
+              <IconButton size="xs" icon={SearchGlyph} label={COPY.find} onClick={() => setFindIn(current.id)} />
+            )}
+            {onCompose && current && !current.summary.login && (
+              <Button
+                size="xs"
+                variant="ghost"
                 icon={MessageSquarePlus}
                 loading={attaching}
                 tooltip={selection[current.id] ? COPY.selected : COPY.recent}
@@ -622,6 +664,16 @@ export function TerminalPanel({
           </>
         }
       />
+      {shown && current && findIn === current.id && !current.summary.login && (
+        <TerminalFind
+          key={current.id}
+          find={(query, previous, direction) => handles.current.get(current.id)?.find(query, previous, direction)}
+          close={() => {
+            setFindIn(undefined)
+            handles.current.get(current.id)?.focus()
+          }}
+        />
+      )}
       {notice && (
         <InlineNotice tone={notice.tone} className="terminal-notice" onClose={() => setNotice(undefined)}>
           {notice.text}
@@ -1005,7 +1057,11 @@ export function TerminalScreen({
         terminal.dispose()
       })
       link.start()
-      handlers.current.onHandle?.({ paste: data => link.sendWhole(data), focus: () => terminal.focus() })
+      handlers.current.onHandle?.({
+        paste: data => link.sendWhole(data),
+        focus: () => terminal.focus(),
+        find: (query, previous, direction) => findTerminalLine(terminal, query, previous, direction),
+      })
       setReady(true)
     })
     return () => {

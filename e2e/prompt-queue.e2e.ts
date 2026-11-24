@@ -147,6 +147,75 @@ describe('queued follow-ups', () => {
       await host.close()
     }
   })
+  it('keeps a screenshot with its queued instructions across a reload and delivers it once', async () => {
+    const first = '先等待界面草稿'
+    const follow = '下一轮按图检查按钮'
+    const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=', 'base64')
+    let release = () => {}
+    const finish = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const seen: Array<{ text: string; images: string[] }> = []
+    const host = await startTestHost({
+      providerId: 'queue-vision',
+      plugins: [
+        {
+          id: 'queued-image-fixture',
+          name: '排队图片测试',
+          version: '1',
+          description: '',
+          activate(ctx) {
+            ctx.registerProvider({
+              id: 'queue-vision',
+              name: 'Vision fixture',
+              model: 'fixture',
+              modelCapabilities: { fixture: { vision: true } },
+              async *stream({ messages }) {
+                const last = messages.at(-1)!
+                seen.push({ text: last.content, images: (last.attachments ?? []).flatMap(a => (a.type === 'image' ? [a.data] : [])) })
+                if (last.content === first) {
+                  await finish
+                }
+                yield { type: 'text', text: '已核对' }
+                yield { type: 'finish', reason: 'stop' }
+              },
+            })
+          },
+        },
+      ],
+    })
+    const browser = await chromium.launch(browserLaunchOptions())
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, colorScheme: 'dark' })
+      await enrollBrowser(page, host, { name: '排队截图' })
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { prompt: first, requestId: randomUUID() },
+      })
+      await expect.poll(() => seen.length).toBe(1)
+      await openSession(page, sessionId)
+      const composer = page.locator('form.composer:visible')
+      await composer.getByLabel('选择附件', { exact: true }).setInputFiles({ name: 'button.png', mimeType: 'image/png', buffer: image })
+      await expect.poll(() => composer.locator('.attachment-draft[data-state="ready"]').count()).toBe(1)
+      await composer.getByRole('textbox', { name: '继续对话' }).fill(follow)
+      await composer.getByRole('button', { name: '排队发送', exact: true }).click()
+      const queue = page.getByRole('region', { name: '排队发送', exact: true })
+      await queue.getByText('1 个附件').waitFor()
+      await page.reload()
+      await queue.getByText('1 个附件').waitFor()
+      await page.screenshot({ path: 'test-results/queued-screenshot-390.png', animations: 'disabled' })
+      expect(seen).toHaveLength(1)
+      release()
+      await expect.poll(() => seen.filter(turn => turn.text === follow)).toEqual([{ text: follow, images: [image.toString('base64')] }])
+      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).queue ?? []).toEqual([])
+    } finally {
+      release()
+      await browser.close()
+      await host.close()
+    }
+  })
+
   it('adds a selected queued message to the same live turn without consuming the earlier item or the draft', async () => {
     const host = await startTestHost()
     const browser = await chromium.launch(browserLaunchOptions())

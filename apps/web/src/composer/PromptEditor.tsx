@@ -7,6 +7,7 @@ import type { FileMention } from '@latch/protocol'
 import { escapeSecurityText } from '@latch/protocol'
 import { chipIcon, chipLabel, chipTip } from './PromptChip.tsx'
 import { promptChips, type PromptCatalogue, type PromptChip } from './prompt-tokens.ts'
+import { terminalExcerptField } from './terminalExcerptDecorations.tsx'
 
 /**
  * The message input as the rest of the page holds it: the draft, its selection in text offsets, focus, and an edit that
@@ -87,7 +88,8 @@ class ChipWidget extends WidgetType {
     label.textContent = chipLabel(this.chip)
     const spoken = document.createElement('span')
     spoken.className = 'prompt-chip-token'
-    spoken.textContent = escapeSecurityText(this.token)
+    spoken.textContent =
+      this.chip.kind === 'conversation' || this.chip.kind === 'quote' ? label.textContent : escapeSecurityText(this.token)
     chip.append(icon, label, spoken)
     // The glyph box keeps its 14px from the start, so the line does not move when React draws into it.
     const root = createRoot(icon)
@@ -127,12 +129,15 @@ function chipDecorations(state: EditorState): DecorationSet {
   const { catalogue, refs } = state.field(sourceField)
   const text = state.doc.toString()
   const { from, to } = state.selection.main
+  const { excerpts } = state.field(terminalExcerptField)
   return Decoration.set(
-    promptChips(text, catalogue, refs).map(chip =>
-      Decoration.replace({
-        widget: new ChipWidget(chip, text.slice(chip.start, chip.end), from < to && from <= chip.start && to >= chip.end),
-      }).range(chip.start, chip.end),
-    ),
+    promptChips(text, catalogue, refs)
+      .filter(chip => !excerpts.some(block => chip.start < block.to && chip.end > block.from))
+      .map(chip =>
+        Decoration.replace({
+          widget: new ChipWidget(chip, text.slice(chip.start, chip.end), from < to && from <= chip.start && to >= chip.end),
+        }).range(chip.start, chip.end),
+      ),
   )
 }
 
@@ -175,7 +180,7 @@ const look = EditorView.theme({
     minHeight: 'var(--prompt-min-height, auto)',
     caretColor: 'var(--ink)',
   },
-  '.cm-line': { padding: '0' },
+  '.cm-line': { padding: 'var(--prompt-line-padding, 0)' },
   '.cm-placeholder': { color: 'var(--muted)' },
 })
 
@@ -292,6 +297,7 @@ export function PromptEditor(props: PromptEditorProps) {
         selection: { anchor: initial.value.length },
         extensions: [
           sourceField.init(() => ({ catalogue: initial.catalogue, refs: initial.refs ?? [], hint: initial.hint })),
+          terminalExcerptField,
           chipField,
           hintField,
           undo.of(history()),

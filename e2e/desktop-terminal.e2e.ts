@@ -13,7 +13,7 @@ import type { AppSnapshot, TerminalListResponse, WorkspaceInfo } from '@latch/pr
 import { startTestHost } from './helpers/host.ts'
 import { closeSettings, openPanelTab, openSettings } from './helpers/layout.ts'
 import { homeInput, switchView } from './helpers/workbench.ts'
-import { promptValue } from './helpers/prompt.ts'
+import { promptValue, setPromptSelection } from './helpers/prompt.ts'
 
 type Launch = NonNullable<NonNullable<ServerOptions['terminal']>['launch']>
 type Spec = Parameters<Launch>[0]
@@ -125,6 +125,7 @@ const electronE2E = latchEnv(process.env, 'ELECTRON_E2E') === '1'
 describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop shell: terminal', () => {
   it('opens, types, resizes, attaches, reconnects, ends, reopens and runs two terminals, with stand-in shells only', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-terminal-'))
+    const modelPrompts: string[] = []
     const plugin: HarnessPlugin = {
       id: 'e2e-terminal',
       name: '终端测试模型',
@@ -135,7 +136,8 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
           id: 'e2e-terminal',
           name: '终端测试模型',
           model: 'e2e',
-          async *stream() {
+          async *stream({ messages }) {
+            modelPrompts.push(messages.findLast(message => message.role === 'user')!.content)
             yield { type: 'text', text: '好的。' }
             yield { type: 'finish', reason: 'stop' }
           },
@@ -453,11 +455,58 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await expect.poll(() => promptValue(draft)).toBe('终端 1\n```text\nran\n```')
       await draft.fill('')
 
-      // A reload shows the same terminal with its output replayed from the Host's scrollback.
+      shell.print('\r\nTypeError: missing fixture value\r\n    at render (app.ts:5:2)\r\nfixture complete\r\n')
+      await expect.poll(() => rows.innerText()).toContain('missing fixture value')
+      await draft.fill('先保留这段草稿')
+      await panel.getByRole('button', { name: '把最近报错加入草稿', exact: true }).click()
+      const raw = [
+        '先保留这段草稿',
+        '',
+        '终端 1 · 最近报错',
+        '```text',
+        'TypeError: missing fixture value',
+        '    at render (app.ts:5:2)',
+        '```',
+      ].join('\n')
+      const withWritingLine = raw + '\n'
+      const heading = draft.locator('.terminal-excerpt-heading')
+      await expect.poll(() => promptValue(draft)).toBe(withWritingLine)
+      await heading.filter({ hasText: '终端 1 · 最近报错' }).waitFor()
+      const visible = await draft.innerText()
+      expect(visible).toContain('先保留这段草稿')
+      expect(visible).toContain('at render (app.ts:5:2)')
+      expect(visible).not.toContain('```')
+      expect(await draft.locator('.terminal-excerpt-body').first().innerText()).toContain('TypeError: missing fixture value')
+      await setPromptSelection(draft, 0, withWritingLine.length)
+      const copied = await draft.evaluate(element => {
+        const data = new DataTransfer()
+        element.dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }))
+        return data.getData('text/plain')
+      })
+      expect(copied).toBe(withWritingLine)
+      await setPromptSelection(draft, withWritingLine.length)
+      expect((await host.bridge.detail(sessionId)).messages.filter(message => message.role === 'user')).toHaveLength(1)
+      await panel.getByRole('button', { name: '查找终端输出' }).click()
+      const find = panel.getByRole('searchbox', { name: '查找终端输出' })
+      await find.fill('missing fixture value')
+      await panel.getByRole('search').getByRole('status').filter({ hasText: '1/1' }).waitFor()
+      await capture(page, 'terminal-error-to-draft')
+      await find.press('Escape')
+
+      // A reload restores both the editable draft and the terminal output from the Host's scrollback.
       await page.reload()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
       await tabs.getByRole('tab', { name: '终端 1', exact: true }).waitFor()
       await expect.poll(() => rows.innerText()).toContain('ran echo hi')
+      await expect.poll(() => promptValue(draft)).toBe(withWritingLine)
+      await heading.waitFor()
+      expect(await draft.innerText()).not.toContain('```')
+      await page.getByRole('button', { name: '发送', exact: true }).click()
+      await expect.poll(() => modelPrompts).toEqual(['打开终端', raw])
+      const sent = page.locator('.message-user .user-bubble-text').filter({ hasText: 'TypeError: missing fixture value' })
+      await sent.waitFor()
+      expect(await sent.innerText()).not.toContain('```')
+      expect((await host.bridge.detail(sessionId)).messages.findLast(message => message.role === 'user')?.text).toBe(raw)
       expect(Number(await resizer.getAttribute('aria-valuenow'))).toBe(savedHeight)
       await rightToggle.click()
       await expect.poll(async () => Number(await widthAdjust.getAttribute('aria-valuenow'))).toBe(savedWidth)
@@ -519,6 +568,10 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
         }
       })
       expect(paint).toEqual({ hit: 14, thumb: 4, clip: 'content-box' })
+      // xterm hides its overlay when the pointer has been idle while taking the screenshot.
+      await page.mouse.move(scrollBox.x - 20, scrollBox.y + scrollBox.height / 2)
+      await page.mouse.move(scrollBox.x + 1, scrollBox.y + scrollBox.height / 2)
+      await slider.hover({ position: { x: 1, y: Math.floor(scrollBox.height / 2) } })
       await page.mouse.down()
       await expect.poll(() => matchesToken('--scroll-thumb-active')).toBe(true)
       await page.mouse.move(scrollBox.x + 1, scrollBox.y - 75, { steps: 5 })
@@ -567,7 +620,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       expect(settledTurn?.activeMs).toBeLessThan(1000)
       await page.locator('.topbar-crumb-button').filter({ visible: true }).click()
       const roundCount = page.locator('.crumb-body').locator('.crumb-row').filter({ hasText: '轮数' })
-      await roundCount.getByText('1 轮', { exact: true }).waitFor()
+      await roundCount.getByText('2 轮', { exact: true }).waitFor()
       await capture(page, 'short-turn-count-1440')
       await page.keyboard.press('Escape')
 

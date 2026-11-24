@@ -118,7 +118,7 @@ More in [Security boundary](docs/USAGE.md#安全边界) and [Security model](doc
 | | Status |
 | --- | --- |
 | Mac | Runs from source. A signed and notarized build hasn’t been produced yet, so there is no installer or automatic update. |
-| iPhone and iPad | Builds from source and pairs with your Mac. Not on the App Store and not yet tested on physical devices. No push notifications. |
+| iPhone and iPad | Builds from source and pairs with your Mac. Paired devices can receive [lock screen alerts and Live Activities](docs/IOS-NOTIFICATIONS.md) when Apple push credentials are configured. App Store distribution and physical-device verification are pending. |
 | Other devices | Any browser, over HTTPS with a certificate you provide. Latch doesn’t create certificates or offer plain-HTTP access. |
 | Linux | The Host runs, but Linux has no on-device confirmation, so browsers and phones can’t connect. The desktop app connects with offline codes. |
 | Windows | Not yet. The Host needs a per-user runtime directory for its socket, which isn’t implemented on Windows. |

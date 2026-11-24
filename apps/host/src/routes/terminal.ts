@@ -23,7 +23,10 @@ const dimension = z.number().int()
 const sizeSchema = z.strictObject({ cols: dimension, rows: dimension })
 const inputSchema = z.strictObject({ data: z.base64() })
 const closeSchema = z.strictObject({ force: z.boolean().optional() })
-const attachSchema = z.strictObject({ lines: z.number().int().optional(), selection: z.string().optional() })
+const attachSchema = z.union([
+  z.strictObject({ lines: z.number().int().optional(), selection: z.string().optional() }),
+  z.strictObject({ recentError: z.literal(true) }),
+])
 
 function requesterOf(caller: DeviceCaller): TerminalRequester {
   return { listener: caller.connection.listener, deviceId: caller.device.id }
@@ -192,11 +195,20 @@ export function createTerminalRoutes(
         return true
       }
       if (action === 'attach') {
-        const { lines, selection } = attachSchema.parse(await optionalJsonBody(req, ATTACH_BODY_BYTES))
+        const options = attachSchema.parse(await optionalJsonBody(req, ATTACH_BODY_BYTES))
         authorize(caller)
         json(
           res,
-          service.extract(ref, requester, { ...(lines !== undefined ? { lines } : {}), ...(selection !== undefined ? { selection } : {}) }),
+          service.extract(
+            ref,
+            requester,
+            'recentError' in options
+              ? options
+              : {
+                  ...(options.lines !== undefined ? { lines: options.lines } : {}),
+                  ...(options.selection !== undefined ? { selection: options.selection } : {}),
+                },
+          ),
         )
         return true
       }

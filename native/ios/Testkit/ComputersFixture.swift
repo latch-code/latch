@@ -5,6 +5,16 @@ import LatchNativeCore
 func phoneComputersFixture(_ input: [String: Any]) throws -> [String: Any] {
     let value = try NativeJSON.decode(JSONSerialization.data(withJSONObject: input))
     try checkQuestionAttention()
+    let subject = NativeJSON.object(["session": .string("same-session"), "kind": .string("approval"), "id": .string("exact-approval")])
+    guard let target = PhonePushTarget(subject),
+          PhonePushHint(route: UUID().uuidString, ticket: String(repeating: "b", count: 32), reject: true)?.reject == true,
+          PhonePushHint(route: "unknown", ticket: "other") == nil else { throw NativeFailure.invalidRecord }
+    func pushDetail(_ session: String, _ ids: [String]) -> NativeJSON {
+        .object(["summary": .object(["id": .string(session)]), "approvals": .array(ids.map { .object(["id": .string($0)]) })])
+    }
+    guard target.record(in: pushDetail("same-session", ["other", "exact-approval"]))?["id"].string == "exact-approval",
+          target.record(in: pushDetail("same-session", ["other"])) == nil,
+          target.record(in: pushDetail("other-session", ["exact-approval"])) == nil else { throw NativeFailure.invalidRecord }
     let snapshot = value["snapshot"]
     let items = PhoneComputers.attention(snapshot)
     let sessions = PhoneSessions.shelves(tasks: snapshot["tasks"].array, workspaces: []).first { $0.id == "waiting" }?.tasks.compactMap { $0["id"].string } ?? []

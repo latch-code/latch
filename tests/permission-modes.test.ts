@@ -451,6 +451,33 @@ describe('Latch 内置 sessions at each level', () => {
     expect(tool.execute).not.toHaveBeenCalled()
   })
 
+  it('rechecks an automatic PR turn before accepting and cancels an expired approval without running the tool', async () => {
+    const { bridge, tool } = await runtime({ risk: 'R1' })
+    const id = await session(bridge, 'never')
+    tool.execute.mockClear()
+    await expect(
+      bridge.prompt(id, 'do not run', 'stale-grant', {
+        unattended: true,
+        authorizeUnattended: () => {
+          throw new Error('grant changed')
+        },
+      }),
+    ).rejects.toThrow('grant changed')
+    expect((await bridge.detail(id)).messages.some(message => message.requestId === 'stale-grant')).toBe(false)
+    await bridge.prompt(id, 'check external feedback', 'expired-approval', {
+      outsideContent: true,
+      unattended: true,
+      authorizeUnattended: () => ({ revisions: {}, model: { providerId: 'fixture', model: 'fixture-model' }, approvalTtlMs: 0 }),
+    })
+    await settled(bridge, id, 'cancelled')
+    expect(bridge.approvals()).toHaveLength(0)
+    expect(tool.execute).not.toHaveBeenCalled()
+    expect((await bridge.detail(id)).summary.agentPrivate).not.toBe(true)
+    await bridge.prompt(id, 'write', 'human-after-review')
+    await settled(bridge, id)
+    expect(tool.execute).toHaveBeenCalledOnce()
+  })
+
   it('a scheduled run (its context unattended) asks at every level too', async () => {
     const { bridge, tool } = await runtime({ risk: { risk: 'R2', reason: 'protected-path' } })
     const id = await session(bridge, 'never')

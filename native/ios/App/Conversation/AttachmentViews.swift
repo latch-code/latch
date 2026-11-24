@@ -294,19 +294,32 @@ private struct PhotoPicker: UIViewControllerRepresentable {
                 var picked: [PhonePicked] = []
                 for (index, result) in results.prefix(PhoneAttachments.perMessage).enumerated() {
                     let name = result.itemProvider.suggestedName ?? "照片 \(index + 1)"
-                    picked.append(await Self.load(result.itemProvider, name: name, limit: limit))
+                    picked.append(await pickedImage(result.itemProvider, name: name, limit: limit))
                 }
                 await done(picked)
             }
         }
-        private static func load(_ provider: NSItemProvider, name: String, limit: Int) async -> PhonePicked {
-            await withCheckedContinuation { continuation in
-                // The provider's file exists only during this callback; it is re-encoded here and never kept.
-                _ = provider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) { url, _ in
-                    guard let url else { continuation.resume(returning: PhonePicked(name: name, kind: .image, file: nil, size: 1, failure: PhoneAttachLoader.unreadable)); return }
-                    continuation.resume(returning: PhoneAttachLoader.image(url: url, name: name, limit: limit))
-                }
-            }
+    }
+}
+
+/** The picker and explicit Paste hand over image providers. Use their file while its URL is valid. */
+@MainActor func pickedImage(_ provider: NSItemProvider, name: String, limit: Int, paste: Bool = false) async -> PhonePicked {
+    let imageTypes = provider.registeredTypeIdentifiers.filter { UTType($0)?.conforms(to: .image) == true }
+    let type = imageTypes.first { $0 != UTType.image.identifier } ?? UTType.image.identifier
+    let file: PhonePicked? = await withCheckedContinuation { continuation in
+        _ = provider.loadFileRepresentation(forTypeIdentifier: type) { url, _ in
+            continuation.resume(returning: url.map { PhoneAttachLoader.image(url: $0, name: name, limit: limit) })
+        }
+    }
+    if let file { return file }
+    let failure = paste ? "没能粘贴图片。请长按输入框选「粘贴」，或从「＋ → 照片」选择。" : PhoneAttachLoader.unreadable
+    let missing = PhonePicked(name: name, kind: .image, file: nil, size: 1, failure: failure)
+    guard paste else { return missing }
+    // The iPad keyboard may offer the encoded PNG but deny a temporary file. Request just that representation.
+    return await withCheckedContinuation { continuation in
+        _ = provider.loadDataRepresentation(forTypeIdentifier: type) { data, _ in
+            guard let data, !data.isEmpty else { continuation.resume(returning: missing); return }
+            continuation.resume(returning: PhoneAttachLoader.image(data: data, name: name, limit: limit))
         }
     }
 }
@@ -386,14 +399,19 @@ struct AttachSupport: ViewModifier {
         content
             // Read again when the selection changes, or the Harness starts or reports what it takes, as the web does.
             .task(id: revision) { if let key { await model.loadAttachCaps(key, selection: selection, harness: harness) } }
+            .onChange(of: key) { _, _ in source = nil }
+            .onChange(of: model.contentGeneration) { _, _ in source = nil }
+            .onChange(of: model.privateSnapshot.epoch) { _, _ in source = nil }
             .sheet(item: $source) { source in
+                let host = model.generation, reading = model.contentGeneration, window = model.privateSnapshot.epoch
                 let caps = key.flatMap { model.attachState($0).caps }, count = key.map { model.tray($0).items.count } ?? 0
                 AttachPicker(source: source, imageLimit: caps.map { PhoneAttachments.limit(.image, $0) } ?? PhoneAttachments.streamBytes,
                     largest: caps.map { PhoneAttachments.limit($0.files ? .file : .text, $0) } ?? 0, files: caps?.files == true,
                     remaining: PhoneAttachments.perMessage - count) { pick, picked in
                     // The rows first, then the sheet goes: a pick never depends on the sheet still being there.
-                    if let key { model.addAttachments(key, pick: pick, picked: picked, selection: selection) }
-                    self.source = nil
+                    if model.finishAttachmentIntake(key, selection: selection, host: host, reading: reading, window: window, pick: pick, picked: picked) {
+                        self.source = nil
+                    }
                 }
             }
     }

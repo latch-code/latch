@@ -260,6 +260,10 @@ export class ToolGatewayServer implements ToolGateway {
 
   constructor(private readonly options: ToolGatewayOptions) {}
 
+  hasToolLease(sessionId: string): boolean {
+    return [...this.bindings.values()].some(binding => binding.sessionId === sessionId && !binding.mcp && !binding.closed)
+  }
+
   get listening(): boolean {
     return this.server !== undefined
   }

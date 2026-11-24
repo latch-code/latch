@@ -9,6 +9,11 @@ import UniformTypeIdentifiers
  * drag stay off, so nothing in a reply opens or leaves by itself.
  */
 struct ConversationText: UIViewRepresentable {
+    @Environment(\.replyCitation) private var replyCitation
+    init(text: String = "", monospaced: Bool = false, size: CGFloat = 16, rich: NSAttributedString? = nil,
+         links: [PhoneRichText.LinkTarget] = [], onLink: ((PhoneRichText.LinkTarget) -> Void)? = nil, wraps: Bool = true) {
+        self.text = text; self.monospaced = monospaced; self.size = size; self.rich = rich; self.links = links; self.onLink = onLink; self.wraps = wraps
+    }
     var text: String = ""
     var monospaced = false
     var size: CGFloat = 16
@@ -35,7 +40,7 @@ struct ConversationText: UIViewRepresentable {
     }
     func updateUIView(_ view: MarkdownTextView, context: Context) {
         let coordinator = context.coordinator, trait = context.environment.sizeCategory
-        coordinator.links = links; coordinator.onLink = onLink
+        coordinator.links = links; coordinator.onLink = onLink; coordinator.citation = replyCitation
         if !wraps { view.textContainer.lineBreakMode = .byClipping; view.textContainer.widthTracksTextView = false; view.textContainer.size.width = .greatestFiniteMagnitude }
         if let rich {
             guard coordinator.shownRich.map({ !$0.isEqual(to: rich) }) ?? true || coordinator.category != trait else { return }
@@ -59,6 +64,16 @@ struct ConversationText: UIViewRepresentable {
         return uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
     }
     final class Coordinator: NSObject, UITextViewDelegate {
+        var citation: ReplyCitation?
+        func textView(_ textView: UITextView, editMenuForTextIn range: NSRange, suggestedActions: [UIMenuElement]) -> UIMenu? {
+            guard let citation, let content = textView.attributedText, range.length > 0, NSMaxRange(range) <= content.length else { return nil }
+            let words = content.sourceText(in: range)
+            guard !words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, words.utf16.count <= 4000 else { return nil }
+            let block = content.sourceText(in: NSRange(location: 0, length: content.length))
+            let offset = content.sourceText(in: NSRange(location: 0, length: range.location)).utf16.count
+            let quote = UIAction(title: "引用这句话", image: UIImage(systemName: "quote.bubble")) { _ in citation.insert(words, block, offset) }
+            return UIMenu(children: [quote] + suggestedActions)
+        }
         var shown: String?
         var shownRich: NSAttributedString?
         var category: ContentSizeCategory?
@@ -110,10 +125,11 @@ struct LocalTextEditor: UIViewRepresentable {
     var commandKeys: [String] = []
     var onCommand: ((String) -> Void)? = nil
     var suffixHint: String? = nil
+    var onPasteImages: (@MainActor ([NSItemProvider]) async -> Void)? = nil
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> LocalPromptView {
         let view = LocalPromptView(usingTextLayoutManager: true)
-        view.isEditable = true; view.isSelectable = true; view.delegate = context.coordinator
+        view.isEditable = true; view.isSelectable = true; view.delegate = context.coordinator; view.pasteDelegate = context.coordinator
         view.isScrollEnabled = maximumLines == nil
         view.backgroundColor = .clear; view.textColor = .label; view.font = Self.font
         view.textContainerInset = .zero; view.textContainer.lineFragmentPadding = 0
@@ -137,6 +153,7 @@ struct LocalTextEditor: UIViewRepresentable {
             coordinator.sync(view)
         }
         view.completionKeys = commandKeys; view.completionCommand = onCommand
+        view.configureImagePaste(onPasteImages != nil)
         if view.commandHint != suffixHint { view.commandHint = suffixHint; view.setNeedsLayout() }
         view.accessibilityHint = suffixHint
         view.accessibilityLabel = placeholder
@@ -162,8 +179,29 @@ struct LocalTextEditor: UIViewRepresentable {
         // The text view itself fills the visible editor, including the blank lines a person can tap.
         return CGSize(width: width, height: max(line * CGFloat(min(minimumLines, maximumLines)), min(maximum, size.height)))
     }
-    final class Coordinator: NSObject, UITextViewDelegate {
+    final class Coordinator: NSObject, UITextViewDelegate, UITextPasteDelegate {
         var parent: LocalTextEditor
+        private var pastedImages: [any UITextPasteItem] = []
+        private var imagePasteTask: Task<Void, Never>?
+        func textPasteConfigurationSupporting(_ supporting: any UITextPasteConfigurationSupporting, transform item: any UITextPasteItem) {
+            guard let paste = parent.onPasteImages, item.itemProvider.hasItemConformingToTypeIdentifier(UTType.image.identifier) else {
+                item.setDefaultResult(); return
+            }
+            let first = pastedImages.isEmpty
+            pastedImages.append(item)
+            if first {
+                let previous = imagePasteTask
+                imagePasteTask = Task { @MainActor in
+                    let items = pastedImages
+                    pastedImages.removeAll()
+                    // UIKit may deliver more items while an earlier provider is still preparing its file.
+                    await previous?.value
+                    // Use the providers authorized for this gesture; keep them alive through the bounded file reads.
+                    await paste(items.map { $0.itemProvider })
+                    for image in items { image.setNoResult() }
+                }
+            }
+        }
         var applying = false
         private var queued = false
         private var lastPublished: String
@@ -245,6 +283,22 @@ final class LocalPromptView: LocalTextView {
     var completionKeys: [String] = []
     var completionCommand: ((String) -> Void)?
     var commandHint: String?
+    private var takesImagePaste = false
+    private var originalPasteConfiguration: UIPasteConfiguration?
+    func configureImagePaste(_ enabled: Bool) {
+        guard enabled != takesImagePaste else { return }
+        takesImagePaste = enabled
+        if enabled {
+            originalPasteConfiguration = pasteConfiguration
+            // UIKit's implicit configuration for a plain UITextView accepts NSString-readable content.
+            let configuration = (pasteConfiguration?.copy() as? UIPasteConfiguration) ?? UIPasteConfiguration(forAccepting: NSString.self)
+            configuration.addAcceptableTypeIdentifiers([UTType.image.identifier])
+            pasteConfiguration = configuration
+        } else {
+            pasteConfiguration = originalPasteConfiguration
+            originalPasteConfiguration = nil
+        }
+    }
     private var hintLabel: UILabel?
     override func layoutSubviews() {
         super.layoutSubviews()

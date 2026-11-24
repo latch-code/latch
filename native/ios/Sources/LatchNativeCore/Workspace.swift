@@ -398,6 +398,15 @@ public actor NativeWorkspace {
             throw NativeFailure.unavailable
         }
     }
+    public func setAttentionSubscription(_ value: NativeJSON) async throws {
+        let answer = try await getJSON("/link/api/native/attention-subscription", body: true, on: nil, post: value.encoded())
+        guard answer["saved"].bool else { throw NativeFailure.invalidRecord }
+    }
+    public func attentionTarget(_ hint: PhonePushHint) async throws -> PhonePushTarget? {
+        let body = try NativeJSON.object(["route": .string(hint.route), "ticket": .string(hint.ticket)]).encoded()
+        let answer = try await getJSON("/link/api/native/attention-target", body: true, on: nil, post: body)
+        return PhonePushTarget(answer["target"])
+    }
     /** A Host may remember its independently checked network. This never changes local authority or blocks dialing. */
     public func noteProximity(gatewayHash: Data) async -> Bool {
         do {

@@ -105,3 +105,14 @@ describe('prompt chips', () => {
     expect(both.map(chip => [chip.start, chip.end])).toEqual([[6, 19]])
   })
 })
+
+it('shows reference titles and quote headers as atomic draft chips while preserving the model input and exact reply source', () => {
+  const token = '[conversation-ref:00000000-0000-4000-8000-000000000000] Earlier work · read_conversation_reference'
+  const header = '[引用回复 session/message@12]'
+  const draft = token + '\n' + header + '\n> Keep this part.\nMy question'
+  const chips = promptChips(draft, {})
+  expect(chips.map(chip => [chip.kind, chip.name, draft.slice(chip.start, chip.end)])).toEqual([
+    ['conversation', 'Earlier work', token],
+    ['quote', '', header],
+  ])
+})
