@@ -4,9 +4,12 @@ import Mark from './Mark.astro'
 import Film from './Film.astro'
 import GitHubLink from './GitHubLink.astro'
 import MarketplaceCover from './MarketplaceCover.astro'
-import { HERO, TIMELINE, film } from '../build-data'
+import { HERO, TIMELINE } from '../build-data'
 import { AGENTS, COPY, FEATURES, href, type Feature, type Lang } from '../i18n'
 import type { FilmId } from '../media'
+import type PICS from '../pics.json'
+
+type PicStem = keyof typeof PICS
 
 interface Props { lang: Lang }
 const { lang } = Astro.props
@@ -27,15 +30,16 @@ const CHAPTERS = TIMELINE.steps.map((step) => {
 const video = (m: { mp4: string; mp4Small?: string }) => ({ src: `${base}video/${m.mp4}`, small: m.mp4Small ? `${base}video/${m.mp4Small}` : undefined })
 const SEGMENTS = TIMELINE.segments.map((s) => ({ from: s.from, to: s.to, mac: video(s.mac), phone: video(s.phone) }))
 // Films for the feature panels; each falls back to the panel's own still.
-const FEATURE_FILMS: Partial<Record<Feature, FilmId>> = { handoff: 'conversation-reference', ship: 'pr-follow', tools: 'terminal-error' }
-const COVERS = ['release-check', 'context-insights', 'release-review', 'shift-handoff']
+const FEATURE_FILMS: Partial<Record<Feature, FilmId>> = {
+  handoff: 'conversation-reference',
+  ship: 'pr-follow',
+  tools: 'terminal-error',
+  context: 'context-panel',
+  plugins: 'plugin-market',
+}
+// Panels without a still of their own fall back to the plugin's live cover.
+const FEATURE_COVERS: Partial<Record<Feature, string>> = { context: 'context-insights', plugins: 'release-check' }
 const plugins = href(lang, '/plugins/')
-// Line icons for the lock screen facts: the Dynamic Island, fixed wording, the push key.
-const LOCK_ICONS = [
-  '<rect x="4.25" y="1.75" width="7.5" height="12.5" rx="1.75"/><rect x="6.5" y="3.25" width="3" height="1.25" rx=".625"/>',
-  '<path d="M2.75 4.25h10.5M2.75 8h10.5M2.75 11.75h6"/>',
-  '<circle cx="5.25" cy="10.75" r="2.5"/><path d="M7 9 13.25 2.75M11 5l1.75 1.75M9.25 6.75 10.5 8"/>',
-]
 const arrow = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg>'
 const download = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v7.5M4.75 7 8 10.25 11.25 7M3 13.25h10"/></svg>'
 
@@ -50,6 +54,8 @@ const ICONS: Record<Feature, string> = {
   review: '<path d="M9.25 1.75H4.5A1.75 1.75 0 0 0 2.75 3.5v9a1.75 1.75 0 0 0 1.75 1.75h7a1.75 1.75 0 0 0 1.75-1.75V5.75z"/><path d="M8 5.25v4M6 7.25h4M6 11.5h4"/>',
   ship: '<circle cx="4.25" cy="3.75" r="1.75"/><circle cx="4.25" cy="12.25" r="1.75"/><circle cx="11.75" cy="12.25" r="1.75"/><path d="M4.25 5.5v5M11.75 10.5V6.25a2 2 0 0 0-2-2H7.25M8.75 2.75 7.25 4.25l1.5 1.5"/>',
   tools: '<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.75"/><path d="M4.75 6.25 6.75 8l-2 1.75M8.25 10h3"/>',
+  context: '<path d="M2.75 13.25V8.5M6.25 13.25V5.5M9.75 13.25V9.5M13.25 13.25V2.75"/>',
+  plugins: '<rect x="2.25" y="2.25" width="4.75" height="4.75" rx="1"/><rect x="9" y="2.25" width="4.75" height="4.75" rx="1"/><rect x="2.25" y="9" width="4.75" height="4.75" rx="1"/><path d="M11.375 9v4.75M9 11.375h4.75"/>',
 }
 const play = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7.5-4.5z"/></svg>'
 const pause = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.25 3.25v9.5M10.75 3.25v9.5"/></svg>'
@@ -121,65 +127,26 @@ const pause = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M5
           <div class="feature" role="tabpanel" id={`panel-${f}`} aria-labelledby={`tab-${f}`} tabindex="0" data-inactive={i === 0 ? undefined : ''}>
             <div class="feature__cap">
               <h3>{item.title}</h3>
-              <p>{item.body}</p>
+              <p>{item.body}{f === 'plugins' && <>{' '}<a class="feature__link" href={plugins}><span>{t.features.browse}</span><Fragment set:html={arrow} /></a></>}</p>
             </div>
-            {FEATURE_FILMS[f] ? (
+            {FEATURE_COVERS[f] ? (
+              <Film id={FEATURE_FILMS[f]!} lang={lang} class="feature__film">
+                <div class="feature__window feature__cover" aria-hidden="true"><MarketplaceCover id={FEATURE_COVERS[f]!} lang={lang} /></div>
+              </Film>
+            ) : FEATURE_FILMS[f] ? (
               <Film id={FEATURE_FILMS[f]!} lang={lang} class="feature__film">
                 <div class="feature__window shot" data-kind="product">
-                  <Pic stem={`feat-${f}`} alt={item.alt} sizes={featureSizes} />
+                  <Pic stem={`feat-${f}` as PicStem} alt={item.alt} sizes={featureSizes} />
                 </div>
               </Film>
             ) : (
               <div class="feature__window shot" data-kind="product">
-                <Pic stem={`feat-${f}`} alt={item.alt} sizes={featureSizes} />
+                <Pic stem={`feat-${f}` as PicStem} alt={item.alt} sizes={featureSizes} />
               </div>
             )}
           </div>
         )
       })}
-    </div>
-  </div>
-</section>
-
-<section class="band news" aria-labelledby="news-title">
-  <div class="wrap">
-    <h2 id="news-title" class="features__title">{t.news.title}</h2>
-    <div class="news__grid">
-      <div class:list={['tile', 'tile--wide', film('plugin-market', lang) && 'tile--stacked']}>
-        <div class="tile__text">
-          <h3>{t.news.market.title}</h3>
-          <p>{t.news.market.body}</p>
-          <a class="tile__link" href={plugins}><span>{t.news.market.link}</span><Fragment set:html={arrow} /></a>
-        </div>
-        <div class="tile__media">
-          <Film id="plugin-market" lang={lang}>
-            <div class="covers" aria-hidden="true">
-              {COVERS.map((id) => <div class="covers__item"><MarketplaceCover id={id} lang={lang} /></div>)}
-            </div>
-          </Film>
-        </div>
-      </div>
-      <div class:list={['tile', film('context-panel', lang) && 'tile--wide tile--stacked']}>
-        <div class="tile__text">
-          <h3>{t.news.context.title}</h3>
-          <p>{t.news.context.body}</p>
-        </div>
-        <div class="tile__media">
-          <Film id="context-panel" lang={lang}>
-            <div class="tile__cover" aria-hidden="true"><MarketplaceCover id="context-insights" lang={lang} /></div>
-          </Film>
-        </div>
-      </div>
-      <div class:list={['tile', film('lock-screen-approval', lang) && 'tile--wide']}>
-        <div class="tile__text">
-          <h3>{t.news.lock.title}</h3>
-          <p>{t.news.lock.body}</p>
-          <ul class="facts tile__facts">
-            {t.news.lock.facts.map((fact, i) => <li><svg class="i" viewBox="0 0 16 16" aria-hidden="true" set:html={LOCK_ICONS[i]} /><span>{fact}</span></li>)}
-          </ul>
-        </div>
-        {film('lock-screen-approval', lang) && <div class="tile__media tile__media--phone"><Film id="lock-screen-approval" lang={lang} /></div>}
-      </div>
     </div>
   </div>
 </section>
@@ -194,17 +161,21 @@ const pause = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M5
         <li>{t.phone.f2}</li>
         <li>{t.phone.f3}</li>
         <li>{t.phone.f4}</li>
+        <li>{t.phone.f5}</li>
       </ul>
     </div>
     <div class="phones">
       {(lang === 'zh' ? (['phone-zh-a', 'phone-zh-b', 'phone-zh-c'] as const) : (['phone-a', 'phone-b', 'phone-c'] as const)).map((stem, i) => (
         <div class={`shot shot--phone phones__${i}`} data-kind="product">
-          <Pic stem={stem} alt={t.phone.alts[i]!} sizes="(min-width: 1024px) 236px, 30vw" />
+          {i === 1 ? (
+            <Film id="lock-screen-approval" lang={lang}><Pic stem={stem} alt={t.phone.alts[i]!} sizes="(min-width: 1024px) 236px, 30vw" /></Film>
+          ) : (
+            <Pic stem={stem} alt={t.phone.alts[i]!} sizes="(min-width: 1024px) 236px, 30vw" />
+          )}
         </div>
       ))}
     </div>
   </div>
-  {film('work-computer', lang) && <div class="wrap phone__film"><Film id="work-computer" lang={lang} /></div>}
 </section>
 
 <section class="band trust" aria-labelledby="trust-title">

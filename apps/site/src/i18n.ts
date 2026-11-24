@@ -147,6 +147,7 @@ const en = {
   features: {
     title: 'From the first ask to the merged pull request.',
     label: 'What Latch does',
+    browse: 'Browse the plugins',
     play: 'Play the video',
     pause: 'Pause the video',
     items: {
@@ -210,6 +211,18 @@ const en = {
         body: 'Run the tests yourself in the same project. Search the output, and put the latest error into your draft in one step.',
         alt: 'A terminal under the conversation, with seven passing tests.',
       },
+      context: {
+        tab: 'Context',
+        title: 'See what fills the context window.',
+        body: 'The Context panel shows what each request is made of and how the window fills turn by turn, and opens the tool result behind a change.',
+        alt: 'The Context panel beside a conversation.',
+      },
+      plugins: {
+        tab: 'Plugins',
+        title: 'Add plugins, or make your own.',
+        body: 'Skills, tools, session panels and app pages from the plugin marketplace. Every plugin is saved as a draft and reviewed before it runs.',
+        alt: 'The plugin marketplace with the four bundled plugins.',
+      },
     },
   },
   phone: {
@@ -219,6 +232,7 @@ const en = {
     f2: 'On the same network, the phone connects directly.',
     f3: 'Away from home, it goes through a relay you run, which can’t read your sessions.',
     f4: 'One of your agents can work on another paired computer; the Mac app opens that computer in its own window.',
+    f5: 'With an Apple push key configured for your Host, a waiting approval can show on the lock screen and in the Dynamic Island.',
     alts: [
       'On iPhone: the team card with all three members running.',
       'On iPhone: Draft storage and Reconnect sync are done, and Recovery tests needs you.',
@@ -237,27 +251,6 @@ const en = {
     k3t: 'A record you can check.',
     k3: 'Every grant is written to a hash-chained audit log first.',
     fine: 'Agents and plugins run with your Mac user’s permissions. Latch decides who may ask for what; it is not a sandbox.',
-  },
-  news: {
-    title: 'Three things new in Latch.',
-    market: {
-      title: 'A plugin marketplace, and a mode for making your own.',
-      body: 'Add skills, tools, session panels and app pages. Every plugin is saved as a draft and reviewed before it runs.',
-      link: 'Browse the plugins',
-    },
-    context: {
-      title: 'See what fills the context window.',
-      body: 'The Context panel shows what each request is made of, window use turn by turn and when it was compacted, and opens the tool result behind a change.',
-    },
-    lock: {
-      title: 'Decide from the lock screen.',
-      body: 'On iPhone, a pending approval can reach the lock screen and Dynamic Island. Opening it checks the decision again on your Mac.',
-      facts: [
-        'One waiting decision at a time, on the lock screen and in the Dynamic Island.',
-        'Known commands and file types in fixed wording; anything else says to unlock and view.',
-        'Off by default: it needs an Apple push key that you configure for your Host.',
-      ],
-    },
   },
   film: { play: 'Play the film', pause: 'Pause the film' },
   close: { title: 'Start a team on your Mac.', note: 'Open source under the MIT License. Windows, Linux and Android are coming.' },
@@ -444,6 +437,7 @@ const zh: Copy = {
   features: {
     title: '从第一句需求，​到合并的 PR。',
     label: 'Latch 能做什么',
+    browse: '浏览插件',
     play: '播放视频',
     pause: '暂停视频',
     items: {
@@ -507,6 +501,18 @@ const zh: Copy = {
         body: '在同一个项目里自己跑一遍测试。可以在输出里查找，一步把最近的报错放进草稿。',
         alt: '对话下方的终端，七个测试全部通过。',
       },
+      context: {
+        tab: '上下文',
+        title: '看清上下文窗口\u200b装了什么。',
+        body: '「上下文」面板列出每次请求的组成和逐轮的窗口用量，还能直接打开造成变化的工具结果。',
+        alt: '对话旁的「上下文」面板。',
+      },
+      plugins: {
+        tab: '插件',
+        title: '装插件，\u200b也能自己做。',
+        body: '从插件市场加上技能、工具、会话面板和应用页面。每个插件先存为草稿，审阅后才运行。',
+        alt: '插件市场与随附的四款插件。',
+      },
     },
   },
   phone: {
@@ -516,6 +522,7 @@ const zh: Copy = {
     f2: '同一网络下，手机直接连到 Mac。',
     f3: '不在一个网络时，经你自己运行的中继连回，中继看不到会话内容。',
     f4: '我的 Agent 可以在另一台已配对的电脑上工作，桌面端为那台电脑单独开一个窗口。',
+    f5: '为自己的 Host 配置 Apple 推送后，等待中的审批可以出现在锁屏和灵动岛。',
     alts: [
       'iPhone App 的会话列表：等你处理的会话排在最前，下面按项目分组。',
       'iPhone App 里，Codex 请求修改一个文件，下面是更多、拒绝与允许。',
@@ -534,27 +541,6 @@ const zh: Copy = {
     k3t: '记录可以核对。',
     k3: '每次授权都先写进哈希链审计记录。',
     fine: 'Agent 与插件以你的 Mac 用户权限运行。Latch 管的是谁能让它做什么，它不是沙箱。',
-  },
-  news: {
-    title: '新加入的三项能力。',
-    market: {
-      title: '插件市场，\u200b还能自己做插件。',
-      body: '给工作台加上技能、工具、会话面板和应用页面。每个插件先存为草稿，审阅后才运行。',
-      link: '浏览插件',
-    },
-    context: {
-      title: '看清上下文窗口\u200b装了什么。',
-      body: '「上下文」面板列出每次请求的组成、逐轮的窗口用量和压缩记录，还能直接打开造成变化的工具结果。',
-    },
-    lock: {
-      title: '在锁屏上\u200b做决定。',
-      body: 'iPhone 上，待处理的审批可以出现在锁屏和灵动岛。点开后，Mac 会再核对一遍这项决定。',
-      facts: [
-        '锁屏和灵动岛一次突出一条等待中的决定。',
-        '已知的命令和文件类型用固定措辞，其余提示解锁查看。',
-        '默认关闭：需要你为自己的 Host 配置 Apple 推送凭据。',
-      ],
-    },
   },
   film: { play: '播放影片', pause: '暂停影片' },
   close: { title: '在 Mac 上​组建你的团队。', note: '以 MIT 许可证开源。Windows、Linux 与 Android 版即将推出。' },
@@ -674,5 +660,17 @@ export const AGENTS: Agent[] = [
   },
 ]
 
-export const FEATURES = ['board', 'models', 'handoff', 'review', 'ship', 'tools', 'browser', 'simulator', 'computer'] as const
+export const FEATURES = [
+  'board',
+  'models',
+  'handoff',
+  'review',
+  'ship',
+  'tools',
+  'browser',
+  'simulator',
+  'computer',
+  'context',
+  'plugins',
+] as const
 export type Feature = (typeof FEATURES)[number]
