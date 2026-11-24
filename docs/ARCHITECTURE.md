@@ -277,7 +277,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 - **快照与补丁。** 不跟随链接，跳过 Host 受保护的路径；名字像密钥的文件只记元数据，内容含密钥的只记哈希、从不给内容；二进制、过大、像密钥与没有留存的文件不进补丁。改动存储必须是本用户的普通目录（500 `changes-store-insecure`）。
 - **撤销、恢复与丢弃。** 读要 `view` 与数据范围 `files`，写要 `run`、`files` 并过发送消息的检查，读取在返回之前再查一次。只写没再动过的文件（按内容哈希，否则 409 `change-files-changed`，一个文件也不写）；没有留存的不写也不删；像密钥的文件丢弃时不写不删；运行中 409 `change-running`。丢弃全部未提交的改动不可恢复，只在 `host.sock`，先预览再带 `confirm` 与预览的 `planHash` 执行；退回到某一条之前也只按预览的 `planHash` 执行。
 - **行级反馈。** 快照的 `reviewNotes` 只有每个会话的计数与修订号，文字只经列表路由；「修好了」一类状态只由人设定，Host 不推断。
-- **编辑文件。** `PUT /tasks/:id/files/:handle` 带 `baseHash`：在改动记录的锁里重读，哈希不同 409 `file-changed`，一个字节也不写；锁里、写审计 `file.edit` 之后与改名之前各按设备此刻的权限再核对，改名前再核对文件夹、文件身份与哈希。受保护的路径只给有 `approve:elevated` 的设备（`file-edit-elevated`），Latch 程序目录从不编辑（`file-code-root`），混用换行的文件不编辑；有一轮在运行时 409 `file-turn-running`；拒绝不重放；任何客户端都不提供覆盖。
+- **编辑文件。** `PUT /tasks/:id/files/:handle` 带 `baseHash`：在改动记录的锁里重读，哈希不同 409 `file-changed`，一个字节也不写；锁里、写审计 `file.edit` 之后与改名之前各按设备此刻的权限再核对，改名前再核对文件夹、文件身份与哈希。受保护的路径和已选项目中的 Latch 程序代码只给有 `approve:elevated` 的设备（`file-edit-elevated`），混用换行的文件不编辑；有一轮在运行时 409 `file-turn-running`；拒绝不重放；任何客户端都不提供覆盖。
 - **预览。** 预览框不是操作系统的沙箱。可能含密钥的文件只显示文本，不调用高亮、公式或图表；没有 `actions.preview` 的文件在读取之前拒绝。媒体地址只收同源的 Host 文件句柄、附件句柄或页面自己建的 blob（`trustedMediaUrl`），Markdown 里新的链接不放宽 `work` 的范围，远端图片不请求。
 - **运行期间的文件变化**只观察文件元数据，不运行 Git、shell 或项目代码；它可能含其他程序的写入，不证明由 Agent 生成，也没有撤销。扫描只看冻结的根里的普通文件，条目、层数、时间、结果的路径数与字节、同时观察的数量都有上限；秘密文件、Host 私有数据与生成目录不进记录。`fileChanges` 只给已授权的会话详情与 SSE；旧运行晚到的结算只更新原消息；Host 重启时残留的观察记为部分。这些变化不给 `work` 设备目录浏览，也不授予对已删除、秘密、私有或移出项目的路径的访问。
 
@@ -425,20 +425,20 @@ MermaidKit 由 Xcode 的 Package.resolved 精确锁定，只链接到 App 和模
 
 每个文件夹按固定次序检查（`paths.ts` 的 `checkFolderCandidate` 与 `ruleFailure`），不能加入时 Host 说明原因。第 8、9 项在实际执行时排在第 2 项之前；这里的序号不是风险等级。
 
-| 次序 | 拒绝 | 错误 |
+| 次序 | 检查 | 结果 |
 | --- | --- | --- |
 | 1 | 不是绝对路径、含 NUL、超过 4096 字节、不存在或不是目录 | 400 `workspace-invalid`；因权限读不到时 409 `workspace-permission` |
 | 2 | 与数据目录、Agent 安装目录或运行目录重叠 | 409 `workspace-overlap` |
 | 3 | 就是主目录 | 409 `workspace-overlap` |
 | 4 | 与主目录下的敏感目录（`DENY_READ_HOME_PATHS`，如 `~/.ssh`）或登录时自启动的目录（`Library/LaunchAgents`、`.config/autostart`、`.config/systemd`）重叠；包含 TLS 私钥；在 macOS 上触及别名根（`/System/Volumes/Data`、`/.nofollow`、`/.resolve`、`/.vol`） | 409 `workspace-overlap` |
 | 5 | 包含主目录，或与主目录下的隐藏条目、`.config`、`.local`、`bin`、（macOS）`Library` 重叠 | 409 `workspace-overlap` |
-| 6 | 与 Latch 程序目录重叠 | 409 `workspace-code-root` |
+| 6 | 与 Latch 程序目录重叠 | 允许；项目列表带 `codeRoot: true` 提示 |
 | 7 | 路径中有受保护的名称（`PROTECTED_COMPONENTS`，如 `.git`；`.github/workflows`） | 409 `workspace-overlap` |
 | 8 | 只对新加入的文件夹：路径或其真实路径含不可显示的字符（控制字符、行与段分隔符、双向控制符、零宽字符） | 400 `workspace-folder-unprintable` |
 | 9 | 只对新加入的文件夹：真实路径含逗号、`*` 或 `?`（有的 Agent 按它们拆分或展开文件夹列表） | 400 `workspace-folder-chars` |
 | 10 | 只在加入与开始会话时：Host 打不开这个文件夹（如 macOS 的隐私设置） | 409 `workspace-permission` |
 
-- 「重叠」指相同、包含或位于其内。
+- 「重叠」指相同、包含或位于其内。显式加入的程序目录仍必须通过其他规则；包含 Host 数据、运行目录或凭据的源码目录不会因这一例外放行。
 - 已保存的文件夹必须仍在自己的真实路径上：现在要经链接才能到达的文件夹按找不到处理。
 - 项目内（`checkProjectFolders`）：没有文件夹 409 `workspace-last-folder`，超过 8 个 409 `workspace-folder-limit`，两个文件夹相同或相互包含 409 `workspace-folder-overlap`，主文件夹已是启动目录或另一个项目的主文件夹 409 `workspace-exists`。
 - 受保护名称的比较先做 NFKC、去掉文件系统会忽略的码点、转小写并去掉结尾的点与空格，所以 `.GIT`、带零宽字符的 `.git` 都算。
@@ -447,8 +447,8 @@ MermaidKit 由 Xcode 的 Package.resolved 精确锁定，只链接到 App 和模
 
 Host 按需检查每个项目的文件夹（文件夹规则与项目内的重叠），结果在列出时保留 5 秒；新建会话时总是重新检查，并确认 Host 能打开这些文件夹。只要有一个文件夹不可用，整个项目就不可用：部分可用的项目会悄悄改变一个 L3 会话所见的范围。不可用的项目保留在设置中：
 
-- 由可用变为不可用时审计一次 `workspace.disabled`（原因 `overlap`、`code-root`、`protected`、`invalid`、`missing` 或 `permission`，以及文件夹序号）；写入失败只记日志，项目照样不可用。
-- 列表仍列出它，项目与出问题的文件夹各带 `unavailable`；与程序目录重叠的项目另带 `codeRoot: true`。
+- 由可用变为不可用时审计一次 `workspace.disabled`（原因 `overlap`、`protected`、`invalid`、`missing` 或 `permission`，以及文件夹序号；旧审计的 `code-root` 仍可读取）；写入失败只记日志，项目照样不可用。
+- 列表仍列出它，项目与出问题的文件夹各带 `unavailable`。`codeRoot: true` 独立表示任一文件夹与程序目录重叠，只用于提示，不使项目不可用；主文件夹与附加文件夹都检查，旧项目按同一规则重新判断。
 - 把它设为默认值返回 400 `workspace-unavailable`，在其中新建会话返回 409 `workspace-disabled`。
 - 文件夹回到原来的真实路径并通过检查后自动恢复。Latch 不跟踪移动的文件夹。
 
@@ -484,8 +484,14 @@ Host 按需检查每个项目的文件夹（文件夹规则与项目内的重叠
 `classifyDefaultWorkspace` 对启动目录给出三项判断：
 
 - **位于数据目录内**（`<数据目录>/workspace` 布局）：只能用于内置 Harness，ACP 返回 409 `workspace-inside-data`。
-- **在数据目录之外与程序目录重叠**（只可能来自 `--workspace` 或 `LATCH_WORKSPACE`）：所有 Standard 写入按 R2 处理，ACP 返回 409 `workspace-code-root`；列表中它带 `codeRoot: true`。
+- **在数据目录之外与程序目录重叠**（只可能来自 `--workspace` 或 `LATCH_WORKSPACE`）：所有 Standard 写入仍按 R2 处理，ACP 可以按所选权限开始和继续会话；列表中它带 `codeRoot: true`。若这个程序目录还包含 Host 数据目录，ACP 仍返回 409 `workspace-inside-data`，不提供 commands 目录；这不会放开旧 `.runtime` 布局中的数据范围。
 - **`sensitive`**：等于主目录；与 `DENY_READ_HOME_PATHS`、运行目录或 Agent 安装目录重叠；包含 TLS 私钥；或触及主目录下的隐藏与配置目录（位于数据目录内的启动目录不查这一项，因为 Linux 的默认数据目录在 `~/.local/share`）。此时 Host 拒绝启动（409 `workspace-overlap`）。
+
+### 开发 Latch 自身
+
+本机原生选择器或命令行显式添加源码目录即授予该项目范围，不新增确认关卡。项目选择器、输入框和项目设置标出程序目录，并说明构建或重启可能影响当前使用；不阻止发送，不把 ACP 的写入描述成每次都需询问。内置文件工具的程序代码写入仍逐次按 R2 询问，文件面板手动编辑仍需 `approve:elevated`，其他授权、审计和文件版本检查不变。
+
+这不隔离源码与正在运行的程序：构建会更新 Host 正在提供的 `dist/web`，更换本机确认组件会影响签名核验。验证时使用独立工作树和临时节点；应用修改时，由所有者明确安排构建与重启，确认组件变化后按本机确认的重新固定流程处理。Latch 不因添加源码项目自动构建、重启或替换运行版本。
 
 ### 工作区工具的禁止路径
 

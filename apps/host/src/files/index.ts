@@ -197,15 +197,14 @@ function admitRead(caller: FileCaller): asserts caller is FileCaller & { device:
 const scopeOf = (action: FileAction): DeviceScope => (action === 'open' || action === 'editor' ? 'run' : 'view')
 
 const EDIT_REFUSALS = {
-  'file-code-root': { status: 403, message: 'Latch 程序目录里的文件不能在这里编辑。' },
   'file-edit-elevated': { status: 403, message: '这个文件需要能批准高风险操作的设备。' },
   'file-mixed-eol': { status: 409, message: '混用换行符的文件不能在这里编辑。' },
 } as const
 type EditRefusal = keyof typeof EDIT_REFUSALS
 
 /**
- * Where an edit stands beyond the read rules: never in the program folder; on a path whose writes Latch treats as R2
- * (hooks, manifests, CI, agent settings, environment files), only from a device that may approve R2.
+ * Writes Latch treats as R2 (its own code, hooks, manifests, CI, agent settings, environment files) require a device
+ * that may approve R2. Selecting Latch's source as a project does not grant that scope.
  */
 export function editProtection(
   device: Device,
@@ -213,12 +212,10 @@ export function editProtection(
   root: FileRoot,
   codeRoot: string | undefined,
 ): { protection: 'none' | 'protected-path' } | { refusal: EditRefusal } {
-  if (
+  const code =
     codeRoot !== undefined
     && (isInsidePath(file.realPath, codeRoot) || isInsidePath(root.path, codeRoot) || isInsidePath(codeRoot, root.path))
-  )
-    return { refusal: 'file-code-root' }
-  if (!isProtectedWorkspacePath(file.relativePath, root.path)) return { protection: 'none' }
+  if (!code && !isProtectedWorkspacePath(file.relativePath, root.path)) return { protection: 'none' }
   return device.scopes.includes('approve:elevated') ? { protection: 'protected-path' } : { refusal: 'file-edit-elevated' }
 }
 const refuseEdit = (code: EditRefusal) => new AppError(EDIT_REFUSALS[code].status, code, EDIT_REFUSALS[code].message)

@@ -1,4 +1,4 @@
-import { Button, InlineNotice } from '@latch/ui'
+import { InlineNotice } from '@latch/ui'
 import type { WorkspaceInfo } from '@latch/protocol'
 import { CODE_ROOT_COPY } from '../core/securityCopy.ts'
 
@@ -9,32 +9,11 @@ export function codeRootWorkspace(workspaces: readonly WorkspaceInfo[] | undefin
   )
 }
 
-/**
- * The amber warning wherever such a folder is chosen or shown (设置 › 项目, the new session, the breadcrumb's popover): why every
- * write will ask, and, for the start directory, that the way out is a new project, with 添加项目… where this device can
- * make one.
- */
-export function CodeRootNotice({
-  workspace,
-  onNewProject,
-  className,
-}: {
-  workspace: Pick<WorkspaceInfo, 'id'>
-  onNewProject?: () => void
-  className?: string
-}) {
+/** The same warning in project settings, the new session and the session's folder details. */
+export function CodeRootNotice({ workspace, className }: { workspace: Pick<WorkspaceInfo, 'id'>; className?: string }) {
   const start = workspace.id === 'default'
   return (
-    <InlineNotice
-      tone="warn"
-      className={className}
-      action={
-        start && onNewProject ? (
-          <Button size="xs" onClick={onNewProject}>
-            {CODE_ROOT_COPY.newProject}
-          </Button>
-        ) : undefined
-      }>
+    <InlineNotice tone="warn" className={className}>
       {CODE_ROOT_COPY.notice}
       {start && ` · ${CODE_ROOT_COPY.startDir}`}
     </InlineNotice>

@@ -331,19 +331,24 @@ describe('workspace guard', () => {
     expect(await verdict(join(guard.home, '.config', 'gcloud'))).toBe(sensitive)
     expect(await verdict(join(guard.home, 'Library'))).toBe(sensitive)
     expect(await verdict(join(guard.root, 'tls'))).toBe(sensitive)
-    expect(await verdict(guard.codeRoot)).toBe('409 workspace-code-root 该目录与 Latch 程序目录重叠，不能作为项目')
+    expect(await verdict(guard.codeRoot)).toBe('ok')
     mkdirSync(join(guard.codeRoot, 'src'))
-    expect(await verdict(join(guard.codeRoot, 'src'))).toBe('409 workspace-code-root 该目录与 Latch 程序目录重叠，不能作为项目')
+    expect(await verdict(join(guard.codeRoot, 'src'))).toBe('ok')
     expect(await verdict(join(guard.home, 'projects', 'b'))).toBe('409 workspace-exists 该目录已添加为项目「项目 B」')
     expect(await verdict(join(guard.home, 'projects', 'a'))).toBe('ok')
   })
 
-  it('flags code-root ancestors as code-root', async () => {
+  it('allows code-root ancestors and flags them for display', async () => {
     const guard = await context()
     const wrapper = join(guard.root, 'wrap')
     mkdirSync(join(wrapper, 'latch'), { recursive: true })
     const result = await checkWorkspaceCandidate(wrapper, { ...guard, codeRoot: join(wrapper, 'latch') })
-    expect(result.ok ? undefined : result.error.code).toBe('workspace-code-root')
+    expect(result).toEqual({ ok: true, realPath: wrapper })
+    await expect(checkFolderCandidate(wrapper, { ...guard, codeRoot: join(wrapper, 'latch') }, { added: true })).resolves.toEqual({
+      ok: true,
+      realPath: wrapper,
+      codeRoot: true,
+    })
   })
 
   it('classifies the startup workspace without refusing it', async () => {
@@ -354,6 +359,20 @@ describe('workspace guard', () => {
     await expect(classifyDefaultWorkspace(join(guard.home, 'projects', 'a'), guard)).resolves.toEqual({
       insideData: false,
       codeRoot: false,
+    })
+    mkdirSync(join(guard.codeRoot, 'data'))
+    const contextWithData = { ...guard, dataDir: join(guard.codeRoot, 'data') }
+    await expect(classifyDefaultWorkspace(guard.codeRoot, contextWithData)).resolves.toEqual({
+      insideData: false,
+      codeRoot: true,
+      containsData: true,
+    })
+    const alias = join(guard.root, 'code-alias')
+    symlinkSync(guard.codeRoot, alias)
+    await expect(classifyDefaultWorkspace(alias, contextWithData)).resolves.toEqual({
+      insideData: false,
+      codeRoot: true,
+      containsData: true,
     })
   })
 
@@ -727,8 +746,13 @@ describe('macOS path aliases', () => {
       expect(await verdict(alias(guard.home))).toBe('workspace-overlap 不能把主目录整体作为项目')
       expect(await verdict(alias(join(guard.home, '.ssh')))).toBe('workspace-overlap 该目录包含或位于敏感目录（如 ~/.ssh），不能作为项目')
       expect(await verdict(alias(join(guard.root, 'tls')))).toBe('workspace-overlap 该目录包含或位于敏感目录（如 ~/.ssh），不能作为项目')
-      expect(await verdict(alias(guard.codeRoot))).toBe('workspace-code-root 该目录与 Latch 程序目录重叠，不能作为项目')
-      expect(await verdict(alias(join(guard.codeRoot, 'src')))).toBe('workspace-code-root 该目录与 Latch 程序目录重叠，不能作为项目')
+      expect(await verdict(alias(guard.codeRoot))).toBe(`ok ${guard.codeRoot}`)
+      expect(await verdict(alias(join(guard.codeRoot, 'src')))).toBe(`ok ${join(guard.codeRoot, 'src')}`)
+      await expect(checkFolderCandidate(alias(guard.codeRoot), guard, { added: true })).resolves.toEqual({
+        ok: true,
+        realPath: guard.codeRoot,
+        codeRoot: true,
+      })
       expect(await verdict(alias(join(guard.home, 'projects', 'a')))).toBe('workspace-exists 该目录已添加为项目「项目 A」')
     }
     // The stored path is the plain spelling.
@@ -826,6 +850,25 @@ describe('project folders', () => {
   const text = (verdict: Awaited<ReturnType<typeof checkFolderCandidate>>) =>
     verdict.ok ? `ok ${verdict.realPath}` : `${verdict.problem} ${verdict.error.status} ${verdict.error.code} ${verdict.error.message}`
 
+  it('marks new and saved code folders without admitting private or protected folders', async () => {
+    const { guard } = setup()
+    const source = join(guard.codeRoot, 'src')
+    mkdirSync(source)
+    for (const path of [guard.codeRoot, source])
+      for (const added of [false, true])
+        await expect(checkFolderCandidate(path, guard, { added })).resolves.toEqual({ ok: true, realPath: path, codeRoot: true })
+    const privateData = join(guard.codeRoot, 'data')
+    mkdirSync(privateData)
+    await expect(checkFolderCandidate(guard.codeRoot, { ...guard, dataDir: privateData }, { added: true })).resolves.toMatchObject({
+      ok: false,
+      problem: 'overlap',
+      error: { code: 'workspace-overlap' },
+    })
+    const protectedFolder = join(guard.codeRoot, '.git')
+    mkdirSync(protectedFolder)
+    await expect(checkFolderCandidate(protectedFolder, guard, { added: true })).resolves.toMatchObject({ ok: false, problem: 'protected' })
+  })
+
   it('applies R1–R7 to every folder, R8 and R9 to added ones, and R10 when asked', async () => {
     const { root, projects, guard } = setup()
     const added = (path: string) => checkFolderCandidate(path, guard, { added: true }).then(text)
@@ -835,7 +878,7 @@ describe('project folders', () => {
     expect(await added(join(projects, 'missing'))).toBe('missing 400 workspace-invalid 找不到这个文件夹')
     expect(await added(join(projects, 'file.txt'))).toBe('not-directory 400 workspace-invalid 这个路径不是文件夹')
     expect(await added(guard.dataDir)).toBe('overlap 409 workspace-overlap 该目录与 Latch 的数据目录重叠，不能作为项目')
-    expect(await added(guard.codeRoot)).toBe('code-root 409 workspace-code-root 该目录与 Latch 程序目录重叠，不能作为项目')
+    expect(await added(guard.codeRoot)).toBe(`ok ${guard.codeRoot}`)
     expect(await added(join(root, 'home', 'repo', '.git'))).toBe(
       'protected 409 workspace-overlap 该目录位于受保护目录（如 .git）内，不能作为项目',
     )

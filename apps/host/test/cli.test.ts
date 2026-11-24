@@ -262,7 +262,7 @@ describe('latch CLI', () => {
     const t = await startTestHost({ dataDir, workspaceRoot: start, agentsDir: agents, codeRoot: code })
     cleanups.push(() => t.close())
     await t.close()
-    const attempts = [start, agents, code]
+    const attempts = [start, agents]
     for (const path of attempts) {
       const attempt = cli({ cwd: root })
       expect(await attempt.latch('project', 'add', path, '--yes', '--data-dir', dataDir)).toBe(1)
@@ -278,6 +278,8 @@ describe('latch CLI', () => {
     expect(await mismatched.latch('project', 'add', start, '--yes', '--workspace', tls, '--data-dir', dataDir)).toBe(1)
     expect(mismatched.output.stderr).toContain('--workspace 与上次 Host 的默认文件夹不同')
     expect((await HostConfig.open(dataDir)).settings().workspaces).toEqual([])
+    expect(await cli({ cwd: root }).latch('project', 'add', code, '--yes', '--data-dir', dataDir)).toBe(0)
+    expect((await HostConfig.open(dataDir)).settings().workspaces).toMatchObject([{ path: code }])
     const fresh = await stoppedDataDir()
     const missing = cli({ cwd: root })
     expect(await missing.latch('project', 'add', tls, '--yes', '--data-dir', fresh)).toBe(1)

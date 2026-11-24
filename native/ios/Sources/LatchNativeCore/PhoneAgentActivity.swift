@@ -161,7 +161,7 @@ public enum PhoneScheduleProposals {
     }
     /**
      * The places a schedule can work in, as the web's project picker offers them: the projects, each with why the Harness
-     * cannot use it (more folders than it takes) and the 程序目录内 mark, then the owner's home.
+     * cannot use it (more folders than it takes) and the Latch 程序目录 mark, then the owner's home.
      */
     public static func locations(_ catalog: NativeJSON, harness: NativeJSON) -> [PhoneScheduleLocation] {
         let limit = harness["projectFolders"]["access"].string == "all" ? harness["projectFolders"]["max"].integer : nil
@@ -216,10 +216,10 @@ public struct PhoneScheduleLocation: Equatable, Sendable, Identifiable {
     public let name: String
     /** Why it cannot be chosen; nil when it can. */
     public let unavailable: String?
-    /** Inside Latch's own program folder: every write asks. */
+    /** Overlaps the running Latch's code: building or restarting can affect the current app. */
     public let codeRoot: Bool
-    public static let codeRootWords = "程序目录内"
-    public static let codeRootNotice = "在程序目录里，每次写入都问你"
+    public static let codeRootWords = "Latch 程序目录"
+    public static let codeRootNotice = "正在开发当前运行的 Latch，构建或重启可能影响当前使用。"
 }
 
 /**

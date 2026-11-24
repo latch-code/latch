@@ -572,7 +572,7 @@ async function touchesHomeConfig(candidate: Located, home: Located): Promise<boo
   return false
 }
 
-type RuleProblem = 'overlap' | 'code-root' | 'protected'
+type RuleProblem = 'overlap' | 'protected'
 
 function overlapFailure(message: string): { error: AppError; problem: RuleProblem } {
   return { error: new AppError(409, 'workspace-overlap', message), problem: 'overlap' }
@@ -602,9 +602,6 @@ async function ruleFailure(
   if (touchesAliasRoot(candidate)) return overlapFailure(SENSITIVE_MESSAGE)
   if (await touchesHomeConfig(candidate, home)) return overlapFailure(HOME_CONFIG_MESSAGE)
 
-  if (overlapping(candidate, await locate(context.codeRoot))) {
-    return { error: new AppError(409, 'workspace-code-root', '该目录与 Latch 程序目录重叠，不能作为项目'), problem: 'code-root' }
-  }
   if (hasProtectedComponent(candidate.real)) {
     return { error: new AppError(409, 'workspace-overlap', '该目录位于受保护目录（如 .git）内，不能作为项目'), problem: 'protected' }
   }
@@ -658,7 +655,7 @@ export function isAgentSafePath(path: string): boolean {
 
 export type FolderGuardContext = Omit<WorkspaceGuardContext, 'existing'>
 export type FolderProblem = 'invalid' | 'missing' | 'not-directory' | 'permission' | 'unprintable' | 'chars' | RuleProblem
-export type FolderVerdict = { ok: true; realPath: string } | { ok: false; error: AppError; problem: FolderProblem }
+export type FolderVerdict = { ok: true; realPath: string; codeRoot?: true } | { ok: false; error: AppError; problem: FolderProblem }
 
 export interface FolderCheckOptions {
   /**
@@ -692,8 +689,8 @@ function permissionFailure(): FolderVerdict {
 
 /**
  * Rules R1–R10 for one folder of a project, on realpaths: R1–R7 are `checkWorkspaceCandidate`'s rules 1–7 (absolute,
- * an existing directory, no overlap with Latch's or the owner's sensitive directories, not the code root, no protected
- * component), R8–R9 apply to folders being added, and R10 when `readable` is set.
+ * an existing directory, no overlap with Latch's or the owner's sensitive directories, no protected component),
+ * R8–R9 apply to folders being added, and R10 when `readable` is set. Latch's own code is a warning, not a refusal.
  */
 export async function checkFolderCandidate(
   path: string,
@@ -729,7 +726,8 @@ export async function checkFolderCandidate(
       return deniedByPermissions(error) ? permissionFailure() : missing()
     }
   }
-  return { ok: true, realPath: candidate.real }
+  const codeRoot = overlapping(candidate, await locate(context.codeRoot))
+  return { ok: true, realPath: candidate.real, ...(codeRoot ? { codeRoot: true } : {}) }
 }
 
 export type ProjectVerdict = { ok: true } | { ok: false; error: AppError; index: number }
@@ -774,6 +772,8 @@ export async function checkProjectFolders(
 export interface DefaultWorkspaceFlags {
   insideData: boolean
   codeRoot: boolean
+  /** The startup workspace contains the data directory; relevant when permitting an explicit code workspace. */
+  containsData?: true
   /** Set when the startup workspace would expose secrets or Latch's own directories; the Host then refuses to start. */
   sensitive?: { reason: 'home' | 'deny-read' | 'tls-key' | 'runtime' | 'agents' | 'home-config'; message: string }
 }
@@ -787,10 +787,12 @@ export interface DefaultWorkspaceFlags {
  */
 export async function classifyDefaultWorkspace(realWorkspace: string, context: WorkspaceGuardContext): Promise<DefaultWorkspaceFlags> {
   const workspace = await locate(realWorkspace)
-  const insideData = within(workspace, await locate(context.dataDir))
+  const data = await locate(context.dataDir)
+  const insideData = within(workspace, data)
   const codeRoot = !insideData && overlapping(workspace, await locate(context.codeRoot))
+  const containsData = !insideData && within(data, workspace)
   const sensitive = await sensitiveOverlap(workspace, context, insideData)
-  return { insideData, codeRoot, ...(sensitive ? { sensitive } : {}) }
+  return { insideData, codeRoot, ...(containsData ? { containsData: true } : {}), ...(sensitive ? { sensitive } : {}) }
 }
 
 async function sensitiveOverlap(

@@ -256,7 +256,9 @@ pnpm desktop -- --tailnet \
 
 - 没有用 `--workspace` 或 `LATCH_WORKSPACE` 指定时，每个不在项目中的新 Agent 会话在启动目录中得到一个自己的新文件夹（权限 0700）；删除会话不删除它的文件夹。指定了启动目录时，会话直接在其中工作。
 - **项目**在桌面端「设置 → 项目」或用 `pnpm latch project` 添加，每个项目最多 8 个文件夹。项目与文件夹只能在 Host 所在的电脑上添加。
-- 主目录本身、含凭据的目录（`~/.ssh`、`~/.aws`、`~/.gnupg`、各 Agent 的配置目录等）、主目录下的隐藏目录、数据目录与 Latch 程序目录等位置不能作为启动目录或加入项目。完整规则见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+- 主目录本身、含凭据的目录（`~/.ssh`、`~/.aws`、`~/.gnupg`、各 Agent 的配置目录等）、主目录下的隐藏目录、数据目录等位置仍受目录规则限制。完整规则见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+- **用 Latch 开发 Latch。** 可以主动把正在运行的 Latch 源码加入项目，也可以用 `--workspace` 或 `LATCH_WORKSPACE` 指定它。界面会标出程序目录，并提示构建或重启可能影响当前使用。Latch 内置修改程序代码仍逐次询问，其他 Agent 按所选权限工作；文件面板编辑需要能批准高风险操作的设备。如果源码目录里还存着 Host 数据，仍不能把包含数据的整个目录加入项目，应先按数据迁移说明分开存放。
+- 源码项目不自动隔离运行版本：`pnpm build` 更新的网页会被运行中的 Host 使用；Host 代码改动需要重启后生效。修改本机确认组件后，需要停止 Host 并运行 `pnpm latch presence repin`。验证改动时用独立工作树、临时数据目录与临时工作区；只有明确要应用改动时才构建或重启正在使用的那份 Latch。
 - 会话可以在新的 Git 工作树里开始，工作树放在 `LATCH_WORKTREES_DIR`。工作树只分开文件，端口、进程和这台电脑上的权限仍然共用。
 - 数据目录的内容、锁与恢复见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 

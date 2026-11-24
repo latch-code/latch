@@ -1153,11 +1153,11 @@ async function markedFailed(auditFile: string, seq: number): Promise<boolean> {
   return false
 }
 
-type DisabledReason = 'overlap' | 'code-root' | 'protected' | 'invalid' | 'missing' | 'permission'
+type DisabledReason = 'overlap' | 'protected' | 'invalid' | 'missing' | 'permission'
 
 /** Audit reason for a saved project that has become unusable. */
 function disabledReason(problem: FolderProblem): DisabledReason {
-  if (problem === 'overlap' || problem === 'code-root' || problem === 'protected' || problem === 'permission') return problem
+  if (problem === 'overlap' || problem === 'protected' || problem === 'permission') return problem
   if (problem === 'missing' || problem === 'not-directory') return 'missing'
   return 'invalid'
 }
@@ -1169,6 +1169,7 @@ const START_DIRECTORY = '默认文件夹'
 interface FolderState {
   id: string
   path: string
+  codeRoot?: true
   problem?: FolderProblem
   message?: string
 }
@@ -1891,16 +1892,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       ...(tlsKeyPath ? { tlsKeyPath } : {}),
     }
     const defaultFlags = await classifyDefaultWorkspace(realWorkspace, { ...workspaceGuard, existing: [] })
+    const defaultAcpDataOverlap = defaultFlags.insideData || (defaultFlags.codeRoot && defaultFlags.containsData === true)
     /** Until the listeners are up: `workspace.disabled` records name the startup check as their actor. */
     let starting = true
     if (defaultFlags.sensitive) throw new AppError(409, 'workspace-overlap', defaultFlags.sensitive.message)
-    if (defaultFlags.insideData)
-      logNoted('workspace-in-data-dir', {}, `工作区位于数据目录内（${realWorkspace}）。迁出之前只能使用内置 Harness。`)
+    if (defaultAcpDataOverlap)
+      logNoted('workspace-in-data-dir', {}, `工作区包含或位于数据目录内（${realWorkspace}）。迁出之前只能使用内置 Harness。`)
     if (defaultFlags.codeRoot)
       logNoted(
         'workspace-overlaps-code',
         {},
-        `工作区与 Latch 程序目录重叠（${realWorkspace}），内置 Harness 的每次写入都需要在本机确认，ACP Agent 不可用。`,
+        `工作区与 Latch 程序目录重叠（${realWorkspace}），可用于开发 Latch；内置 Harness 的写入按 R2 处理。构建或重启可能影响当前运行的 Latch。`,
       )
     // Path spellings (case, firmlinks) differ between APIs; code-root decisions compare canonical forms only.
     const canonicalCodeRoot = await canonicalPath(codeRoot)
@@ -2009,7 +2011,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const verdict = await checkFolderCandidate(folder.path, workspaceGuard, { readable }).catch(() => undefined)
         const problem: FolderProblem | undefined = verdict === undefined ? 'invalid' : verdict.ok ? undefined : verdict.problem
         const message = verdict === undefined ? '无法检查这个文件夹' : verdict.ok ? undefined : verdict.error.message
-        folders.push({ id: folder.id, path: folder.path, ...(problem ? { problem, message } : {}) })
+        folders.push({
+          id: folder.id,
+          path: folder.path,
+          ...(verdict?.ok && verdict.codeRoot ? { codeRoot: true } : {}),
+          ...(problem ? { problem, message } : {}),
+        })
         if (problem && !failure)
           failure = { index, reason: disabledReason(problem), message: `文件夹「${basename(folder.path) || folder.path}」：${message}` }
       }
@@ -7427,7 +7434,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         })),
         ...(record.glyph ? { glyph: record.glyph } : {}),
         ...(record.defaultModel ? { defaultModel: { ...record.defaultModel } } : {}),
-        ...(state.folders.some(folder => folder.problem === 'code-root') ? { codeRoot: true as const } : {}),
+        ...(state.folders.some(folder => folder.codeRoot) ? { codeRoot: true as const } : {}),
         ...branchOfProject(record.path),
       }
     }
@@ -10596,10 +10603,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             startWidenings.delete(input.requestId)
           }
         }
-        if (workspaceId === 'default' && defaultFlags.insideData)
-          throw new AppError(409, 'workspace-inside-data', '该工作区位于数据目录内，迁出之前只能使用内置 Harness')
-        if (workspaceId === 'default' && defaultFlags.codeRoot)
-          throw new AppError(409, 'workspace-code-root', '该目录与 Latch 程序目录重叠，不能作为项目')
+        if (workspaceId === 'default' && defaultAcpDataOverlap)
+          throw new AppError(409, 'workspace-inside-data', '该工作区包含或位于数据目录内，迁出之前只能使用内置 Harness')
         const own = ownFolder
           ? await ownFolders.allocate(folderRequest, input.pluginCreation ? writePluginAuthoring : undefined)
           : undefined
@@ -12295,7 +12300,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           if (!harness || !hub!.has(id) || harness.status !== 'ready') return undefined
           const mode = input.mode ?? (harness.modes.includes('agent') ? 'agent' : harness.modes[0])
           if (mode && !harness.modes.includes(mode)) return undefined
-          if (workspaceId === 'default' && hub!.levelOf(id) !== 'L1' && (defaultFlags.insideData || defaultFlags.codeRoot)) return undefined
+          if (workspaceId === 'default' && hub!.levelOf(id) !== 'L1' && defaultAcpDataOverlap) return undefined
           // A new own folder/worktree has no actual directory yet. A cache read may never allocate one or a helper home.
           if (input.worktree || input.customAgentId || (workspaceId === 'default' && makeOwnFolders && mode === 'agent')) return undefined
           const chosen = workspaceId === 'default' ? undefined : savedProject(workspaceId)

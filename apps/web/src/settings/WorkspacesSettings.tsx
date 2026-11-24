@@ -444,19 +444,7 @@ export function WorkspacesSettings({
                     ) : undefined
                   }
                 />
-                {start.codeRoot && (
-                  <CodeRootNotice
-                    workspace={start}
-                    className="project-code-root"
-                    {...(folders
-                      ? {
-                          onNewProject: () => {
-                            void pick()
-                          },
-                        }
-                      : {})}
-                  />
-                )}
+                {start.codeRoot && <CodeRootNotice workspace={start} className="project-code-root" />}
               </>
             )}
           </SettingsGroup>
