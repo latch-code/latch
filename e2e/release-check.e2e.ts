@@ -26,6 +26,7 @@ const OUTPUT = 'test-results/release-check'
 const EXAMPLE = resolve('examples/release-check')
 const PLUGIN = 'release-check'
 const TITLE = '发布检查'
+const PLUGIN_NAME = '发布检查记录'
 const SLOW = { timeout: 30_000 }
 
 /** The example's files as the Agent writes them into the session's `latch-app/` in one turn. */
@@ -464,7 +465,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('发布检查 dra
         .click()
       await window.getByRole('button', { name: '作为应用草稿' }).click()
       const settings = window.locator('.settings-page')
-      await settings.getByRole('heading', { name: TITLE, exact: true }).waitFor()
+      await settings.getByRole('heading', { name: PLUGIN_NAME, exact: true }).waitFor()
       const card = settings.locator('.new-app-card').filter({ hasText: PLUGIN })
       await card.waitFor()
       await expect.poll(() => card.getAttribute('data-phase')).toBe('draft')

@@ -40,8 +40,8 @@ sources:
 {
   "formatVersion": 2,
   "id": "release-check",
-  "name": "发布检查",
-  "version": "1.0.0",
+  "name": "发布检查记录",
+  "version": "1.0.1",
   "description": "",
   "requires": { "appSdk": "^1" },
   "apps": [
