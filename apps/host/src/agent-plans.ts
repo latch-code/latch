@@ -15,7 +15,7 @@ import type {
 import { GENERAL_AGENT_ID } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
-import { agentContext, generalFacts, type AgentSessionSelection, type CustomAgents } from './custom-agents.ts'
+import { agentContext, assertAgentWorksHere, generalFacts, type AgentSessionSelection, type CustomAgents } from './custom-agents.ts'
 import type { AutomationPlan } from './automations.ts'
 
 const WORK_COMPUTER = '这个助手在另一台电脑上工作。请打开它的工作电脑继续。'
@@ -23,7 +23,7 @@ const STANDARD = 'standard'
 const STANDARD_PLUGIN = 'standard-harness'
 
 interface Options {
-  agents: CustomAgents
+  agents: Pick<CustomAgents, 'get' | 'general' | 'memories' | 'definitionHash'>
   harness(id: string): HarnessInfo | undefined
   plugins(): PluginInfo[]
   skills(): SkillInfo[]
@@ -129,7 +129,7 @@ export class AgentPlans {
    */
   agentContext(id: string, harnessId: string, scope: DataScope | undefined): AgentExecutionContext {
     const agent = this.options.agents.get(id)
-    this.options.agents.assertWorksHere(id)
+    assertAgentWorksHere(agent)
     return this.build(agent, harnessId, scope === 'all')
   }
 
