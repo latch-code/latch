@@ -25,6 +25,7 @@ export interface RosterRow {
   word?: PersonWord
   /** Why a new topic cannot start on it now (its Harness is missing or too old); its topics stay readable. */
   unavailable?: string
+  workComputer?: true
   /** Deleted, and kept only because topics of it remain. */
   gone: boolean
   /**
@@ -50,7 +51,7 @@ export function topicState(task: TaskSummary, asking: ReadonlySet<string> = new 
 const askingOf = (snapshot: Pick<AppSnapshot, 'approvals'>) => new Set(snapshot.approvals.map(approval => approval.sessionId))
 
 function rowOf(
-  who: Pick<RosterRow, 'id' | 'name' | 'avatar' | 'duty' | 'gone'> & { unavailable?: string | undefined },
+  who: Pick<RosterRow, 'id' | 'name' | 'avatar' | 'duty' | 'gone'> & { unavailable?: string | undefined; workComputer?: true },
   topics: TaskSummary[],
   asking: ReadonlySet<string>,
 ): RosterRow {
@@ -105,7 +106,8 @@ export function rosterRows(
         avatar: agent.avatar,
         duty: dutyLine(agent),
         gone: false,
-        unavailable: agent.available ? undefined : (agent.unavailableReason ?? AGENT_SPACE_COPY.cannotStart),
+        unavailable: agent.available || agent.workComputer ? undefined : (agent.unavailableReason ?? AGENT_SPACE_COPY.cannotStart),
+        ...(agent.workComputer ? { workComputer: true } : {}),
       },
       topicsOf(agent.id),
       asking,

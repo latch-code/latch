@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { GENERAL_AGENT_ID, type AutomationSummary, type CustomAgentList } from '@latch/protocol'
@@ -8,15 +8,15 @@ import {
   IconButton,
   InlineNotice,
   Loading,
-  SegmentedControl,
   Sheet,
   Switch,
+  Tabs,
   ChevronLeftGlyph,
   CloseGlyph,
   EditGlyph,
   PlusGlyph,
 } from '@latch/ui'
-import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+import { defineCopy, listText } from '../core/i18n.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
 import { AgentHome } from './AgentHome.tsx'
@@ -33,6 +33,7 @@ import { Availability, LockedAgents } from './parts.tsx'
 import { SchedulesTab } from './Schedules.tsx'
 import { scheduleBlock, whenWords } from './scheduleModel.ts'
 import { useAgentComputer, useAgentDetail, useAgentHome, useAgentList, useProposals } from './useAgentData.ts'
+import { AgentWorkComputerField, AgentWorkDestination } from './AgentWorkComputer.tsx'
 import { ComputerSection, NotificationSection } from './Computer.tsx'
 import { McpSection } from './McpSection.tsx'
 import { builtinHarness } from '../composerChoice.ts'
@@ -50,6 +51,7 @@ const COPY = defineCopy(
     edit: '编辑',
     newSchedule: '新建定时',
     profile: '资料',
+    sourceSettings: '这里修改原电脑保留的配置。要调整新委托使用的技能和工具，请打开工作电脑上的助手。',
     close: '关闭资料',
     missing: '找不到这个 Agent',
     missingDetail: '它可能已在别处删除。',
@@ -57,19 +59,20 @@ const COPY = defineCopy(
     retry: '重试',
     confirmingDetail: '结果确认前不能读取或修改 Agent，Mac 会自己重试。',
     builtin: '内置',
-    profileTabs: '动态、资料库与记忆',
+    profileTabs: '资料页签',
     activity: '动态',
     library: '资料库',
     memory: '记忆',
+    runtime: '运行设置',
     loading: '正在读取',
     upcoming: '即将进行',
     place: '工作位置',
     skills: '技能',
     allSkills: '全部已启用',
-    skillCount: (count: number) => `${formatNumber(count)} 个`,
+    noSkills: '未选择',
     tools: '工具',
-    allTools: '不限',
-    pluginCount: (count: number) => `${formatNumber(count)} 个插件`,
+    allTools: '全部已启用的工具插件',
+    noTools: '未选择工具插件',
     settings: '设置',
   },
   {
@@ -80,6 +83,8 @@ const COPY = defineCopy(
     edit: 'Edit',
     newSchedule: 'New schedule',
     profile: 'Profile',
+    sourceSettings:
+      'These settings belong to the original computer. Open the assistant on its work computer to change the skills and tools for new requests.',
     close: 'Close profile',
     missing: 'Agent not found',
     missingDetail: 'It may have been deleted elsewhere.',
@@ -87,25 +92,26 @@ const COPY = defineCopy(
     retry: 'Retry',
     confirmingDetail: 'You can read or edit the Agent once your Mac confirms the result. Your Mac will retry automatically.',
     builtin: 'Built-in',
-    profileTabs: 'Activity, library, and memory',
+    profileTabs: 'Profile tabs',
     activity: 'Activity',
     library: 'Library',
     memory: 'Memory',
+    runtime: 'Runtime settings',
     loading: 'Loading',
     upcoming: 'Upcoming',
     place: 'Workspace',
     skills: 'Skills',
     allSkills: 'All enabled',
-    skillCount: (count: number) => formatNumber(count),
+    noSkills: 'None selected',
     tools: 'Tools',
-    allTools: 'Unrestricted',
-    pluginCount: (count: number) => plural(count, { one: '{n} plugin', other: '{n} plugins' }),
+    allTools: 'All enabled tool plugins',
+    noTools: 'No tool plugins selected',
     settings: 'Settings',
   },
 )
 
 type View = 'main' | 'settings' | 'schedules'
-type Segment = 'activity' | 'library' | 'memory'
+type ProfileTab = 'activity' | 'library' | 'memory' | 'runtime'
 
 /** 即将进行: each schedule with its plan and a switch; 编辑 opens the schedules' own editing. */
 function Upcoming({
@@ -170,10 +176,8 @@ function Upcoming({
 }
 
 /**
- * An Agent's profile, opened from its face or name: a big face (the picker), name and duty; 动态 · 记忆 (its recent
- * topics, and its memories to add, change and delete); 即将进行 (its schedules with switches); the computer and where
- * it works; how it runs and how many skills and tools it has; and 设置, the edit form. 通用 has no schedules here, and its
- * 设置 is its instructions and skills. Writes keep their requestId and say when their result is unknown.
+ * The profile shows the Agent's identity and edit form, with separate tabs for activity and upcoming runs, files,
+ * memory, and runtime settings. Writes keep their requestId and report unknown results.
  */
 export function AgentProfile({
   shell,
@@ -221,12 +225,13 @@ export function AgentProfile({
   const viewOf = (wanted: ProfileSection | undefined): View =>
     wanted === 'settings' ? 'settings' : wanted === 'schedules' ? 'schedules' : 'main'
   const [view, setView] = useState<View>(() => viewOf(section))
-  const [segment, setSegment] = useState<Segment>(section === 'memory' ? 'memory' : 'activity')
+  const [tab, setTab] = useState<ProfileTab>(section === 'memory' ? 'memory' : 'activity')
+  const tabsId = useId()
   const body = useRef<HTMLDivElement>(null)
   // A link to a section shows it, also when the profile is already open.
   useEffect(() => {
     setView(viewOf(section))
-    if (section === 'memory') setSegment('memory')
+    if (section !== 'settings') setTab(section === 'memory' ? 'memory' : 'activity')
     body.current?.scrollTo({ top: 0 })
   }, [section, nonce])
   useEffect(() => {
@@ -309,129 +314,11 @@ export function AgentProfile({
                   {general && <span className="agent-builtin">{COPY.builtin}</span>}
                 </h3>
                 {duty && <p>{duty}</p>}
-                {summary && (!summary.available || offline) && (
+                {summary && ((!summary.available && !summary.workComputer) || offline) && (
                   <Availability available={summary.available} reason={summary.unavailableReason} offline={offline} />
                 )}
               </div>
             </div>
-            <div className="agent-profile-section">
-              <SegmentedControl<Segment>
-                label={COPY.profileTabs}
-                value={segment}
-                options={[
-                  { value: 'activity', label: COPY.activity },
-                  { value: 'library', label: COPY.library },
-                  { value: 'memory', label: COPY.memory },
-                ]}
-                onValueChange={setSegment}
-              />
-              {segment === 'activity' && (
-                <ActivityTab
-                  owner={owner}
-                  version={activityVersion(snapshot, owner)}
-                  onOpenSession={shell.choose}
-                  onMemory={() => {
-                    setSegment('memory')
-                  }}
-                />
-              )}
-              {segment === 'library' && (
-                <LibraryTab
-                  owner={owner}
-                  version={activityVersion(snapshot, owner)}
-                  canOpen={catalog?.features?.filePreview === true && snapshot.device.dataScope === 'all'}
-                  onOpenFile={target => {
-                    // The file preview stands where the profile stands.
-                    shell.closeProfile()
-                    shell.openFile(target)
-                  }}
-                  onOpenSession={shell.choose}
-                />
-              )}
-              {segment === 'memory'
-                && (value ? (
-                  <MemoryTab
-                    key={owner}
-                    owner={owner}
-                    memories={value.detail.memories}
-                    changes={value.detail.memoryChanges}
-                    proposals={
-                      'value' in proposalRead && proposalRead.value
-                        ? proposalRead.value.proposals.filter(item => item.kind !== 'schedule')
-                        : []
-                    }
-                    effect={general ? undefined : effectWords(harness)}
-                    writes={writes}
-                    disabled={held}
-                    onReload={settle}
-                    topicTitle={id => snapshot.tasks.find(task => task.id === id)?.title}
-                    onOpenTopic={shell.choose}
-                    knowsYou={summary && !general ? { agent: summary, canRun } : undefined}
-                  />
-                ) : (
-                  <Loading label={COPY.loading} />
-                ))}
-            </div>
-            {schedulesOn && (
-              <div className="agent-profile-section" aria-label={COPY.upcoming} role="group">
-                <h3>{COPY.upcoming}</h3>
-                <Upcoming
-                  automations={automations}
-                  writes={scheduleWrites}
-                  block={scheduleBlock({ offline, canRun, agent: summary })}
-                  canRun={canRun}
-                  onEdit={() => {
-                    setView('schedules')
-                  }}
-                />
-              </div>
-            )}
-            <ComputerSection
-              hostName={snapshot.hostName}
-              read={computerRead}
-              reachable={connection === 'connected'}
-              sleeping={shell.harness.hostNotice?.state === 'sleeping'}
-              agent={summary}
-              schedulesOn={schedulesOn}
-              canRun={canRun}
-              disabled={held}
-              runBlock={scheduleBlock({ offline, canRun, agent: summary, trigger: 'manual' })}
-              writes={writes}
-              scheduleWrites={scheduleWrites}
-            />
-            {summary && <NotificationSection agent={summary} canRun={canRun} disabled={held} writes={writes} />}
-            {(summary || general) && catalog?.features?.mcp === true && (
-              <McpSection
-                agentId={owner}
-                assignable={!general}
-                harness={harness}
-                builtin={harness !== undefined && harness.id === builtinHarness(catalog ?? undefined)?.id}
-                access={access}
-                disabled={held}
-              />
-            )}
-            <dl className="agent-facts agent-profile-section">
-              <dt>{COPY.place}</dt>
-              <dd>
-                <span>{worksIn(catalog ?? undefined, summary?.defaultProjectId)}</span>
-              </dd>
-              {value && (
-                <>
-                  <dt>{COPY.skills}</dt>
-                  <dd>
-                    <span>{skills === undefined ? COPY.allSkills : COPY.skillCount(skills.length)}</span>
-                  </dd>
-                  {!general && (
-                    <>
-                      <dt>{COPY.tools}</dt>
-                      <dd>
-                        <span>{tools === undefined ? COPY.allTools : COPY.pluginCount(tools.length)}</span>
-                      </dd>
-                    </>
-                  )}
-                </>
-              )}
-            </dl>
             <Button
               className="agent-profile-settings"
               disabled={!value}
@@ -441,9 +328,194 @@ export function AgentProfile({
               }}>
               {COPY.settings}
             </Button>
+            <div className="agent-profile-section">
+              <Tabs<ProfileTab>
+                className="agent-profile-tabs"
+                label={COPY.profileTabs}
+                value={tab}
+                options={[
+                  { value: 'activity', label: COPY.activity, controls: `${tabsId}-activity` },
+                  { value: 'library', label: COPY.library, controls: `${tabsId}-library` },
+                  { value: 'memory', label: COPY.memory, controls: `${tabsId}-memory` },
+                  { value: 'runtime', label: COPY.runtime, controls: `${tabsId}-runtime` },
+                ]}
+                onValueChange={setTab}
+              />
+              <div
+                id={`${tabsId}-activity`}
+                className="agent-profile-pane"
+                role="tabpanel"
+                aria-label={COPY.activity}
+                tabIndex={0}
+                hidden={tab !== 'activity'}>
+                {tab === 'activity' && (
+                  <>
+                    <ActivityTab
+                      owner={owner}
+                      version={activityVersion(snapshot, owner)}
+                      onOpenSession={shell.choose}
+                      onMemory={() => setTab('memory')}
+                    />
+                    {schedulesOn && (!summary?.workComputer || Boolean(automations?.length)) && (
+                      <div className="agent-profile-section" aria-label={COPY.upcoming} role="group">
+                        <h3>{COPY.upcoming}</h3>
+                        <Upcoming
+                          automations={automations}
+                          writes={scheduleWrites}
+                          block={scheduleBlock({ offline, canRun, agent: summary })}
+                          canRun={canRun && !summary?.workComputer}
+                          onEdit={() => {
+                            setView('schedules')
+                          }}
+                        />
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+              <div
+                id={`${tabsId}-library`}
+                className="agent-profile-pane"
+                role="tabpanel"
+                aria-label={COPY.library}
+                tabIndex={0}
+                hidden={tab !== 'library'}>
+                {tab === 'library' && (
+                  <LibraryTab
+                    owner={owner}
+                    version={activityVersion(snapshot, owner)}
+                    canOpen={catalog?.features?.filePreview === true && snapshot.device.dataScope === 'all'}
+                    onOpenFile={target => {
+                      // The file preview stands where the profile stands.
+                      shell.closeProfile()
+                      shell.openFile(target)
+                    }}
+                    onOpenSession={shell.choose}
+                  />
+                )}
+              </div>
+              <div
+                id={`${tabsId}-memory`}
+                className="agent-profile-pane"
+                role="tabpanel"
+                aria-label={COPY.memory}
+                tabIndex={0}
+                hidden={tab !== 'memory'}>
+                {tab === 'memory'
+                  && (value ? (
+                    <MemoryTab
+                      key={owner}
+                      owner={owner}
+                      memories={value.detail.memories}
+                      changes={value.detail.memoryChanges}
+                      proposals={
+                        'value' in proposalRead && proposalRead.value
+                          ? proposalRead.value.proposals.filter(item => item.kind !== 'schedule')
+                          : []
+                      }
+                      effect={general ? undefined : effectWords(harness)}
+                      writes={writes}
+                      disabled={held}
+                      onReload={settle}
+                      topicTitle={id => snapshot.tasks.find(task => task.id === id)?.title}
+                      onOpenTopic={shell.choose}
+                      knowsYou={summary && !general ? { agent: summary, canRun } : undefined}
+                    />
+                  ) : (
+                    <Loading label={COPY.loading} />
+                  ))}
+              </div>
+              <div
+                id={`${tabsId}-runtime`}
+                className="agent-profile-pane"
+                role="tabpanel"
+                aria-label={COPY.runtime}
+                tabIndex={0}
+                hidden={tab !== 'runtime'}>
+                {/* Keep pending work-computer and MCP operations mounted while viewing another tab. */}
+                {summary && catalog?.features?.agentWorkComputer && access.local && canRun && (
+                  <>
+                    <AgentWorkComputerField
+                      target={summary.workComputer}
+                      disabled={held || offline || writes.saving || writes.held}
+                      onManage={() => shell.openSettings('computers')}
+                      onChange={async next => {
+                        await writes.run('work-computer', `custom-agents/${encodeURIComponent(owner)}`, 'PATCH', {
+                          baseRevision: summary.revision,
+                          workComputer: next ?? null,
+                        })
+                      }}
+                    />
+                    <WriteNotice state={writeFor(writes.state, 'work-computer')} onRetry={() => void writes.retry()} />
+                  </>
+                )}
+                {phone && summary?.workComputer && <AgentWorkDestination owner={owner} target={summary.workComputer} />}
+                <ComputerSection
+                  hostName={snapshot.hostName}
+                  read={computerRead}
+                  reachable={connection === 'connected'}
+                  sleeping={shell.harness.hostNotice?.state === 'sleeping'}
+                  agent={summary}
+                  schedulesOn={schedulesOn}
+                  canRun={canRun}
+                  disabled={held}
+                  runBlock={scheduleBlock({ offline, canRun, agent: summary, trigger: 'manual' })}
+                  writes={writes}
+                  scheduleWrites={scheduleWrites}
+                />
+                {summary && <NotificationSection agent={summary} canRun={canRun} disabled={held} writes={writes} />}
+                {(summary || general) && catalog?.features?.mcp === true && (
+                  <McpSection
+                    agentId={owner}
+                    assignable={!general}
+                    harness={harness}
+                    builtin={harness !== undefined && harness.id === builtinHarness(catalog ?? undefined)?.id}
+                    access={access}
+                    disabled={held}
+                  />
+                )}
+                <dl className="agent-facts agent-profile-section">
+                  <dt>{COPY.place}</dt>
+                  <dd>
+                    <span>{worksIn(catalog ?? undefined, summary?.defaultProjectId)}</span>
+                  </dd>
+                  {value && (
+                    <>
+                      <dt>{COPY.skills}</dt>
+                      <dd>
+                        <span>
+                          {skills === undefined
+                            ? COPY.allSkills
+                            : listText(
+                                skills.map(id => catalog?.skills?.find(skill => skill.id === id)?.name ?? id),
+                                'unit',
+                              ) || COPY.noSkills}
+                        </span>
+                      </dd>
+                      {!general && harness?.agentContext === 'private' && (
+                        <>
+                          <dt>{COPY.tools}</dt>
+                          <dd>
+                            <span>
+                              {tools === undefined
+                                ? COPY.allTools
+                                : listText(
+                                    tools.map(id => plugins.find(plugin => plugin.id === id)?.name ?? id),
+                                    'unit',
+                                  ) || COPY.noTools}
+                            </span>
+                          </dd>
+                        </>
+                      )}
+                    </>
+                  )}
+                </dl>
+              </div>
+            </div>
           </>
         )}
         {!locked && view === 'settings' && !value && detail.read.state === 'loading' && <Loading label={COPY.loading} />}
+        {!locked && view === 'settings' && summary?.workComputer && <InlineNotice>{COPY.sourceSettings}</InlineNotice>}
         {!locked && view === 'settings' && value && <AgentHome key={owner} home={home.value} local={access.local} admin={access.admin} />}
         {!locked && view === 'settings' && <CurrentAgentOptions shell={shell} owner={owner} />}
         {!locked && view === 'settings' && value?.kind === 'custom' && catalog && (

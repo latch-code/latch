@@ -459,7 +459,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         await paths.close()
         if let previous, !(await previous.closeOpening()), let hostId { offlineCacheBlocked.insert(hostId) }
     }
-    func connect(_ host: RegisteredHost) async {
+    func connect(_ host: RegisteredHost, resumePreviousSession: Bool = true) async {
         guard let store, !busy, storageAvailable, !forgettingComputers.contains(host.id),
               hosts.contains(where: { $0.id == host.id }) else { return }
         hold.release(); transportWatch?.cancel(); transportWatch = nil; cancelUpgrade()
@@ -473,7 +473,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         storageOpening.close { await self.closeConnection(previous, hostId: previousHost) }
         workspace = nil; installedTransport = nil
         clearPrivateContent(); resetWorkItems(); resetSessionActions(); resetReview(); snapshot = .null; sessionId = nil; agentPath = []; appPath = []; controlPending = .null; controlsInFlight = []; controlTail = nil; heldDrafts.clear(); draftInserts = [:]; verifiedUntil = nil; connected = false; offline = false
-        let resume = resumeSession, initialSelection = contentGeneration; resumeSession = nil
+        let resume = resumePreviousSession ? resumeSession : nil, initialSelection = contentGeneration; resumeSession = nil
         QuotaWidgetWriter.connecting(to: host.id, computers: hosts.count)
         selectedHost = host; lastHostId = host.id; lastConfirmed = nil; hostNotice = nil; status = "正在连接…"; error = nil
         watchOthers()

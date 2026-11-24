@@ -13,9 +13,10 @@ func phoneHelperCreateFixture(_ input: [String: Any]) throws -> [String: Any] {
     var rows: [[String: Any]] = []
     for item in value["cases"].array {
         do {
-            var draft = try PhoneHelperCreate.choose(catalog, harnessId: item["harnessId"].string ?? "", agents: value["agents"].array)
+            var draft = PhoneHelperDraft(harnessId: "")
             draft.name = item["name"].string ?? "Helper"
             draft.description = item["description"].string ?? ""
+            draft = try PhoneHelperCreate.choose(catalog, harnessId: item["harnessId"].string ?? "", agents: value["agents"].array, previous: draft)
             draft.instructions = item["instructions"].string ?? ""
             if item.object["avatar"] != nil { draft.avatar = item["avatar"] }
             if item["model"] != .null { draft.model = item["model"] }

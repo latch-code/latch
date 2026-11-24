@@ -98,19 +98,18 @@ it('an Agent speaks first, knows what you told 通用, and knows what its schedu
     const opening = page.getByRole('region', { name: '小林的开场' })
     await opening.waitFor()
     // The header says who it is; the opening does not repeat it.
-    expect(await opening.getByText('查资料，写成一页摘要').count()).toBe(0)
     const actions = opening.getByRole('group', { name: '可以这样开始' }).getByRole('button')
     expect(await actions.count()).toBe(3)
     // A Harness Latch has no card for: what it is for, and what works on any Harness; never a folder or command it may lack.
-    expect(await actions.allTextContents()).toEqual(['交给你一件事', '记住一件事', '你能帮我做什么'])
+    expect(await actions.allTextContents()).toEqual(['查资料，写成一页摘要', '记住一件事', '拆解下一步'])
     await shoot(page, 'chat-opening', SIZES)
 
     // A click fills the input and sends nothing.
     const input = page.getByRole('textbox', { name: '给小林发消息', exact: true })
     await opening.getByRole('button', { name: '记住一件事' }).click()
     expect(await promptValue(input)).toBe('记住：')
-    await opening.getByRole('button', { name: '交给你一件事' }).click()
-    expect(await promptValue(input)).toBe('记住：\n查资料，写成一页摘要：')
+    await opening.getByRole('button', { name: '查资料，写成一页摘要' }).click()
+    expect(await promptValue(input)).toBe('记住：\n查资料，写成一页摘要。这次的材料或问题是：')
     expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(0)
 
     // Its first turn carries what the person confirmed in 通用 (the fake agent echoes what it received).
@@ -161,7 +160,12 @@ it('an Agent speaks first, knows what you told 通用, and knows what its schedu
     // The overview stays quiet after ordinary chat and a manual run.
     await page.getByRole('button', { name: '总览', exact: true }).filter({ visible: true }).click()
     const home = page.locator('.agents-home')
-    await home.getByText('没有待处理事项', { exact: true }).waitFor()
+    const resume = home.getByRole('button', { name: /今晚吃什么.*继续聊天/u })
+    await resume.waitFor()
+    await resume.click()
+    await page.locator('.transcript-shell').getByText('今晚吃什么', { exact: true }).waitFor()
+    expect(await chatOf()).toEqual({ state: 'ready', sessionId })
+    await page.getByRole('button', { name: '总览', exact: true }).filter({ visible: true }).first().click()
     expect(await home.getByRole('region', { name: '最近定时结果', exact: true }).count()).toBe(0)
     expect(await home.getByRole('button', { name: '发给谁', exact: true }).count()).toBe(0)
     // The phone keeps the Agent's latest topic and time on its roster row.
@@ -169,6 +173,8 @@ it('an Agent speaks first, knows what you told 通用, and knows what its schedu
     const row = page.locator(`.agents-root [data-agent-id="${agent.id}"]`)
     await row.locator('time').waitFor()
     expect(await row.locator('.space-agent-line').textContent()).toBe('今晚吃什么')
+    expect(await row.getByText('继续聊天', { exact: true }).isVisible()).toBe(true)
+    expect(await page.locator('.agents-root').getByText('今晚吃什么', { exact: true }).count()).toBe(1)
     expect(await row.locator('xpath=..').getByRole('button', { name: '聊天', exact: true }).count()).toBe(0)
     await shoot(page, 'agents-page-after', [
       [1440, 'light'],

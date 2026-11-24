@@ -1,3 +1,4 @@
+import { AgentWorkDestination } from '../agents/AgentWorkComputer.tsx'
 import { SHELL_COPY } from './copy.ts'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
@@ -169,6 +170,7 @@ export function ConversationView({
     }),
     [current?.commands, current?.skills, leadTeam, shell.snapshot.tasks, catalog?.harnesses],
   )
+  const personalAgent = snapshot.customAgents?.find(agent => agent.id === shell.summary?.agent?.customAgentId)
   const sideQuestion = useSideQuestion(selectedId)
   const sideQuestionPage = visible && phone && sideQuestion !== undefined && !sideQuestion.minimized
   const showTranscript = visible && !sideQuestionPage
@@ -644,7 +646,15 @@ export function ConversationView({
               />
             )}
             <div inert={sideQuestionPage || undefined}>
-              <SessionComposer shell={shell} visible={visible} sidePanel={sideQuestion} />
+              {personalAgent?.workComputer
+              && !shell.submission.pending
+              && !shell.stopping.has(selectedId ?? '')
+              && current?.summary.status !== 'running'
+              && current?.summary.status !== 'waiting-approval' ? (
+                <AgentWorkDestination owner={personalAgent.id} target={personalAgent.workComputer} />
+              ) : (
+                <SessionComposer shell={shell} visible={visible} sidePanel={sideQuestion} />
+              )}
             </div>
           </div>
         </div>

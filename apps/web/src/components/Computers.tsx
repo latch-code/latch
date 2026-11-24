@@ -3,6 +3,7 @@ import {
   DevicesGlyph,
   ICON_STROKE,
   Icon,
+  InlineNotice,
   LaptopGlyph,
   LiveDot,
   MenuFooterLink,
@@ -19,6 +20,7 @@ import {
   ATTENTION_WORDS,
   CONNECTION_WORDS,
   computerState,
+  currentDesktopComputer,
   otherComputerRows,
   type OtherComputerList,
   type OtherComputerRow,
@@ -27,7 +29,7 @@ import {
 import type { ComputerSession } from '@latch/protocol'
 import { ShelfHead } from './ProjectNavigation.tsx'
 import { hostView } from '../core/permissions.ts'
-import { computerName } from '../core/securityCopy.ts'
+import { computerName, describeFailure } from '../core/securityCopy.ts'
 import { shellComputers, type ComputersView } from '../core/shell.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { relativeTime } from '../format.ts'
@@ -44,7 +46,12 @@ const COPY = defineCopy(
     settings: '设置',
     oldBuild: '版本较旧',
     actions: (value1: string | number) => `${value1} 的操作`,
-    open: '打开',
+    openComputerWindow: '打开电脑窗口',
+    openSeparateWindow: '在单独窗口打开',
+    openMainWindow: '在主窗口打开',
+    switchMainWindow: '在主窗口切换',
+    opening: '正在打开…',
+    switching: '正在切换…',
     devices: '设备',
     deviceCount: (count: number) => `${formatNumber(count)} 台`,
     untitled: '未命名会话',
@@ -67,7 +74,12 @@ const COPY = defineCopy(
     settings: 'Settings',
     oldBuild: 'Outdated version',
     actions: (value1: string | number) => `Actions for ${value1}`,
-    open: 'Open',
+    openComputerWindow: 'Open computer window',
+    openSeparateWindow: 'Open in separate window',
+    openMainWindow: 'Open in main window',
+    switchMainWindow: 'Switch in main window',
+    opening: 'Opening…',
+    switching: 'Switching…',
     devices: 'Devices',
     deviceCount: (count: number) => `${plural(count, { one: '{n} device', other: '{n} devices' })}`,
     untitled: 'Untitled session',
@@ -96,9 +108,8 @@ export interface ComputerLinks {
 
 /**
  * The computer this page talks to, as a small popover anchored where its name stands (a sheet on phones): its name, how
- * this window reaches it and in what state, the other computers the desktop app knows (choosing one brings its window;
- * its row's context gesture opens the same 打开), the devices, and the ways to 连接新设备 and 设置. Everything that
- * changes trust (pairing, removing, trusting a certificate) stays on its own settings page; this only leads there.
+ * this window reaches it, the other computers the desktop app knows, the devices, and the ways to 连接新设备 and 设置.
+ * Choosing a computer switches the workbench; its context menu can open a separate window.
  */
 export function ComputerChip({
   snapshot,
@@ -122,16 +133,38 @@ export function ComputerChip({
   align?: 'start' | 'end'
 }) {
   const computers = shellComputers()
-  const hostId = hostView(snapshot)?.hostId
-  const current = view?.computers.find(computer => computer.hostId === hostId)
-  // Compared with this Mac's Host, which updates with the app; only this Mac's page knows it.
-  const reference = view?.computers.find(computer => computer.local)?.hostId === hostId ? snapshot.version : undefined
-  const others = otherComputerRows(view, hostId, reference)
+  const page = typeof window === 'undefined' ? undefined : window.location
+  const current = page && currentDesktopComputer(view, page)
+  const hostId = current?.hostId ?? hostView(snapshot)?.hostId
+  const others = otherComputerRows(view, hostId, current?.local ? snapshot.version : undefined)
   const [open, setOpen] = useState(false)
-  const name = computerName(snapshot.hostName)
+  const [switching, setSwitching] = useState<string>()
+  const [switchError, setSwitchError] = useState('')
+  const localPage = page?.protocol === 'latch:' && page.hostname === 'app'
+  const name = localPage
+    ? computerName(snapshot.hostName, current?.name || COPY.thisMac)
+    : (current?.name ?? computerName(snapshot.hostName))
   const live = connection === 'connected'
-  const address = current?.origin ? hostOf(current.origin) : pageAddress()
+  const address = current?.origin ? hostOf(current.origin) : pageAddress(page)
   const how = [transport, address].filter(Boolean).join(' · ')
+  const canSwitch = typeof computers?.switchTo === 'function'
+  const destination = !canSwitch ? COPY.openComputerWindow : computers.switchesInMainWindow ? COPY.switchMainWindow : ''
+  const localId = view?.computers.find(computer => computer.local)?.hostId
+
+  async function choose(targetHostId: string, close: () => void) {
+    if (!computers || switching !== undefined) return
+    setSwitchError('')
+    setSwitching(targetHostId)
+    try {
+      const result = await (computers.switchTo ? computers.switchTo(targetHostId) : computers.open(targetHostId))
+      if (result.ok) close()
+      else setSwitchError(result.error)
+    } catch {
+      setSwitchError('computer-switch-failed')
+    } finally {
+      setSwitching(undefined)
+    }
+  }
   return (
     <Popover
       label={COPY.computer}
@@ -139,7 +172,10 @@ export function ComputerChip({
       size="sm"
       side={side}
       align={align}
-      onOpenChange={setOpen}
+      onOpenChange={next => {
+        setOpen(next)
+        if (next) setSwitchError('')
+      }}
       trigger={props =>
         trigger(props, {
           name,
@@ -149,7 +185,7 @@ export function ComputerChip({
         })
       }>
       <div className="computer-pop">
-        <div className="computer-pop-here" data-computer-here="">
+        <div className="computer-pop-here" data-computer-here="" aria-current="true">
           <span className="computer-pop-line">
             <LiveDot live={live} />
             <span className="computer-pop-name" title={name}>
@@ -159,11 +195,27 @@ export function ComputerChip({
           </span>
           {how && <span className="computer-pop-how">{how}</span>}
         </div>
-        {others.length > 0 && computers && (
+        {computers && (others.length > 0 || switchError) && (
           <div className="computer-pop-group" role="group" aria-label={COPY.otherComputers}>
+            {destination && others.length > 0 && <div className="computer-pop-destination">{destination}</div>}
             {others.map(row => (
-              <OtherComputer key={row.hostId} row={row} onOpen={() => void computers.open(row.hostId)} onManage={links.settings} />
+              <OtherComputer
+                key={row.hostId}
+                row={row}
+                busy={switching !== undefined}
+                pending={switching === row.hostId ? (canSwitch ? COPY.switching : COPY.opening) : ''}
+                destination={destination}
+                onChoose={close => void choose(row.hostId, close)}
+                openLabel={row.hostId === localId ? COPY.openMainWindow : COPY.openSeparateWindow}
+                onOpen={() => void computers.open(row.hostId)}
+                onManage={links.settings}
+              />
             ))}
+            {switchError && (
+              <InlineNotice tone="error">
+                {describeFailure(0, switchError, { fallback: describeFailure(0, 'computer-switch-failed') })}
+              </InlineNotice>
+            )}
           </div>
         )}
         {(links.devices || links.connect || links.settings) && (
@@ -198,7 +250,25 @@ export function SidebarComputerTrigger({ props, name, state }: { props: MenuTrig
   )
 }
 
-function OtherComputer({ row, onOpen, onManage }: { row: OtherComputerRow; onOpen: () => void; onManage: (() => void) | undefined }) {
+function OtherComputer({
+  row,
+  busy,
+  pending,
+  destination,
+  onChoose,
+  openLabel,
+  onOpen,
+  onManage,
+}: {
+  row: OtherComputerRow
+  busy: boolean
+  pending: string
+  destination: string
+  onChoose: (close: () => void) => void
+  openLabel: string
+  onOpen: () => void
+  onManage: (() => void) | undefined
+}) {
   const close = useLayerClose()
   return (
     <div className="computer-pop-row" data-computer-row={row.hostId}>
@@ -206,16 +276,17 @@ function OtherComputer({ row, onOpen, onManage }: { row: OtherComputerRow; onOpe
         type="button"
         className="ui-menu-footer-link computer-pop-other"
         title={row.name}
-        onClick={() => {
-          close()
-          onOpen()
-        }}>
+        aria-disabled={busy || undefined}
+        aria-description={destination || undefined}
+        onClick={() => onChoose(close)}>
         <span className="ui-menu-item-lead">
           <span className="computer-dot" data-state={row.state} aria-hidden="true" />
         </span>
         <span className="computer-pop-other-text">
           <span className="computer-pop-other-name">{row.name}</span>
-          <span className="computer-pop-other-state">{row.text}</span>
+          <span className="computer-pop-other-state" aria-live="polite">
+            {pending || row.text}
+          </span>
         </span>
         <span className="computer-pop-other-meta">
           {row.older && <span className="computer-older">{COPY.oldBuild}</span>}
@@ -229,7 +300,7 @@ function OtherComputer({ row, onOpen, onManage }: { row: OtherComputerRow; onOpe
           {
             id: 'computer',
             items: [
-              { id: 'open', label: COPY.open, leading: <Icon icon={LaptopGlyph} size={14} />, onSelect: onOpen },
+              { id: 'open', label: openLabel, disabled: busy, leading: <Icon icon={LaptopGlyph} size={14} />, onSelect: onOpen },
               ...(onManage
                 ? [{ id: 'manage', label: COPY.settings, leading: <Icon icon={SettingsGlyph} size={14} />, onSelect: onManage }]
                 : []),
@@ -277,8 +348,8 @@ function hostOf(origin: string): string {
 }
 
 /** The address of this page where it is a web address; the desktop app's own scheme names none. */
-function pageAddress(): string {
-  if (location.protocol !== 'http:' && location.protocol !== 'https:') return ''
+function pageAddress(location: Location | undefined): string {
+  if (location?.protocol !== 'http:' && location?.protocol !== 'https:') return ''
   // The Host's per-identity loopback alias (h-<hostId>.localhost) says nothing a person reads: its port does.
   return /^h-[a-z2-7]{52}\.localhost$/u.test(location.hostname) ? `localhost:${location.port}` : location.host
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { BoardAttendInput, TaskSummary } from '@latch/protocol'
 import { api, ApiError } from './api.ts'
+import { shellComputers } from './shell.ts'
 
 const live = (task: Pick<TaskSummary, 'status'>) => task.status === 'running' || task.status === 'waiting-approval'
 
@@ -35,31 +36,62 @@ export function attend(sessionId: string, input: BoardAttendInput): Promise<{ su
 }
 
 /**
- * 打开过: while `shown` (the conversation is the surface in view, in a visible tab) a failed run's settlement is marked
+ * 打开过: while `shown` (the conversation is in view, in a visible tab and selected workspace) a failed run's settlement is marked
  * opened, so it leaves 等你处理 on every device. Once per settlement on this page; a failure is sent again on the next
  * open, show or reconnect, never queued offline. A stale settlement is left to the newer one already on its way.
  */
 export function useOpenedMark(summary: TaskSummary | undefined, shown: boolean, online: boolean): void {
-  const [pageVisible, setPageVisible] = useState(() => document.visibilityState === 'visible')
+  const computers = shellComputers()
+  const guarded = computers?.isWorkspaceActive !== undefined || computers?.subscribeWorkspaceActive !== undefined
+  const selected = useRef(!guarded)
+  const [workspace, setWorkspace] = useState({ active: !guarded })
+  useEffect(() => {
+    if (!computers?.isWorkspaceActive || !computers.subscribeWorkspaceActive) return undefined
+    let listening = true
+    let updated = false
+    const apply = (active: boolean) => {
+      if (!listening || selected.current === active) return
+      selected.current = active
+      // A switch away and back can be batched into a single React render.
+      setWorkspace({ active })
+    }
+    const stop = computers.subscribeWorkspaceActive(active => {
+      updated = true
+      apply(active)
+    })
+    void computers
+      .isWorkspaceActive()
+      .then(active => {
+        if (!updated) apply(active === true)
+      })
+      .catch(() => {})
+    return () => {
+      listening = false
+      selected.current = false
+      stop()
+    }
+  }, [computers])
+  const [pageVisible, setPageVisible] = useState(() => typeof document !== 'undefined' && document.visibilityState === 'visible')
   useEffect(() => {
     const changed = () => {
       setPageVisible(document.visibilityState === 'visible')
     }
     document.addEventListener('visibilitychange', changed)
+    changed()
     return () => {
       document.removeEventListener('visibilitychange', changed)
     }
   }, [])
   const sent = useRef(new Set<string>())
   const id = summary?.id
-  const settle = summary && shown && pageVisible && online ? openedSettle(summary) : undefined
+  const settle = summary && shown && pageVisible && workspace.active && online ? openedSettle(summary) : undefined
   useEffect(() => {
-    if (id === undefined || settle === undefined) return
+    if (id === undefined || settle === undefined || !selected.current || document.visibilityState !== 'visible') return
     const key = `${id}\n${settle}`
     if (sent.current.has(key)) return
     sent.current.add(key)
     attend(id, { settle, opened: true }).catch((cause: unknown) => {
       if (!(cause instanceof ApiError && cause.code === 'attend-stale')) sent.current.delete(key)
     })
-  }, [id, settle])
+  }, [id, settle, workspace])
 }

@@ -917,17 +917,17 @@ function devToolsMayGo(event) {
 
 /** The page sees a tab only while it has bounds and no overlay of the page covers it; a hidden tab gives up focus. */
 function applyVisibility(tab) {
-  const visible = tab.bounds !== null && !tab.occluded
+  const visible = tab.bounds !== null && !tab.occluded && !tab.suspended
   if (visible) tab.view.setBounds(tab.bounds)
   tab.view.setVisible(visible)
   // A tab out of sight makes no sound; a frozen frame (an overlay, 选取元素) still counts as in sight.
-  if (!tab.contents.isDestroyed()) tab.contents.setAudioMuted(tab.bounds === null)
+  if (!tab.contents.isDestroyed()) tab.contents.setAudioMuted(tab.bounds === null || tab.suspended === true)
   if (!visible && !tab.contents.isDestroyed() && tab.contents.isFocused() && !tab.window.isDestroyed()) tab.window.webContents.focus()
 }
 
 /** A capture of the tab; a tab out of sight (the Agent's, the panel shut) stays hidden while it is taken. */
 async function snapshot(tab, rect, limits) {
-  const shown = tab.bounds !== null && !tab.occluded
+  const shown = tab.bounds !== null && !tab.occluded && !tab.suspended
   const image = shown ? await tab.contents.capturePage(rect) : await tab.contents.capturePage(rect, { stayHidden: true })
   return encodeImage(image, limits ?? (rect ? CROP_LIMITS : CAPTURE_LIMITS))
 }
@@ -1016,6 +1016,8 @@ function createPreviewBrowser(options) {
    * input on macOS, so the Agent works only in a session whose panel is open, in a tab the panel shows.
    */
   let showingSession = null
+  let workbenchVisible = true
+  let workbenchRevision = 0
 
   /** The gesture recorder of each tab's WebContents, so an Agent action can drop a click the person made before it. */
   const gestures = new WeakMap()
@@ -1530,6 +1532,17 @@ function createPreviewBrowser(options) {
       window.webContents.on('render-process-gone', hideAll)
     },
     closeAll,
+    /** Switching computers covers the local page, then reveals the same panel and its tabs on return. */
+    setWorkbenchVisible(visible) {
+      if (workbenchVisible === visible) return
+      workbenchVisible = visible
+      if (!visible) workbenchRevision++
+      for (const tab of tabs.values()) {
+        tab.suspended = !visible
+        if (!tab.contents.isDestroyed()) applyVisibility(tab)
+      }
+      tabsChanged(true)
+    },
     /** Every tab of the window, with the session and project it belongs to, for a page that comes back. */
     list() {
       if (!liveWindow()) return failure('unavailable')
@@ -1602,6 +1615,7 @@ function createPreviewBrowser(options) {
         view,
         contents,
         bounds: null,
+        suspended: !workbenchVisible,
         occluded: false,
         occlusions: 0,
         error: null,
@@ -1688,7 +1702,8 @@ function createPreviewBrowser(options) {
         verdict: url => navigationVerdict({ url, kind: 'typed' }, ports),
         snapshot,
         gesture: tab => gestures.get(tab.contents),
-        showing: () => showingSession,
+        showing: () => (workbenchVisible ? showingSession : null),
+        workbenchRevision: () => workbenchRevision,
         /** Asks the page to show a tab of the session its panel shows. */
         reveal: tab => emit(tab, { type: 'reveal' }),
         aftermath: AGENT_AFTERMATH_MS,
@@ -1923,11 +1938,11 @@ function createPreviewBrowser(options) {
  * `latchShell.browser`: every channel answers only `trusted` senders (the main window's own top-level page), with
  * inputs of exactly the shape the preload sends; a guest has no preload and cannot send at all.
  */
-function handleBrowserRequests({ ipcMain, trusted, controller }) {
+function handleBrowserRequests({ ipcMain, trusted, layoutSender = trusted, controller }) {
   const refused = failure('shell-refused')
-  const route = (channel, parse, action) => {
+  const route = (channel, parse, action, accept = trusted) => {
     ipcMain.handle(channel, (event, input) => {
-      if (!trusted(event)) return refused
+      if (!accept(event)) return refused
       const value = parse(input)
       return value === undefined ? INVALID : action(value)
     })
@@ -1936,8 +1951,9 @@ function handleBrowserRequests({ ipcMain, trusted, controller }) {
   route(CHANNELS.close, INPUTS.tab, input => controller.close(input))
   route(CHANNELS.navigate, INPUTS.navigate, input => controller.navigate(input))
   route(CHANNELS.go, INPUTS.go, input => controller.go(input))
-  route(CHANNELS.bounds, INPUTS.bounds, input => controller.setBounds(input))
-  route(CHANNELS.occlude, INPUTS.occlude, input => controller.occlude(input))
+  // The parked local page can still resize its panel; the native views stay hidden until the workbench returns.
+  route(CHANNELS.bounds, INPUTS.bounds, input => controller.setBounds(input), layoutSender)
+  route(CHANNELS.occlude, INPUTS.occlude, input => controller.occlude(input), layoutSender)
   route(CHANNELS.focus, INPUTS.tab, input => controller.focus(input))
   route(CHANNELS.capture, INPUTS.tab, input => controller.capture(input))
   route(CHANNELS.annotate, INPUTS.annotate, input => controller.annotate(input))
@@ -1952,7 +1968,7 @@ function handleBrowserRequests({ ipcMain, trusted, controller }) {
   route(CHANNELS.logs, INPUTS.tab, input => controller.logs(input))
   route(CHANNELS.takeOver, INPUTS.tab, input => controller.takeOver(input))
   route(CHANNELS.handBack, INPUTS.tab, input => controller.handBack(input))
-  route(CHANNELS.showing, INPUTS.showing, input => controller.showing(input))
+  route(CHANNELS.showing, INPUTS.showing, input => controller.showing(input), layoutSender)
 }
 
 module.exports = {

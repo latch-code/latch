@@ -2142,6 +2142,49 @@ describe('the Agent in the preview browser', () => {
     expect(runner.report().at(-1)).toMatchObject({ opener: 'agent', url: 'http://localhost:5173/' })
   })
 
+  it('suspends the local preview and agent input while a remote workbench covers it, then restores the same panel', async () => {
+    const { call, controller, contents, view, tabId } = agentSetup()
+    expect(view.visible).toBe(true)
+    controller.setWorkbenchVisible!(false)
+    expect(view.visible).toBe(false)
+    expect(await call('browser_key', { key: 'Escape' })).toMatchObject({ ok: false, error: 'panel-closed', dispatched: false })
+    expect(contents.inputs).toHaveLength(0)
+    const bounds = { x: 0, y: 0, width: 750, height: 500 }
+    controller.setBounds!({ tabId, bounds })
+    expect(view.visible).toBe(false)
+    controller.setWorkbenchVisible!(true)
+    expect(view.visible).toBe(true)
+    expect(view.getBounds()).toEqual(bounds)
+    expect(await call('browser_read', {})).toMatchObject({ ok: true })
+  })
+
+  it.each(['browser_screenshot', 'browser_type'])('discards a pending %s when the workbench switches away and back', async tool => {
+    const { call, controller, contents, refOf } = agentSetup()
+    const ref = await refOf('textbox "名字"')
+    const inWorld = contents.executeJavaScriptInIsolatedWorld.bind(contents)
+    vi.spyOn(contents, 'executeJavaScriptInIsolatedWorld').mockImplementationOnce(async (world, scripts) => {
+      const result = await inWorld(world, scripts)
+      controller.setWorkbenchVisible!(false)
+      controller.setWorkbenchVisible!(true)
+      return result
+    })
+    const result = await call(tool, tool === 'browser_type' ? { ref, text: 'Hello' } : { ref })
+    expect(result).toMatchObject({ ok: false, error: 'panel-closed', dispatched: false })
+    expect(contents.captures).toHaveLength(0)
+    expect(contents.typed).toHaveLength(0)
+  })
+
+  it('does not send a capture that finishes after the workbench is covered', async () => {
+    const { call, controller, contents } = agentSetup()
+    vi.spyOn(contents, 'capturePage').mockImplementationOnce(async () => {
+      controller.setWorkbenchVisible!(false)
+      return contents.captureImage
+    })
+    const result = await call('browser_screenshot', {})
+    expect(result).toMatchObject({ ok: false, error: 'panel-closed', dispatched: false })
+    expect(result).not.toHaveProperty('image')
+  })
+
   it('says a layer of the page covers the shown tab, not that the panel is closed', async () => {
     const { call, controller, refOf, tabId } = agentSetup()
     const name = await refOf('textbox "名字"')

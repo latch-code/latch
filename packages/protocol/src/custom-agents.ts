@@ -119,8 +119,17 @@ export interface LeftoverAgentFolder {
   bytes?: number
 }
 
+export const CUSTOM_AGENT_ID = /^agt_[a-f0-9-]{36}$/u
+
+export interface AgentWorkComputer {
+  hostId: string
+  agentId: string
+}
+
 /** 名称、图标、说明、指令、技能、Harness 与模型 of one of 我的 Agent. */
 export interface CustomAgentConfig {
+  /** Explicit destination for new work. The paired client opens this assistant on that Host. */
+  workComputer?: AgentWorkComputer
   name: string
   description: string
   /** The engine, chosen once at creation: the Host refuses to change it (409 `agent-harness-fixed`). */
@@ -189,7 +198,9 @@ export type CustomAgentSummary = Omit<CustomAgent, 'instructions' | 'skills' | '
 /** `avatar`: the face chosen while creating (never a picture); absent, the Host assigns an unused one. */
 export type CustomAgentCreate = CustomAgentConfig & { requestId: string; avatar?: AgentAvatar }
 /** `harnessId` may only repeat the Agent's own: another one is refused with 409 `agent-harness-fixed`. */
-export type CustomAgentPatch = Partial<Omit<CustomAgentConfig, 'model' | 'tools' | 'defaultProjectId' | 'engineOptions'>> & {
+export type CustomAgentPatch = Partial<
+  Omit<CustomAgentConfig, 'model' | 'tools' | 'defaultProjectId' | 'workComputer' | 'engineOptions'>
+> & {
   requestId: string
   baseRevision: number
   /** A face: choosing one also puts the face back in a picture's place. A picture is set only by its upload. */
@@ -203,6 +214,7 @@ export type CustomAgentPatch = Partial<Omit<CustomAgentConfig, 'model' | 'tools'
   engineOptions?: Record<string, string> | null
   tools?: string[] | null
   defaultProjectId?: string | null
+  workComputer?: AgentWorkComputer | null
 }
 
 /**

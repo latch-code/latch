@@ -86,6 +86,8 @@ struct AgentChat: View {
             case .locked: LockedAgents()
             case .confirming: ConfirmingAgents()
             case .closed: ClosedAgents()
+            case .hidden where !model.connected:
+                Text("工作电脑未连接，连接后可以查看助手。").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted)
             default:
                 if let entry { chat(entry) }
                 else {
@@ -98,7 +100,10 @@ struct AgentChat: View {
         }
         .background(PhoneTheme.canvas)
         .safeAreaInset(edge: .top, spacing: 0) {
-            if let entry, model.agentAccess == .ready, model.engineInfo(entry.harnessId)["level"].string == "L3" {
+            if let entry, model.agentAccess == .ready, entry.destination != .local {
+                AgentWorkComputer(entry: entry)
+                    .padding(.horizontal, 16).padding(.vertical, 8)
+            } else if let entry, model.agentAccess == .ready, model.engineInfo(entry.harnessId)["level"].string == "L3" {
                 let detail = shown != nil && model.detail["summary"]["id"].string == shown ? model.detail : .null
                 HelperPermissionLine(name: entry.name, note: PhoneHelperSpeech.permission(detail, harness: model.engineInfo(entry.harnessId)))
                     .padding(.horizontal, 16).padding(.vertical, 6)
@@ -139,6 +144,9 @@ struct AgentChat: View {
     @ViewBuilder private func chat(_ entry: PhoneAgentEntry) -> some View {
         let frame = AgentFrame(owner: id, entry: entry, openProfile: { profile = true }, openTopic: { reach($0) })
         if let shown { ConversationView(id: shown, frame: frame) }
+        else if entry.destination != .local && !model.pending.contains(where: { PhonePending.topicOwner($0) == id }) {
+            Color.clear.navigationBarTitleDisplayMode(.inline).toolbar { AgentFrameItems(frame: frame, topic: .null, shown: nil) }
+        }
         else { NewTopicView(frame: frame, started: { picked = $0; firstPage = false }).onAppear { firstPage = true } }
     }
 }
@@ -209,7 +217,13 @@ private struct NewTopicView: View {
     private var waiting: [PhoneScheduleResult] { model.agentResults[frame.owner] ?? [] }
     var body: some View {
         ScrollView {
-            if !waiting.isEmpty {
+            if waiting.isEmpty, frame.entry.destination == .local, frame.entry.available, model.canRun, mine.isEmpty,
+               PhoneAgentChat.slot(model.snapshot, owner: frame.owner)["state"].string == "empty" {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("想让\(frame.entry.name)先帮你做什么？").font(.title3.weight(.semibold)).foregroundStyle(PhoneTheme.ink)
+                    if !general, !frame.entry.duty.isEmpty { Text(frame.entry.duty).font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted) }
+                }.frame(maxWidth: 760, alignment: .leading).padding(.horizontal, 20).padding(.vertical, 28).frame(maxWidth: .infinity)
+            } else if !waiting.isEmpty {
                 ResultStack(results: waiting, openActivity: frame.openProfile, openRun: frame.openTopic,
                     openFile: { file, run in files.open(model, reference: file.path, root: file.root, session: run) })
                     .frame(maxWidth: 760).padding(.horizontal, 16).padding(.vertical, 20).frame(maxWidth: .infinity)

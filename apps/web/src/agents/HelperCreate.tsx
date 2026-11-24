@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 
-import type { AgentAvatar as AvatarValue, CustomAgent, CustomAgentSummary, HarnessInfo, HostCatalog, ModelRef } from '@latch/protocol'
+import type {
+  AgentAvatar as AvatarValue,
+  CustomAgent,
+  CustomAgentSummary,
+  CustomAgentList,
+  HarnessInfo,
+  HostCatalog,
+  ModelRef,
+} from '@latch/protocol'
 import {
   Button,
   ConfirmDialog,
@@ -30,7 +38,7 @@ import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import type { AgentCreationToken } from '../core/agentCreation.ts'
 import { AgentAvatar } from './AgentAvatar.tsx'
-import { WriteNotice } from './AgentForm.tsx'
+import { AgentCapabilities, WriteNotice } from './AgentForm.tsx'
 import { DraftAvatarPicker } from './AvatarPicker.tsx'
 import { ABILITY_WORDS, firstFace, helperCandidates, helperCardLine, helperMode, isolationBrief, type HelperCandidate } from './helpers.ts'
 import { usesHostModels } from './model.ts'
@@ -67,6 +75,10 @@ const COPY = defineCopy(
     dutyPrompt: '一句话，例如：查资料，写成一页摘要',
     instructionsMore: '多说几句',
     instructions: '指令',
+    cloudEntry: '添加工作电脑上的助手',
+    entryIdentity: '名字和职责显示在这台电脑的名单里。新委托使用目标助手自己的配置。',
+    localStandby: '切回本机时，将使用 Latch 内置和本机的模型设置。',
+    capabilities: '技能与工具',
     more: '更多',
     model: '用的模型',
     useDefault: '用默认',
@@ -105,6 +117,10 @@ const COPY = defineCopy(
     dutyPrompt: 'One sentence, such as “Research a topic and write a one-page summary”',
     instructionsMore: 'Add more detail',
     instructions: 'Instructions',
+    cloudEntry: 'Add an assistant from the work computer',
+    entryIdentity: 'The name and role appear in this computer’s list. New requests use the target assistant’s settings.',
+    localStandby: 'Switching back uses the built-in Harness and this computer’s model settings.',
+    capabilities: 'Skills and tools',
     more: 'More',
     model: 'Model',
     useDefault: 'Use default',
@@ -228,19 +244,27 @@ interface HelperDraft {
   name: string
   description: string
   instructions: string
+  skills?: string[]
+  tools?: string[]
   model?: ModelRef
   defaultProjectId?: string
 }
 
 /** The request 创建 sends: the Harness, fixed from now on, and what the person wrote; nothing the Harness cannot use. */
-export function helperRequest(harness: Pick<HarnessInfo, 'id' | 'modes' | 'capabilities'>, draft: HelperDraft) {
+export function helperRequest(
+  harness: Pick<HarnessInfo, 'id' | 'modes' | 'capabilities' | 'skills' | 'agentContext'>,
+  draft: HelperDraft,
+  workComputer?: CustomAgentSummary['workComputer'],
+) {
   return {
+    ...(workComputer ? { workComputer } : {}),
     name: draft.name.trim(),
     description: draft.description.trim(),
     instructions: draft.instructions,
     harnessId: harness.id,
     mode: helperMode(harness),
-    skills: [] as string[],
+    skills: harness.skills ? (draft.skills ?? []) : [],
+    ...(harness.agentContext === 'private' && draft.tools !== undefined ? { tools: draft.tools } : {}),
     avatar: draft.avatar,
     ...(draft.model && usesHostModels(harness) ? { model: draft.model } : {}),
     ...(draft.defaultProjectId ? { defaultProjectId: draft.defaultProjectId } : {}),
@@ -248,26 +272,27 @@ export function helperRequest(harness: Pick<HarnessInfo, 'id' | 'modes' | 'capab
 }
 
 /**
- * Creating a helper, in two steps on one page. First 「你想让谁成为你的帮手？」: a card for each ready Harness that can
- * take an Agent, Latch 内置 first, and below the ones not ready. Then who it is: the face, a name, its duty,
- * 多说几句 for the instructions, and 更多 for the model, 做事前 and 在哪做. Nothing exists until
- * 创建, which writes with a requestId; its Harness is fixed from then on.
+ * The person can describe the helper before choosing its engine. The same identity draft belongs to both
+ * views. Creating requires an explicit engine choice and is retried with the original request ID.
  */
 export function HelperCreate({
   catalog,
   access,
   agents,
+  plugins,
   writes,
   disabled,
   onCreated,
   onCancel,
   onSettings,
   onManageProviders,
+  workComputer,
 }: {
   catalog: HostCatalog
   access: DeviceAccess
   /** The Agents there are, for a hue none of them wears. */
   agents: readonly CustomAgentSummary[]
+  plugins?: CustomAgentList['plugins'] | undefined
   writes: AgentWrites
   disabled: boolean
   onCreated: (agent: CustomAgent) => void
@@ -275,11 +300,15 @@ export function HelperCreate({
   /** Opens 设置 › Harness, on a device that may change it. */
   onSettings?: () => void
   onManageProviders?: () => void
+  workComputer?: CustomAgentSummary['workComputer']
 }) {
   const { ready, waiting } = helperCandidates(catalog)
-  const [draft, setDraft] = useState<HelperDraft | null>(null)
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [draft, setDraft] = useState<Omit<HelperDraft, 'name' | 'description'> | null>(null)
   const [choosing, setChoosing] = useState(true)
   const [more, setMore] = useState(false)
+  const [capabilities, setCapabilities] = useState(false)
   const [words, setWords] = useState(false)
   const [abandon, setAbandon] = useState<AgentCreationToken>()
   const state = writeFor(writes.state, 'agent:new')
@@ -288,19 +317,21 @@ export function HelperCreate({
   useEffect(() => {
     if (hadCreation.current && !writes.held && !writes.saving && state === null) {
       setDraft(null)
+      setName('')
+      setDescription('')
       setChoosing(true)
       hadCreation.current = false
     }
   }, [writes.held, writes.saving, state])
   const locked = disabled || writes.saving || writes.held
   const chosen = draft ? ready.find(item => item.harness.id === draft.harnessId) : undefined
-  const update = (patch: Partial<HelperDraft>) => {
+  const update = (patch: Partial<Omit<HelperDraft, 'name' | 'description'>>) => {
     setDraft(previous => (previous ? { ...previous, ...patch } : previous))
   }
   const choose = (candidate: HelperCandidate) => {
     setDraft(previous => ({
-      name: previous?.name ?? '',
-      description: previous?.description ?? '',
+      ...(previous?.skills ? { skills: previous.skills } : {}),
+      ...(previous?.tools ? { tools: previous.tools } : {}),
       instructions: previous?.instructions ?? '',
       harnessId: candidate.harness.id,
       avatar: previous?.avatar ?? firstFace(candidate.card, agents),
@@ -332,6 +363,8 @@ export function HelperCreate({
             onConfirm={async () => {
               if (await writes.abandon?.(abandon)) {
                 setDraft(null)
+                setName('')
+                setDescription('')
                 setChoosing(true)
               }
             }}
@@ -340,10 +373,91 @@ export function HelperCreate({
       </div>
     )
   }
+  const identity = (
+    <>
+      <div className={draft && !choosing ? 'helper-who' : undefined}>
+        {draft && !choosing && (
+          <DraftAvatarPicker
+            avatar={draft.avatar}
+            name={name.trim()}
+            onPick={avatar => {
+              update({ avatar })
+            }}
+          />
+        )}
+        <TextField
+          label={COPY.name}
+          value={name}
+          maxLength={80}
+          placeholder={COPY.namePrompt}
+          required
+          disabled={locked}
+          onChange={event => {
+            setName(event.target.value)
+          }}
+        />
+      </div>
+      <TextField
+        label={COPY.duty}
+        value={description}
+        maxLength={200}
+        placeholder={COPY.dutyPrompt}
+        disabled={locked}
+        onChange={event => {
+          setDescription(event.target.value.replaceAll('\n', ' '))
+        }}
+      />
+    </>
+  )
+  if (workComputer) {
+    const createEntry = async () => {
+      if (locked || !name.trim()) return
+      const body =
+        chosen && draft
+          ? helperRequest(chosen.harness, { ...draft, name, description }, workComputer)
+          : {
+              name: name.trim(),
+              description: description.trim(),
+              instructions: '',
+              skills: [],
+              harnessId: 'standard',
+              mode: 'agent',
+              workComputer,
+            }
+      const saved = await writes.run<CustomAgent>('agent:new', 'custom-agents', 'POST', body)
+      if (saved) onCreated(saved)
+    }
+    return (
+      <form
+        className="helper-create agent-form"
+        aria-label={AGENT_SPACE_COPY.newAgent}
+        onSubmit={event => {
+          event.preventDefault()
+          void createEntry()
+        }}>
+        <h1 className="settings-title">{COPY.cloudEntry}</h1>
+        <p className="agent-profile-quiet">{COPY.entryIdentity}</p>
+        {identity}
+        {!chosen && <p className="agent-profile-quiet">{COPY.localStandby}</p>}
+        <WriteNotice state={state} onRetry={() => void writes.retry<CustomAgent>().then(saved => saved && onCreated(saved))} />
+        <div className="agent-form-actions">
+          <span className="agent-form-spacer" />
+          <Button onClick={onCancel} disabled={locked}>
+            {COPY.cancel}
+          </Button>
+          <Button type="submit" variant="primary" disabled={locked || !name.trim()}>
+            {COPY.create}
+          </Button>
+        </div>
+      </form>
+    )
+  }
   if (choosing || !draft || !chosen) {
     return (
-      <div className="helper-create" aria-label={AGENT_SPACE_COPY.newAgent} role="form">
-        <h1 className="helper-create-question">{COPY.choose}</h1>
+      <div className="helper-create agent-form" aria-label={AGENT_SPACE_COPY.newAgent} role="form">
+        <h1 className="settings-title">{AGENT_SPACE_COPY.newAgent}</h1>
+        {identity}
+        <h2 className="agent-profile-heading">{COPY.choose}</h2>
         {ready.length ? (
           <ul className="helper-cards" aria-label={COPY.candidates}>
             {ready.map(candidate => (
@@ -370,12 +484,17 @@ export function HelperCreate({
     )
   }
   const harness = chosen.harness
-  const problem = draft.name.trim() ? undefined : COPY.nameRequired
+  const problem = name.trim() ? undefined : COPY.nameRequired
   // Said where the person decides: Latch does not isolate an external Harness, and one that never asks says that too.
   const isolation = isolationBrief(harness)
   const create = async () => {
     if (problem || locked) return
-    const saved = await writes.run<CustomAgent>('agent:new', 'custom-agents', 'POST', helperRequest(harness, draft))
+    const saved = await writes.run<CustomAgent>(
+      'agent:new',
+      'custom-agents',
+      'POST',
+      helperRequest(harness, { ...draft, name, description }, workComputer),
+    )
     if (saved) onCreated(saved)
   }
   return (
@@ -414,36 +533,7 @@ export function HelperCreate({
           </Hint>
         )}
       </div>
-      <div className="helper-who">
-        <DraftAvatarPicker
-          avatar={draft.avatar}
-          name={draft.name.trim()}
-          onPick={avatar => {
-            update({ avatar })
-          }}
-        />
-        <TextField
-          label={COPY.name}
-          value={draft.name}
-          maxLength={80}
-          placeholder={COPY.namePrompt}
-          required
-          disabled={locked}
-          onChange={event => {
-            update({ name: event.target.value })
-          }}
-        />
-      </div>
-      <TextField
-        label={COPY.duty}
-        value={draft.description}
-        maxLength={200}
-        placeholder={COPY.dutyPrompt}
-        disabled={locked}
-        onChange={event => {
-          update({ description: event.target.value.replaceAll('\n', ' ') })
-        }}
-      />
+      {identity}
       <div className="helper-fold">
         <FoldHeader open={words} onOpenChange={setWords}>
           {COPY.instructionsMore}
@@ -461,6 +551,29 @@ export function HelperCreate({
           />
         </Collapse>
       </div>
+      {(harness.skills || harness.agentContext === 'private') && (
+        <div className="helper-fold">
+          <FoldHeader open={capabilities} onOpenChange={setCapabilities}>
+            {COPY.capabilities}
+          </FoldHeader>
+          <Collapse open={capabilities}>
+            <AgentCapabilities
+              catalog={catalog}
+              acceptsSkills={Boolean(harness.skills)}
+              builtIn={harness.agentContext === 'private'}
+              plugins={plugins}
+              skills={draft.skills ?? []}
+              tools={draft.tools}
+              disabled={locked}
+              onSkills={skills => update({ skills })}
+              onTools={tools => {
+                const { tools: _previous, ...rest } = draft
+                setDraft(tools === undefined ? rest : { ...rest, tools })
+              }}
+            />
+          </Collapse>
+        </div>
+      )}
       <div className="helper-fold">
         <FoldHeader open={more} onOpenChange={setMore}>
           {COPY.more}

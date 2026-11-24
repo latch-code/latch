@@ -2,17 +2,17 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/server.ts`、`routes/`、`src/task-delta.ts`、`src/task-content.ts` | HTTP/SSE、认证、投影与限速（route-guards.test） |
+| `src/{server,task-delta,task-content}.ts`、`routes/` | HTTP/SSE、认证、投影与限速（route-guards.test） |
 | `src/native*.ts`、`relay/` | 原生连接、发现、墓碑与目录 |
 | `src/auth.ts`、`presence*.ts`、`agent-probes.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`model-*.ts`、`model-gateway/`、`risk.ts`、`paths.ts` | 登记、设备与本机确认；审计；`policy.json`；出站与模型网关；风险分级；路径 |
-| `src/{host-state,crypto,identity,hub,session-meta,prompt-queues,questions,config,providers}.ts`、`src/agent-*.ts` | 状态、锁、加密、回执与配置 |
+| `src/{host-state,crypto,identity,hub,session-meta,prompt-queues,questions,config,providers}.ts`、`src/agent-*.ts` | 状态、锁、加密与回执 |
 | `src/plugins/<种类>/<id>/` | 内置插件：`providers/` 下各协议与 `demo`（共用 `http.ts`、`service.ts`、`*-wire.ts`）、`tools/{workspace-files,safe-tools}`、`standard` |
-| `scripts/` | 启停、CLI、桌面启动与构建（`build-*.ts`） |
+| `scripts/` | 启停、CLI 与构建 |
 | `test/` | 夹具：`test/helpers/host.ts` |
 
 不变量：
 - 请求只信 `ListenerContext`，不信代理头（server.test）。
-- 先审计再执行：授予或执行权限的操作先写审计，写入失败就不执行；撤销、拒绝、取消、删除、移除权限与收紧策略从不因审计失败受阻（永久删除 Agent 的家除外），响应改带 `x-latch-audit: failed`。审计 detail 只含 ID、哈希、枚举、布尔与计数（`test/server.test.ts`）。
+- 授权与执行先写审计，失败即拒绝；撤销、拒绝、取消、删除与收紧照常（永久删除 Agent 的家除外），响应带 `x-latch-audit: failed`。审计 detail 只含 ID、哈希、枚举、布尔与计数（`test/server.test.ts`）。
 - 审计前后复核附言的 `run` 与私有权限。
 - 出站经注入的 `fetch` 和策略，限预置、已确认或固定的地址；密钥限绑定的源和路径，更新前与锁内复核所见目标（`test/providers.test.ts`）。
 - Standard 由 `classifyStandardCall` 分级；`requiresApproval` 不能降级，未列工具（含插件工具）、异常或未知值均按 R2（`test/risk.test.ts`）。
@@ -20,9 +20,10 @@
 - `latchCodeRoot()` 固定，自动工作区避开。
 - 同项目的变更与启动串行、跨项目不等，撤销和收紧仍可并行；旧会话保留冻结目录（`test/project-regressions.test.ts`）。
 - 确认只经 `PresenceService`，无设备签名批准。开发固定 CDHash，发布固定身份与审计，缺一须离线重新固定，运行前核验子进程（ARCHITECTURE）。
-- 终端限 `host.sock`、`run` 与 `all`，复核目录身份，环境用 `terminalEnvironment`。
+- 终端与助手工作电脑配置限 `host.sock`、`run`、`all`；终端复核目录身份，环境用 `terminalEnvironment`。
+- 助手改绑后凭原设备、请求 ID、请求体哈希核对已接收的发送或追加，缺证据保留未确认。
 - 本机 MCP 提示先审计、持久化来源再转发；远程拒绝（MCP.md）。
-- 构建禁测试代码；组件自检。私有框架限画面，输入限 idb Unix 套接字。
+- 构建禁测试代码；组件自检；私有框架限画面，输入走 idb Unix 套接字。
 - `work` 不见文件差异；扩展报告限 `admin`、普通来源。投影不改执行参数、回执、终态（STREAMING）。
 - `src/paths.ts`、`host-state.ts`、`env.ts` 只用可擦除语法（`tsconfig.strip.json`），供 Vite 与 Vitest 配置直接加载。
 - 附件字节只进私有存储，消息与 SSE 只存引用；上传逐块复查设备，下载句柄绑定设备（`test/attachment-routes.test.ts`）。

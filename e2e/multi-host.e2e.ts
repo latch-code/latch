@@ -295,7 +295,18 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
         })
         expect(remoteShell).toEqual({
           keys: ['about', 'computers', 'devMode', 'kind', 'lights', 'platform', 'remote', 'settings', 'spaces'],
-          computers: ['list', 'open', 'start', 'subscribe', 'subscribeSession', 'subscribeStart'],
+          computers: [
+            'isWorkspaceActive',
+            'list',
+            'open',
+            'start',
+            'subscribe',
+            'subscribeSession',
+            'subscribeStart',
+            'subscribeWorkspaceActive',
+            'switchTo',
+            'switchesInMainWindow',
+          ],
           remote: true,
         })
         const remoteView = await bPage.evaluate(() =>
@@ -338,16 +349,27 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
         expect(await bPage.evaluate(async () => (await fetch('/link/api/snapshot')).status)).toBe(200)
 
         // Another workbench can change its theme without recoloring this Mac's open About window.
-        const showAboutFrom = (source: Page) =>
-          app.evaluate(async ({ BrowserWindow, Menu }, url) => {
+        const showAboutFrom = async (source: Page) => {
+          const windowId = await app.evaluate(({ app, BrowserWindow }, url) => {
             const workbench = BrowserWindow.getAllWindows().find(window => window.webContents.getURL() === url)!
-            if (!workbench.isFocused())
-              await new Promise<void>(done => {
-                workbench.once('focus', done)
-                workbench.focus()
-              })
-            Menu.getApplicationMenu()!.getMenuItemById('about')!.click()
+            app.focus({ steal: true })
+            if (workbench.isMinimized()) workbench.restore()
+            workbench.show()
+            workbench.focus()
+            return workbench.id
           }, source.url())
+          await vi.waitFor(
+            async () => {
+              const focused = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getFocusedWindow()?.id)
+              expect(focused, 'The source workbench must have native focus before opening About').toBe(windowId)
+            },
+            { timeout: 5_000 },
+          )
+          await app.evaluate(({ BrowserWindow, Menu }, id) => {
+            if (BrowserWindow.getFocusedWindow()?.id !== id) throw new Error('The source workbench lost focus before opening About')
+            Menu.getApplicationMenu()!.getMenuItemById('about')!.click()
+          }, windowId)
+        }
         const aboutBackground = () =>
           app.evaluate(({ BrowserWindow }) =>
             BrowserWindow.getAllWindows()
@@ -539,7 +561,7 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
         // B removes this device: 已被移除, with only 移除 left to do here.
         expect((await b.raw('unix', `api/devices/${encodeURIComponent(mine.id)}`, { method: 'DELETE' })).status).toBe(200)
         await row.getByText('已被移除', { exact: true }).waitFor({ timeout: 60_000 })
-        expect(await exists(credentialFile)).toBe(false)
+        await vi.waitFor(async () => expect(await exists(credentialFile)).toBe(false))
         await shots('revoked')
 
         // 移除: the record, the credential and B's page storage go, and B's window closes.

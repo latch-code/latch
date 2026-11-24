@@ -9,6 +9,7 @@ import {
   AGENT_FILE_VERSION,
   AGENT_HUES,
   GENERAL_AGENT_ID,
+  CUSTOM_AGENT_ID,
   GENERAL_FACT_LIMITS,
   MODEL_EFFORT,
   type AgentAvatar,
@@ -52,7 +53,7 @@ import type { AuditActor, AuditLog } from './audit.ts'
 import { scheduleSchema } from './schedule.ts'
 import { HELPER_HOME_NAME, homeBelongsTo } from './session-folders.ts'
 
-export const CUSTOM_AGENT_ID = /^agt_[a-f0-9-]{36}$/u
+export { CUSTOM_AGENT_ID } from '@latch/protocol'
 const MAX_AGENTS = 64
 const MAX_MEMORIES = 128
 /** Per owner. Past it the oldest dismissed go first, then the oldest saved; pending ones are never dropped. */
@@ -97,7 +98,9 @@ const engineOptions = z.record(z.string().min(1).max(128), z.string().max(1024))
 const instructions = z.string().max(32_000)
 const skills = z.array(skillId).max(64).refine(unique)
 const tools = z.array(pluginId).max(64).refine(unique)
+const workComputer = z.strictObject({ hostId: z.string().regex(/^[a-z2-7]{52}$/u), agentId })
 const config = z.strictObject({
+  workComputer: workComputer.optional(),
   name,
   description: z
     .string()
@@ -123,6 +126,7 @@ const avatar = z.discriminatedUnion('kind', [
 const notifications = z.strictObject({ completed: z.boolean(), failed: z.boolean(), waiting: z.boolean() })
 const createSchema = config.extend({ requestId, avatar: faceAvatar.optional() })
 const patchSchema = z.strictObject({
+  workComputer: workComputer.nullable().optional(),
   name: name.optional(),
   description: z
     .string()
@@ -451,6 +455,13 @@ export class CustomAgents {
   list(): CustomAgent[] {
     return this.journal.read().agents as CustomAgent[]
   }
+  worksElsewhere(id: string | undefined): boolean {
+    return id !== undefined && this.journal.read().agents.some(agent => agent.id === id && agent.workComputer)
+  }
+  /** A missing owner is handled separately by each workflow (including read-only history). */
+  assertWorksHere(id: string | undefined): void {
+    if (this.worksElsewhere(id)) throw new AppError(409, 'agent-work-computer', '请在这个助手的工作电脑上继续。')
+  }
   get(id: string): CustomAgent {
     const found = this.journal.read().agents.find(agent => agent.id === id)
     if (!found) throw missing()
@@ -681,6 +692,7 @@ export class CustomAgents {
       mode,
       model: selected,
       engineOptions,
+      workComputer: destination,
     } = this.get(owner)
     return digest({
       id,
@@ -690,6 +702,7 @@ export class CustomAgents {
       harness,
       mode,
       model: selected ?? null,
+      ...(destination ? { workComputer: destination } : {}),
       ...(engineOptions ? { engineOptions } : {}),
       memories,
     })
@@ -715,7 +728,7 @@ export class CustomAgents {
     }).then(result => ({ ...result, value: this.get(result.value) }))
   }
 
-  patch(id: string, input: CustomAgentPatch, actor: AgentActor): Promise<AgentMutation<CustomAgent>> {
+  patch(id: string, input: CustomAgentPatch, actor: AgentActor, pauseSchedules?: () => Promise<void>): Promise<AgentMutation<CustomAgent>> {
     agentId.parse(id)
     const parsed = patchSchema.parse(input)
     return this.mutate('update', 'agent', id, parsed, actor, state => {
@@ -731,6 +744,7 @@ export class CustomAgents {
         engineOptions: nextOptions,
         tools: nextTools,
         defaultProjectId: project,
+        workComputer: destination,
         notifications: nextNotifications,
         keepAwakeForSchedules: wake,
         generalFacts: knows,
@@ -746,7 +760,12 @@ export class CustomAgents {
       assign(found, 'engineOptions', nextOptions)
       assign(found, 'tools', nextTools)
       assign(found, 'defaultProjectId', project)
-      return { target: id, customAgentId: id }
+      const moves =
+        destination !== undefined
+        && (found.workComputer?.hostId !== destination?.hostId || found.workComputer?.agentId !== destination?.agentId)
+      if (moves && !pauseSchedules) throw new AppError(503, 'agent-write-unknown', '尚未确认原电脑上的定时任务已暂停。')
+      assign(found, 'workComputer', destination)
+      return { target: id, customAgentId: id, ...(moves && pauseSchedules ? { beforeCommit: pauseSchedules } : {}) }
     }).then(result => ({ ...result, value: this.get(id) }))
   }
 
@@ -1491,6 +1510,8 @@ export class CustomAgents {
       target: string
       customAgentId?: string
       via?: 'proposal' | 'undo' | 'own'
+      /** A scope reduction that must be durable before this agent change becomes visible. */
+      beforeCommit?: () => Promise<void>
       /** The audit record in place of `agent.changed`. */
       record?: { action: 'agent.imported'; detail: { customAgentId: string; memories: number; schedules: number; fileHash: string } }
     },
@@ -1532,6 +1553,10 @@ export class CustomAgents {
         } catch (error) {
           if (!lowering) throw error
           audited = false
+        }
+        if (result.beforeCommit) {
+          actor.authorize()
+          await result.beforeCommit()
         }
         const stored = { hash: payload, target: result.target, audited }
         state.receipts[key] = stored

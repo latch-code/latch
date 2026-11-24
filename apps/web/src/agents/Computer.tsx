@@ -11,6 +11,7 @@ import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
 const COPY = defineCopy(
   {
     computer: '电脑',
+    original: '原电脑',
     loading: '正在读取',
     missedNote: 'Mac 睡眠、关机或 Latch 没有运行时，定时任务不会运行，醒来后也不补跑。',
     missedSchedules: '错过的定时',
@@ -28,6 +29,7 @@ const COPY = defineCopy(
   },
   {
     computer: 'Computer',
+    original: 'Original computer',
     loading: 'Loading',
     missedNote:
       'Schedules skip runs while the Mac is asleep or shut down, or while Latch is closed. Missed runs aren’t started after wake.',
@@ -89,10 +91,11 @@ export function ComputerSection({
   })
   const locked = disabled || writes.saving || writes.held
   const runLocked = disabled || scheduleWrites.saving || scheduleWrites.held
+  const heading = agent?.workComputer ? COPY.original : COPY.computer
   const keepAwakeState = agent ? writeFor(writes.state, `keep-awake:${agent.id}`) : null
   return (
-    <div className="agent-profile-section agent-computer" aria-label={COPY.computer} role="group">
-      <h3>{COPY.computer}</h3>
+    <div className="agent-profile-section agent-computer" aria-label={heading} role="group">
+      <h3>{heading}</h3>
       <div className="agent-computer-card">
         <div className="agent-computer-row">
           <Icon icon={Laptop} size={16} className="agent-computer-icon" />

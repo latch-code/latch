@@ -324,10 +324,10 @@ it('keeps one profile, unsaved defaults, focus and an unknown write across deskt
       engineOptions: { model: 'large', effort: 'high', mode: 'plan' },
     })
     await panel.getByRole('button', { name: '尚未保存', exact: true }).click()
-    await panel.getByRole('radio', { name: '记忆', exact: true }).click()
+    await panel.getByRole('tab', { name: '记忆', exact: true }).click()
     for (const width of [390, 1440]) {
       await page.setViewportSize({ width, height: 1024 })
-      await expect.poll(() => panel.getByRole('radio', { name: '记忆', exact: true }).getAttribute('aria-checked')).toBe('true')
+      await expect.poll(() => panel.getByRole('tab', { name: '记忆', exact: true }).getAttribute('aria-selected')).toBe('true')
     }
     await panel.getByRole('button', { name: '关闭资料', exact: true }).click()
     await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains('agent-frame-who'))).toBe(true)

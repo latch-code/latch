@@ -545,6 +545,7 @@ const fixture: HarnessPlugin = {
   version: '1',
   description: '',
   activate(context) {
+    context.registerSkill({ id: 'digest', name: '摘要清单', description: '把资料整理成一页摘要', content: 'Draft a one-page summary.' })
     context.registerProvider({
       id: 'helper-fixture',
       name: 'Helper fixture',
@@ -627,6 +628,48 @@ async function shoot(page: Page, name: string) {
   await noHorizontalOverflow(page)
   await page.screenshot({ path: `${OUT}/${name}.png` })
 }
+
+it('assembles an assistant from a skill and an explicit plugin scope before its first job', async () => {
+  const host = await startTestHost({ plugins: [fixture] })
+  const browser = await chromium.launch(browserLaunchOptions())
+  try {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark', reducedMotion: 'reduce' })
+    const owner = await host.enroll({ listener: 'unix' })
+    const page = await context.newPage()
+    page.setDefaultTimeout(15_000)
+    await fullScopeBrowser(page, host, owner, '能力验收')
+    await place(page, '我的 Agent').click()
+    await page.getByRole('button', { name: '新建 Agent', exact: true }).filter({ visible: true }).first().click()
+    const form = page.getByRole('form', { name: '新建 Agent' })
+    await form.getByLabel('名字', { exact: true }).fill('读书助手')
+    await form.getByLabel('职责', { exact: true }).fill('把阅读笔记整理成一页摘要')
+    await page.getByRole('list', { name: '候选' }).getByRole('button', { name: 'Latch 内置', exact: true }).click()
+    expect(await form.getByLabel('名字', { exact: true }).inputValue()).toBe('读书助手')
+    await form.getByRole('button', { name: '技能与工具', exact: true }).click()
+    await form.getByRole('checkbox', { name: /摘要清单/u }).check()
+    await form.getByRole('checkbox', { name: '全部已启用的插件', exact: true }).uncheck()
+    const plugins = (await owner.json<CustomAgentList>('custom-agents')).plugins.filter(plugin =>
+      plugin.capabilities.some(cap => cap.startsWith('tool:')),
+    )
+    expect(plugins.length).toBeGreaterThan(0)
+    for (const plugin of plugins) await form.getByRole('checkbox', { name: plugin.name, exact: true }).uncheck()
+    await mkdir(OUT, { recursive: true })
+    await page.setViewportSize({ width: 768, height: 1024 })
+    await shoot(page, 'assemble-768-dark')
+    await form.getByRole('button', { name: '创建', exact: true }).click()
+    await page.getByRole('textbox', { name: '给读书助手发消息', exact: true }).waitFor()
+    const agent = (await owner.json<CustomAgentList>('custom-agents')).agents.find(item => item.name === '读书助手')!
+    expect((await owner.json<{ agent: CustomAgent }>(`custom-agents/${agent.id}`)).agent).toMatchObject({
+      description: '把阅读笔记整理成一页摘要',
+      skills: ['helper-fixture:digest'],
+      tools: [],
+    })
+    await context.close()
+  } finally {
+    await browser.close()
+    await host.close()
+  }
+})
 
 it('creates a helper in two steps, talks to it as a person, and changes its model only in 资料 › 设置', async () => {
   await mkdir(OUT, { recursive: true })

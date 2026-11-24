@@ -22,6 +22,8 @@ export const SESSION_META_FILE = 'sessions-meta.json'
 export const RECEIPT_TTL_MS = 7 * 24 * 60 * 60 * 1000
 export const RECEIPTS_PER_DEVICE = 10_000
 export const MAX_RECEIPTS = 100_000
+/** Agent prompt proofs must not consume space reserved for approval, cancel, or config receipts. */
+const MAX_AGENT_PROMPTS = 4096
 /** Sessions with metadata the file holds; receipt-only entries come on top, so the read limit covers both. */
 const MAX_META_SESSIONS = 100_000
 /** `TaskSummary.runId` as the Host accepts it in a cancel; the Hub drops a driver's run ID of any other form. */
@@ -145,6 +147,13 @@ const gitReceiptSchema = z.strictObject({
   at: isoTime,
 })
 const receiptSchema = z.discriminatedUnion('kind', [approvalReceiptSchema, cancelReceiptSchema, configReceiptSchema, gitReceiptSchema])
+const agentPromptSchema = z.strictObject({
+  sessionId: z.string().min(1).max(256),
+  requestId: requestIdText,
+  deviceId: deviceIdText,
+  payloadHash: hex64Text,
+  outcome: z.enum(['accepted', 'steered']),
+})
 
 /** A tag as `normalizeBoardTags` leaves it: 1–24 code points, no control characters or line breaks. */
 const tagText = z.string().refine(value => {
@@ -249,6 +258,7 @@ const sessionEntrySchema = z.object({
 const metaSchema = z.object({
   version: z.literal(1),
   sessions: z.array(sessionEntrySchema).max(MAX_META_SESSIONS + MAX_RECEIPTS),
+  agentPrompts: z.array(z.unknown()).max(MAX_AGENT_PROMPTS).optional(),
 })
 
 export type ApprovalRecord = z.infer<typeof approvalReceiptSchema>
@@ -256,6 +266,7 @@ export type CancelRecord = z.infer<typeof cancelReceiptSchema>
 export type ConfigRecord = z.infer<typeof configReceiptSchema>
 export type GitRecord = z.infer<typeof gitReceiptSchema>
 export type StoredReceipt = ApprovalRecord | CancelRecord | ConfigRecord | GitRecord
+type AgentPromptRecord = z.infer<typeof agentPromptSchema>
 /**
  * The plugin page that started a session: its plugin record (`install`), and the permission level and mode the session
  * started with, so a page cannot drive a session a person widened.
@@ -333,6 +344,9 @@ interface Entry {
 
 /** What the Host reads and records about approval decisions and cancels. */
 export interface SessionReceipts {
+  /** An accepted request of a custom Agent, even after its work computer changed. */
+  agentPrompt(sessionId: string, requestId: string): AgentPromptRecord | undefined
+  recordAgentPrompt(input: AgentPromptRecord): Promise<void>
   /** The recorded decision on an approval, from any device. */
   approval(approvalId: string): { sessionId: string; record: ApprovalRecord } | undefined
   /** A cancel this device sent on this session with this `requestId`. */
@@ -359,6 +373,10 @@ function cancelKey(sessionId: string, deviceId: string, requestId: string): stri
   return `${sessionId}\n${deviceId}\n${requestId}`
 }
 
+function agentPromptKey(sessionId: string, requestId: string): string {
+  return `${sessionId}\n${requestId}`
+}
+
 export interface SessionMetaOptions {
   now?: () => number
   log?: (message: string) => void
@@ -380,6 +398,7 @@ export class SessionMetaStore implements SessionReceipts {
   private readonly configs = new Map<string, Entry>()
   private readonly gits = new Map<string, Entry>()
   private readonly perDevice = new Map<string, number>()
+  private readonly agentPrompts = new Map<string, AgentPromptRecord>()
 
   private constructor(
     private readonly path: string,
@@ -398,6 +417,7 @@ export class SessionMetaStore implements SessionReceipts {
     }
     const meta = new Map<string, StoredMeta>()
     const loaded: Entry[] = []
+    const agentPrompts: AgentPromptRecord[] = []
     let skipped = 0
     if (text !== undefined) {
       let parsed: z.infer<typeof metaSchema>
@@ -405,6 +425,11 @@ export class SessionMetaStore implements SessionReceipts {
         parsed = metaSchema.parse(JSON.parse(text))
       } catch {
         throw new AppError(500, 'config-corrupt', `会话设置文件 ${path} 无法读取，原文件已保留；请修复或移走后重启`)
+      }
+      for (const value of parsed.agentPrompts ?? []) {
+        const record = agentPromptSchema.safeParse(value)
+        if (record.success) agentPrompts.push(record.data)
+        else skipped++
       }
       for (const { id, receipts, ...fields } of parsed.sessions) {
         if (Object.keys(fields).length) meta.set(id, fields)
@@ -421,6 +446,7 @@ export class SessionMetaStore implements SessionReceipts {
       }
     }
     const store = new SessionMetaStore(path, dataDir, meta, options.now ?? Date.now)
+    for (const record of agentPrompts) store.agentPrompts.set(agentPromptKey(record.sessionId, record.requestId), record)
     loaded.sort((a, b) => Date.parse(a.receipt.at) - Date.parse(b.receipt.at))
     const configDevices = new Map<string, number>()
     for (const entry of loaded) {
@@ -481,6 +507,7 @@ export class SessionMetaStore implements SessionReceipts {
   has(sessionId: string): boolean {
     if (this.meta.has(sessionId)) return true
     for (const entry of this.entries) if (entry.sessionId === sessionId) return true
+    for (const record of this.agentPrompts.values()) if (record.sessionId === sessionId) return true
     return false
   }
 
@@ -502,7 +529,20 @@ export class SessionMetaStore implements SessionReceipts {
   remove(sessionId: string): Promise<void> {
     // Deleting the entry being visited is safe for a Set: iteration continues with the next one.
     for (const entry of this.entries) if (entry.sessionId === sessionId) this.delete(entry)
+    for (const [key, record] of this.agentPrompts) if (record.sessionId === sessionId) this.agentPrompts.delete(key)
     return this.update(sessionId, () => undefined)
+  }
+
+  agentPrompt(sessionId: string, requestId: string): AgentPromptRecord | undefined {
+    return this.agentPrompts.get(agentPromptKey(sessionId, requestId))
+  }
+
+  async recordAgentPrompt(input: AgentPromptRecord): Promise<void> {
+    const record = agentPromptSchema.parse(input)
+    const key = agentPromptKey(record.sessionId, record.requestId)
+    if (!this.agentPrompts.has(key)) this.agentPrompts.set(key, record)
+    if (this.agentPrompts.size > MAX_AGENT_PROMPTS) this.agentPrompts.delete(this.agentPrompts.keys().next().value!)
+    await this.saveReceipts()
   }
 
   approval(approvalId: string): { sessionId: string; record: ApprovalRecord } | undefined {
@@ -520,6 +560,10 @@ export class SessionMetaStore implements SessionReceipts {
   record(sessionId: string, receipt: ApprovalRecord | CancelRecord): Promise<void> {
     this.insert({ sessionId, receipt: structuredClone(receipt) })
     this.prune()
+    return this.saveReceipts()
+  }
+
+  private saveReceipts(): Promise<void> {
     // The write reads the receipts when it starts, so every receipt recorded before then is in it.
     this.pendingWrite ??= this.enqueue(async () => {
       this.pendingWrite = undefined
@@ -654,6 +698,9 @@ export class SessionMetaStore implements SessionReceipts {
     }
     const sessions = [...meta].map(([id, fields]) => ({ id, ...fields, ...(receipts.has(id) ? { receipts: receipts.get(id) } : {}) }))
     for (const [id, list] of receipts) if (!meta.has(id)) sessions.push({ id, receipts: list })
-    await writeFileAtomic(this.path, JSON.stringify({ version: 1, sessions }) + '\n', { prefix: `${SESSION_META_FILE}.` })
+    const agentPrompts = [...this.agentPrompts.values()]
+    await writeFileAtomic(this.path, JSON.stringify({ version: 1, sessions, ...(agentPrompts.length ? { agentPrompts } : {}) }) + '\n', {
+      prefix: `${SESSION_META_FILE}.`,
+    })
   }
 }

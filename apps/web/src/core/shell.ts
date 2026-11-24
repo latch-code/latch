@@ -264,6 +264,13 @@ export type ComputerResult = { ok: true; hostId?: string; revokedThere?: boolean
 export interface ShellComputers {
   list(): Promise<ComputersView | undefined>
   subscribe(callback: (view: ComputersView) => void): () => void
+  /** Select a computer in the primary workbench without opening a separate window. */
+  switchTo?(hostId: string): Promise<ComputerResult>
+  /** A separate computer window switches in the primary workbench. */
+  switchesInMainWindow?: true
+  /** Whether this page is selected in its window. A covered workspace can still be visible to Chromium. */
+  isWorkspaceActive?(): Promise<boolean | undefined>
+  subscribeWorkspaceActive?(callback: (active: boolean) => void): () => void
   /** On this Mac's page `taskId` opens a session that waits on that computer (an item of its `waiting`). */
   open(hostId: string, taskId?: string): Promise<ComputerResult>
   /** Another computer's page: a session of its own Host that main was asked to open. */
@@ -271,7 +278,10 @@ export interface ShellComputers {
   /** 新会话 on that computer: its own window comes forward on its start screen; nothing typed goes along. */
   start?(hostId: string): Promise<ComputerResult>
   /** Another window asked this page to show its start screen. */
-  subscribeStart?(callback: () => void): () => void
+  subscribeStart?(callback: (agentId?: string) => void): () => void
+  /** Native picker on this Mac. The rest of the target's roster never enters this page. */
+  pickWorkAgent?(hostId: string): Promise<ComputerResult & { agentId?: string }>
+  openWorkAgent?(hostId: string, agentId: string, owner: string): Promise<ComputerResult>
   add?(source: 'clipboard' | 'file'): Promise<ComputerResult>
   cancelAdd?(): Promise<ComputerResult>
   trustCertificate?(hostId: string): Promise<ComputerResult>

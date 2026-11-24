@@ -153,13 +153,13 @@ export const canDelegate = (snapshot: Pick<AppSnapshot, 'device' | 'catalog'>, a
  */
 export function agentActivity(
   snapshot: Pick<AppSnapshot, 'tasks' | 'approvals'>,
-  agent: Pick<CustomAgentSummary, 'id' | 'available'>,
+  agent: Pick<CustomAgentSummary, 'id' | 'available' | 'workComputer'>,
 ): AvatarState {
   const own = snapshot.tasks.filter(task => topicOwner(task) === agent.id)
   const asking = new Set(snapshot.approvals.map(approval => approval.sessionId))
   if (own.some(task => waitsOnYou(task) || (asking.has(task.id) && task.status === 'running'))) return 'waiting'
   if (own.some(task => task.status === 'running' || task.status === 'waiting-approval')) return 'running'
-  if (!agent.available) return 'resting'
+  if (!agent.available && !agent.workComputer) return 'resting'
   const latest = own
     .filter(task => !task.archived)
     .reduce<TaskSummary | undefined>((found, task) => (!found || task.updatedAt > found.updatedAt ? task : found), undefined)

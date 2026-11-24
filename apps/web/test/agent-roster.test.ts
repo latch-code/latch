@@ -347,10 +347,20 @@ describe('what the rows draw', () => {
     expect(html).not.toContain('小满')
   })
 
-  it('says there are no Agents yet beside 通用, which is always there', () => {
+  it('labels a work computer destination while keeping a pending local approval reachable', () => {
+    const remote = agent('remote', '云助手', { available: false, workComputer: { hostId: 'a'.repeat(52), agentId: 'agt_123' } })
+    const task = topic('wait', 'remote', 5, { status: 'waiting-approval' })
+    const state = { ...shell().snapshot, tasks: [task], customAgents: [remote] }
+    const html = list({ snapshot: state })
+    expect(html).toContain('工作电脑')
+    expect(html).not.toContain('data-unavailable=')
+    expect(html).toContain('等你点头')
+  })
+
+  it('lists General alone on first use', () => {
     const none = { ...snapshot([], []), device: { id: 'd1', dataScope: 'all' } }
     const html = list({ snapshot: none, selectedId: null } as never)
-    expect(html).toContain('还没有自己的 Agent')
+    expect(html).not.toContain('还没有自己的 Agent')
     expect(html).toContain('通用')
   })
 
@@ -460,8 +470,7 @@ describe('the 总览 while the Host withholds the list of Agents', () => {
       lifecycle: {},
       audit: {},
     } as unknown as ShellState
-    const data = agentsHomeData(shell)
-    return renderToStaticMarkup(createElement(AgentsHome, { shell, data, emptyInOverview: data.empty === 'no-agents' }))
+    return renderToStaticMarkup(createElement(AgentsHome, { shell }))
   }
   const waiting = topic('m1', 'man', 3, { status: 'waiting-approval', live: live('approval') })
 
@@ -477,7 +486,32 @@ describe('the 总览 while the Host withholds the list of Agents', () => {
 
   it('shows the skeleton only while there is nothing to draw, and the empty state only once the list is known', () => {
     expect(home(undefined, [])).toContain('agents-home-loading')
-    expect(home([], [])).toContain('还没有自己的 Agent')
+    expect(home([], [])).toContain('这台设备可以查看已有的聊天。')
+    expect(home([], [])).not.toContain('和通用聊聊')
     expect(home([], [])).not.toContain('agents-home-loading')
   })
+})
+
+it('resumes only the latest chat selected by the Host, ignoring newer retired, archived and scheduled work', () => {
+  const tasks = [
+    topic('mine', 'a', 1),
+    topic('gen', 'general', 2),
+    topic('old', 'a', 8),
+    topic('run', 'a', 9, { automationId: 'schedule' }),
+    topic('arch', 'b', 10, { archived: true }),
+  ]
+  const state = {
+    snapshot: {
+      ...snapshot(tasks, [agent('a', 'A'), agent('b', 'B')]),
+      catalog: { features: { singleAgentChat: true } },
+      agentChats: {
+        a: { state: 'ready', sessionId: 'mine' },
+        general: { state: 'ready', sessionId: 'gen' },
+        b: { state: 'ready', sessionId: 'arch' },
+      },
+    },
+    stopping: new Set<string>(),
+  } as unknown as Pick<ShellState, 'snapshot' | 'stopping'>
+  expect(agentsHomeData(state).recent?.id).toBe('gen')
+  expect(agentsHomeData({ ...state, snapshot: { ...state.snapshot, agentChats: {} } }).recent).toBeUndefined()
 })

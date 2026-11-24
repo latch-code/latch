@@ -611,6 +611,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       { harnessId: 'codex', engineOptions: { model: 'gpt-fixture', '~mode': 'danger-full-access' }, chooseAgain: ['codex'] },
       {
         harnessId: 'codex',
+        name: '简报助手',
+        description: '每周整理发布摘要',
         model: { providerId: 'chat', model: 'm1' },
         engineOptions: { '~mode': 'danger-full-access' },
         chooseAgain: ['standard'],
@@ -718,6 +720,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(rows[0]!.body).not.toHaveProperty('model')
     expect(rows[0]!.body).not.toHaveProperty('engineOptions')
     expect(rows[0]!.body).not.toHaveProperty('defaultProjectId')
+    expect(rows[2]!.body).toMatchObject({ name: '简报助手', description: '每周整理发布摘要', harnessId: 'standard' })
     expect(rows[1]!.body).toMatchObject({ engineOptions: { model: 'gpt-fixture', '~mode': 'danger-full-access' } })
     expect(rows[2]!.body).not.toHaveProperty('model')
     expect(rows[2]!.body).not.toHaveProperty('engineOptions')
@@ -6971,6 +6974,18 @@ S4 -->|是\n继续| End["保留\\n"]`
         { ...catalog, harnesses: harnesses.filter(item => item.id !== 'standard') },
         { ...catalog, harnesses: harnesses.map(item => (item.id === 'standard' ? { ...item, status: 'unavailable' } : item)) },
       ],
+      destinationCases: [
+        {},
+        { workComputer: { hostId: 'a'.repeat(52), agentId: daily } },
+        { workComputer: { hostId: 'a'.repeat(8), agentId: daily } },
+        { workComputer: { hostId: 'a'.repeat(52), agentId: 'general' } },
+        { workComputer: null },
+      ],
+      registrations: [
+        ['a'.repeat(52), 'b'.repeat(52)],
+        ['a'.repeat(51) + 'b', 'b'.repeat(52)],
+        ['a'.repeat(52), 'a'.repeat(52)],
+      ].map(([registered, source]) => ({ registered, source, agent: { workComputer: { hostId: 'a'.repeat(52), agentId: daily } } })),
       memoryOwner: review,
       memory,
       proposals: { proposals },
@@ -7082,6 +7097,14 @@ S4 -->|是\n继续| End["保留\\n"]`
       { harness: 'standard', block: 'Latch 内置暂不可用', fields: null },
       { harness: 'standard', block: 'Latch 内置暂不可用', fields: null },
     ])
+    expect(result.destinations).toEqual([
+      { route: ['local'], canStart: true },
+      { route: ['a'.repeat(52), daily], canStart: false },
+      { route: ['invalid'], canStart: false },
+      { route: ['invalid'], canStart: false },
+      { route: ['invalid'], canStart: false },
+    ])
+    expect(result.matchedAgents).toEqual([daily, '', ''])
     expect(result.entries).toEqual([
       {
         id: 'general',

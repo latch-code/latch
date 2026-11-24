@@ -21,9 +21,13 @@ const holdEarlyRemoteSession = (_event, sessionId) => {
   if (typeof sessionId === 'string' && SESSION_ID.test(sessionId)) earlyRemoteSession = sessionId
 }
 // 新会话 on this computer, asked from another window before this page subscribed: waits for the first subscriber.
-let earlyStart = false
-const holdEarlyStart = () => {
-  earlyStart = true
+// true is the session start screen; an ID or "new" opens the Agent page on this computer.
+let earlyStart
+const validWorkAgent = value => typeof value === 'string' && value !== 'general' && AGENT_ID.test(value)
+const startTarget = value => (value === undefined ? true : value === 'new' || validWorkAgent(value) ? value : undefined)
+const holdEarlyStart = (_event, value) => {
+  const target = startTarget(value)
+  if (target !== undefined) earlyStart = target
 }
 ipcRenderer.on('latch:computers:start-here', holdEarlyStart)
 const INVALID = Object.freeze({ status: 'failed', code: 'invalid' })
@@ -497,7 +501,22 @@ function computersApi(full) {
             .invoke('latch:computers:open', hostId, ...(full && typeof taskId === 'string' && SESSION_ID.test(taskId) ? [taskId] : []))
             .then(computerResult)
         : Promise.resolve(computerResult(undefined)),
+    switchTo: hostId =>
+      typeof hostId === 'string' && HOST_ID.test(hostId)
+        ? ipcRenderer.invoke('latch:computers:switch', hostId).then(computerResult)
+        : Promise.resolve(computerResult(undefined)),
+    isWorkspaceActive: () =>
+      ipcRenderer.invoke('latch:computers:workspace-active').then(value => (typeof value === 'boolean' ? value : undefined)),
+    subscribeWorkspaceActive: callback => {
+      if (typeof callback !== 'function') return () => {}
+      const listener = (_event, value) => {
+        if (typeof value === 'boolean') callback(value)
+      }
+      ipcRenderer.on('latch:computers:workspace-active', listener)
+      return () => ipcRenderer.removeListener('latch:computers:workspace-active', listener)
+    },
   }
+  if (!full && process.argv.includes('--latch-switch-in-main-window')) api.switchesInMainWindow = true
   /** 新会话 on that computer: its own window comes forward on its start screen; nothing typed goes along. */
   api.start = hostId =>
     typeof hostId === 'string' && HOST_ID.test(hostId)
@@ -506,12 +525,17 @@ function computersApi(full) {
   /** Another window asked this one to show its start screen. */
   api.subscribeStart = callback => {
     if (typeof callback !== 'function') return () => {}
-    const listener = () => callback()
+    const deliver = target => (target === true ? callback() : callback(target))
+    const listener = (_event, value) => {
+      const target = startTarget(value)
+      if (target !== undefined) deliver(target)
+    }
     ipcRenderer.removeListener('latch:computers:start-here', holdEarlyStart)
     ipcRenderer.on('latch:computers:start-here', listener)
-    if (earlyStart) {
-      earlyStart = false
-      callback()
+    if (earlyStart !== undefined) {
+      const target = earlyStart
+      earlyStart = undefined
+      deliver(target)
     }
     return () => ipcRenderer.removeListener('latch:computers:start-here', listener)
   }
@@ -534,6 +558,20 @@ function computersApi(full) {
       return () => ipcRenderer.removeListener('latch:computers:session', listener)
     }
   if (full) {
+    /** Choosing returns only the one assistant picked in the native menu. Opening never takes a free-form route. */
+    api.pickWorkAgent = hostId =>
+      typeof hostId === 'string' && HOST_ID.test(hostId)
+        ? ipcRenderer.invoke('latch:computers:work-agent', hostId).then(value => {
+            if (value?.ok !== true || (value.hostId === undefined && value.agentId === undefined)) return computerResult(value)
+            return value.hostId === hostId && validWorkAgent(value.agentId)
+              ? { ok: true, hostId, agentId: value.agentId }
+              : computerResult(undefined)
+          })
+        : Promise.resolve(computerResult(undefined))
+    api.openWorkAgent = (hostId, agentId, owner) =>
+      typeof hostId === 'string' && HOST_ID.test(hostId) && validWorkAgent(agentId) && validWorkAgent(owner)
+        ? ipcRenderer.invoke('latch:computers:work-agent', hostId, agentId, owner).then(computerResult)
+        : Promise.resolve(computerResult(undefined))
     /** `clipboard`: the link another computer's 复制链接 put there; `file`: a code file chosen in the system's panel. */
     api.add = source => ipcRenderer.invoke('latch:computers:add', source === 'file' ? 'file' : 'clipboard').then(computerResult)
     api.cancelAdd = () => ipcRenderer.invoke('latch:computers:cancel-add').then(computerResult)

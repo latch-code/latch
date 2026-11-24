@@ -166,6 +166,12 @@
   margin-top: var(--sp-4);
   border-top: 1px solid var(--line-strong);
 }
+.computer-pop-destination {
+  padding: var(--sp-4) var(--sp-10);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
 .computer-pop-other {
   min-height: 44px;
   padding-block: var(--sp-4);

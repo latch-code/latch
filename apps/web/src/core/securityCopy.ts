@@ -81,12 +81,11 @@ export interface Brief {
 }
 
 /**
- * The computer a go-there sentence sends a person on another device to: its own name (`snapshot.hostName`), or 「Mac」
- * where the page does not know it (the connection page, an older Host) or the name would need escaping. The Latch app on
- * that computer says 「这台 Mac」 instead (`computerLabel`).
+ * The computer's own name (`snapshot.hostName`), or a display fallback if the name is missing or would need escaping.
+ * A sentence sending another device there defaults to 「Mac」; the local phrasing is in `computerLabel`.
  */
-export function computerName(hostName?: string): string {
-  return typeof hostName === 'string' && isAcceptableDeviceName(hostName) ? hostName.trim() : 'Mac'
+export function computerName(hostName?: string, fallback = 'Mac'): string {
+  return typeof hostName === 'string' && isAcceptableDeviceName(hostName) ? hostName.trim() : fallback
 }
 
 const COMPUTER_COPY = defineCopy(
@@ -1709,6 +1708,7 @@ const FIXED = defineCopy<Record<string, string>>(
     'offline-code-invalid': '离线连接码无效或已过期',
     'approval-settled': '该审批已结束',
     'fingerprint-mismatch': '这台设备的密钥和 Mac 读到的不一致，已停止连接。',
+    'work-computer-unavailable': '无法打开该助手。请检查工作电脑上的 Latch 版本、助手和本设备的查看与运行权限。',
     'host-unavailable': '连不上这台 Mac 上的 Latch，请确认它还在运行。',
     'credential-store-failed': '无法安全保存设备凭据，连接未完成。',
     'browser-open-unsupported': `此系统上不能从 Latch 应用直接打开浏览器，请运行 ${LATCH_COMMAND} device invite --loopback。`,
@@ -1772,6 +1772,8 @@ const FIXED = defineCopy<Record<string, string>>(
     'offline-code-invalid': 'The offline code is invalid or has expired',
     'approval-settled': 'This approval has already ended',
     'fingerprint-mismatch': 'This device’s key does not match what the Mac read. Connection stopped.',
+    'work-computer-unavailable':
+      'Cannot open this assistant. Check the Latch version, assistant, and this device’s view and run access on the work computer.',
     'host-unavailable': 'Cannot reach Latch on this Mac. Check that it is still running.',
     'credential-store-failed': 'The device credential could not be saved safely, so the connection did not finish.',
     'browser-open-unsupported': `The Latch app cannot open a browser on this system. Run ${LATCH_COMMAND} device invite --loopback.`,
@@ -1821,6 +1823,7 @@ const EXTRA_FAILURES: Readonly<Record<string, string>> = defineCopy(
     'certificate-refused': '这个地址上的服务器没能证明它是那台电脑，新证书没有被信任。',
     'computer-not-found': '找不到这台电脑。',
     'computer-refused': '无法添加这台电脑，请在「设置 › 电脑」中检查。',
+    'computer-switch-failed': '无法切换到这台电脑，请重试。',
     'computers-read-only': '打不开设备凭据，电脑列表只能查看。检查后重新打开 Latch。',
     forbidden: 'Latch 拒绝了这次请求。',
     'gesture-required': '请在 Latch 页面上点按后再试。',
@@ -1889,6 +1892,7 @@ const EXTRA_FAILURES: Readonly<Record<string, string>> = defineCopy(
     'certificate-refused': 'The server could not prove its identity. Latch did not trust the new certificate.',
     'computer-not-found': 'This computer could not be found.',
     'computer-refused': 'Latch cannot add this computer. Check it in Settings › Computers.',
+    'computer-switch-failed': 'Couldn’t switch to this computer. Try again.',
     'computers-read-only':
       'The computer list is read-only because its device credentials could not be opened. Check them and reopen Latch.',
     forbidden: 'Latch refused this request.',
@@ -1970,6 +1974,8 @@ const HOST_REFUSALS: Readonly<Record<string, string>> = defineCopy<Record<string
     'native-verification-invalid': '验证已过期或无效，请在手机上重新验证。',
     'native-verification-superseded': '这次验证已被更新的一次替换，请在手机上重新验证。',
     // What a device may see and do.
+    'agent-work-computer': '请在这个助手的工作电脑上继续。',
+    'agent-work-computer-local': '请选择另一台电脑，或清除工作电脑以使用本机。',
     'agent-scope-required': '这台设备不能看全部数据。',
     'file-scope': '这台设备不能浏览项目文件。',
     'history-scope': '接入已有会话需要这台设备能查看全部数据。',
@@ -2063,6 +2069,8 @@ const HOST_REFUSALS: Readonly<Record<string, string>> = defineCopy<Record<string
     'native-identity-required': 'The phone connection has no identity. Pair again.',
     'native-verification-invalid': 'Verification expired or is invalid. Verify again on the phone.',
     'native-verification-superseded': 'A newer verification replaced this one. Verify again on the phone.',
+    'agent-work-computer': 'Continue on this assistant’s work computer.',
+    'agent-work-computer-local': 'Select another computer, or clear the work computer to use this one.',
     'agent-scope-required': 'This device cannot view all data.',
     'file-scope': 'This device cannot browse project files.',
     'history-scope': 'Adding existing sessions needs a device that can view all data.',

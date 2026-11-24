@@ -359,6 +359,8 @@ export class Automations {
   private readonly settling = new Map<string, number>()
   /** Agents being saved, by ID and `''` for 通用, with how many saves are in progress. */
   private readonly editing = new Map<string, number>()
+  /** A validated computer change has revoked this owner's grants and has yet to publish the new destination. */
+  private readonly moving = new Map<string, symbol>()
   private constructor(
     private readonly options: Options,
     private readonly journal: AgentJournal<State>,
@@ -712,7 +714,12 @@ export class Automations {
    * definition. The check leaves them alone from before the save until they are bound to it, or it would find the new
    * definition against the old grant and pause them. A failed bind leaves the old grant, and the next check pauses them.
    */
-  async edit<T>(customAgent: string | undefined, actor: AgentActor, save: () => Promise<T>, definition?: () => string): Promise<T> {
+  async edit<T>(
+    customAgent: string | undefined,
+    actor: AgentActor,
+    save: (pauseForMove: () => Promise<void>) => Promise<T>,
+    definition?: () => string,
+  ): Promise<T> {
     const owner = customAgent ?? ''
     // The grant follows `definitionHash`, which is part of every run's basis. A change outside it (a name, a description, an
     // avatar) keeps the basis, so it neither moves the grant to the editor nor pauses the schedule; a new name still shows
@@ -725,14 +732,42 @@ export class Automations {
         return undefined
       }
     }
+    const move = Symbol()
     const before = hash()
     this.editing.set(owner, (this.editing.get(owner) ?? 0) + 1)
     try {
-      const saved = await save()
+      // The agent journal invokes this only after checking the receipt, revision, body and audit. A crash between
+      // files may leave schedules paused early, but can never publish a move ahead of revoking its old standing grants.
+      const saved = await save(async () => {
+        this.moving.set(owner, move)
+        await this.journal.change(
+          `work-computer:${owner}`,
+          'pause',
+          state => {
+            let changed = false
+            for (const item of state.rows) {
+              if (item.automation.customAgentId !== customAgent || !item.automation.enabled) continue
+              item.automation.enabled = false
+              item.automation.revision++
+              item.automation.updatedAt = this.stamp()
+              item.automation.pause = { reason: 'agent-unavailable', message: PAUSE_MESSAGES['agent-unavailable'] }
+              if (!item.attempt) item.automation.state = 'paused'
+              delete item.automation.nextRunAt
+              delete item.grant
+              delete item.queued
+              changed = true
+            }
+            return { value: true, changed }
+          },
+          actor.authorize,
+        )
+        this.options.changed()
+      })
       const after = hash()
       if (before === undefined || after === undefined || before !== after) await this.rebind(customAgent, actor)
       return saved
     } finally {
+      if (this.moving.get(owner) === move) this.moving.delete(owner)
       const left = this.editing.get(owner)! - 1
       if (left) this.editing.set(owner, left)
       else this.editing.delete(owner)
@@ -746,6 +781,13 @@ export class Automations {
       await this.journal
         .change(`rebind:${key}`, 'rebind', async state => {
           const target = this.find(state, key)
+          if (
+            target.automation.customAgentId !== customAgent
+            || !target.automation.enabled
+            || !target.grant
+            || this.moving.has(customAgent ?? '')
+          )
+            return { value: false, changed: false }
           let plan: AutomationPlan
           try {
             this.options.authorize(actor.actor.deviceId, configOf(target.automation), 'schedule')
@@ -1092,6 +1134,7 @@ export class Automations {
     return times
   }
   private grant(item: Row, actor: AgentActor): void {
+    if (this.moving.has(item.automation.customAgentId ?? '')) throw new AppError(409, 'automation-changed', '助手正在更改工作电脑。')
     const definition = configOf(item.automation)
     this.options.authorize(actor.actor.deviceId, definition, 'schedule')
     const plan = this.options.plan(definition, 'schedule')

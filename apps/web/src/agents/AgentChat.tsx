@@ -5,6 +5,7 @@ import { GENERAL_AGENT_ID } from '@latch/protocol'
 import { Button, EmptyState, IconButton, ChevronLeftGlyph } from '@latch/ui'
 import { defineCopy } from '../core/i18n.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
+import { AgentWorkDestination } from './AgentWorkComputer.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
 import { personalChat } from './chat.ts'
 import { helperAbilities } from './helpers.ts'
@@ -122,7 +123,7 @@ export function AgentChat({ shell, owner, onBack }: { shell: ShellState; owner: 
   const chat = personalChat(snapshot, owner)
   const pendingHere = shell.delegation.pending?.customAgentId === owner
   // Only while nothing has been said: a first message on its way, or another device's chat, has no opening.
-  const opening = !locked && !missing && !confirming && chat?.state === 'empty' && !pendingHere
+  const opening = !locked && !missing && !confirming && !agent?.workComputer && chat?.state === 'empty' && !pendingHere
   const fill = (text: string) => {
     setDraft(previous => fillDraft(previous, text))
     requestAnimationFrame(() => {
@@ -163,7 +164,11 @@ export function AgentChat({ shell, owner, onBack }: { shell: ShellState; owner: 
         )}
         {!locked && !missing && !confirming && (
           <div className="agent-chat-composer">
-            <NewTopic key={owner} shell={shell} owner={owner} agent={agent} name={name} offline={offline} draftState={draftState} />
+            {agent?.workComputer && !pendingHere ? (
+              <AgentWorkDestination owner={owner} target={agent.workComputer} />
+            ) : (
+              <NewTopic key={owner} shell={shell} owner={owner} agent={agent} name={name} offline={offline} draftState={draftState} />
+            )}
           </div>
         )}
       </div>

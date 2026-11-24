@@ -145,6 +145,11 @@ extension PhoneModel {
         let current = generation, initialReading = contentGeneration
         do { try await ensureVerified() } catch { report(error); return false }
         guard current == generation, initialReading == contentGeneration, transportReady else { return false }
+        // Older pending writes belong to this Host and may already have succeeded. Only their original request may settle them.
+        if !pending.contains(where: { $0.requestId == request.requestId }) {
+            let owner = PhonePending.topicOwner(request) ?? PhoneHistory.promptSession(request.path).flatMap { PhoneAgentChat.owner(summary(of: $0)) }
+            if let reason = agentDestination(owner).localBlocker { error = reason; return false }
+        }
         let selected = sessionId, reading = contentGeneration
         busy = true; defer { if generation == current { busy = false } }
         // A message with attachments hears the Host's own refusal: `attachment-released` proves it was not delivered, even on a retry.

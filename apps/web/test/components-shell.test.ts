@@ -9,9 +9,11 @@ import { scrollMovesAnchor } from '../src/components/overlays.tsx'
 import { SessionHeader } from '../src/shell/ConversationHeader.tsx'
 import { placeName } from '../src/shell/SessionComposers.tsx'
 import { reservedLabel } from '../src/settings/devices/ReservedAttachments.tsx'
+import { ComputerChip } from '../src/components/Computers.tsx'
 import { Sidebar } from '../src/components/Sidebar.tsx'
 import { PhoneSessionList } from '../src/components/PhoneSessionList.tsx'
 import { settingsSections } from '../src/settings/SettingsPage.tsx'
+import type { ComputersView } from '../src/core/shell.ts'
 
 const noop = () => {}
 afterEach(() => {
@@ -232,6 +234,52 @@ const snapshotOf = (listener: AppSnapshot['device']['listener'], scopes: AppSnap
     demo: false,
     hostName: 'studio-mini',
   }) as unknown as AppSnapshot
+
+it('renders the Host name without a desktop shell or browser location', () => {
+  const html = renderToStaticMarkup(
+    createElement(ComputerChip, {
+      snapshot: snapshotOf('loopback-tcp'),
+      view: undefined,
+      connection: 'connected',
+      transport: '',
+      links: {},
+      trigger: (props, here) => createElement('button', props, here.title),
+    }),
+  )
+  expect(html).toContain('>studio-mini</button>')
+  expect(html).not.toContain('data-computer-row')
+})
+
+it('shows the configured local Host name and the registered remote name in the desktop computer menu', () => {
+  const snapshot = snapshotOf('unix')
+  const remoteId = 'b'.repeat(52)
+  const view: ComputersView = {
+    computers: [
+      { hostId: snapshot.host.hostId, name: 'system-hostname', local: true, state: 'online' },
+      { hostId: remoteId, name: '配对的云电脑', local: false, state: 'online' },
+    ],
+  }
+  const render = (hostname: string, hostName: string, listed = true) => {
+    vi.stubGlobal('window', { location: { protocol: 'latch:', hostname } })
+    return renderToStaticMarkup(
+      createElement(ComputerChip, {
+        snapshot: { ...snapshot, hostName },
+        view: listed ? view : undefined,
+        connection: 'connected',
+        transport: '',
+        links: {},
+        trigger: (props, here) => createElement('button', { ...props, title: here.name }, here.name),
+      }),
+    )
+  }
+  const local = render('app', '本机演示 Mac')
+  expect(local).toContain('>本机演示 Mac</button>')
+  expect(local).toContain('class="computer-pop-name" title="本机演示 Mac"')
+  expect(local).not.toContain('system-hostname')
+  expect(render('app', '')).toContain('>system-hostname</button>')
+  expect(render('app', '', false)).toContain('>这台 Mac</button>')
+  expect(render(`h-${remoteId}`, '远程 Host 另一个名称')).toContain('>配对的云电脑</button>')
+})
 
 describe('设置 sections', () => {
   it('gives a device that manages this Mac every section, and one that does not 通用 · 设备 · 快捷键 · 关于', () => {

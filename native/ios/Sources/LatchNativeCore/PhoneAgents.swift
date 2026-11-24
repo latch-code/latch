@@ -138,6 +138,31 @@ public enum PhoneAgentFace: String, Equatable, Sendable {
     }
 }
 
+/** A binding is navigation to a separately paired computer. Unknown formats must never enable a local send. */
+public enum PhoneAgentDestination: Equatable, Sendable {
+    case local, remote(hostId: String, agentId: String), invalid
+
+    public init(_ agent: NativeJSON) {
+        guard let value = agent.object["workComputer"] else { self = .local; return }
+        guard let host = value["hostId"].string, LinkBytes.matches(host, "[a-z2-7]{52}"),
+              let id = value["agentId"].string, PhoneAgents.validId(id), id != PhoneAgents.generalId else { self = .invalid; return }
+        self = .remote(hostId: host, agentId: id)
+    }
+
+    public var localBlocker: String? {
+        switch self {
+        case .local: nil
+        case .remote: "请到工作电脑上的助手发送消息。"
+        case .invalid: "工作电脑信息无效，请在原电脑上重新选择。"
+        }
+    }
+
+    public func agentId(on registeredHost: String, from sourceHost: String) -> String? {
+        guard case let .remote(host, target) = self, host == registeredHost, registeredHost != sourceHost else { return nil }
+        return target
+    }
+}
+
 public struct PhoneAgentEntry: Equatable, Sendable, Identifiable {
     public let id: String
     public let name: String
@@ -153,6 +178,7 @@ public struct PhoneAgentEntry: Equatable, Sendable, Identifiable {
     public let place: String?
     public let available: Bool
     public let unavailableReason: String?
+    public var destination: PhoneAgentDestination = .local
 }
 
 /** A read of private Agent data. A failed read never settles a pending write. */
@@ -203,7 +229,7 @@ public enum PhoneAgents {
                 face: face(snapshot, id: id, available: available),
                 duty: duty(agent), runs: runsWith(catalog, agent: agent), harnessId: agent["harnessId"].string,
                 place: worksIn(catalog, projectId: agent["defaultProjectId"].string), available: available,
-                unavailableReason: available ? nil : agent["unavailableReason"].string)
+                unavailableReason: available ? nil : agent["unavailableReason"].string, destination: PhoneAgentDestination(agent))
         }
     }
     /**
@@ -266,6 +292,7 @@ public enum PhoneAgents {
     }
     /** Why a new topic cannot start now, in the web's words; nil when it can. */
     public static func blocker(_ catalog: NativeJSON, agent: NativeJSON, choice: PhoneStartChoice, connected: Bool, canRun: Bool) -> String? {
+        if let reason = PhoneAgentDestination(agent).localBlocker { return reason }
         if !connected { return "Mac 不在线，恢复后再发" }
         if !canRun { return "这台设备不能开始会话" }
         if !agent["available"].bool { return agent["unavailableReason"].string ?? "现在不能开始" }
@@ -284,6 +311,7 @@ public enum PhoneAgents {
      * the Host refuses another (`agent-harness-fixed`).
      */
     public static func fields(_ catalog: NativeJSON, agent: NativeJSON, choice: PhoneStartChoice, prompt: String) throws -> [String: NativeJSON] {
+        guard PhoneAgentDestination(agent) == .local else { throw NativeFailure.forbidden }
         guard let id = agent["id"].string, validId(id), id != generalId, let harnessId = agent["harnessId"].string, choice.harnessId != nil else {
             throw NativeFailure.invalidRecord
         }

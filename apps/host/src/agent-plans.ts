@@ -18,6 +18,7 @@ import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { agentContext, generalFacts, type AgentSessionSelection, type CustomAgents } from './custom-agents.ts'
 import type { AutomationPlan } from './automations.ts'
 
+const WORK_COMPUTER = '这个助手在另一台电脑上工作。请打开它的工作电脑继续。'
 const STANDARD = 'standard'
 const STANDARD_PLUGIN = 'standard-harness'
 
@@ -48,6 +49,7 @@ export class AgentPlans {
 
   /** Why a session cannot start on this agent now, in words for the person. */
   unavailable(agent: CustomAgent): string | undefined {
+    if (agent.workComputer) return WORK_COMPUTER
     if (agent.defaultProjectId && !this.options.projectUsable(agent.defaultProjectId)) return '默认项目已移除，请更新这个 Agent。'
     const harness = this.options.harness(agent.harnessId)
     if (!harness || harness.status !== 'ready') return '这个 Harness 暂时不可用，请检查电脑上的配置。'
@@ -126,7 +128,9 @@ export class AgentPlans {
    * does for a Code session.
    */
   agentContext(id: string, harnessId: string, scope: DataScope | undefined): AgentExecutionContext {
-    return this.build(this.options.agents.get(id), harnessId, scope === 'all')
+    const agent = this.options.agents.get(id)
+    this.options.agents.assertWorksHere(id)
+    return this.build(agent, harnessId, scope === 'all')
   }
 
   /** What a session on this engine that picks no other agent receives; undefined while 通用 has nothing to add. */

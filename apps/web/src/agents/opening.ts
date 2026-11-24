@@ -5,26 +5,36 @@ const COPY = defineCopy(
   {
     scheduleLast: (name: string) => `「${name}」上次怎么样`,
     scheduleNext: (name: string) => `「${name}」要做什么`,
-    scheduleNew: '每天帮我做一件事',
-    project: (name: string) => `看看「${name}」`,
-    folder: '看看你的文件夹',
-    duty: '交给你一件事',
-    command: '帮我跑个命令',
+    scheduleNew: '安排工作日晨报',
+    newSchedulePrompt: '每个工作日早上 9 点，为我整理一份晨报。我希望关注：',
+    scheduleLastPrompt: (name: string) => `「${name}」上次运行得怎么样？结果在哪？`,
+    scheduleNextPrompt: (name: string) => `「${name}」每次会做什么？`,
+    projectPrompt: (name: string) => `帮我梳理「${name}」里的材料，列出最重要的三点，并注明来自哪个文件。`,
+    dutyPrompt: (duty: string) => `${duty}。这次的材料或问题是：`,
+    rememberPrompt: '记住：',
+    summarize: '把材料整理成摘要',
+    summarizePrompt: '帮我把下面的材料整理成一页摘要，先写结论，再列三条要点：',
+    steps: '拆解下一步',
+    stepsPrompt: '帮我把这件事拆成三个可以开始的步骤：',
+    project: (name: string) => `梳理「${name}」的材料`,
     remember: '记住一件事',
-    ask: '你能帮我做什么',
-    intro: '你在这台电脑上能做什么',
   },
   {
     scheduleLast: (name: string) => `How did “${name}” go?`,
     scheduleNext: (name: string) => `What will “${name}” do?`,
-    scheduleNew: 'Do something for me every day',
-    project: (name: string) => `Look at “${name}”`,
-    folder: 'Look in your folder',
-    duty: 'Give you a task',
-    command: 'Run a command for me',
+    scheduleNew: 'Set up a weekday briefing',
+    newSchedulePrompt: 'Prepare a briefing for me at 9 am every weekday. Focus on: ',
+    scheduleLastPrompt: (name: string) => `How did “${name}” go last time? Where are the results?`,
+    scheduleNextPrompt: (name: string) => `What will “${name}” do each time it runs?`,
+    projectPrompt: (name: string) => `Summarize the materials in “${name}” in three key points and name the source file for each one.`,
+    dutyPrompt: (duty: string) => `${duty}. Here is what I need this time: `,
+    rememberPrompt: 'Remember: ',
+    summarize: 'Summarize my notes',
+    summarizePrompt: 'Turn the material below into a one-page summary. Start with the conclusion and list three key points: ',
+    steps: 'Plan my next steps',
+    stepsPrompt: 'Break this task down into three steps I can start today: ',
+    project: (name: string) => `Summarize “${name}”`,
     remember: 'Remember something',
-    ask: 'What can you help with?',
-    intro: 'What can you do on this computer?',
   },
 )
 
@@ -57,11 +67,7 @@ const clip = (text: string, limit: number) => {
   return points.length > limit ? `${points.slice(0, limit - 1).join('')}…` : points.join('')
 }
 
-/**
- * Three things to ask, most specific first: its schedules (what the last run did), its folder or project, what it is for
- * (its description, for the person to finish), then what its Harness can do (run a command) and 「记住…」, which works on
- * every Harness. Only what it can really do: a Harness Latch has no card for gets no folder or command.
- */
+/** Drafts the person can finish with their own material. Context-specific work comes before general examples. */
 export function openingActions(input: OpeningInput): OpeningAction[] {
   const actions: OpeningAction[] = []
   const can = (ability: HelperAbility) => input.abilities.includes(ability)
@@ -70,24 +76,24 @@ export function openingActions(input: OpeningInput): OpeningAction[] {
     const name = clip(latest.name, 16)
     actions.push(
       latest.lastRun
-        ? { id: 'schedule-last', label: COPY.scheduleLast(name), text: `「${latest.name}」上次运行得怎么样？结果在哪？` }
-        : { id: 'schedule-next', label: COPY.scheduleNext(name), text: `「${latest.name}」每次会做什么？` },
+        ? { id: 'schedule-last', label: COPY.scheduleLast(name), text: COPY.scheduleLastPrompt(latest.name) }
+        : { id: 'schedule-next', label: COPY.scheduleNext(name), text: COPY.scheduleNextPrompt(latest.name) },
     )
-  } else if (can('schedule') && input.canAutomate)
-    actions.push({ id: 'schedule-new', label: COPY.scheduleNew, text: '每个工作日早上 9 点，帮我' })
-  if (input.mode !== 'chat' && can('files'))
-    actions.push(
-      input.project
-        ? { id: 'folder', label: COPY.project(clip(input.project, 12)), text: `看看「${input.project}」里有什么，挑要紧的说。` }
-        : { id: 'folder', label: COPY.folder, text: '你的文件夹里现在有什么？列给我看。' },
-    )
-  // What it is for, in its own words: the person finishes the sentence.
-  const duty = input.general ? undefined : input.description?.replace(/\s+/gu, ' ').trim()
-  if (duty) actions.push({ id: 'duty', label: COPY.duty, text: `${duty.replace(/[。.！!？?]+$/u, '')}：` })
-  if (input.mode !== 'chat' && can('commands')) actions.push({ id: 'command', label: COPY.command, text: '帮我跑一下 ' })
-  actions.push({ id: 'remember', label: COPY.remember, text: '记住：' })
-  if (actions.length < 3) actions.push({ id: 'ask', label: COPY.ask, text: '你能帮我做什么？举三个例子。' })
-  if (actions.length < 3) actions.push({ id: 'intro', label: COPY.intro, text: '你在这台电脑上能用哪些文件和工具？' })
+  }
+  const duty = input.general
+    ? undefined
+    : input.description
+        ?.replace(/\s+/gu, ' ')
+        .trim()
+        .replace(/[。.！!？?]+$/u, '')
+  if (duty) actions.push({ id: 'duty', label: clip(duty, 24), text: COPY.dutyPrompt(duty) })
+  else actions.push({ id: 'summarize', label: COPY.summarize, text: COPY.summarizePrompt })
+  if (input.mode !== 'chat' && can('files') && input.project)
+    actions.push({ id: 'folder', label: COPY.project(clip(input.project, 12)), text: COPY.projectPrompt(input.project) })
+  if (!latest && can('schedule') && input.canAutomate)
+    actions.push({ id: 'schedule-new', label: COPY.scheduleNew, text: COPY.newSchedulePrompt })
+  actions.push({ id: 'remember', label: COPY.remember, text: COPY.rememberPrompt })
+  actions.push({ id: 'steps', label: COPY.steps, text: COPY.stepsPrompt })
   return actions.slice(0, 3)
 }
 

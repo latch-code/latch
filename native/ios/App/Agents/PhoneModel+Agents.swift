@@ -12,6 +12,22 @@ struct CreatedHelper: Equatable {
 }
 
 extension PhoneModel {
+    func agentDestination(_ owner: String?) -> PhoneAgentDestination {
+        guard let owner, let agent = snapshot["customAgents"].array.first(where: { $0["id"].string == owner }) else { return .local }
+        return PhoneAgentDestination(agent)
+    }
+
+    /** Connect with the destination registration's own keys. No content or writes from the source are passed. */
+    func openAgentComputer(_ host: RegisteredHost, owner: String, target: String, source: UUID) async {
+        guard generation == source, agentAccess == .ready, agentPath.first == owner, tab == .agents, !busy, !verifying,
+              let current = selectedHost, agentDestination(owner).agentId(on: host.device.hostId, from: current.device.hostId) == target,
+              !forgettingComputers.contains(host.id) else { return }
+        let opening = UUID(); otherOpening = opening
+        await connect(host, resumePreviousSession: false)
+        guard otherOpening == opening, selectedHost?.id == host.id, tab == .agents, agentPath.isEmpty else { return }
+        otherOpening = nil
+        agentPath = [target]
+    }
     func readAgentPart(_ path: String) async -> PhoneAgentRead {
         #if LATCH_SCREENS
         if staged { return ScreensStage.read(path) }

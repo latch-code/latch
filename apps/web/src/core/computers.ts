@@ -122,6 +122,12 @@ export interface OtherComputerRow {
   older: boolean
 }
 
+/** The shell's origin identifies its computer, including during startup or when its Host is disconnected. */
+export function currentDesktopComputer(view: ComputersView | undefined, location: Pick<Location, 'protocol' | 'hostname'>) {
+  if (location.protocol !== 'latch:') return undefined
+  return view?.computers.find(computer => location.hostname === (computer.local ? 'app' : `h-${computer.hostId}`))
+}
+
 /**
  * The computers other than this page's own Host, in the list's order. A computer counts what waits there only while it
  * answers; one that went away says how much waited before it went. Versions compare against this Mac's Host, which only

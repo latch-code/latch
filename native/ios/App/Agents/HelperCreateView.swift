@@ -28,6 +28,10 @@ struct HelperCreateSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
+                    field("名字") { LocalTextEditor(text: $draft.name, placeholder: "给它一个名字", maximumLines: 1) }.disabled(locked)
+                    if draft.name.utf16.count > 80 { limit("名字最多 80 字") }
+                    field("职责") { LocalTextEditor(text: $draft.description, placeholder: "一句话，例如：查资料，写成一页摘要", maximumLines: 3) }.disabled(locked)
+                    if draft.description.utf16.count > 200 { limit("职责最多 200 字") }
                     if choosing { candidateList } else { identity }
                     if completedId != nil {
                         HStack {
@@ -45,7 +49,7 @@ struct HelperCreateSheet: View {
                 }.padding(20).frame(maxWidth: 560).frame(maxWidth: .infinity)
             }
             .background(PhoneTheme.canvas)
-            .navigationTitle(choosing ? "新建 Agent" : "给它一个名字")
+            .navigationTitle("新建 Agent")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() }.disabled(saving) }
@@ -66,7 +70,7 @@ struct HelperCreateSheet: View {
     }
     private var candidateList: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("你想让谁成为你的帮手？").font(.system(size: 21, weight: .semibold)).foregroundStyle(PhoneTheme.ink)
+            Text("选择执行方").font(PhoneTheme.row).foregroundStyle(PhoneTheme.ink)
             VStack(spacing: 0) {
                 ForEach(Array(candidates.ready.enumerated()), id: \.element.id) { index, candidate in
                     if index > 0 { Divider().padding(.leading, 68) }
@@ -113,10 +117,6 @@ struct HelperCreateSheet: View {
                 Spacer()
                 HelperAvatarPicker(avatar: $draft.avatar).disabled(locked)
             }
-            field("名字") { LocalTextEditor(text: $draft.name, placeholder: "给它一个名字", maximumLines: 1) }
-            if draft.name.utf16.count > 80 { limit("名字最多 80 字") }
-            field("职责") { LocalTextEditor(text: $draft.description, placeholder: "一句话，例如：查资料，写成一页摘要", maximumLines: 3) }
-            if draft.description.utf16.count > 200 { limit("职责最多 200 字") }
             DisclosureGroup("多说几句", isExpanded: $words) {
                 field("指令") { LocalTextEditor(text: $draft.instructions, placeholder: "怎么做，哪些事需要留意", maximumLines: 10) }.padding(.top, 10)
                 if draft.instructions.utf16.count > 32_000 { limit("指令最多 32000 字") }
@@ -137,7 +137,7 @@ struct HelperCreateSheet: View {
     }
     private func choose(_ id: String) {
         do {
-            draft = try PhoneHelperCreate.choose(catalog, harnessId: id, agents: model.snapshot["customAgents"].array, previous: draft.harnessId.isEmpty ? nil : draft)
+            draft = try PhoneHelperCreate.choose(catalog, harnessId: id, agents: model.snapshot["customAgents"].array, previous: draft)
             choosing = false; outcome = nil
         } catch { outcome = .refused("这个帮手现在不能用。") }
     }

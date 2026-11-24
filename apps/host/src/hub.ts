@@ -99,6 +99,8 @@ export interface HarnessMount {
 }
 
 export interface HubOptions {
+  /** Checked immediately before giving a new request to its driver, including after an async prompt note. */
+  assertAgentWorksHere?: (owner: string | undefined) => void
   /** Directory for `sessions-meta.json`. */
   dataDir: string
   /** Harness for `createTask` without `harnessId`. */
@@ -738,7 +740,10 @@ export class HarnessHub implements Bridge {
       withHarnessPromptSource({ method: 'create', requestId: input.requestId, text: input.prompt }, () =>
         this.creatingTask.run(
           { workspaceId, agentId: input.agentContext?.agent?.customAgentId, automation: automationId !== undefined },
-          () => bridge.createTask(task),
+          () => {
+            this.options.assertAgentWorksHere?.(input.agentContext?.agent?.customAgentId)
+            return bridge.createTask(task)
+          },
         ),
       ),
     ).catch((error: unknown) => {
@@ -1151,9 +1156,10 @@ export class HarnessHub implements Bridge {
     const text = this.promptNote ? await this.withNote(this.promptNote, sessionId, prompt, requestId) : prompt
     try {
       await this.accept(member, bridge =>
-        withHarnessPromptSource({ method: 'prompt', sessionId, requestId, text: prompt }, () =>
-          options ? bridge.prompt(sessionId, text, requestId, options) : bridge.prompt(sessionId, text, requestId),
-        ),
+        withHarnessPromptSource({ method: 'prompt', sessionId, requestId, text: prompt }, () => {
+          this.options.assertAgentWorksHere?.(this.agentOf(sessionId)?.customAgentId)
+          return options ? bridge.prompt(sessionId, text, requestId, options) : bridge.prompt(sessionId, text, requestId)
+        }),
       )
     } finally {
       if (options?.freshContext) await this.dropSeedPrefix(member, sessionId)
@@ -1198,9 +1204,10 @@ export class HarnessHub implements Bridge {
     const bridge = member.bridge
     if (queued ? !bridge.steerQueued : !bridge.steer) return 'prompt-required'
     const outcome = await this.accept(member, () =>
-      withHarnessPromptSource({ method: 'steer', sessionId, requestId, text: prompt, ...(beforeSteer ? { beforeSteer } : {}) }, () =>
-        queued ? bridge.steerQueued!(sessionId, prompt, requestId, queued) : bridge.steer!(sessionId, prompt, requestId),
-      ),
+      withHarnessPromptSource({ method: 'steer', sessionId, requestId, text: prompt, ...(beforeSteer ? { beforeSteer } : {}) }, () => {
+        this.options.assertAgentWorksHere?.(this.agentOf(sessionId)?.customAgentId)
+        return queued ? bridge.steerQueued!(sessionId, prompt, requestId, queued) : bridge.steer!(sessionId, prompt, requestId)
+      }),
     )
     if (queued && outcome !== 'injected' && outcome !== 'prompt-required')
       throw new AppError(409, 'steer-unknown', 'Harness 未确认追加结果，请核对会话记录。')

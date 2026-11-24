@@ -13,7 +13,11 @@ import { speakerOf } from '../src/agents/model.ts'
 import { helperPermissionBlocked, mcpServer, permissionNote, personActivity, personStatus, toolWord } from '../src/agents/personWords.ts'
 import type { AgentWrites } from '../src/agents/useAgentWrites.ts'
 
-const builtin = { ...testHarness('standard', { kind: 'builtin', label: 'Latch 内置' }), agentContext: 'private' as const }
+const builtin = {
+  ...testHarness('standard', { kind: 'builtin', label: 'Latch 内置' }),
+  agentContext: 'private' as const,
+  skills: 'native' as const,
+}
 const codex = { ...testHarness('codex', { label: 'Codex' }), agentContext: 'first-turn' as const, skills: 'server' as const }
 const pi = {
   ...testHarness('pi', { label: 'pi' }),
@@ -243,7 +247,29 @@ describe('creating a helper: 「你想让谁成为你的帮手？」', () => {
       model: { providerId: 'svc', model: 'm1' },
       defaultProjectId: 'notes',
     })
+    const assembled = { ...draft, skills: ['notes:summary'], tools: [] }
+    expect(helperRequest(builtin, assembled)).toMatchObject({ skills: ['notes:summary'], tools: [] })
+    expect(helperRequest(codex, assembled)).not.toHaveProperty('tools')
+    expect(helperRequest({ ...codex, skills: undefined } as never, assembled).skills).toEqual([])
     expect(helperMode({ modes: ['chat'] })).toBe('chat')
+  })
+
+  it('accepts a name for an already chosen cloud assistant even without a local Harness', () => {
+    const html = renderToStaticMarkup(
+      createElement(HelperCreate, {
+        catalog: catalog([]),
+        access: { scopes: new Set(['run']), local: true, legacy: false, admin: true } as never,
+        agents: [],
+        writes: { state: null, saving: false, held: false } as unknown as AgentWrites,
+        disabled: false,
+        onCreated: () => {},
+        onCancel: () => {},
+        workComputer: { hostId: 'b'.repeat(52), agentId: 'agt_00000000-0000-4000-8000-000000000007' },
+      }),
+    )
+    expect(html).toContain('添加工作电脑上的助手')
+    expect(html).toContain('给它起个名字')
+    expect(html).not.toContain('你想让谁成为你的帮手？')
   })
 
   it('draws the question and the cards before anything is created', () => {

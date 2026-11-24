@@ -285,3 +285,62 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and deliv
     await host.close()
   }
 })
+
+it('opens the exact scheduled result from the desktop and phone overviews', async () => {
+  await mkdir(OUT, { recursive: true })
+  let shift = 0
+  const host = await startTestHost({ now: () => Date.now() + shift, plugins: [scheduled] })
+  const browser = await chromium.launch(browserLaunchOptions())
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
+    page.setDefaultTimeout(15_000)
+    await agentBrowser(page, host, owner, '回访结果')
+    const due = new Date(Date.now() + 120_000)
+    due.setSeconds(0, 0)
+    const scheduledFor = { kind: 'daily', time: `${pad(due.getHours())}:${pad(due.getMinutes())}` }
+    for (const [name, prompt] of [
+      ['周报摘要', '整理本周已经完成的三件事'],
+      ['会议提纲', '整理明天例会的议题'],
+    ]) {
+      await owner.json('automations', {
+        method: 'POST',
+        body: {
+          requestId: randomUUID(),
+          name,
+          prompt,
+          model: { providerId: 'schedule-fixture', model: 'fixture' },
+          schedule: scheduledFor,
+          notify: false,
+          enabled: true,
+        },
+      })
+    }
+    shift = due.getTime() - Date.now()
+    await expect
+      .poll(
+        async () =>
+          (await owner.json<AutomationList>('automations')).automations.filter(
+            row => row.lastRun?.state === 'completed' && row.lastRun?.trigger === 'schedule',
+          ).length,
+        { timeout: 20_000 },
+      )
+      .toBe(2)
+    shift = 0
+    await page.getByRole('radio', { name: '我的 Agent', exact: true }).filter({ visible: true }).click()
+    const results = page.getByRole('region', { name: '最近定时结果', exact: true })
+    await results.getByRole('button', { name: /周报摘要.*查看这次结果/u }).waitFor()
+    await page.screenshot({ path: `${OUT}/overview-results-1440.png`, animations: 'disabled' })
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await noHorizontalOverflow(page)
+    await page.screenshot({ path: `${OUT}/overview-results-390-dark.png`, animations: 'disabled' })
+    await results.getByRole('button', { name: /会议提纲.*查看这次结果/u }).click()
+    await page.locator('.transcript-shell').getByText('echo: 整理明天例会的议题', { exact: true }).waitFor()
+    expect(await page.locator('.transcript-shell').getByText('echo: 整理本周已经完成的三件事', { exact: true }).count()).toBe(0)
+    await page.close()
+  } finally {
+    await browser.close()
+    await host.close()
+  }
+})

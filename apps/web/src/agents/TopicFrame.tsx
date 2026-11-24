@@ -44,8 +44,10 @@ export function TopicFrame({
   // Opening one of your Agents' chat warms its process, so the first words come sooner. The Host decides whether anything
   // starts (scope, limits, its own chat slot); a refusal or failure changes nothing here.
   const chatSession = personalChat(snapshot, owner)
+  const found = snapshot.customAgents?.find(agent => agent.id === owner)
   const warmable =
     owner !== GENERAL_AGENT_ID
+    && !found?.workComputer
     && current !== null
     && chatSession?.state === 'ready'
     && chatSession.sessionId === current
@@ -57,7 +59,6 @@ export function TopicFrame({
     void api(`custom-agents/${encodeURIComponent(owner)}/warm`, { method: 'POST', body: {} }).catch(() => undefined)
   }, [warmable, owner, current])
   const general = owner === GENERAL_AGENT_ID
-  const found = general ? undefined : snapshot.customAgents?.find(agent => agent.id === owner)
   const named = sessionAgent(snapshot, general ? { generalChat: true } : { agent: { customAgentId: owner } })
   const name = named?.name ?? 'Agent'
   const generalBlock = general ? startBlock(snapshot, generalChoice(shell.catalog ?? undefined)) : null
@@ -110,6 +111,8 @@ export function TopicFrame({
     </StatusWord>
   ) : frozen === null && ACTIVITY_WORDS[state] ? (
     <ActivityWord state={state} live={agentLiveWord(snapshot, owner, current)} />
+  ) : found?.workComputer ? (
+    <StatusWord tone="neutral">{AGENT_SPACE_COPY.workComputer}</StatusWord>
   ) : found && !found.available ? (
     <Unavailable reason={found.unavailableReason} onRepair={repair} />
   ) : null

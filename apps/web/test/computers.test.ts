@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { ComputerSummary } from '@latch/protocol'
-import { computerState, connectionTransport, olderVersion, otherComputerRows, otherWaiting } from '../src/core/computers.ts'
+import {
+  computerState,
+  connectionTransport,
+  currentDesktopComputer,
+  olderVersion,
+  otherComputerRows,
+  otherWaiting,
+} from '../src/core/computers.ts'
 
 const HOST_A = 'a'.repeat(52)
 const HOST_B = 'b'.repeat(52)
@@ -14,6 +21,17 @@ const computer = (extra: Partial<ComputerSummary>): ComputerSummary => ({
 })
 
 describe('other computers on this Mac’s page', () => {
+  it('uses the current desktop origin to exclude its own computer from the switcher', () => {
+    const local = computer({ hostId: HOST_A, local: true, name: 'studio' })
+    const remote = computer({ state: 'offline' })
+    const view = { computers: [local, remote] }
+    expect(currentDesktopComputer(view, { protocol: 'latch:', hostname: 'app' })).toBe(local)
+    const current = currentDesktopComputer(view, { protocol: 'latch:', hostname: `h-${HOST_B}` })
+    expect(current).toBe(remote)
+    expect(otherComputerRows(view, current?.hostId, undefined).map(row => row.hostId)).toEqual([HOST_A])
+    expect(currentDesktopComputer(view, { protocol: 'https:', hostname: `h-${HOST_B}` })).toBeUndefined()
+  })
+
   it('lists what waits on other computers only, live while they answer and 离线前 otherwise', () => {
     const local = computer({ hostId: HOST_A, local: true, name: 'studio' })
     expect(otherWaiting({ computers: [local, computer({ waiting: [item] })] }, HOST_A)).toEqual([

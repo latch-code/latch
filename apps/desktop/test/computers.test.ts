@@ -74,6 +74,9 @@ const remote = require('../src/remote-proxy.cjs') as {
 }
 const computers = require('../src/computers.cjs') as {
   createSenderOf(options: Record<string, unknown>): (event: unknown) => { kind: string; hostId?: string } | undefined
+  createWorkComputerHandler(
+    options: Record<string, unknown>,
+  ): (event: unknown, hostId: unknown, agentId?: unknown, owner?: unknown) => Promise<unknown>
   createStartHandler(options: Record<string, unknown>): (event: unknown, hostId: unknown) => unknown
   whenLoaded(contents: unknown, send: () => void): void
   parseComputers(value: unknown): { version: 1; computers: Array<Record<string, unknown>> } | undefined
@@ -1344,16 +1347,20 @@ describe('the computers preload', () => {
     computers: {
       list(): Promise<{ computers: Array<Record<string, unknown>> } | undefined>
       open(hostId: string, taskId?: string): Promise<unknown>
+      switchTo(hostId: string): Promise<unknown>
+      switchesInMainWindow?: true
+      isWorkspaceActive(): Promise<boolean | undefined>
+      subscribeWorkspaceActive(callback: (active: boolean) => void): () => void
       subscribeSession?(callback: (id: string) => void): () => void
     }
   }
-  async function load(href: string, isMainFrame = true) {
+  async function load(href: string, isMainFrame = true, argv: string[] = []) {
     const listeners = new Map<string, (event: unknown, value: unknown) => void>()
     const invoke = vi.fn(async (..._args: unknown[]): Promise<unknown> => ({ ok: true }))
     const send = vi.fn()
     let shell: Shell | undefined
     runInNewContext(await readFile('apps/desktop/src/preload.cjs', 'utf8'), {
-      process: { platform: 'darwin', isMainFrame, argv: [] },
+      process: { platform: 'darwin', isMainFrame, argv },
       location: { href },
       URL,
       require: () => ({
@@ -1373,6 +1380,39 @@ describe('the computers preload', () => {
     })
     return { shell: shell!, invoke, send, listeners }
   }
+
+  it('switches computers with only an identity and labels the explicit remote windows separately', async () => {
+    const marker = ['--latch-switch-in-main-window']
+    const local = await load('latch://app/link/', true, marker)
+    const remoteView = await load(`latch://h-${HOST_B}/link/`)
+    const remoteWindow = await load(`latch://h-${HOST_B}/link/`, true, marker)
+    expect(local.shell.computers.switchesInMainWindow).toBeUndefined()
+    expect(remoteView.shell.computers.switchesInMainWindow).toBeUndefined()
+    expect(remoteWindow.shell.computers.switchesInMainWindow).toBe(true)
+    for (const { shell, invoke } of [local, remoteView, remoteWindow]) {
+      expect(await shell.computers.switchTo('https://other-computer/')).toMatchObject({ ok: false })
+      expect(invoke).not.toHaveBeenCalled()
+      expect(await shell.computers.switchTo(HOST_A)).toEqual({ ok: true })
+      expect(invoke).toHaveBeenCalledExactlyOnceWith('latch:computers:switch', HOST_A)
+    }
+  })
+
+  it('only reports whether the requesting workbench page is selected', async () => {
+    const { shell, invoke, listeners } = await load(`latch://h-${HOST_B}/link/`)
+    const channel = 'latch:computers:workspace-active'
+    invoke.mockResolvedValueOnce(false)
+    expect(await shell.computers.isWorkspaceActive()).toBe(false)
+    expect(invoke).toHaveBeenCalledExactlyOnceWith(channel)
+    expect(await shell.computers.isWorkspaceActive()).toBeUndefined()
+    const changed = vi.fn()
+    const unsubscribe = shell.computers.subscribeWorkspaceActive(changed)
+    listeners.get(channel)!({}, { hostId: HOST_A, active: false })
+    listeners.get(channel)!({}, true)
+    listeners.get(channel)!({}, false)
+    expect(changed.mock.calls).toEqual([[true], [false]])
+    unsubscribe()
+    expect(listeners.has(channel)).toBe(false)
+  })
 
   it('forwards only a checked About palette from a local or remote top-level page', async () => {
     const appearance = 'dark #2f2f2f #f0f0f0 #adadad #a0a0a0'
@@ -1480,6 +1520,31 @@ describe('the computers preload', () => {
     expect(listeners.has('latch:computers:start-here')).toBe(false)
   })
 
+  it('keeps the native picker and cross-computer navigation local, and forwards only the selected target', async () => {
+    const target = 'agt_00000000-0000-4000-8000-000000000001'
+    const local = await load('latch://app/link/')
+    const api = local.shell.computers as Shell['computers'] & {
+      pickWorkAgent(id: string): Promise<unknown>
+      openWorkAgent(hostId: string, agentId: string, owner: string): Promise<unknown>
+    }
+    local.invoke.mockResolvedValueOnce({ ok: true, hostId: HOST_B, agentId: target, name: 'private name', secret: 'private' })
+    expect(await api.pickWorkAgent(HOST_B)).toEqual({ ok: true, hostId: HOST_B, agentId: target })
+    await api.openWorkAgent(HOST_B, target, target)
+    expect(local.invoke).toHaveBeenLastCalledWith('latch:computers:work-agent', HOST_B, target, target)
+    local.invoke.mockClear()
+    await api.openWorkAgent(HOST_B, 'general', target)
+    expect(local.invoke).not.toHaveBeenCalled()
+    const remote = await load(`latch://h-${HOST_B}/link/`)
+    expect(remote.shell.computers).not.toHaveProperty('pickWorkAgent')
+    expect(remote.shell.computers).not.toHaveProperty('openWorkAgent')
+    remote.listeners.get('latch:computers:start-here')!({}, target)
+    const go = vi.fn()
+    ;(remote.shell.computers as Shell['computers'] & { subscribeStart(cb: typeof go): void }).subscribeStart(go)
+    expect(go.mock.calls).toEqual([[target]])
+    remote.listeners.get('latch:computers:start-here')!({}, '../outside')
+    expect(go).toHaveBeenCalledTimes(1)
+  })
+
   it('never gives another computer’s page what waits elsewhere, and opens there only sessions main sends', async () => {
     const { shell, invoke, listeners } = await load(`latch://h-${HOST_B}/link/`)
     expect(shell.remote).toBe(true)
@@ -1501,6 +1566,90 @@ describe('the computers preload', () => {
   })
 })
 
+describe('a manual request’s configured work computer', () => {
+  const target = 'agt_00000000-0000-4000-8000-000000000001'
+  const localOwner = 'agt_00000000-0000-4000-8000-000000000003'
+  const further = 'agt_00000000-0000-4000-8000-000000000002'
+  const snapshot = {
+    host: { hostId: HOST_B },
+    catalog: { features: { agentWorkComputer: true } },
+    device: { dataScope: 'all', scopes: ['view', 'run'] },
+    customAgents: [
+      { id: target, name: '云端助手', available: true },
+      { id: further, name: '已转向第三台', available: true, workComputer: { hostId: HOST_A, agentId: target } },
+    ],
+  }
+  function fixture() {
+    const proxy = { probe: vi.fn(async (): Promise<{ state: string; snapshot?: unknown }> => ({ state: 'online', snapshot })) }
+    const choose = vi.fn(async (): Promise<string | undefined> => target)
+    const navigate = vi.fn(async () => ({ ok: true }))
+    const gestureOf = vi.fn(() => true)
+    const localSnapshot = vi.fn(async (): Promise<unknown> => ({
+      ...snapshot,
+      host: { hostId: HOST_A },
+      customAgents: [{ id: localOwner, workComputer: { hostId: HOST_B, agentId: target } }],
+    }))
+    const run = computers.createWorkComputerHandler({
+      localHostId: HOST_A,
+      proxyFor: (id: string) => (id === HOST_B ? proxy : undefined),
+      senderOf: (kind: string) => ({ kind }),
+      gestureOf,
+      localSnapshot,
+      choose,
+      navigate,
+    })
+    return { run, choose, navigate, gestureOf, proxy, localSnapshot }
+  }
+  it('returns just the selected ID and opens only the runnable assistant on that paired Host', async () => {
+    const test = fixture()
+    expect(await test.run('full', HOST_B)).toEqual({ ok: true, hostId: HOST_B, agentId: target })
+    expect(test.choose).toHaveBeenCalledWith(HOST_B, [{ id: target, name: '云端助手' }])
+    expect(test.navigate).not.toHaveBeenCalled()
+    await test.run('full', HOST_B, target, localOwner)
+    expect(test.navigate).toHaveBeenCalledWith(HOST_B, target)
+    test.choose.mockResolvedValueOnce('new')
+    expect(await test.run('full', HOST_B)).toEqual({ ok: true })
+    expect(test.navigate).toHaveBeenLastCalledWith(HOST_B, 'new')
+  })
+  it('refuses a remote caller, a missing gesture, a changed scope, an old Host, an offline or redirected target, and a revoked source', async () => {
+    const test = fixture()
+    expect(await test.run('remote', HOST_B, target, localOwner)).toMatchObject({ error: 'forbidden' })
+    expect(await test.run('full', HOST_A, target, localOwner)).toMatchObject({ error: 'computer-not-found' })
+    test.gestureOf.mockReturnValueOnce(false)
+    expect(await test.run('full', HOST_B, target, localOwner)).toMatchObject({ error: 'gesture-required' })
+    expect(test.proxy.probe).not.toHaveBeenCalled()
+    for (const changed of [
+      { state: 'offline' },
+      { state: 'online', snapshot: { ...snapshot, host: { hostId: HOST_A } } },
+      { state: 'online', snapshot: { ...snapshot, catalog: { features: {} } } },
+      { state: 'online', snapshot: { ...snapshot, device: { dataScope: 'all', scopes: ['view'] } } },
+      { state: 'online', snapshot: { ...snapshot, device: { dataScope: 'work', scopes: ['view', 'run'] } } },
+    ]) {
+      test.proxy.probe.mockResolvedValueOnce(changed)
+      expect(await test.run('full', HOST_B, target, localOwner)).toMatchObject({ ok: false })
+    }
+    expect(await test.run('full', HOST_B, further, localOwner)).toMatchObject({ ok: false })
+    test.proxy.probe.mockResolvedValueOnce({ state: 'online', snapshot: { ...snapshot, customAgents: [] } })
+    expect(await test.run('full', HOST_B, target, localOwner)).toMatchObject({ ok: false })
+    test.choose.mockResolvedValueOnce(undefined)
+    expect(await test.run('full', HOST_B)).toMatchObject({ ok: false, error: 'canceled' })
+    test.choose.mockImplementationOnce(async () => {
+      test.proxy.probe.mockResolvedValueOnce({ state: 'revoked' })
+      return target
+    })
+    expect(await test.run('full', HOST_B)).toMatchObject({ ok: false })
+    test.localSnapshot.mockResolvedValueOnce({
+      ...snapshot,
+      host: { hostId: HOST_A },
+      customAgents: [{ id: localOwner, workComputer: { hostId: HOST_B, agentId: further } }],
+    })
+    expect(await test.run('full', HOST_B, target, localOwner)).toMatchObject({ ok: false })
+    test.localSnapshot.mockResolvedValueOnce(undefined)
+    expect(await test.run('full', HOST_B, target, localOwner)).toMatchObject({ ok: false })
+    expect(test.navigate).not.toHaveBeenCalled()
+  })
+})
+
 describe('main’s 新会话 on a computer (latch:computers:start)', () => {
   const { isAppUrl } = require('../src/proxy.cjs') as { isAppUrl(url: string, home?: string): boolean }
   const mainContents = { id: 'main' }
@@ -1514,7 +1663,7 @@ describe('main’s 新会话 on a computer (latch:computers:start)', () => {
     isAppUrl,
     localHome: 'app',
     mainContents: () => mainContents,
-    remoteContents: (hostId: string) => (hostId === HOST_B ? bContents : undefined),
+    isRemoteContents: (hostId: string, contents: unknown) => hostId === HOST_B && contents === bContents,
     has: (hostId: string) => hostId === HOST_A || hostId === HOST_B || hostId === HOST_C,
   })
   const HOST_C = 'c'.repeat(52)
