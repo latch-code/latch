@@ -29,7 +29,6 @@ import { detailOwnsSummary } from '../core/projection.ts'
 import { setPreference } from '../preferences.ts'
 import { requestLeave } from '../preview/editDrafts.ts'
 import {
-  CODE_ROOT_COPY,
   NOTICE_COPY,
   describeFailure,
   isSessionStopCode,
@@ -620,11 +619,7 @@ export function useSessionController({
     refs: fileMentions.filter(ref => hasFileMention(submission.draft, ref)),
     onRefs: setFileMentions,
   }
-  const noProjectRefusal =
-    !creating && draftHarness?.level === 'L3' && codeRootWorkspace(catalog?.workspaces, { id: 'default' })
-      ? CODE_ROOT_COPY.chooseProject
-      : undefined
-  /** The project list also opens when the selected Harness cannot run in the default folder. */
+  /** A folder refused by the Host is explained in the project list. */
   const [projectRequest, setProjectRequest] = useState(0)
   const [projectNotice, setProjectNotice] = useState<string>()
   const askProject = (notice?: string) => {
@@ -638,10 +633,6 @@ export function useSessionController({
   const sendDraft = async (queueForLater = false) => {
     if (creating && creatorBlocked) {
       submission.setError(COPY.creatorUnavailable)
-      return
-    }
-    if (!creating && inputId === null && !submission.fork && (choice.workspaceId ?? 'default') === 'default' && noProjectRefusal) {
-      askProject()
       return
     }
     if (inputId !== null && active && ((!queueAttachments && attachmentDraft.items.length > 0) || mentionChoice.refs.length > 0)) {
@@ -1689,10 +1680,10 @@ export function useSessionController({
   )
   const statuses = approvalStatuses
   const noteComposer = rejection.composer
-  // A new Agent session in a folder inside Latch's program directory: every write will ask on the Host's computer.
+  // Developing the running copy affects the current workspace, regardless of the selected Harness.
   const codeRootChoice =
-    selectedId === null && !startsL3 && choice.mode !== 'chat'
-      ? codeRootWorkspace(catalog?.workspaces, { id: choice.workspaceId })
+    selectedId === null && choice.mode !== 'chat'
+      ? codeRootWorkspace(catalog?.workspaces, { id: choice.workspaceId ?? 'default' })
       : undefined
   const currentModel = sessionModel(summary)
   const mode = selectedId === null ? choice.mode : (summary?.mode ?? 'agent')
@@ -1833,9 +1824,7 @@ export function useSessionController({
               draftHarness,
             ),
       codeRootChoice:
-        creating || (!access.legacy && draftHarness?.level === 'L3') || choice.mode === 'chat'
-          ? undefined
-          : codeRootWorkspace(catalog?.workspaces, { id: choice.workspaceId }),
+        creating || choice.mode === 'chat' ? undefined : codeRootWorkspace(catalog?.workspaces, { id: choice.workspaceId ?? 'default' }),
       gate:
         access.legacy || access.scopes.has('run')
           ? { kind: 'open' as const }
@@ -1929,7 +1918,6 @@ export function useSessionController({
     abandoning,
     pendingQueued,
     askProject,
-    noProjectRefusal,
     projectAsk: {
       request: projectRequest,
       notice: projectNotice,

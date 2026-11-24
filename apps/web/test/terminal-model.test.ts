@@ -227,6 +227,7 @@ const b64 = (text: string) => Buffer.from(text).toString('base64')
 describe('terminal stream', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   })
 
   it('replays first, then reconnects after a cut from the last offset, and stops at closed', async () => {
@@ -277,15 +278,17 @@ describe('terminal stream', () => {
   })
 
   it('treats a terminal the Host no longer knows as closed, without retrying', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const fetch = vi.fn(async () => Response.json({ error: 'terminal-not-found' }, { status: 404 }))
     const { record, sink } = recorder()
     new TerminalLink('s', 't', sink, { fetch: fetch as unknown as typeof globalThis.fetch, initialDelayMs: 1 }).start()
     await vi.waitFor(() => expect(record.closed).toBe(1))
-    await new Promise(done => setTimeout(done, 20))
+    await vi.advanceTimersByTimeAsync(60_000)
     expect(fetch).toHaveBeenCalledTimes(1)
   })
 
   it('holds the stream while the screen has not parsed what it was given', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const big = 'x'.repeat(200 * 1024)
     let release: () => void = () => {}
     const parsed = new Promise<void>(resolve => {
@@ -319,7 +322,7 @@ describe('terminal stream', () => {
     const link = new TerminalLink('s', 't', sink, { fetch: (async () => new Response(body, { status: 200 })) as unknown as typeof fetch })
     link.start()
     await vi.waitFor(() => expect(record.output.length).toBe(big.length * 2))
-    await new Promise(done => setTimeout(done, 30))
+    await vi.advanceTimersByTimeAsync(1_000)
     // Past the high-water mark the third frame is not read until the screen catches up.
     expect(pulled).toBe(2)
     release()

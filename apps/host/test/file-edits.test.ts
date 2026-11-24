@@ -92,11 +92,12 @@ describe('edit protection', () => {
   const device = (scopes: Device['scopes']) => ({ scopes }) as Device
   const root = { id: 'default', path: '/work/app' }
   const at = (relativePath: string) => ({ relativePath, realPath: `/work/app/${relativePath}` })
-  it('never edits in the program folder, and asks R2 rights for protected paths', () => {
+  it('requires R2 rights for program folders and protected paths', () => {
     const elevated = device(['view', 'run', 'approve:elevated'])
-    expect(editProtection(elevated, at('a.txt'), root, '/work/app')).toEqual({ refusal: 'file-code-root' })
-    expect(editProtection(elevated, at('a.txt'), root, '/work')).toEqual({ refusal: 'file-code-root' })
-    expect(editProtection(elevated, at('a.txt'), root, '/work/app/vendor/latch')).toEqual({ refusal: 'file-code-root' })
+    for (const codeRoot of ['/work/app', '/work', '/work/app/vendor/latch']) {
+      expect(editProtection(elevated, at('a.txt'), root, codeRoot)).toEqual({ protection: 'protected-path' })
+      expect(editProtection(device(['view', 'run']), at('a.txt'), root, codeRoot)).toEqual({ refusal: 'file-edit-elevated' })
+    }
     expect(editProtection(elevated, at('a.txt'), root, '/opt/latch')).toEqual({ protection: 'none' })
     expect(editProtection(device(['view', 'run']), at('package.json'), root, '/opt/latch')).toEqual({ refusal: 'file-edit-elevated' })
     expect(editProtection(elevated, at('package.json'), root, '/opt/latch')).toEqual({ protection: 'protected-path' })
@@ -104,6 +105,28 @@ describe('edit protection', () => {
 })
 
 describe('file edits', () => {
+  it('edits a program-folder file with elevated scope and an audit, and refuses after that scope is revoked', async () => {
+    const workspaceRoot = await realpath(await mkdtemp(join(tmpdir(), 'latch-self-edit-')))
+    onTestFinished(() => rm(workspaceRoot, { recursive: true, force: true }))
+    const { t, owner, file, open, save } = await fixture({ workspaceRoot, codeRoot: workspaceRoot })
+    await writeFile(file('notes.txt'), 'before\n')
+    const opened = await open(owner, 'notes.txt')
+    expect(opened.actions.edit).toBe(true)
+    const response = await save(owner, opened.handle, { baseHash: sha('before\n'), content: 'after\n' })
+    expect(response.status).toBe(200)
+    expect(await readFile(file('notes.txt'), 'utf8')).toBe('after\n')
+    expect(await audited(t)).toEqual(['file.edit'])
+
+    await t.host.security.devices.setScopes(owner.id, { scopes: ['view', 'run'] }, { listener: 'unix' }, 'lpc-local')
+    expect((await open(owner, 'notes.txt')).actions.edit).toBe(false)
+    expect(await errorOf(await save(owner, opened.handle, { baseHash: sha('after\n'), content: 'denied\n' }))).toEqual({
+      status: 403,
+      error: 'file-edit-elevated',
+    })
+    expect(await readFile(file('notes.txt'), 'utf8')).toBe('after\n')
+    expect(await audited(t)).toEqual(['file.edit'])
+  })
+
   it('saves over the version opened, atomically, keeping the mode and line endings, with the audit first and a receipt', async () => {
     const { t, owner, file, open, save } = await fixture()
     await writeFile(file('notes.txt'), 'one\r\ntwo\r\n')

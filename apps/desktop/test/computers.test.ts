@@ -123,6 +123,7 @@ const proxyModule = require('../src/proxy.cjs') as {
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
+  vi.useRealTimers()
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
 })
 
@@ -983,16 +984,19 @@ describe('a computer bound to its certificate', () => {
 
 describe('a stalled handshake', () => {
   it('ends at once when the request times out, not at the handshake limit', async () => {
-    let closedAt = 0
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let accept!: () => void
+    let close!: () => void
+    const connected = new Promise<void>(resolve => (accept = resolve))
+    const closed = new Promise<void>(resolve => (close = resolve))
     const sockets = new Set<import('node:net').Socket>()
     const server = createNetServer(socket => {
       sockets.add(socket)
       // Accepts the connection and reads the TLS hello but never answers it.
       socket.resume()
-      socket.on('close', () => {
-        closedAt = Date.now()
-      })
+      socket.on('close', close)
       socket.on('error', () => {})
+      accept()
     })
     await new Promise<void>(done => server.listen(0, '127.0.0.1', done))
     cleanups.push(
@@ -1003,14 +1007,15 @@ describe('a stalled handshake', () => {
         }),
     )
     const { port } = server.address() as AddressInfo
-    const started = Date.now()
-    const failure = await remote
+    const request = remote
       .httpsRequest(`https://127.0.0.1:${port}`, { path: '/link/api/health', timeoutMs: 300 })
       .catch((error: unknown) => error)
+    await connected
+    await vi.advanceTimersByTimeAsync(300)
+    const failure = await request
     expect((failure as { code?: string }).code).toBe('ETIMEDOUT')
-    await new Promise(done => setTimeout(done, 200))
-    expect(closedAt).toBeGreaterThan(0)
-    expect(closedAt - started).toBeLessThan(2_000)
+    // No further timer advances: request expiry itself must close the live TLS connection.
+    await closed
   })
 })
 

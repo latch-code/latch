@@ -1,8 +1,6 @@
 import { createServer, connect } from 'node:net'
 import { generateKeyPairSync, sign } from 'node:crypto'
 import { once } from 'node:events'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { resolve } from 'node:path'
 import { createServer as createTlsServer, connect as connectTls } from 'node:tls'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -50,16 +48,21 @@ it('never issues an inner TLS ticket or resumes when a previously captured ticke
     servername: 'transport.latch.invalid',
     ca: transport.cert,
   })
+  cleanup.push(() => {
+    oldClient.destroy()
+  })
   oldClient.on('error', () => {})
+  const ticket = once(oldClient, 'session')
   await once(oldClient, 'secureConnect')
   const oldEcho = once(oldClient, 'data')
   oldClient.write('fixture')
   await oldEcho
-  await new Promise(resolve => setTimeout(resolve, 75))
+  await ticket
   expect(Boolean(observed.capture)).toBe(true)
+  const oldClosed = once(oldClient, 'close')
   oldClient.destroy()
+  await oldClosed
   observed.tickets = 0
-  const latency: number[] = []
   const sockets = new Set<import('node:net').Socket>()
   const server = createServer(socket => {
     sockets.add(socket)
@@ -95,36 +98,23 @@ it('never issues an inner TLS ticket or resumes when a previously captured ticke
   const port = (server.address() as import('node:net').AddressInfo).port,
     identity = { rootSpki: root.publicKey.export({ type: 'spki', format: 'der' }), knockKey, certificate: device.cert, key: device.key }
   const open = async () => {
-    const started = performance.now()
     const raw = connect(port, '127.0.0.1')
     raw.on('error', () => {})
     const socket = await connectNative(raw, { path: 'direct' }, identity)
-    latency.push(performance.now() - started)
     cleanup.push(() => {
       socket.destroy()
     })
     const echoed = once(socket, 'data')
     socket.write(Buffer.from('fixture'))
     await echoed
-    await new Promise(resolve => setTimeout(resolve, 75))
     expect(socket.isSessionReused()).toBe(false)
-    return socket
+    const closed = once(socket, 'close')
+    socket.end()
+    await closed
   }
-  const first = await open()
-  const execute = promisify(execFile),
-    pids = (await execute('/usr/bin/pgrep', ['-P', String(process.pid), '-f', '/latch-native-tls$'], { env: {} })).stdout.trim()
-  expect(/^[0-9]+$/u.test(pids)).toBe(true)
-  const rss = Number((await execute('/bin/ps', ['-o', 'rss=', '-p', pids], { env: {} })).stdout.trim())
-  const issued = observed.tickets
-  first.destroy()
+  await open()
+  expect(observed.tickets).toBe(0)
   observed.offer = true
   await open()
-  expect(issued).toBe(0)
   expect(observed.tickets).toBe(0)
-  console.info(
-    'Native TLS local fixture handshake milliseconds:',
-    latency.map(value => Math.round(value)),
-    'one connection helper RSS KiB:',
-    rss,
-  )
 })

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render } from 'vitest-browser-react'
 import { page } from 'vitest/browser'
 import {
@@ -17,6 +17,10 @@ import {
   Tooltip,
   keyGlyphs,
 } from '../src/index.ts'
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('keyGlyphs and the tooltip words', () => {
   it('writes a shortcut for the platform', async () => {
@@ -128,14 +132,9 @@ describe('Group and Row', () => {
 
 describe('Toast', () => {
   it('stands at the bottom centre and goes after 2.2 seconds', async () => {
-    let elapsed = 0
-    const start = performance.now()
+    const dismissed = vi.fn()
     const screen = await render(
-      <Toast
-        placement="bottom"
-        onDismiss={() => {
-          elapsed = performance.now() - start
-        }}>
+      <Toast placement="bottom" duration={null} onDismiss={dismissed}>
         已处理
       </Toast>,
     )
@@ -143,7 +142,21 @@ describe('Toast', () => {
     await expect.poll(() => innerHeight - toast.getBoundingClientRect().bottom).toBe(24)
     const box = toast.getBoundingClientRect()
     expect(Math.abs((box.left + box.right) / 2 - innerWidth / 2)).toBeLessThan(1)
-    await expect.poll(() => elapsed, { timeout: 4000 }).toBeGreaterThanOrEqual(2190)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await screen.rerender(
+        <Toast placement="bottom" onDismiss={dismissed}>
+          已处理
+        </Toast>,
+      )
+      await vi.advanceTimersByTimeAsync(2199)
+      expect(dismissed).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(dismissed).toHaveBeenCalledOnce()
+    } finally {
+      await screen.unmount()
+      vi.useRealTimers()
+    }
   })
 })
 

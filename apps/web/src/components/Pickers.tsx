@@ -297,7 +297,6 @@ export function ProjectPicker({
   notice,
   onClosed,
   defaultLocation,
-  noProjectRefusal,
   face,
   hint,
 }: {
@@ -313,14 +312,13 @@ export function ProjectPicker({
   /** The desktop app on the Host's computer: a new project from a folder chosen in the system's panel. */
   onCreate?: (() => void) | undefined
   disabled?: boolean
-  /** Each new value opens the list: sending found no project, or a folder was refused. */
+  /** Each new value opens the list after a folder was refused. */
   openRequest?: number | undefined
   /** Why the folder just chosen did not become a project, in the Host's words. */
   notice?: string | undefined
   onClosed?: (() => void) | undefined
   /** Agent forms use the same default ID for the Host-allocated home, never for the public start folder. */
   defaultLocation?: { label: string; description: string }
-  noProjectRefusal?: string | undefined
   /** The words the trigger shows instead of the chosen project's name (「选一个项目」 under the start page's headline). */
   face?: string
   /** The trigger's hover: a long name in full. */
@@ -365,12 +363,10 @@ export function ProjectPicker({
             options: [
               {
                 ...option(start, defaultLocation?.label ?? COPY.noProject),
-                ...(noProjectRefusal ? { disabledReason: noProjectRefusal } : {}),
                 tag: undefined,
                 // The Host's own start directory gives each session a new folder; one the owner set is used as it is.
-                description: noProjectRefusal
-                  ? undefined
-                  : (defaultLocation?.description ?? (catalog.sessionFolders ? noProjectLine(harness) : middleEllipsis(start.path, 44))),
+                description:
+                  defaultLocation?.description ?? (catalog.sessionFolders ? noProjectLine(harness) : middleEllipsis(start.path, 44)),
               },
             ],
           },
@@ -451,7 +447,7 @@ export function workspaceSections(catalog: HostCatalog, value: string | undefine
         id: workspace.id,
         label: workspace.id === 'default' ? COPY.noProject : workspace.name || basename(workspace.path),
         description: middleEllipsis(workspace.path, 44),
-        // A folder in Latch's program directory: every Latch 内置 write will ask on the Host's computer.
+        // Keep the running program's folder recognizable when it is chosen for development.
         tag: workspace.codeRoot ? <Badge tone="warn">{CODE_ROOT_COPY.badge}</Badge> : undefined,
         checked: workspace.id === value,
         onSelect: () => {

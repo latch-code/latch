@@ -119,9 +119,19 @@ describe('route guards', () => {
     expect((await phone.request('POST', subscriptions, registration)).status).toBe(403)
     await verifyPhone(t, phone, deviceId, verificationKey)
     expect((await phone.request('POST', subscriptions, registration)).status).toBe(200)
+    const readyApproval = (sessionId: string, notifications: number) =>
+      vi.waitFor(
+        async () => {
+          expect(delivered).toHaveLength(notifications)
+          // Push reads the driver's pending list, which can precede the approval's commit to session detail.
+          const { approvals } = await t.host.bridge.detail(sessionId)
+          expect(approvals).toHaveLength(1)
+          return approvals[0]!
+        },
+        { timeout: 12000 },
+      )
     const { sessionId } = await t.host.bridge.createTask({ prompt: '生成一份需要审批的报告', requestId: randomUUID() })
-    await vi.waitFor(() => expect(delivered).toHaveLength(1), { timeout: 12000 })
-    const approval = (await t.host.bridge.detail(sessionId)).approvals[0]!
+    const approval = await readyApproval(sessionId, 1)
     const hint = { route: registration.route, ticket: delivered[0]!.ticket }
     expect((await phone.request('POST', targets, hint)).body).toMatchObject({
       target: { session: sessionId, id: approval.id, kind: 'approval' },
@@ -133,8 +143,7 @@ describe('route guards', () => {
     expect(decision.status).toBe(200)
     expect((await phone.request('POST', targets, hint)).body).toEqual({ target: null })
     const second = await t.host.bridge.createTask({ prompt: '请审批这份报告', requestId: randomUUID() })
-    await vi.waitFor(() => expect(delivered).toHaveLength(2), { timeout: 12000 })
-    const exact = (await t.host.bridge.detail(second.sessionId)).approvals[0]!
+    const exact = await readyApproval(second.sessionId, 2)
     const freshHint = { route: registration.route, ticket: delivered[1]!.ticket }
     expect((await phone.request('POST', targets, freshHint)).body).toMatchObject({ target: { id: exact.id } })
     const acted = await phone.request('POST', '/link/api/approvals/' + exact.id, { decision: 'allow', requestId: randomUUID() })

@@ -133,10 +133,11 @@ describe('asking main which references are files', () => {
   })
 
   it('draws a chip for inline code the Host says is a file, and leaves other code and a streaming reply as code', async () => {
+    vi.useFakeTimers()
     const { known } = store(['out/deck.pptx'])
     known.want('out/deck.pptx')
     known.want('missing.ts')
-    await new Promise(done => setTimeout(done, 300))
+    await vi.runAllTimersAsync()
     const html = within(known, createElement(MessageContent, { text: '已写入 `out/deck.pptx`，见 `missing.ts` 与 `npm run build`。' }))
     expect(html).toContain('data-file-chip=""')
     expect(html).toContain('<span class="file-chip-folders">out/</span><span class="file-chip-name">deck.pptx</span>')
@@ -153,9 +154,10 @@ describe('asking main which references are files', () => {
   })
 
   it("asks about a finished tool's files only, and draws its chips only once the row is opened", async () => {
+    vi.useFakeTimers()
     const { known } = store(['out/deck.pptx'])
     known.want('out/deck.pptx')
-    await new Promise(done => setTimeout(done, 300))
+    await vi.runAllTimersAsync()
     const message: Message = {
       id: 'tool:c1',
       role: 'tool',

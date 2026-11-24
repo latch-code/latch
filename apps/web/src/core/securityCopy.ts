@@ -913,24 +913,17 @@ export const NATIVE_LINK_COPY = defineCopy(
   },
 )
 
-/**
- * A folder inside Latch's program directory: every write by the built-in agent needs an answer on this Mac and other
- * agents cannot start there. The start directory comes from the start options, so the way out is a project.
- */
+/** Developing the running copy of Latch can affect this workspace when it is built or restarted. */
 export const CODE_ROOT_COPY = defineCopy(
   {
-    badge: '程序目录内',
-    notice: '在程序目录里，每次写入都问你',
+    badge: 'Latch 程序目录',
+    notice: '正在开发当前运行的 Latch，构建或重启可能影响当前使用。',
     startDir: 'Latch 启动时的文件夹',
-    chooseProject: '默认文件夹与 Latch 程序目录重叠，请选择其他项目。',
-    newProject: '添加项目…',
   },
   {
-    badge: 'In program folder',
-    notice: 'In the program folder, every write asks you',
+    badge: 'Latch program folder',
+    notice: 'You are developing the running copy of Latch. Building or restarting it may affect your current work.',
     startDir: 'Folder Latch started in',
-    chooseProject: 'The default folder overlaps the Latch program folder. Choose another project.',
-    newProject: 'Add project…',
   },
 )
 

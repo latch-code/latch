@@ -243,6 +243,10 @@ describe('the picker board', () => {
   })
 
   it('keeps focus in the board when the list it was on is replaced while open, so Escape still closes it', async () => {
+    let finishRead: () => void = () => {}
+    const response = new Promise<void>(resolve => {
+      finishRead = resolve
+    })
     function Reading() {
       const [read, setRead] = useState(false)
       const sources = read
@@ -258,7 +262,7 @@ describe('the picker board', () => {
             width="lg"
             onOpenChange={open => {
               // As a draft's panel does: opening it starts a read whose answer replaces the rows.
-              if (open) setTimeout(() => setRead(true), 50)
+              if (open) void response.then(() => setRead(true))
             }}
             panel={
               <PickerBoard
@@ -278,6 +282,7 @@ describe('the picker board', () => {
     const screen = await render(<Reading />)
     await screen.getByRole('button', { name: /^模型/u }).click()
     await expect.element(screen.getByRole('menuitemradio', { name: '默认模型' })).toHaveFocus()
+    finishRead()
     await expect.element(screen.getByRole('menuitemradio', { name: 'Large' })).toHaveFocus()
     await userEvent.keyboard('{Escape}')
     await expect.poll(() => document.querySelector('.ui-board')?.closest('[popover]')?.matches(':popover-open')).toBe(false)

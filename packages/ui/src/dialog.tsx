@@ -32,13 +32,14 @@ function useModal(
 ): {
   closedby: 'none' | undefined
   onCancel: (event: { preventDefault: () => void; target: EventTarget; currentTarget: EventTarget }) => void
-  onClose: (event: { currentTarget: HTMLDialogElement }) => void
+  onClose: (event: { target: EventTarget; currentTarget: HTMLDialogElement }) => void
   onPointerDown: (event: PointerEvent<HTMLDialogElement>) => void
   onClick: (event: MouseEvent<HTMLDialogElement>) => void
   onKeyDown: (event: KeyboardEvent<HTMLDialogElement>) => void
 } {
   const restore = useRef<HTMLElement | null>(null)
   const pressedScrim = useRef(false)
+  const pendingCloses = useRef(0)
   const latest = useRef({ open, onClose, dismissible })
   useLayoutEffect(() => {
     latest.current = { open, onClose, dismissible }
@@ -53,6 +54,7 @@ function useModal(
       dialog.showModal()
       focusInitial(dialog)
     } else if (!open && dialog.open) {
+      pendingCloses.current++
       dialog.close()
       giveBack(restore.current)
     }
@@ -62,6 +64,7 @@ function useModal(
     const dialog = ref.current
     return () => {
       if (dialog?.open) {
+        pendingCloses.current++
         dialog.close()
         giveBack(restore.current)
       }
@@ -80,9 +83,14 @@ function useModal(
       if (dismissible) latest.current.onClose()
     },
     onClose: event => {
-      // The browser can still close it on its own (repeated Escape); report that as a close, or, where it must stay and
-      // `closedby` is not supported, open it again. The event arrives a task later, so one from a close this hook made
-      // and has since undone (a remount) finds the dialog open again.
+      if (event.target !== event.currentTarget) return
+      // close() queues its event. A controlled close or Strict Mode cleanup may already have reopened this same
+      // dialog, and a browser close can follow before either event arrives. Consume our own events in order.
+      if (pendingCloses.current > 0) {
+        pendingCloses.current--
+        return
+      }
+      // A browser close (repeated Escape) reports dismissal, or reopens a modal that still requires an answer.
       const dialog = event.currentTarget
       if (!latest.current.open || dialog.open) return
       if (latest.current.dismissible) latest.current.onClose()

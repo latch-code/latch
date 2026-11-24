@@ -821,26 +821,25 @@ describe('approval cards', () => {
 })
 
 describe('a folder inside Latch’s program directory', () => {
-  const start = { id: 'default', name: 'app', path: '/repo/latch/.runtime/workspace', codeRoot: true as const }
-  const folders = (onNewProject?: () => void) =>
+  const start = { id: 'default', name: 'app', path: '/repo/latch', codeRoot: true as const }
+  const folders = () =>
     renderToStaticMarkup(
       createElement(SessionFolders, {
         snapshot: appSnapshot({ catalog: hostCatalog({ workspaces: [start] }) }),
         summary: session({ cwd: start.path }),
         local: true,
         admin: false,
-        ...(onNewProject ? { onNewProject } : {}),
       }),
     )
 
-  it('warns in the breadcrumb’s popover by the Host’s flag, with 添加项目… where this device can make one', () => {
-    const html = folders(noop)
+  it('warns about the running copy by the Host’s flag without asking the person to change projects', () => {
+    const html = folders()
     expect(html).toContain('data-tone="warn"')
     expect(html).toContain(CODE_ROOT_COPY.notice)
     expect(html).toContain(CODE_ROOT_COPY.startDir)
-    expect(html).toContain(`>${CODE_ROOT_COPY.newProject}</button>`)
-    // Elsewhere only the reason; and nothing for a folder the Host does not flag.
-    expect(folders()).not.toContain(CODE_ROOT_COPY.newProject)
+    expect(html).not.toContain('添加项目')
+    expect(html).not.toContain('每次写入')
+    // Nothing for a folder the Host does not flag.
     const plain = renderToStaticMarkup(
       createElement(SessionFolders, {
         snapshot: appSnapshot({ catalog: hostCatalog({ workspaces: [{ ...start, codeRoot: undefined }] }) }),
@@ -866,11 +865,11 @@ describe('a folder inside Latch’s program directory', () => {
       createElement(ProjectRow, { workspace: { ...start, id: 'p1' }, owner: true, isDefault: false, folders: null, onRemove: noop }),
     )
     expect(card).toContain(CODE_ROOT_COPY.notice)
-    // A saved project cannot be moved from here yet: no start-directory sentence and no action.
+    // A saved project has the same warning without the start-directory sentence.
     expect(card).not.toContain(CODE_ROOT_COPY.startDir)
   })
 
-  it('says the way out of the start directory once in 设置 › 项目', () => {
+  it('identifies the start directory in 设置 › 项目 without requiring another project', () => {
     const settings = (workspace: typeof start | Omit<typeof start, 'codeRoot'>) =>
       renderToStaticMarkup(
         createElement(WorkspacesSettings, {

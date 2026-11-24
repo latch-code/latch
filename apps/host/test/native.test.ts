@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
   connectNative,
   PaddedStream,
@@ -934,10 +934,12 @@ describe('native Host entry with existing authorization', () => {
     cleanup.push(() => fresh.close())
     expect(body<{ device: { id: string } }>(await fresh.request('GET', '/link/api/snapshot')).device.id).toBe(registered.deviceId)
   })
-  it.skipIf(process.platform !== 'darwin')(
-    'keeps directory names behind the body window and discards a listing when its original window expires',
-    async () => {
+  describe.skipIf(process.platform !== 'darwin')('directory body-window authorization', () => {
+    beforeAll(async () => {
       await buildFilesHelper()
+    }, 130_000)
+
+    it('keeps directory names behind the body window and discards a listing when its original window expires', async () => {
       let time = Date.now()
       const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 }, now: () => time })
       cleanup.push(() => host.close())
@@ -958,6 +960,7 @@ describe('native Host entry with existing authorization', () => {
         barrier = new Promise<void>(done => {
           release = done
         })
+      cleanup.push(release)
       const original = FileDirectoryReader.prototype.list
       vi.spyOn(FileDirectoryReader.prototype, 'list').mockImplementationOnce(async function (this: FileDirectoryReader, input) {
         const result = await original.call(this, input)
@@ -974,8 +977,8 @@ describe('native Host entry with existing authorization', () => {
         expect(result.status).toBe(403)
         expect(JSON.stringify(result.body)).not.toContain('never-unverified')
       }
-    },
-  )
+    })
+  })
   it('keeps question bodies private before App verification and refuses an answer after its window expires', async () => {
     let time = Date.now(),
       continued = 0

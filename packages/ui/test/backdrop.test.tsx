@@ -181,20 +181,22 @@ describe('the background layer', () => {
     }
     const before = stats.read!().frames
     const started = performance.now()
-    await pause(600)
-    const elapsed = performance.now() - started
-    const after = stats.read!()
-    window.requestAnimationFrame = request
-    observer.disconnect()
-    expect(after.frames - before).toBeGreaterThan(2)
-    expect(after.frames - before).toBeLessThanOrEqual(Math.ceil(elapsed / FRAME_INTERVAL) + 1)
-    expect(after.minGap).toBeGreaterThanOrEqual(FRAME_INTERVAL - 1.5)
-    // Never an animation frame per display refresh: about one for each frame it drew.
-    expect(requested).toBeLessThanOrEqual(after.frames - before + 3)
-    expect(after.points).toBeLessThanOrEqual(particleCount(400, 300, 'standard'))
-    // The loop writes pixels only: no attribute, style, class or node changed anywhere, the canvas included.
-    expect(changes.map(record => `${record.type} ${record.target.nodeName} ${record.attributeName ?? ''}`)).toEqual([])
-    expect(screen.container.querySelector('canvas')!.getAttribute('style')).toBeNull()
+    try {
+      await expect.poll(() => stats.read!().frames).toBeGreaterThan(before + 2)
+      const elapsed = performance.now() - started
+      const after = stats.read!()
+      expect(after.frames - before).toBeLessThanOrEqual(Math.ceil(elapsed / FRAME_INTERVAL) + 1)
+      expect(after.minGap).toBeGreaterThanOrEqual(FRAME_INTERVAL - 1.5)
+      // Never an animation frame per display refresh: about one for each frame it drew.
+      expect(requested).toBeLessThanOrEqual(after.frames - before + 3)
+      expect(after.points).toBeLessThanOrEqual(particleCount(400, 300, 'standard'))
+      // The loop writes pixels only: no attribute, style, class or node changed anywhere, the canvas included.
+      expect(changes.map(record => `${record.type} ${record.target.nodeName} ${record.attributeName ?? ''}`)).toEqual([])
+      expect(screen.container.querySelector('canvas')!.getAttribute('style')).toBeNull()
+    } finally {
+      window.requestAnimationFrame = request
+      observer.disconnect()
+    }
   })
 
   it.for(['field', 'digits'] as const)('keeps an ambient layer moving while nothing runs (%s)', async kind => {
@@ -202,8 +204,7 @@ describe('the background layer', () => {
     const screen = await render(<Stage kind={kind} ambient running={0} stats={stats} />)
     await expect.poll(() => stats.read?.().frames ?? 0).toBeGreaterThan(1)
     const before = stats.read!().frames
-    await pause(600)
-    expect(stats.read!().frames).toBeGreaterThan(before + 5)
+    await expect.poll(() => stats.read!().frames).toBeGreaterThan(before + 5)
     expect(stats.read!().idle).toBe(false)
     expect(drawn(screen.container.querySelector('canvas')!, WHOLE)).toBeGreaterThan(0)
   })

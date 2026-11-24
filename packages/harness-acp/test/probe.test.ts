@@ -1,12 +1,14 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentRecord } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { agentProbePreview, probeAgent } from '../src/probe.ts'
 const roots: string[] = []
+const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
 })
 async function fixture(env: Record<string, string> = {}, overrides: Partial<AgentRecord> = {}) {
@@ -93,16 +95,51 @@ describe('initialize-only Agent probes', () => {
     })
     await expect(t.logs()).rejects.toMatchObject({ code: 'ENOENT' })
   })
-  it('stops the process after a handshake timeout and after Host cancellation', async () => {
-    const t = await fixture({ FAKE_ACP_INIT_DELAY: '10000' })
-    const result = await probeAgent(t.agent, { ...t.options, expectedLaunchHash: t.preview.launchHash, timeoutMs: 200 })
-    expect(result.status).toBe('failed')
-    const pid = (await t.logs())[0]!.pid
-    expect(() => process.kill(pid, 0)).toThrow()
+  it('stops the process after a handshake timeout', async () => {
+    const t = await fixture({ FAKE_ACP_INIT_SILENT: '1' })
+    const controller = new AbortController()
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    const pending = probeAgent(t.agent, {
+      ...t.options,
+      expectedLaunchHash: t.preview.launchHash,
+      timeoutMs: 200,
+      signal: controller.signal,
+    })
+    const close = async () => {
+      vi.useRealTimers()
+      controller.abort()
+      await pending.catch(() => {})
+    }
+    cleanups.push(close)
+    try {
+      // Advance the deadline only after the real child has received initialize; process startup speed is not the contract.
+      await expect.poll(async () => (await t.logs()).some(line => line.method === 'initialize'), { timeout: 5_000 }).toBe(true)
+      await vi.advanceTimersByTimeAsync(200)
+      vi.useRealTimers()
+      expect(await pending).toMatchObject({ status: 'failed', diagnostic: expect.stringContaining('initialize timed out') })
+      const pid = (await t.logs())[0]!.pid
+      expect(() => process.kill(pid, 0)).toThrow()
+    } finally {
+      await close()
+    }
+  })
+  it('waits for the process to stop after Host cancellation', async () => {
+    const t = await fixture({ FAKE_ACP_INIT_SILENT: '1' })
     const controller = new AbortController()
     const pending = probeAgent(t.agent, { ...t.options, expectedLaunchHash: t.preview.launchHash, signal: controller.signal })
-    await expect.poll(async () => (await t.logs()).filter(line => line.event === 'start').length).toBe(2)
-    controller.abort()
-    expect((await pending).status).toBe('failed')
+    const close = async () => {
+      controller.abort()
+      await pending.catch(() => {})
+    }
+    cleanups.push(close)
+    try {
+      await expect.poll(async () => (await t.logs()).some(line => line.method === 'initialize'), { timeout: 5_000 }).toBe(true)
+      const pid = (await t.logs())[0]!.pid
+      controller.abort()
+      expect((await pending).status).toBe('failed')
+      expect(() => process.kill(pid, 0)).toThrow()
+    } finally {
+      await close()
+    }
   })
 })

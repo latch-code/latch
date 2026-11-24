@@ -2,7 +2,7 @@ import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { createTransportCertificate, nodeCrypto, RelayControl, connectRelayTunnel } from '@latch/link-client'
 import { holder, issuePass, routeKey, UTC_DAY } from '@latch/link-wire'
 import { startRelay } from '../src/server.ts'
@@ -117,7 +117,9 @@ it.each([undefined, 'outer-pad-v2'] as const)(
     }
     rx += 100
     tx += 200
-    await new Promise(resolve => setTimeout(resolve, 1100))
+    await vi.waitFor(() => expect(relay.status().quota).toMatchObject({ monthlyUsed: 300, calibrated: true, healthy: true }), {
+      timeout: 5000,
+    })
     const status = await (await fetch(`${admin}/status`)).json()
     expect(status.quota).toMatchObject({ monthlyUsed: 300, calibrated: true, healthy: true })
     expect(status.forwarding.waiting).toBe(0)

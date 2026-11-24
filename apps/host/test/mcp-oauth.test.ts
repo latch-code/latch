@@ -335,7 +335,7 @@ describe('登录 of a remote MCP server', () => {
     const silent = await world({ auth: { iss: 'omit' } })
     await signIn(silent)
 
-    const w = await world({ auth: { tokenDelayMs: 300 } })
+    const w = await world()
     // A hit without this login's state is anyone's (another process, a page scanning loopback): refused, and the login
     // waits on for the real callback. Nothing is put on record for it.
     const good = await start(w)
@@ -366,24 +366,53 @@ describe('登录 of a remote MCP server', () => {
     })
     expect(status).toBe(404)
     expect((await view(w)).oauth?.state).toBe('signing-in')
-    // A flood of such hits is answered a bounded number of times a second and then dropped, with no record of any.
-    const flood = await Promise.all(
-      Array.from({ length: 60 }, () =>
-        fetch(forged).then(
-          response => response.status,
-          () => 0,
+    const now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    let signalEntered!: () => void
+    const entered = new Promise<void>(resolve => {
+      signalEntered = resolve
+    })
+    let release!: () => void
+    const released = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const append = w.t.host.security.audit.append.bind(w.t.host.security.audit)
+    const record = vi.spyOn(w.t.host.security.audit, 'append').mockImplementation(async event => {
+      if (event.action === 'mcp.oauth.authorized') {
+        signalEntered()
+        await released
+      }
+      return append(event)
+    })
+    const restore = () => {
+      release()
+      record.mockRestore()
+      clock.mockRestore()
+    }
+    cleanups.push(restore)
+    try {
+      // Keep every hit in one rate-limit window, even when a loaded runner takes longer than a second to send them.
+      const flood = await Promise.all(
+        Array.from({ length: 60 }, () =>
+          fetch(forged).then(
+            response => response.status,
+            () => 0,
+          ),
         ),
-      ),
-    )
-    expect(flood.filter(code => code === 400).length).toBeLessThanOrEqual(20)
-    expect(flood).toContain(0)
-    expect((await audit(w.t)).filter(record => record.action === 'mcp.oauth.failed')).toEqual([])
-    await new Promise(resolve => setTimeout(resolve, 1100))
+      )
+      expect(flood.filter(code => code === 400).length).toBeLessThanOrEqual(20)
+      expect(flood).toContain(0)
+      expect((await audit(w.t)).filter(record => record.action === 'mcp.oauth.failed')).toEqual([])
+      clock.mockReturnValue(now + 1000)
 
-    // A second return while the first is being exchanged is refused; the first still finishes.
-    const [one, two] = await Promise.all([fetch(callback), new Promise(resolve => setTimeout(resolve, 50)).then(() => fetch(callback))])
-    expect(one.status).toBe(200)
-    expect(two.status).toBe(400)
+      // Hold the first callback before its login is saved, so the duplicate reaches the same still-open listener.
+      const one = await fetch(callback)
+      expect(one.status).toBe(200)
+      await entered
+      expect((await fetch(callback)).status).toBe(400)
+    } finally {
+      restore()
+    }
     await settled(w, 'signed-in')
     expect(w.auth.requests.filter(request => request.path === '/token')).toHaveLength(1)
     await expect(fetch(callback)).rejects.toThrow()

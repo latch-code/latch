@@ -85,13 +85,11 @@ export function SessionFolders({
   snapshot,
   local,
   admin,
-  onNewProject,
 }: {
   summary: TaskSummary
   snapshot: AppSnapshot
   local: boolean
   admin: boolean
-  onNewProject?: () => void
 }) {
   const [error, setError] = useState('')
   const catalog = snapshot.catalog
@@ -143,7 +141,7 @@ export function SessionFolders({
         )}
       </CrumbRow>
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
-      {codeRoot && <CodeRootNotice workspace={codeRoot} {...(onNewProject ? { onNewProject } : {})} />}
+      {codeRoot && <CodeRootNotice workspace={codeRoot} />}
     </>
   )
 }

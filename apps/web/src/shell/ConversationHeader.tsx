@@ -866,21 +866,7 @@ export function ConversationHeader({
       {...(summary
         ? {
             crumb: {
-              folders: (
-                <SessionFolders
-                  summary={summary}
-                  snapshot={snapshot}
-                  local={access.local}
-                  admin={access.admin}
-                  {...(owner && shell.shell
-                    ? {
-                        onNewProject: () => {
-                          openSettings('workspaces')
-                        },
-                      }
-                    : {})}
-                />
-              ),
+              folders: <SessionFolders summary={summary} snapshot={snapshot} local={access.local} admin={access.admin} />,
               after: <SessionFacts summary={summary} detail={current} harness={topHarness} gate={shell.gate} />,
             },
           }

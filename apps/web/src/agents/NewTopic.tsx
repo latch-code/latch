@@ -123,7 +123,7 @@ function topicSections({
                 onSelect: () => onProject('default'),
               },
               ...projects.map(project => {
-                // The same guards as the project picker: the Host's reason, the Harness's folder limit, Latch's own folder.
+                // The same guards as the project picker: the Host's reason and the Harness's folder limit.
                 const folders = projectFolders(project).length
                 const limit = harness?.projectFolders?.access === 'all' ? harness.projectFolders.max : undefined
                 const blocked =

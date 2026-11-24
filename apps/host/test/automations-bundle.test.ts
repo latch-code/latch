@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, expect, onTestFinished, test } from 'vitest'
 import type { Automation, AutomationDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, startHostFixture } from '@latch/testkit'
 import { hostBundleOptions } from '../scripts/host-bundle.ts'
@@ -17,6 +17,14 @@ afterEach(async () => {
 })
 
 test('with an engine enabled, a production bundle keeps a 通用 automation on across a restart and runs it', async () => {
+  const timerWarnings: Error[] = []
+  const onWarning = (warning: Error) => {
+    if (warning.name === 'TimeoutOverflowWarning') timerWarnings.push(warning)
+  }
+  process.on('warning', onWarning)
+  onTestFinished(() => {
+    process.off('warning', onWarning)
+  })
   await mkdir(resolve('test-results'), { recursive: true })
   const root = await mkdtemp(join(resolve('test-results'), 'latch-automation-build-'))
   roots.push(root)
@@ -37,6 +45,8 @@ test('with an engine enabled, a production bundle keeps a 通用 automation on a
           rateLimits: 'relaxed',
           nativeNetwork: false,
           now: () => clock,
+          // The runtime's event times and the Host's silence checks must use the same clock.
+          clock: () => clock,
         }),
       { dataDir, workspaceRoot },
     )
@@ -70,4 +80,5 @@ test('with an engine enabled, a production bundle keeps a 通用 automation on a
     .poll(async () => (await viewer.json<AutomationDetail>(`automations/${id}`)).automation.lastRun?.state, { timeout: 15000 })
     .toBe('completed')
   expect((await viewer.json<AutomationDetail>(`automations/${id}`)).automation).toMatchObject({ enabled: true, state: 'ready' })
+  expect(timerWarnings).toEqual([])
 }, 40000)

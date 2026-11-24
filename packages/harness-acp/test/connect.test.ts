@@ -370,7 +370,7 @@ describe('a command older than its preset supports', () => {
     const where = await computer('pi', '1.5.0', file =>
       [
         '#!/bin/sh',
-        `if [ "$1" = --version ]; then sleep 1; cat '${file}'; echo; exit 0; fi`,
+        `if [ "$1" = --version ]; then touch '${file}.reading'; while [ ! -f '${file}.release' ]; do sleep 0.01; done; cat '${file}'; echo; exit 0; fi`,
         `exec '${process.execPath}' '${FAKE_PI_AGENT}' "$@"`,
         '',
       ].join('\n'),
@@ -380,9 +380,13 @@ describe('a command older than its preset supports', () => {
     const driver = await activate(createAcpAgentPlugin(record, FAST))
     const bridge = await open(driver, where)
     const id = await start(bridge, where.workspace)
-    await new Promise(resolve => setTimeout(resolve, 300))
-    await mkdir(join(where.workspace, '.pi'))
-    await writeFile(join(where.workspace, '.pi', 'settings.json'), '{"changed":true}')
+    try {
+      await expect.poll(() => stat(`${where.versionFile}.reading`), { timeout: 5_000 }).toBeDefined()
+      await mkdir(join(where.workspace, '.pi'))
+      await writeFile(join(where.workspace, '.pi', 'settings.json'), '{"changed":true}')
+    } finally {
+      await writeFile(`${where.versionFile}.release`, '')
+    }
     const detail = await ended(bridge, id)
     expect(detail.summary.status).toBe('failed')
     expect(systemText(detail)).toContain('配置与会话启动时不同')

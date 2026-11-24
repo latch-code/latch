@@ -32,6 +32,7 @@ import { AuditLog } from '../src/audit.ts'
 import { createOfflineTicket } from '../src/auth.ts'
 import { HostConfig } from '../src/config.ts'
 import { hashDisplay } from '../src/crypto.ts'
+import { HarnessHub } from '../src/hub.ts'
 import { tlsListenerClass, validateTls } from '../src/listeners.ts'
 import type { TrafficSummary } from '../src/traffic.ts'
 import { startTestHost, type TestHost, type TestHostOptions } from './helpers/host.ts'
@@ -1816,8 +1817,11 @@ describe('traffic counters', () => {
 })
 
 describe('full-access (L3) sessions', () => {
-  async function acpHost() {
-    const t = await testHost({ agentPlugin: (agent: AgentRecord) => createAcpAgentPlugin(agent, { stopGraceMs: 100, cancelGraceMs: 500 }) })
+  async function acpHost(options: TestHostOptions = {}) {
+    const t = await testHost({
+      ...options,
+      agentPlugin: (agent: AgentRecord) => createAcpAgentPlugin(agent, { stopGraceMs: 100, cancelGraceMs: 500 }),
+    })
     const desktop = await t.enroll({ listener: 'unix' })
     const browser = await t.enroll({ scopes: [...ADMIN] })
     const definition = {
@@ -1839,6 +1843,46 @@ describe('full-access (L3) sessions', () => {
     const enrolled = t.presence.requests.length
     return { t, desktop, browser, enrolled }
   }
+
+  it.each(['project', 'default'] as const)('starts and continues ACP in an explicit %s overlapping Latch code', async kind => {
+    const codeRoot = await realpath(await temporaryDirectory('latch-code-'))
+    const { t, desktop, browser, enrolled } = await acpHost({
+      codeRoot,
+      ...(kind === 'default' ? { workspaceRoot: codeRoot } : {}),
+    })
+    const workspaceId = kind === 'default' ? 'default' : (await addProject(desktop, [codeRoot], 'latch-code')).workspace.id
+    const project = (await browser.json<AppSnapshot>('snapshot')).catalog!.workspaces.find(item => item.id === workspaceId)!
+    expect(project).toMatchObject({ path: codeRoot, codeRoot: true })
+    expect(project.unavailable).toBeUndefined()
+    const sessionId = await startTask(browser, 'plan', { harnessId: 'fake', workspaceId })
+    await settled(t, sessionId)
+    expect((await t.host.bridge.detail(sessionId)).summary).toMatchObject({ cwd: codeRoot, workspaceId })
+    await expect
+      .poll(() => browser.json('agents/fake/commands', { method: 'POST', body: { workspaceId } }))
+      .toMatchObject({ catalogue: { commands: [expect.objectContaining({ name: 'init' })] } })
+    expect(
+      (await browser.request(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'plan again', requestId: randomUUID() } }))
+        .status,
+    ).toBe(200)
+    await settled(t, sessionId)
+    expect(t.presence.requests).toHaveLength(enrolled)
+  })
+
+  it('keeps a code workspace containing Host data limited to the built-in harness', async () => {
+    const codeRoot = await realpath(await temporaryDirectory('latch-code-'))
+    const { t, browser } = await acpHost({ codeRoot, workspaceRoot: codeRoot, dataDir: join(codeRoot, 'data') })
+    const builtin = await startTask(browser, 'hello', { harnessId: 'standard', mode: 'chat' })
+    await settled(t, builtin)
+    const response = await browser.request('tasks', {
+      method: 'POST',
+      body: { prompt: 'plan', requestId: randomUUID(), mode: 'agent', harnessId: 'fake' },
+    })
+    expect(response.status).toBe(409)
+    expect(await body(response)).toMatchObject({ error: 'workspace-inside-data' })
+    const lookup = vi.spyOn(HarnessHub.prototype, 'commandCatalogueOf')
+    expect(await browser.json('agents/fake/commands', { method: 'POST', body: { workspaceId: 'default' } })).toEqual({ catalogue: null })
+    expect(lookup).not.toHaveBeenCalled()
+  })
 
   it('lists what the last session offered before the next starts, and starts on what a device chose from it', async () => {
     const { t, browser, enrolled } = await acpHost()
@@ -3339,7 +3383,7 @@ describe('providers', () => {
 })
 
 describe('workspaces, policy and audit', () => {
-  it("adds projects outside Latch's own directories only, from the desktop, audited", async () => {
+  it('adds projects including Latch code from the desktop, audited, while keeping private directories excluded', async () => {
     const codeRoot = await realpath(await temporaryDirectory('latch-code-'))
     const t = await testHost({ codeRoot })
     const desktop = await t.enroll({ listener: 'unix' })
@@ -3362,7 +3406,9 @@ describe('workspaces, policy and audit', () => {
     })
     expect(await refusal(join(t.dataDir, 'auth'))).toMatchObject({ refused: [{ code: 'workspace-overlap' }] })
     expect(await refusal(t.root)).toMatchObject({ refused: [{ code: 'workspace-overlap' }] })
-    expect(await refusal(codeRoot)).toMatchObject({ refused: [{ code: 'workspace-code-root' }] })
+    const codeProject = (await addProject(desktop, [codeRoot], 'Latch code')).workspace
+    expect(codeProject).toMatchObject({ path: codeRoot, codeRoot: true })
+    expect(codeProject.unavailable).toBeUndefined()
     expect(await refusal('relative/path')).toMatchObject({ refused: [{ code: 'workspace-invalid' }] })
     for (const path of ['folder-grants', 'workspaces'])
       expect(await body(await viewer.request(path, { method: 'POST', body: {} }))).toMatchObject({ error: 'scope-required' })
@@ -3454,14 +3500,14 @@ describe('workspaces, policy and audit', () => {
     settings.workspaces.push({ id: 'home', name: 'Home', path: homedir() })
     await writeFile(join(dataDir, 'settings.json'), JSON.stringify(settings), { mode: 0o600 })
 
-    // The second start treats the project as part of the Latch code, which projects may not overlap.
-    const t = await testHost({ dataDir, codeRoot: await realpath(root) })
+    // A folder saved before becomes the Agent installation directory at the second start.
+    const t = await testHost({ dataDir, agentsDir: await realpath(project) })
     const device = await t.enroll({ scopes: [...ADMIN] })
     const snapshot = await device.json<AppSnapshot>('snapshot')
     const reasons = (list: WorkspaceInfo[]) => list.map(item => [item.id, item.unavailable])
     const expected = [
       ['default', undefined],
-      ['project', '文件夹「project」：该目录与 Latch 程序目录重叠，不能作为项目'],
+      ['project', '文件夹「project」：该目录与 Latch 的Agent 安装目录重叠，不能作为项目'],
       ['home', expect.stringMatching(/^文件夹「[^」]+」：/u)],
     ]
     expect(reasons(snapshot.catalog!.workspaces)).toEqual(expected)
@@ -3482,10 +3528,9 @@ describe('workspaces, policy and audit', () => {
     ).toMatchObject({ error: 'workspace-disabled' })
     const disabled = (await auditRecords(t)).filter(record => record.action === 'workspace.disabled').map(record => record.detail)
     expect(disabled).toEqual([
-      { workspaceId: 'project', reason: 'code-root', folderIndex: 0 },
+      { workspaceId: 'project', reason: 'overlap', folderIndex: 0 },
       { workspaceId: 'home', reason: 'overlap', folderIndex: 0 },
     ])
-    expect(snapshot.catalog!.workspaces.find(item => item.id === 'project')).toMatchObject({ codeRoot: true })
     expect((await device.request('workspaces/home', { method: 'DELETE' })).status).toBe(200)
   })
 
@@ -4288,6 +4333,21 @@ describe('projects of several folders', () => {
     const { workspaces } = await device.json<{ workspaces: WorkspaceInfo[] }>('workspaces')
     return workspaces.find(item => item.id === id)!
   }
+
+  it('updates the code warning when a code folder joins or leaves an existing project', async () => {
+    const { paths } = await folders('api', 'latch')
+    const t = await testHost({ codeRoot: paths.latch })
+    const desktop = await t.enroll({ listener: 'unix' })
+    const { workspace } = await addProject(desktop, [paths.api!], 'project')
+    expect((await projectOf(desktop, workspace.id)).codeRoot).toBeUndefined()
+    const added = await body<{ workspace: WorkspaceInfo }>(await desktop.addFolders({ projectId: workspace.id, paths: [paths.latch!] }))
+    expect(added.workspace.codeRoot).toBe(true)
+    expect(added.workspace.unavailable).toBeUndefined()
+    expect(await projectOf(desktop, workspace.id)).toMatchObject({ codeRoot: true })
+    const codeFolder = added.workspace.folders!.find(folder => folder.path === paths.latch)!
+    expect((await desktop.request(`workspaces/${workspace.id}/folders/${codeFolder.id}`, { method: 'DELETE' })).status).toBe(200)
+    expect((await projectOf(desktop, workspace.id)).codeRoot).toBeUndefined()
+  })
 
   it('adds folders only from the desktop app over host.sock, with a fresh nonce signed over the exact body', async () => {
     let clock = Date.now()

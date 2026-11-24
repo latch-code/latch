@@ -2,7 +2,7 @@ import { _electron, type ElectronApplication, type Locator, type Page } from '@p
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -520,8 +520,11 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await chmod(adapter, 0o755)
       const project = join(directory, 'rust-learn')
       await mkdir(project)
+      const codeRoot = join(directory, 'latch-program')
+      await mkdir(codeRoot)
       const host = await startTestHost({
         demo: false,
+        codeRoot,
         sessionFolders: true,
         presenceMode: 'manual',
         // Only this adapter is found, whatever is installed on the machine running the test.
@@ -573,15 +576,16 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(0)
         expect((await owner.json<{ agents: AgentSettings[] }>('agents')).agents).toEqual([])
 
-        // A folder the Host refuses says so in the list, at once.
+        // The Host's data folder remains protected; the refusal keeps the draft in place.
         await application.evaluate(({ BrowserWindow, dialog }, chosen) => {
           dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [chosen] })) as typeof dialog.showOpenDialog
           BrowserWindow.prototype.isFocused = () => true
-        }, process.cwd())
+        }, host.dataDir)
         await open.click()
         const projectMenu = page.getByRole('menu', { name: '项目', exact: true })
         expect(await projectMenu.count()).toBe(1)
-        await projectMenu.getByText(/^没有打开 .*不能作为项目$/u).waitFor()
+        await projectMenu.getByText(/^没有打开 .*不能添加到项目的目录重叠。$/u).waitFor()
+        expect(await promptValue(input)).toBe('修一下测试')
 
         // The chosen folder is a project at once, named in the question; a list asked for earlier stays shut.
         await application.evaluate(({ dialog }, chosen) => {
@@ -639,19 +643,34 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await pick(null)
         await add.click()
         await page.locator('.transcript').getByText('echo: 随便试试', { exact: true }).waitFor()
-        await pick(process.cwd())
+        await pick(host.dataDir)
         await add.click()
         await page
           .locator('.toast')
-          .getByText(/^没有打开 .*不能作为项目$/u)
+          .getByText(/^没有打开 .*不能添加到项目的目录重叠。$/u)
           .waitFor()
         await page.locator('.transcript').getByText('echo: 随便试试', { exact: true }).waitFor()
-        const second = join(directory, 'second')
-        await mkdir(second)
-        await pick(second)
+        // A program folder explicitly chosen in the native picker is a usable project, with a warning before sending.
+        await pick(codeRoot)
         await add.click()
-        await place.getByText('second', { exact: true }).first().waitFor()
-        await page.locator('#session-navigation').getByText('second', { exact: true }).waitFor()
+        await place.getByText('latch-program', { exact: true }).first().waitFor()
+        await page.locator('#session-navigation').getByText('latch-program', { exact: true }).waitFor()
+        await page
+          .locator('.composer-notice')
+          .getByText('正在开发当前运行的 Latch，构建或重启可能影响当前使用。', { exact: true })
+          .waitFor()
+        const before = host.presence.requests.length
+        await input.fill('检查 Latch 源码')
+        const submitted = page.waitForResponse(
+          response => response.url().endsWith('/link/api/tasks') && response.request().method() === 'POST',
+        )
+        await input.press('Meta+Enter')
+        const response = await submitted
+        expect(response.status()).toBe(201)
+        const { sessionId } = (await response.json()) as { sessionId: string }
+        await page.locator('.transcript').getByText('echo: 检查 Latch 源码', { exact: true }).waitFor()
+        expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.cwd).toBe(await realpath(codeRoot))
+        expect(host.presence.requests).toHaveLength(before)
       } finally {
         await application?.close()
         await host.close()

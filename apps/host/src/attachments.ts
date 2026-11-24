@@ -186,6 +186,7 @@ export class AttachmentStore {
       throw new AppError(503, 'attachments-unavailable', '附件存储失败，上传结果未知，请重启后重试。')
     }
   }
+  /** Binding must not unlink a draft during a finite content read: even an open descriptor's ctime changes. */
   private mutate<T>(action: () => Promise<T>): Promise<T> {
     const next = this.serial.then(action, action)
     this.serial = next.catch(() => {})
@@ -651,7 +652,10 @@ export class AttachmentStore {
    * Opens a stored attachment for reading ranges, without holding it whole. Its whole content is checked against its
    * ref the first time, and again whenever the file is no longer the one checked (another inode, size or time).
    */
-  async reader(ref: AttachmentRef): Promise<AttachmentReader> {
+  reader(ref: AttachmentRef): Promise<AttachmentReader> {
+    return this.mutate(() => this.openReader(ref))
+  }
+  private async openReader(ref: AttachmentRef): Promise<AttachmentReader> {
     const entry = this.entryOf(ref)
     const changed = () => new AppError(409, 'attachment-changed', '附件内容已变化，请重新添加。')
     const file = await open(this.path(entry), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch(() => {
@@ -686,7 +690,10 @@ export class AttachmentStore {
       close: () => file.close(),
     }
   }
-  async read(ref: AttachmentRef): Promise<AttachmentData> {
+  read(ref: AttachmentRef): Promise<AttachmentData> {
+    return this.mutate(() => this.readContent(ref))
+  }
+  private async readContent(ref: AttachmentRef): Promise<AttachmentData> {
     const entry = this.state.entries[ref.id]
     if (!entry || !isAttachmentRef(ref) || canonicalJson(entry.ref) !== canonicalJson(ref))
       throw new AppError(404, 'attachment-missing', '附件不可用。')
@@ -719,7 +726,10 @@ export class AttachmentStore {
    * kept only while it is a plain file with the same bytes. Removed with the session, or by `prune` when no attachment
    * is bound to that session.
    */
-  async materialize(ref: AttachmentRef, sessionId: string): Promise<string> {
+  materialize(ref: AttachmentRef, sessionId: string): Promise<string> {
+    return this.mutate(() => this.materializeFile(ref, sessionId))
+  }
+  private async materializeFile(ref: AttachmentRef, sessionId: string): Promise<string> {
     const entry = this.state.entries[ref.id]
     // The run may start before its draft is bound to the session (`bind`); a draft bound elsewhere is not this one's.
     if (!entry || (entry.taskId ?? sessionId) !== sessionId || !taskId.safeParse(sessionId).success)

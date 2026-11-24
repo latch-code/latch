@@ -171,7 +171,7 @@ export interface WorkspaceInfo {
   defaultModel?: ModelRef
   /** Host-read, display-only Git branch of the primary folder; omitted when metadata cannot be verified. */
   branch?: string
-  /** The project lies in Latch's program directory: every Latch 内置 write asks for local approval, and ACP agents cannot start there. */
+  /** A project folder overlaps Latch's program directory: usable for development, with Latch 内置 writes classified R2. */
   codeRoot?: true
 }
 

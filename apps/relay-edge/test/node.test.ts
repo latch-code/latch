@@ -1,5 +1,5 @@
 import { scryptSync } from 'node:crypto'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   attachMac,
   hex,
@@ -564,7 +564,13 @@ describe('edge relay node', () => {
     }
     host.send({ type: 'registration-proof', routeId: reply.routeId, nonce: reply.nonce, solution })
     await t.clock.advance(40)
-    await new Promise(resolve => setTimeout(resolve, 500))
+    await vi.waitFor(
+      async () => {
+        await t.clock.advance(40)
+        expect(host.messages()).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'registered', status: 0 })]))
+      },
+      { timeout: 5000 },
+    )
     expect(await host.next(t.clock, 2)).toMatchObject({ type: 'registered', status: 0 })
   }, 30_000)
 

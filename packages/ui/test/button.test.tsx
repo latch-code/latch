@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
 
@@ -9,6 +9,10 @@ const style = (element: Element, pseudo?: string) => getComputedStyle(element, p
 /** The open tooltips' text; a closed one is hidden, so role queries no longer find it. */
 const openTooltips = () => Array.from(document.querySelectorAll('.ui-tooltip:popover-open'), element => element.textContent)
 const wait = (ms: number) => new Promise(done => setTimeout(done, ms))
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('buttons', () => {
   it('keeps an accessible shortcut without drawing or reserving key caps', async () => {
@@ -188,19 +192,24 @@ describe('buttons', () => {
     // A tooltip hidden by an earlier test would make the next one appear at once.
     await wait(350)
     const settings = screen.getByRole('button', { name: '设置' })
-    await userEvent.hover(settings)
-    await wait(250)
-    expect(openTooltips()).toEqual([])
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await userEvent.hover(settings)
+      await vi.advanceTimersByTimeAsync(399)
+      expect(openTooltips()).toEqual([])
+      await vi.advanceTimersByTimeAsync(1)
+    } finally {
+      vi.useRealTimers()
+    }
     await expect.poll(openTooltips, { timeout: 2000 }).toEqual(['设置'])
     // It fades in from a scale of .98 over --m-enter, inverted.
     const first = document.querySelector<HTMLElement>('.ui-tooltip:popover-open')!
-    expect(first.getAnimations().map(item => (item as CSSAnimation).animationName)).toEqual(['ui-pop'])
+    expect(style(first).animationName).toBe('ui-pop')
     expect([style(first).backgroundColor, style(first).color]).toEqual(['rgb(23, 23, 26)', 'rgb(250, 250, 250)'])
     // The label already names the button, so the tooltip does not describe it a second time.
     expect(settings.element().hasAttribute('aria-describedby')).toBe(false)
     await userEvent.hover(screen.getByRole('button', { name: '添加' }))
-    await wait(100)
-    expect(openTooltips()).toEqual(['添加'])
+    await expect.poll(openTooltips).toEqual(['添加'])
     // The neighbour's tooltip glides from where the last one stood instead of popping in again.
     const next = document.querySelector<HTMLElement>('.ui-tooltip:popover-open')!
     expect([next.hasAttribute('data-glide'), style(next).transitionProperty]).toEqual([true, 'left, top'])

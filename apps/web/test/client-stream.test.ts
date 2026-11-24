@@ -193,6 +193,7 @@ describe('fetch-based event stream connection', () => {
   })
 
   it('drops the connection on suspend, ignores frames that arrive after it, and connects again only on reconnect', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     let push!: (text: string) => void
     const live = () =>
       new ReadableStream<Uint8Array>({
@@ -236,7 +237,7 @@ describe('fetch-based event stream connection', () => {
     connection.suspend()
     expect(connection.open).toBe(false)
     push('event: refresh\ndata: 2\n\n')
-    await new Promise(resolve => setTimeout(resolve, 30))
+    await vi.advanceTimersByTimeAsync(60_000)
     expect(events).toHaveLength(1)
     expect(fetchMock).toHaveBeenCalledTimes(1)
     connection.reconnect()
@@ -254,16 +255,21 @@ describe('fetch-based event stream connection', () => {
   })
 
   it('stops when the handler answers stop', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: 'device-revoked', message: 'x' }), { status: 401 }))
     const errors = vi.fn()
-    connectEventStream(
+    const unauthorized = vi.fn(() => 'stop' as const)
+    const connection = connectEventStream(
       '/link/api/events',
-      { onOpen: () => {}, onEvent: () => {}, onError: errors, onUnauthorized: () => 'stop' },
+      { onOpen: () => {}, onEvent: () => {}, onError: errors, onUnauthorized: unauthorized },
       { fetch: fetchMock as unknown as typeof fetch, initialDelayMs: 1 },
     )
-    await new Promise(resolve => setTimeout(resolve, 30))
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(unauthorized).toHaveBeenCalledExactlyOnceWith('device-revoked')
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(errors).not.toHaveBeenCalled()
+    expect(connection.open).toBe(false)
+    connection.close()
   })
 })
 

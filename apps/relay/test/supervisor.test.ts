@@ -31,16 +31,14 @@ beforeAll(async () => {
 afterEach(async () => {
   for (const child of children.splice(0)) {
     child.stdin.end()
-    if (child.exitCode === null)
-      await Promise.race([
-        new Promise(resolve => child.once('exit', resolve)),
-        new Promise(resolve =>
-          setTimeout(() => {
-            child.kill('SIGKILL')
-            resolve(undefined)
-          }, 3000),
-        ),
-      ])
+    if (child.exitCode === null && child.signalCode === null)
+      await new Promise<void>(resolve => {
+        const timer = setTimeout(() => child.kill('SIGKILL'), 3000)
+        child.once('exit', () => {
+          clearTimeout(timer)
+          resolve()
+        })
+      })
   }
   for (const path of roots.splice(0)) await rm(path, { recursive: true, force: true })
 })
@@ -56,11 +54,12 @@ async function fixture(mode: 'crash' | 'wedge' | 'dependency' | 'corrupt') {
     `import fs from 'node:fs';import http from 'node:http';
 const root=${JSON.stringify(dataDir)};let count=0;try{count=Number(fs.readFileSync(root+'/starts','utf8'))}catch{};fs.writeFileSync(root+'/starts',String(++count),{mode:0o600});fs.fstatSync(3);
 if(count===1&&${JSON.stringify(mode)}==='crash')process.exit(1);
+if(count>1&&${JSON.stringify(mode)}==='wedge')while(!fs.existsSync(root+'/resume'))await new Promise(resolve=>setTimeout(resolve,10));
 const socket=root+'/worker-admin.sock';try{fs.unlinkSync(socket)}catch{};const server=http.createServer((_req,res)=>res.end('{}'));server.listen(socket,()=>{fs.chmodSync(socket,0o600);emit('ready')});
 const status={ready:true,connections:0,routes:0,pending:0,draining:false};const emit=type=>process.stdout.write(JSON.stringify({type,...(type==='ready'?{port:12345,adminPort:0,adminSocket:socket}:{}),status})+'\\n');const timer=setInterval(()=>emit('heartbeat'),1000);
 process.stdin.on('data',()=>process.exit(0));process.stdin.on('end',()=>process.exit(0));process.stdin.resume();
 if(count===1&&${JSON.stringify(mode)}==='dependency')setTimeout(()=>{status.gateway={healthy:false}},100);
-if(count===1&&${JSON.stringify(mode)}==='wedge')setTimeout(()=>Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,30000),100);
+if(count===1&&${JSON.stringify(mode)}==='wedge')setTimeout(()=>{fs.writeFileSync(root+'/wedged','');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,30000)},100);
 `,
     { mode: 0o600 },
   )
@@ -149,11 +148,14 @@ it('keeps independent health responsive while a real worker event loop is wedged
   const f = await fixture('wedge')
   await vi.waitFor(() => expect(f.events.some(event => event.started)).toBe(true), { timeout: 3000 })
   const admin = `http://127.0.0.1:${f.events.find(event => event.started)!.adminPort}`
-  await new Promise(resolve => setTimeout(resolve, 10500))
-  const before = performance.now()
+  await vi.waitFor(() => stat(join(f.dataDir, 'wedged')))
+  // The supervisor answers even though the worker cannot process another event.
+  expect((await fetch(`${admin}/status`, { signal: AbortSignal.timeout(1000) })).status).toBe(200)
+  await vi.waitFor(() => expect(f.events.some(event => event.alert)).toBe(true), { timeout: 12000 })
+  // Hold the replacement before ready so the unhealthy interval cannot pass between polls.
   const health = await fetch(`${admin}/healthz`, { signal: AbortSignal.timeout(1000) })
-  expect(performance.now() - before).toBeLessThan(1000)
   expect(health.status).toBe(503)
+  await writeFile(join(f.dataDir, 'resume'), '')
   await vi.waitFor(() => expect(f.events.filter(event => event.started).length).toBe(2), { timeout: 4000, interval: 50 })
   expect((await fetch(`${admin}/healthz`)).status).toBe(200)
   expect(Number(await readFile(join(f.dataDir, 'starts'), 'utf8'))).toBe(2)

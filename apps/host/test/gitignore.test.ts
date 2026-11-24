@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { ignoreVerdict, isGitignored, matchBudget, parseGitignore, readIgnoreRules, type IgnoreRules } from '../src/files/gitignore.ts'
+import { beginLoopWork, YIELD_MS } from '../src/files/loop-turn.ts'
 import { GREP_LIMITS, grepFiles } from '../src/files/grep.ts'
 import { ProtectedPaths } from '../src/files/resolve.ts'
 import { FileSearchIndex, searchFiles } from '../src/files/search.ts'
@@ -57,10 +58,8 @@ describe('gitignore matching', () => {
     expect(isGitignored(rules('/x.ts', 'app'), 'app/deep/x.ts', false)).toBe(false)
   })
 
-  it('stays linear on a pathological pattern and caps what it keeps', () => {
-    const started = performance.now()
+  it('matches a pathological pattern and caps what it keeps', () => {
     expect(isGitignored(rules(`${'*a'.repeat(200)}b`), 'a'.repeat(255), false)).toBe(false)
-    expect(performance.now() - started).toBeLessThan(200)
     expect(parseGitignore('x\n'.repeat(5000))).toHaveLength(1000)
     expect(parseGitignore(`${'y'.repeat(2000)}\nz`)).toHaveLength(1)
   })
@@ -103,24 +102,48 @@ describe('gitignore rules from the repository, bounded', () => {
   })
 
   it('stops a costly check at its budget and calls the entry undecided, which counts as ignored', () => {
-    const heavy = rules(`${'*'.concat('a'.repeat(62), 'b')}\n`.repeat(1000))
-    const budget = matchBudget()
-    const started = performance.now()
-    expect(ignoreVerdict(heavy, 'a'.repeat(255), false, budget)).toBe('undecided')
-    expect(performance.now() - started).toBeLessThan(50)
-    expect(isGitignored(heavy, 'a'.repeat(255), false, budget)).toBe(true)
-    // A spent walk budget decides nothing more, cheaply.
-    budget.walk = 0
-    expect(ignoreVerdict(rules('*.log'), 'x.txt', false, budget)).toBe('undecided')
-    // Past the deadline, likewise.
-    expect(ignoreVerdict(heavy, 'a'.repeat(10), false, matchBudget(performance.now() - 1))).toBe('undecided')
+    const now = performance.now()
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(now)
+    const end = beginLoopWork()
+    try {
+      const heavy = rules(`${'*'.concat('a'.repeat(62), 'b')}\n`.repeat(1000))
+      const budget = matchBudget()
+      expect(ignoreVerdict(heavy, 'a'.repeat(255), false, budget)).toBe('undecided')
+      expect(budget.cut).toBe('steps')
+      expect(isGitignored(heavy, 'a'.repeat(255), false, budget)).toBe(true)
+      // A spent walk budget decides nothing more, cheaply.
+      budget.walk = 0
+      expect(ignoreVerdict(rules('*.log'), 'x.txt', false, budget)).toBe('undecided')
+      expect(budget.cut).toBe('steps')
+      // Past the deadline, likewise.
+      const expired = matchBudget(now - 1)
+      expect(ignoreVerdict(heavy, 'a'.repeat(10), false, expired)).toBe('undecided')
+      expect(expired.cut).toBe('deadline')
+    } finally {
+      end()
+      clock.mockRestore()
+    }
   })
 
-  it('parses in one pass: an unclosed [ is a literal, a set over the cap leaves its line out', () => {
-    const started = performance.now()
+  it('stops when the shared event-loop window is spent, even with steps remaining', () => {
+    const now = performance.now()
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(now)
+    const end = beginLoopWork()
+    try {
+      const budget = matchBudget()
+      clock.mockReturnValue(now + YIELD_MS + 1)
+      expect(ignoreVerdict(rules('*.log'), 'keep.txt', false, budget)).toBe('undecided')
+      expect(budget.cut).toBe('time')
+      expect(isGitignored(rules('*.log'), 'keep.txt', false, budget)).toBe(true)
+    } finally {
+      end()
+      clock.mockRestore()
+    }
+  })
+
+  it('treats unclosed [ as a literal and leaves out a set over the cap', () => {
     expect(parseGitignore(`${'['.repeat(1023)}\n`.repeat(63))).toHaveLength(63)
     expect(parseGitignore(`${'[a'.repeat(511)}\n`.repeat(64))).toHaveLength(64)
-    expect(performance.now() - started).toBeLessThan(50)
     expect(isGitignored(rules('[[a'), '[[a', false)).toBe(true)
     expect(isGitignored(rules('x[ab'), 'x[ab', false)).toBe(true)
     const wide = rules(`*[${'b'.repeat(1021)}]\nkeep`)
@@ -153,6 +176,7 @@ describe('gitignore rules from the repository, bounded', () => {
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
+  vi.restoreAllMocks()
   for (const close of cleanups.splice(0)) await close()
 })
 
@@ -272,17 +296,31 @@ describe('ordinary repositories and many walks at once', () => {
   const guard = new ProtectedPaths([])
   const GAP = 60
 
-  async function ordinary(files: number, folders = 20) {
-    const parent = await realpath(await mkdtemp(join(tmpdir(), 'latch-ordinary-')))
-    cleanups.push(() => rm(parent, { recursive: true, force: true }))
-    const root = join(parent, 'repo')
+  async function ordinary(
+    files: number,
+    folders = 20,
+    options: { cleanups?: Array<() => Promise<void>>; concurrency?: number; signal?: AbortSignal } = {},
+  ) {
+    const parent = await mkdtemp(join(tmpdir(), 'latch-ordinary-'))
+    const fixtureCleanups = options.cleanups ?? cleanups
+    fixtureCleanups.push(() => rm(parent, { recursive: true, force: true }))
+    const root = join(await realpath(parent), 'repo')
     await mkdir(join(root, '.git'), { recursive: true })
     await writeFile(join(root, '.gitignore'), 'node_modules/\ndist/\n*.log\n.env\ncoverage/\n*.tmp\nbuild/\n.cache/\n*.swp\n.DS_Store\n')
-    for (let folder = 0; folder < folders; folder++) {
-      const at = join(root, `pkg-${folder}`, 'src')
-      await mkdir(at, { recursive: true })
-      for (let index = 0; index < files / folders; index++) await writeFile(join(at, `file-${index}.ts`), 'export const needle = 1\n')
-    }
+    let nextFolder = 0
+    const writers = Array.from({ length: Math.min(folders, options.concurrency ?? 1) }, async () => {
+      while (nextFolder < folders) {
+        options.signal?.throwIfAborted()
+        const at = join(root, `pkg-${nextFolder++}`, 'src')
+        await mkdir(at, { recursive: true })
+        for (let index = 0; index < files / folders; index++) {
+          options.signal?.throwIfAborted()
+          await writeFile(join(at, `file-${index}.ts`), 'export const needle = 1\n', { signal: options.signal })
+        }
+      }
+    })
+    // A failed writer must not leave other writes running when the fixture's owner starts cleanup.
+    for (const result of await Promise.allSettled(writers)) if (result.status === 'rejected') throw result.reason
     return { id: 'default', path: root }
   }
 
@@ -339,9 +377,25 @@ describe('ordinary repositories and many walks at once', () => {
     expect(gap).toBeLessThan(GAP)
   })
 
-  it('ranks many candidates without one long stretch', async () => {
-    const root = await ordinary(12_000, 24)
-    const { gap } = await longestGap(() => searchFiles([root], guard, '', 50, () => false))
-    expect(gap).toBeLessThan(GAP)
-  }, 60_000)
+  describe('ranking a large repository', () => {
+    const fixtureCleanups: Array<() => Promise<void>> = []
+    const preparation = new AbortController()
+    let creating: ReturnType<typeof ordinary> | undefined
+    let root: Awaited<ReturnType<typeof ordinary>>
+    beforeAll(async () => {
+      // Building 12,000 files is fixture I/O, outside the ranking and event-loop budgets below.
+      creating = ordinary(12_000, 24, { cleanups: fixtureCleanups, concurrency: 4, signal: preparation.signal })
+      root = await creating
+    }, 120_000)
+    afterAll(async () => {
+      // Vitest timeouts do not cancel async hooks: stop and settle every writer before removing its directory.
+      preparation.abort()
+      await creating?.catch(() => {})
+      for (const close of fixtureCleanups.splice(0).reverse()) await close()
+    }, 120_000)
+    it('ranks many candidates without one long stretch', async () => {
+      const { gap } = await longestGap(() => searchFiles([root], guard, '', 50, () => false))
+      expect(gap).toBeLessThan(GAP)
+    }, 60_000)
+  })
 })

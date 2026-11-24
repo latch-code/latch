@@ -1483,7 +1483,7 @@ describe("a row's context menu", () => {
     const box = target.getBoundingClientRect()
     const at = { bubbles: true, pointerType: 'touch', clientX: box.left + 4, clientY: box.top + 4 }
     target.dispatchEvent(new PointerEvent('pointerdown', at))
-    await new Promise(done => setTimeout(done, 600))
+    await expect.element(page.getByRole('menuitem', { name: '重命名' })).toBeVisible()
     target.dispatchEvent(new PointerEvent('pointerup', at))
     target.click()
     await expect.element(page.getByRole('menuitem', { name: '重命名' })).toBeVisible()

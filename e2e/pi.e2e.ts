@@ -4,7 +4,7 @@ import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import type { AppSnapshot, TaskDetail } from '@latch/protocol'
+import type { AppSnapshot, TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import { FAKE_PI_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
@@ -468,46 +468,50 @@ describe('pi over its own RPC mode', () => {
     }
   })
 
-  it('keeps the first message until a safe project is chosen when pi cannot use the start folder', async () => {
+  it('sends with pi from an explicitly chosen program project while showing the development warning', async () => {
     const bin = join(directory, 'bin')
-    const guarded = await startTestHost({
+    const programHost = await startTestHost({
       demo: false,
       codeRoot: directory,
       workspaceRoot: join(directory, 'workspace'),
       commandDirectories: () => [bin],
     })
     try {
-      const local = await guarded.enroll({ listener: 'unix' })
+      const local = await programHost.enroll({ listener: 'unix' })
       expect((await savePi(local)).status).toBe(201)
-      const path = join(guarded.root, 'notes')
-      await mkdir(path)
-      expect((await local.addFolders({ paths: [path] })).status).toBe(201)
+      const path = await realpath(directory)
+      const added = await local.addFolders({ name: 'Latch 源码', paths: [path] })
+      expect(added.status).toBe(201)
+      const { workspace } = (await added.json()) as { workspace: WorkspaceInfo }
+      expect(workspace.codeRoot).toBe(true)
+      expect(workspace.unavailable).toBeUndefined()
 
-      const page = await open(1440, 'dark', guarded)
+      const page = await open(1440, 'dark', programHost)
       await newDraft(page)
       await page.getByRole('button', { name: /^Harness：pi/u }).waitFor()
       let starts = 0
       page.on('request', request => {
         if (request.method() === 'POST' && new URL(request.url()).pathname === '/link/api/tasks') starts++
       })
-      await draft(page).fill('你好')
-      const send = page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true })
-      await send.click()
+      await chip(page, '项目').click()
       const menu = page.getByRole('menu', { name: '项目', exact: true })
-      const noProject = menu.getByRole('menuitemradio', { name: /^不选项目/u })
-      await noProject.waitFor()
-      expect(await noProject.isDisabled()).toBe(true)
-      expect(await promptValue(draft(page))).toBe('你好')
-      await shot(page, 'protected-start-1440-dark')
-      await menu.getByRole('menuitemradio', { name: /^notes/u }).click()
+      const project = menu.getByRole('menuitemradio', { name: /^Latch 源码/u })
+      expect(await project.isEnabled()).toBe(true)
+      await project.getByText('Latch 程序目录', { exact: true }).waitFor()
+      await project.click()
+      await page.locator('.composer-notice', { hasText: '正在开发当前运行的 Latch，构建或重启可能影响当前使用。' }).waitFor()
+      await draft(page).fill('检查 Latch 源码')
       expect(starts).toBe(0)
-      await send.click()
-      await reply(page, 'echo: 你好').waitFor()
+      await shot(page, 'program-project-1440-dark')
+      const before = (await received()).length
+      await page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true }).click()
+      await reply(page, 'echo: 检查 Latch 源码').waitFor()
       expect(starts).toBe(1)
-      expect((await local.json<AppSnapshot>('snapshot')).tasks).toMatchObject([{ harnessId: 'pi', cwd: await realpath(path) }])
+      expect((await local.json<AppSnapshot>('snapshot')).tasks).toMatchObject([{ harnessId: 'pi', workspaceId: workspace.id, cwd: path }])
+      expect((await received()).slice(before)).toContainEqual(expect.objectContaining({ event: 'start', cwd: path }))
       await page.context().close()
     } finally {
-      await guarded.close()
+      await programHost.close()
     }
   })
 })

@@ -3,9 +3,13 @@ import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { runInNewContext } from 'node:vm'
 import { Window as HappyWindow } from 'happy-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 interface Verdict {
   ok: boolean
@@ -1224,6 +1228,7 @@ describe('preview browser tabs', () => {
   })
 
   it('reports history, state and failures in bursts no faster than one per 32 ms', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const { controller, open, events } = setup()
     const { tabId, contents } = open()
     expect(controller.go({ tabId, action: 'back' })).toEqual({ ok: true })
@@ -1235,7 +1240,9 @@ describe('preview browser tabs', () => {
     for (let index = 0; index < 10; index++) contents.emit('did-navigate-in-page')
     contents.emit('did-fail-load', {}, -202, 'ERR_CERT_AUTHORITY_INVALID', 'https://x/', true)
     contents.emit('did-fail-load', {}, -3, 'ERR_ABORTED', 'https://x/', true)
-    await new Promise(done => setTimeout(done, 80))
+    await vi.advanceTimersByTimeAsync(31)
+    expect(events('state')).toEqual([])
+    await vi.advanceTimersByTimeAsync(1)
     expect(events('state')).toEqual([
       {
         tabId,
@@ -1434,8 +1441,7 @@ describe('preview browser, version 2', () => {
       ['Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] }],
     ])
     contents.emit('did-navigate')
-    await new Promise(done => setTimeout(done, 0))
-    expect(contents.debugger.commands).toHaveLength(2)
+    await vi.waitFor(() => expect(contents.debugger.commands).toHaveLength(2))
     expect(controller.state({ tabId })).toMatchObject({ ok: true, state: { colorScheme: 'dark' } })
     expect(await controller.colorScheme({ tabId, scheme: 'system' })).toEqual({ ok: true, colorScheme: 'system' })
     expect(contents.debugger.attached).toBe(false)
@@ -1561,8 +1567,9 @@ describe('preview browser, version 2', () => {
     expect(JSON.stringify(logs)).not.toContain('sid=1')
     expect(controller.state({ tabId })).toMatchObject({ ok: true, state: { logs: { errors: 1, warnings: 1, failed: 2 } } })
     expect(controller.logs({ tabId: other.tabId })).toMatchObject({ ok: true, console: [], network: [{ url: 'http://localhost:3000/' }] })
-    await new Promise(done => setTimeout(done, 60))
-    expect(events('state').some(event => (event.state as { logs: { errors: number } }).logs.errors === 1)).toBe(true)
+    await vi.waitFor(() =>
+      expect(events('state').some(event => (event.state as { logs: { errors: number } }).logs.errors === 1)).toBe(true),
+    )
     // Each tab keeps the newest 500 and hands the page the last 200.
     // Running counts follow what the ring pushes out; IDs keep rising.
     for (let index = 0; index < 600; index++)

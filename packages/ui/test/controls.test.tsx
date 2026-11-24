@@ -294,10 +294,16 @@ describe('tabs and filter pills', () => {
     expect(list.element().querySelector('.ui-tab-fill')).toBeNull()
     // Selection is neutral: never blue, never underlined; the others are muted.
     // The fill and the ink cross-fade in over --m-micro.
+    const args = screen.getByRole('tab', { name: '参数' }).element()
     await expect
-      .poll(() => [tab.getBoundingClientRect().height, style(tab).backgroundColor, style(tab).color, style(tab).borderTopLeftRadius])
-      .toEqual([24, 'rgba(18, 18, 28, 0.05)', 'rgb(23, 23, 26)', '6px'])
-    expect(style(screen.getByRole('tab', { name: '参数' }).element()).color).toBe('rgb(86, 86, 95)')
+      .poll(() => [
+        tab.getBoundingClientRect().height,
+        style(tab).backgroundColor,
+        style(tab).color,
+        style(tab).borderTopLeftRadius,
+        style(args).color,
+      ])
+      .toEqual([24, 'rgba(18, 18, 28, 0.05)', 'rgb(23, 23, 26)', '6px', 'rgb(86, 86, 95)'])
     expect(style(tab).textDecorationLine).toBe('none')
   })
 

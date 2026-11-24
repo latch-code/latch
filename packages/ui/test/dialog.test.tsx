@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { flushSync } from 'react-dom'
 import { describe, expect, it, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
@@ -353,6 +354,40 @@ describe('bottom sheet', () => {
     await expect.element(screen.getByRole('dialog', { name: '新会话' })).toBeVisible()
   })
 
+  it('reports a browser close only to its own sheet, including when both closes are queued together', async () => {
+    const outerClosed = vi.fn()
+    const innerClosed = vi.fn()
+    const screen = await render(
+      <Sheet open title="新会话" onClose={outerClosed}>
+        <Sheet open title="模型" onClose={innerClosed}>
+          模型列表
+        </Sheet>
+      </Sheet>,
+    )
+    const outer = screen.getByRole('dialog', { name: '新会话' }).element() as HTMLDialogElement
+    const inner = screen.getByRole('dialog', { name: '模型' }).element() as HTMLDialogElement
+    inner.close()
+    await expect.poll(() => innerClosed.mock.calls.length).toBe(1)
+    expect(outerClosed).not.toHaveBeenCalled()
+    expect(outer.open).toBe(true)
+
+    inner.showModal()
+    const delivered = Promise.all(
+      [inner, outer].map(
+        dialog =>
+          new Promise<void>(resolve => {
+            dialog.addEventListener('close', () => resolve(), { once: true })
+          }),
+      ),
+    )
+    // The inner close will reach React while the outer dialog is already closed too.
+    inner.close()
+    outer.close()
+    await delivered
+    expect(innerClosed).toHaveBeenCalledTimes(2)
+    expect(outerClosed).toHaveBeenCalledOnce()
+  })
+
   it('lets only the outermost modal dim and blur the page: one opened over it brings no scrim of its own', async () => {
     const screen = await render(<Nested />)
     await userEvent.click(screen.getByRole('button', { name: '模型' }))
@@ -401,7 +436,6 @@ describe('a modal that only an answer may end', () => {
     await expect.element(view.getByRole('dialog', { name: '问题' })).toHaveAttribute('closedby', 'none')
     for (let press = 0; press < 4; press++) {
       await userEvent.keyboard('{Escape}')
-      await new Promise(done => setTimeout(done, 30))
       expect(dialog.open).toBe(true)
     }
     expect(onClose).not.toHaveBeenCalled()
@@ -428,11 +462,33 @@ describe('a modal that only an answer may end', () => {
         <Button>好</Button>
       </Modal>,
     )
-    // Let the close event of the test wrapper's rehearsed remount pass first.
-    await new Promise(done => setTimeout(done, 30))
     document.querySelector('dialog')!.close()
     await vi.waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
     })
+  })
+
+  it('reports one browser close when a controlled close and reopen still have their close event queued', async () => {
+    const onClose = vi.fn()
+    let setOpen: (open: boolean) => void = () => {}
+    function Controlled() {
+      const [open, changeOpen] = useState(true)
+      setOpen = changeOpen
+      return (
+        <Dialog open={open} title="问题" onClose={onClose}>
+          内容
+        </Dialog>
+      )
+    }
+    const view = await render(<Controlled />)
+    const dialog = view.getByRole('dialog').element() as HTMLDialogElement
+    const delivered = vi.fn()
+    dialog.addEventListener('close', delivered)
+    // Keep all three operations in one task so neither close event can arrive before the real close.
+    flushSync(() => setOpen(false))
+    flushSync(() => setOpen(true))
+    dialog.close()
+    await expect.poll(() => delivered.mock.calls.length).toBeGreaterThanOrEqual(2)
+    await expect.poll(() => onClose.mock.calls.length).toBe(1)
   })
 })
