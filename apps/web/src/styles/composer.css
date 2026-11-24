@@ -1389,6 +1389,9 @@
 .composer-stop[data-tone='warn'] {
   color: var(--amber);
 }
+.composer-stop [data-tone='err'] {
+  color: var(--red);
+}
 .composer-stop > svg {
   flex-shrink: 0;
 }
