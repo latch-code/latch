@@ -1,3 +1,5 @@
+import { fencedParts } from './fencedParts.ts'
+
 /** Plain text survives native Harness histories, draft recovery and message copying. Offsets address visible DOM text. */
 export interface ReplyQuote {
   sessionId: string
@@ -19,22 +21,27 @@ export function writeReplyQuote(quote: ReplyQuote): string {
 }
 
 export function replyQuotes(text: string): Array<{ from: number; to: number; quote: ReplyQuote }> {
+  if (!text.includes('[引用回复 ')) return []
   const found: Array<{ from: number; to: number; quote: ReplyQuote }> = []
   const pattern = /^\[引用回复 ([^/\s\]]{1,768})\/([^/\s\]]{1,768})@(\d{1,8})\]\n(> [^\n]*(?:\n> [^\n]*)*)/gmu
-  for (const match of text.matchAll(pattern)) {
-    try {
-      const quote = {
-        sessionId: decodeURIComponent(match[1]!),
-        messageId: decodeURIComponent(match[2]!),
-        offset: Number(match[3]),
-        text: match[4]!
-          .split('\n')
-          .map(line => line.slice(2))
-          .join('\n'),
+  for (const part of fencedParts(text)) {
+    if (part.kind !== 'text') continue
+    for (const match of part.text.matchAll(pattern)) {
+      try {
+        const quote = {
+          sessionId: decodeURIComponent(match[1]!),
+          messageId: decodeURIComponent(match[2]!),
+          offset: Number(match[3]),
+          text: match[4]!
+            .split('\n')
+            .map(line => line.slice(2))
+            .join('\n'),
+        }
+        const from = part.from + match.index
+        if (quote.text.length && quote.text.length <= 4000) found.push({ from, to: from + match[0].length, quote })
+      } catch {
+        // A hand-edited marker with an invalid escape stays ordinary text.
       }
-      if (quote.text.length && quote.text.length <= 4000) found.push({ from: match.index, to: match.index + match[0].length, quote })
-    } catch {
-      // A hand-edited marker with an invalid escape stays ordinary text.
     }
   }
   return found

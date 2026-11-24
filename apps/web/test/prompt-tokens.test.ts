@@ -116,3 +116,15 @@ it('shows reference titles and quote headers as atomic draft chips while preserv
     ['quote', '', header],
   ])
 })
+
+it('keeps quote markers inside fenced code literal and preserves the offsets of draft chips outside it', () => {
+  const before = '[引用回复 session/before@10]'
+  const after = '[引用回复 session/after@20]'
+  const file = '@docs:guide.md'
+  const draft = ['😀请看', before, '> 前文', '```text', '[引用回复 session/example@0]', '> 示例', '```', after, '> 后文', file].join('\n')
+  expect(promptChips(draft, {}, [{ root: 'docs', path: 'guide.md' }]).map(({ kind, start, end }) => [kind, start, end])).toEqual([
+    ['quote', draft.indexOf(before), draft.indexOf(before) + before.length],
+    ['quote', draft.indexOf(after), draft.indexOf(after) + after.length],
+    ['file', draft.indexOf(file), draft.indexOf(file) + file.length],
+  ])
+})
