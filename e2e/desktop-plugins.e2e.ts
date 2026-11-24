@@ -276,7 +276,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         expect(await card.getAttribute('data-phase')).toBe('preview')
         expect(host.presence.requests).toHaveLength(beforePage)
         await card.getByRole('button', { name: '应用', exact: true }).click()
-        await applyReview.getByText('从 1.0.0 版修改的本地草稿', { exact: true }).waitFor()
+        await applyReview.getByText('从 1.0.1 版修改的本地草稿', { exact: true }).waitFor()
         await applyReview.getByRole('button', { name: '确认安装', exact: true }).click()
         await expect.poll(() => host.presence.requests.length).toBe(beforePage + 1)
         expect(host.presence.requests.at(-1)?.preview.action).toBe('plugin.package.apply')
@@ -319,7 +319,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await openSection(reopened, '插件')
         await (await chooseFile()).setFiles(exported)
         await editor.getByRole('button', { name: '构建并预览', exact: true }).waitFor()
-        expect(await editor.getByRole('textbox', { name: '插件名称' }).inputValue()).toBe('发布检查')
+        expect(await editor.getByRole('textbox', { name: '插件名称' }).inputValue()).toBe('发布检查记录')
       } finally {
         await application?.close()
         await host.close()
