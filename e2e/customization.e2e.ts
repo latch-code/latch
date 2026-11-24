@@ -10,6 +10,7 @@ import {
   type AppSnapshot,
   type CustomizationDocument,
   type CustomizationReceipt,
+  type CustomizationView,
   type Device,
   type TaskDetail,
 } from '@latch/protocol'
@@ -622,12 +623,14 @@ describe('customisation: 外观 as data, and the way back to the default', () =>
       await group.getByRole('button', { name: '应用', exact: true }).click()
       await expect.poll(async () => (await state()).doc).toEqual({ schema: 1, appearance: { accentHue: 305, radius: 'round' } })
       await expect.poll(() => rootToken(other.page, '--r-8')).toBe('12px')
-      // The history names the revision, and going back to an earlier one writes a new revision.
-      await group.getByText('应用', { exact: true }).first().waitFor()
+      const history = await owner.json<CustomizationView>('customization')
+      const round = history.revisions.find(item => item.revision === history.revision)!
+      const roundRow = group.locator('.settings-row').filter({ has: page.locator(`time[datetime="${round.at}"]`) })
+      await roundRow.getByText('当前', { exact: true }).waitFor()
       await group.getByRole('radiogroup', { name: '圆角' }).getByRole('radio', { name: '方', exact: true }).click()
       await group.getByRole('button', { name: '应用', exact: true }).click()
       await expect.poll(async () => (await state()).doc.appearance.radius).toBe('sharp')
-      await group.getByRole('button', { name: '回退', exact: true }).first().click()
+      await roundRow.getByRole('button', { name: '回退', exact: true }).click()
       await expect.poll(async () => (await state()).doc.appearance.radius).toBe('round')
       await group.getByRole('button', { name: '恢复默认', exact: true }).click()
       await expect.poll(async () => (await state()).doc).toEqual(DEFAULT)
