@@ -1,9 +1,12 @@
 ---
 import Pic from './Pic.astro'
 import Mark from './Mark.astro'
+import Film from './Film.astro'
 import GitHubLink from './GitHubLink.astro'
-import HERO from '../hero.json'
+import MarketplaceCover from './MarketplaceCover.astro'
+import { HERO, TIMELINE, film } from '../build-data'
 import { AGENTS, COPY, FEATURES, href, type Feature, type Lang } from '../i18n'
+import type { FilmId } from '../media'
 
 interface Props { lang: Lang }
 const { lang } = Astro.props
@@ -13,15 +16,27 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, '/')
 const macSizes = '(min-width: 1464px) 1148px, (min-width: 832px) 70vw, 92vw'
 const phoneSizes = '(min-width: 1464px) 301px, (min-width: 832px) 19vw, 50vw'
 const featureSizes = '(min-width: 1360px) 1240px, 92vw'
-// The demo's chapters, from one mark of the recording to the next (src/hero.json, written by the media generator).
-const M = HERO.marks
-const CHAPTERS = [
-  { id: 'ask', from: 0, to: M.team },
-  { id: 'team', from: M.team, to: M.needs },
-  { id: 'needs', from: M.needs, to: M.tap },
-  { id: 'allow', from: M.tap, to: M.handed_back },
-  { id: 'done', from: M.handed_back, to: HERO.duration },
-] as const
+// The demo's steps and the files that carry it, on one clock (src/hero.json, checked by src/media.ts). A step's label
+// comes from hero.json when the generator wrote one, otherwise from the step names in src/i18n.ts.
+const chapterNames: Record<string, string> = t.hero.chapters
+const CHAPTERS = TIMELINE.steps.map((step) => {
+  const label = step.label?.[lang] ?? chapterNames[step.id]
+  if (!label) throw new Error(`Hero step "${step.id}" has no ${lang} label: add it to hero.json or src/i18n.ts`)
+  return { ...step, label }
+})
+const video = (m: { mp4: string; mp4Small?: string }) => ({ src: `${base}video/${m.mp4}`, small: m.mp4Small ? `${base}video/${m.mp4Small}` : undefined })
+const SEGMENTS = TIMELINE.segments.map((s) => ({ from: s.from, to: s.to, mac: video(s.mac), phone: video(s.phone) }))
+// Films for the feature panels; each falls back to the panel's own still.
+const FEATURE_FILMS: Partial<Record<Feature, FilmId>> = { handoff: 'conversation-reference', ship: 'pr-follow', tools: 'terminal-error' }
+const COVERS = ['release-check', 'context-insights', 'release-review', 'shift-handoff']
+const plugins = href(lang, '/plugins/')
+// Line icons for the lock screen facts: the Dynamic Island, fixed wording, the push key.
+const LOCK_ICONS = [
+  '<rect x="4.25" y="1.75" width="7.5" height="12.5" rx="1.75"/><rect x="6.5" y="3.25" width="3" height="1.25" rx=".625"/>',
+  '<path d="M2.75 4.25h10.5M2.75 8h10.5M2.75 11.75h6"/>',
+  '<circle cx="5.25" cy="10.75" r="2.5"/><path d="M7 9 13.25 2.75M11 5l1.75 1.75M9.25 6.75 10.5 8"/>',
+]
+const arrow = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg>'
 const download = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v7.5M4.75 7 8 10.25 11.25 7M3 13.25h10"/></svg>'
 
 // Line icons for the feature tabs, drawn on the app's 16px grid.
@@ -51,32 +66,26 @@ const pause = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M5
   </div>
 
   <div class="wrap wrap--stage">
-    <figure class="film" data-film data-marks={JSON.stringify(HERO.marks)} data-duration={HERO.duration} aria-label={t.hero.film}>
+    <figure class="film" data-film data-duration={HERO.duration} data-hold={TIMELINE.hold ?? undefined} data-allowed={TIMELINE.allowed ?? undefined} data-segments={JSON.stringify(SEGMENTS)} aria-label={t.hero.film}>
       <div class="film__mac shot" data-kind="product">
         <Pic class="film__first" stem="hero-mac-first" alt={t.hero.macAlt.running} sizes={macSizes} eager high />
         <Pic class="film__still" stem="hero-mac-needs" alt={t.hero.macAlt.needs} sizes={macSizes} />
         <Pic class="film__end" stem="hero-mac-done" alt={t.hero.macAlt.done} sizes={macSizes} deferred hidden />
-        <video class="film__video" muted playsinline preload="none" aria-hidden="true" tabindex="-1" data-film-video="mac" width="2400" height="1559">
-          <source src={`${base}video/${HERO.mac.mp4Small}`} type="video/mp4" media="(max-width: 52rem)" />
-          <source src={`${base}video/${HERO.mac.mp4}`} type="video/mp4" />
-        </video>
+        <video class="film__video is-active" muted playsinline preload="none" aria-hidden="true" tabindex="-1" data-film-video="mac" width="2400" height="1558"></video>
       </div>
       <div class="film__phone shot shot--phone" data-kind="product">
         <Pic class="film__first" stem="hero-phone-first" alt={t.hero.phoneAlt.running} sizes={phoneSizes} eager />
         <Pic class="film__still" stem="hero-phone-needs" alt={t.hero.phoneAlt.needs} sizes={phoneSizes} />
         <Pic class="film__end" stem="hero-phone-done" alt={t.hero.phoneAlt.done} sizes={phoneSizes} deferred hidden />
-        <video class="film__video" muted playsinline preload="none" aria-hidden="true" tabindex="-1" data-film-video="phone" width="780" height="1688">
-          <source src={`${base}video/${HERO.phone.mp4Small}`} type="video/mp4" media="(max-width: 52rem)" />
-          <source src={`${base}video/${HERO.phone.mp4}`} type="video/mp4" />
-        </video>
+        <video class="film__video is-active" muted playsinline preload="none" aria-hidden="true" tabindex="-1" data-film-video="phone" width="780" height="1688"></video>
         <button type="button" class="allow" data-allow aria-label={t.hero.allow} style={`--l: ${HERO.allow.left}%; --t: ${HERO.allow.top}%; --w: ${HERO.allow.width}%; --h: ${HERO.allow.height}%`} hidden><span aria-hidden="true"></span></button>
         <span class="film__hint" data-hint aria-hidden="true">{t.hero.hint}</span>
       </div>
     </figure>
     <div class="chapters" data-chapters hidden>
-      <ol class="chapters__list" aria-label={t.hero.steps}>
+      <ol class="chapters__list" aria-label={t.hero.steps} style={`--steps: ${CHAPTERS.length}`}>
         {CHAPTERS.map((c) => (
-          <li><button type="button" class="chapter" data-chapter={c.id} data-from={c.from} data-to={c.to}><span class="chapter__bar" aria-hidden="true"><span></span></span><span class="chapter__label">{t.hero.chapters[c.id]}</span></button></li>
+          <li><button type="button" class="chapter" data-chapter={c.id} data-from={c.from} data-to={c.to} data-hold={c.hold ? '' : undefined}><span class="chapter__bar" aria-hidden="true"><span></span></span><span class="chapter__label">{c.label}</span></button></li>
         ))}
       </ol>
       <button type="button" class="film__toggle" data-film-toggle aria-label={t.hero.pause} data-play={t.hero.play} data-pause={t.hero.pause} data-replay={t.hero.replay}>
@@ -114,12 +123,63 @@ const pause = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M5
               <h3>{item.title}</h3>
               <p>{item.body}</p>
             </div>
-            <div class="feature__window shot" data-kind="product">
-              <Pic stem={`feat-${f}`} alt={item.alt} sizes={featureSizes} />
-            </div>
+            {FEATURE_FILMS[f] ? (
+              <Film id={FEATURE_FILMS[f]!} lang={lang} class="feature__film">
+                <div class="feature__window shot" data-kind="product">
+                  <Pic stem={`feat-${f}`} alt={item.alt} sizes={featureSizes} />
+                </div>
+              </Film>
+            ) : (
+              <div class="feature__window shot" data-kind="product">
+                <Pic stem={`feat-${f}`} alt={item.alt} sizes={featureSizes} />
+              </div>
+            )}
           </div>
         )
       })}
+    </div>
+  </div>
+</section>
+
+<section class="band news" aria-labelledby="news-title">
+  <div class="wrap">
+    <h2 id="news-title" class="features__title">{t.news.title}</h2>
+    <div class="news__grid">
+      <div class:list={['tile', 'tile--wide', film('plugin-market', lang) && 'tile--stacked']}>
+        <div class="tile__text">
+          <h3>{t.news.market.title}</h3>
+          <p>{t.news.market.body}</p>
+          <a class="tile__link" href={plugins}><span>{t.news.market.link}</span><Fragment set:html={arrow} /></a>
+        </div>
+        <div class="tile__media">
+          <Film id="plugin-market" lang={lang}>
+            <div class="covers" aria-hidden="true">
+              {COVERS.map((id) => <div class="covers__item"><MarketplaceCover id={id} lang={lang} /></div>)}
+            </div>
+          </Film>
+        </div>
+      </div>
+      <div class:list={['tile', film('context-panel', lang) && 'tile--wide tile--stacked']}>
+        <div class="tile__text">
+          <h3>{t.news.context.title}</h3>
+          <p>{t.news.context.body}</p>
+        </div>
+        <div class="tile__media">
+          <Film id="context-panel" lang={lang}>
+            <div class="tile__cover" aria-hidden="true"><MarketplaceCover id="context-insights" lang={lang} /></div>
+          </Film>
+        </div>
+      </div>
+      <div class:list={['tile', film('lock-screen-approval', lang) && 'tile--wide']}>
+        <div class="tile__text">
+          <h3>{t.news.lock.title}</h3>
+          <p>{t.news.lock.body}</p>
+          <ul class="facts tile__facts">
+            {t.news.lock.facts.map((fact, i) => <li><svg class="i" viewBox="0 0 16 16" aria-hidden="true" set:html={LOCK_ICONS[i]} /><span>{fact}</span></li>)}
+          </ul>
+        </div>
+        {film('lock-screen-approval', lang) && <div class="tile__media tile__media--phone"><Film id="lock-screen-approval" lang={lang} /></div>}
+      </div>
     </div>
   </div>
 </section>
@@ -133,6 +193,7 @@ const pause = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M5
         <li>{t.phone.f1}</li>
         <li>{t.phone.f2}</li>
         <li>{t.phone.f3}</li>
+        <li>{t.phone.f4}</li>
       </ul>
     </div>
     <div class="phones">
@@ -143,6 +204,7 @@ const pause = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M5
       ))}
     </div>
   </div>
+  {film('work-computer', lang) && <div class="wrap phone__film"><Film id="work-computer" lang={lang} /></div>}
 </section>
 
 <section class="band trust" aria-labelledby="trust-title">

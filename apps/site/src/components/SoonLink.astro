@@ -1,0 +1,10 @@
+---
+// A link from LINKS that may not be live yet: an empty address renders a button that says so on click, never a dead link.
+interface Props { href: string; soon: string; class?: string }
+const { href, soon } = Astro.props
+---
+{href ? (
+  <a class={Astro.props.class} href={href} rel="noopener"><slot /></a>
+) : (
+  <button type="button" class={Astro.props.class} data-soon={soon}><slot /></button>
+)}

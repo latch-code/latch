@@ -8,22 +8,82 @@ import { promisify } from 'node:util'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { catalogPackages } from '../../../examples/marketplace/build.ts'
 import { checkSeo } from '../scripts/seo-check.ts'
+import { heroTimeline, parseFilms } from '../src/media.ts'
 
 const run = promisify(execFile)
 const SITE = fileURLToPath(new URL('..', import.meta.url))
 const ORIGIN = 'https://site.test'
 let folder = ''
 let dist = ''
+let staged = ''
 
-// One real Astro build into a temporary directory; the cases read its output. Telemetry stays off.
+// The cases build with their own media index, so they hold whatever films the repository carries at the time.
+const HERO = {
+  duration: 11.738,
+  marks: {
+    typing: 0.25,
+    team: 2.9,
+    needs: 5.737,
+    hold_start: 7.037,
+    tap: 8.037,
+    allowed: 8.438,
+    handed_back: 9.038,
+    settled: 10.738,
+    end: 11.738,
+  } as Record<string, number>,
+  mac: { mp4: 'hero-mac.0123abcd.mp4', mp4Small: 'hero-mac-sm.0123abcd.mp4' },
+  phone: { mp4: 'hero-phone.0123abcd.mp4', mp4Small: 'hero-phone-sm.0123abcd.mp4' },
+  allow: { left: 51, top: 67, width: 40, height: 5 },
+}
+const FILM = {
+  mp4: 'context-panel.0123abcd.mp4',
+  mp4Small: 'context-panel-sm.0123abcd.mp4',
+  poster: 'context-panel.0123abcd.webp',
+  width: 1600,
+  height: 1000,
+  duration: 8,
+  alt: 'The Context panel beside a conversation.',
+}
+// A longer film as the capture job would deliver it: eight steps, two segments, labels for steps the site has no name for.
+const LABELS = { en: 'Extra step', zh: '额外一步' }
+const EIGHT = {
+  ...HERO,
+  steps: [
+    { id: 'ask', at: 0 },
+    { id: 'plan', at: 1, label: LABELS },
+    { id: 'team', at: 'team' },
+    { id: 'needs', at: 'needs', hold: true },
+    { id: 'allow', at: 'tap' },
+    { id: 'review', at: 9, label: LABELS },
+    { id: 'ship', at: 10, label: LABELS },
+    { id: 'done', at: 'settled' },
+  ],
+  segments: [
+    { from: 0, to: 6, mac: HERO.mac, phone: HERO.phone },
+    { from: 6, to: HERO.duration, mac: HERO.mac, phone: HERO.phone },
+  ],
+}
+
+const build = (out: string, env: Record<string, string> = {}) =>
+  run(join(SITE, 'node_modules/.bin/astro'), ['build', '--root', SITE, '--outDir', out, '--silent'], {
+    cwd: SITE,
+    env: { ...process.env, ASTRO_TELEMETRY_DISABLED: '1', SITE_URL: ORIGIN, ...env },
+  })
+
+// Real Astro builds into a temporary directory; the cases read their output. Telemetry stays off. Both builds take
+// their media index through SITE_FILMS and SITE_HERO: the first has no films and a five-step hero, the second stages a
+// film and an eight-step, two-segment hero.
 beforeAll(async () => {
   folder = await mkdtemp(join(tmpdir(), 'latch-site-'))
   dist = join(folder, 'dist')
-  await run(join(SITE, 'node_modules/.bin/astro'), ['build', '--root', SITE, '--outDir', dist, '--silent'], {
-    cwd: SITE,
-    env: { ...process.env, ASTRO_TELEMETRY_DISABLED: '1', SITE_URL: ORIGIN },
-  })
-}, 120_000)
+  staged = join(folder, 'staged')
+  await writeFile(join(folder, 'no-films.json'), '{}')
+  await writeFile(join(folder, 'short-hero.json'), JSON.stringify(HERO))
+  await build(dist, { SITE_FILMS: join(folder, 'no-films.json'), SITE_HERO: join(folder, 'short-hero.json') })
+  await writeFile(join(folder, 'films.json'), JSON.stringify({ 'context-panel': { en: FILM } }))
+  await writeFile(join(folder, 'hero.json'), JSON.stringify(EIGHT))
+  await build(staged, { SITE_FILMS: join(folder, 'films.json'), SITE_HERO: join(folder, 'hero.json') })
+}, 240_000)
 
 afterAll(async () => {
   if (folder) await rm(folder, { recursive: true, force: true })
@@ -159,4 +219,98 @@ it('reports a page that breaks the invariants', async () => {
   } finally {
     await rm(page, { recursive: true, force: true })
   }
+})
+
+it('derives what each plugin can access from its own manifest', async () => {
+  const page = await readFile(join(dist, 'plugins/index.html'), 'utf8')
+  const article = (id: string) => page.match(new RegExp(`<article\\b[^>]*\\bid="${id}"[^>]*>(.*?)</article>`, 'su'))?.[1] ?? ''
+  expect(article('shift-handoff')).toContain('data-tier="text"')
+  expect(article('shift-handoff')).not.toContain('confirmation on the Mac')
+  expect(article('release-review')).toContain('data-tier="host"')
+  expect(article('context-insights')).toContain('data-tier="panel"')
+  const page4 = article('release-check')
+  expect(page4).toContain('data-tier="page"')
+  for (const capability of [
+    'Read session summaries',
+    'Start sessions in any project',
+    'Read replies from sessions it started',
+    'Storage: plugin, project',
+  ])
+    expect(page4).toContain(capability)
+  // Without scripting each filter is a link to a target that the stylesheet filters on.
+  for (const facet of ['skill', 'panel', 'app', 'tool']) {
+    expect(page).toContain(`href="#provides-${facet}"`)
+    expect(page).toContain(`id="provides-${facet}"`)
+  }
+})
+
+it('keeps every film slot on its still when there is no film for it', async () => {
+  for (const path of ['index.html', 'zh/index.html', 'plugins/index.html', 'zh/plugins/index.html']) {
+    const page = await readFile(join(dist, path), 'utf8')
+    expect(page).not.toContain('data-clip')
+    expect(page).not.toMatch(/<video[^>]*class="clip__video"/u)
+  }
+  const home = await readFile(join(dist, 'index.html'), 'utf8')
+  expect(home).toContain('data-preview="context"')
+  expect([...home.matchAll(/class="chapter"/gu)]).toHaveLength(5)
+  expect([...home.matchAll(/<button[^>]*class="chapter"[^>]*data-hold/gu)]).toHaveLength(1)
+})
+
+it('renders a staged film and an eight-step hero in two segments', async () => {
+  expect(checkSeo(staged).problems).toEqual([])
+  const en = await readFile(join(staged, 'index.html'), 'utf8')
+  const zh = await readFile(join(staged, 'zh/index.html'), 'utf8')
+  const clip = en.match(/<figure[^>]*data-clip="context-panel"[^>]*>(.*?)<\/figure>/su)
+  expect(clip?.[0]).toContain('aspect-ratio: 1600 / 1000')
+  expect(clip?.[1]).toMatch(
+    /<img[^>]*src="\/img\/context-panel\.0123abcd\.webp"[^>]*width="1600"[^>]*height="1000"[^>]*alt="The Context panel/u,
+  )
+  expect(clip?.[1]).toMatch(/<video[^>]*preload="none"[^>]*data-src="\/video\/context-panel\.0123abcd\.mp4"/u)
+  expect(clip?.[1]).not.toMatch(/<video[^>]*\ssrc=/u)
+  expect(clip?.[1]).toMatch(/<button[^>]*data-clip-toggle[^>]*hidden/u)
+  // No entry for Chinese: the slot keeps its live cover.
+  expect(zh).not.toContain('data-clip')
+  expect(zh).toContain('data-preview="context"')
+
+  expect([...en.matchAll(/class="chapter"/gu)]).toHaveLength(8)
+  expect(en).toContain('--steps: 8')
+  expect(en).toContain('>Extra step<')
+  expect(zh).toContain('>额外一步<')
+  const segments = JSON.parse(en.match(/data-segments="([^"]+)"/u)![1]!.replaceAll('&quot;', '"')) as { from: number; to: number }[]
+  expect(segments.map(s => [s.from, s.to])).toEqual([
+    [0, 6],
+    [6, HERO.duration],
+  ])
+})
+
+it('checks the media contracts', () => {
+  expect(parseFilms({ 'plugin-market': { zh: FILM } })).toEqual({ 'plugin-market': { zh: FILM } })
+  expect(() => parseFilms({ 'not-a-slot': { en: FILM } })).toThrow(/films\.not-a-slot is not a film slot/u)
+  expect(() => parseFilms({ 'plugin-market': { en: { ...FILM, mp4: 'film.mp4' } } })).toThrow(
+    /mp4 must be a file name with a content hash/u,
+  )
+  expect(() => parseFilms({ 'plugin-market': { en: { ...FILM, autoplay: true } } })).toThrow(/autoplay is not part of the contract/u)
+  expect(() => parseFilms({ 'plugin-market': { en: { ...FILM, alt: ' ' } } })).toThrow(/alt must be non-empty text/u)
+
+  const today = heroTimeline(HERO)
+  expect(today.steps.map(s => [s.id, s.from, s.to])).toEqual([
+    ['ask', 0, HERO.marks.team],
+    ['team', HERO.marks.team, HERO.marks.needs],
+    ['needs', HERO.marks.needs, HERO.marks.tap],
+    ['allow', HERO.marks.tap, HERO.marks.handed_back],
+    ['done', HERO.marks.handed_back, HERO.duration],
+  ])
+  expect(today.hold).toBeCloseTo(HERO.marks.hold_start! + 0.6)
+  expect(today.allowed).toBe(HERO.marks.allowed)
+  expect(today.segments).toHaveLength(1)
+
+  expect(heroTimeline(EIGHT).steps).toHaveLength(8)
+  const nine = { ...EIGHT, steps: [...EIGHT.steps, { id: 'more', at: 11 }] }
+  expect(() => heroTimeline(nine)).toThrow(/hero\.steps must list 2 to 8 steps/u)
+  const gap = { ...EIGHT, segments: [EIGHT.segments[0], { ...EIGHT.segments[1], from: 7 }] }
+  expect(() => heroTimeline(gap)).toThrow(/segments\[1\]\.from must start where the segment before it ends/u)
+  const order = { ...EIGHT, steps: [EIGHT.steps[0], { id: 'late', at: 'nowhere' }] }
+  expect(() => heroTimeline(order)).toThrow(/names mark "nowhere", which is missing/u)
+  const twoHolds = { ...EIGHT, steps: EIGHT.steps.map(s => ({ ...s, hold: true })) }
+  expect(() => heroTimeline(twoHolds)).toThrow(/may hold at one step only/u)
 })

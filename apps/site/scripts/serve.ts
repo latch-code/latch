@@ -69,6 +69,23 @@ const server = createServer((request, response) => {
       headers['Content-Encoding'] = 'gzip'
       headers.Vary = 'Accept-Encoding'
     }
+    // Byte ranges for video, as a CDN serves them: without them a browser cannot seek the hero film.
+    const range = ext === '.mp4' && file ? /^bytes=(\d*)-(\d*)$/u.exec(request.headers.range ?? '') : null
+    if (ext === '.mp4') headers['Accept-Ranges'] = 'bytes'
+    if (range && (range[1] || range[2])) {
+      const size = body.length
+      const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]))
+      const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1
+      if (start > end || start >= size) {
+        response.writeHead(416, { 'Content-Range': `bytes */${size}` })
+        response.end()
+        return
+      }
+      headers['Content-Range'] = `bytes ${start}-${end}/${size}`
+      response.writeHead(206, headers)
+      response.end(body.subarray(start, end + 1))
+      return
+    }
     response.writeHead(file ? 200 : 404, headers)
     response.end(body)
   })().catch(() => {

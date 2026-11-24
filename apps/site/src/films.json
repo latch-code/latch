@@ -1,0 +1,104 @@
+{
+  "plugin-market": {
+    "zh": {
+      "mp4": "plugin-market-zh.177ed0cb.mp4",
+      "mp4Small": "plugin-market-zh-sm.8b4a728b.mp4",
+      "poster": "plugin-market-zh.10b004b0.webp",
+      "posterAvif": "plugin-market-zh.10b004b0.avif",
+      "width": 1920,
+      "height": 1200,
+      "duration": 13.2,
+      "alt": "在 Latch 工作台打开插件市场，查看四个随附插件，打开「上下文」，审阅来源与权限后确认安装。"
+    }
+  },
+  "context-panel": {
+    "zh": {
+      "mp4": "context-panel-zh.7d9a8207.mp4",
+      "mp4Small": "context-panel-zh-sm.efc7f9de.mp4",
+      "poster": "context-panel-zh.91b2ee9d.webp",
+      "posterAvif": "context-panel-zh.91b2ee9d.avif",
+      "width": 1920,
+      "height": 1200,
+      "duration": 12.7,
+      "alt": "在会话旁打开「上下文」面板，逐次查看请求，组成条随之变化，再跳到并展开造成变化的工具结果。"
+    }
+  },
+  "pr-follow": {
+    "zh": {
+      "mp4": "pr-follow-zh.f6099ab0.mp4",
+      "mp4Small": "pr-follow-zh-sm.17c74ee2.mp4",
+      "poster": "pr-follow-zh.a55b0693.webp",
+      "posterAvif": "pr-follow-zh.a55b0693.avif",
+      "width": 1920,
+      "height": 1200,
+      "duration": 10.3,
+      "alt": "跟进 PR 的会话收到新的评审意见和一项失败的检查，输入框上方出现提醒，点开后查看失败日志，并把评审评论加入草稿。"
+    },
+    "en": {
+      "mp4": "pr-follow-en.0dc291e8.mp4",
+      "mp4Small": "pr-follow-en-sm.4c8fa5eb.mp4",
+      "poster": "pr-follow-en.6c987c1f.webp",
+      "posterAvif": "pr-follow-en.6c987c1f.avif",
+      "width": 1920,
+      "height": 1200,
+      "duration": 10.3,
+      "alt": "A session following its PR gets new review feedback and a failed check; the notice above the composer opens the failed log, and a review comment goes into the draft."
+    }
+  },
+  "terminal-error": {
+    "zh": {
+      "mp4": "terminal-error-zh.8e5455c5.mp4",
+      "mp4Small": "terminal-error-zh-sm.7cf6b0ce.mp4",
+      "poster": "terminal-error-zh.45d6b33e.webp",
+      "posterAvif": "terminal-error-zh.45d6b33e.avif",
+      "width": 1920,
+      "height": 1200,
+      "duration": 12.3,
+      "alt": "在会话的终端里运行测试，查找输出中的报错，再用「引用报错」把最近的报错和调用栈放进草稿。"
+    },
+    "en": {
+      "mp4": "terminal-error-en.55f0cdec.mp4",
+      "mp4Small": "terminal-error-en-sm.5d9cc735.mp4",
+      "poster": "terminal-error-en.148c706b.webp",
+      "posterAvif": "terminal-error-en.148c706b.avif",
+      "width": 1920,
+      "height": 1200,
+      "duration": 12.3,
+      "alt": "Tests run in the session's terminal, the output is searched for the error, and Quote error puts the latest error and its stack into the draft."
+    }
+  },
+  "plugin-create": {
+    "zh": {
+      "mp4": "plugin-create-zh.d164e6c3.mp4",
+      "mp4Small": "plugin-create-zh-sm.56b01f0d.mp4",
+      "poster": "plugin-create-zh.b6ff6dc5.webp",
+      "posterAvif": "plugin-create-zh.b6ff6dc5.avif",
+      "width": 1920,
+      "height": 1200,
+      "duration": 12.5,
+      "alt": "在插件市场点「创建插件」，以创造模式描述需求，Agent 在专用文件夹写出插件草稿，再打开草稿审阅清单与技能内容。"
+    },
+    "en": {
+      "mp4": "plugin-create-en.59513f2d.mp4",
+      "mp4Small": "plugin-create-en-sm.896631a2.mp4",
+      "poster": "plugin-create-en.c5803ae9.webp",
+      "posterAvif": "plugin-create-en.c5803ae9.avif",
+      "width": 1920,
+      "height": 1200,
+      "duration": 12.9,
+      "alt": "Create plugin opens creation mode; the agent writes a plugin draft in its own folder, and the draft opens for review with its manifest and skill text."
+    }
+  },
+  "lock-screen-approval": {
+    "zh": {
+      "mp4": "lock-screen-approval-zh.ee1a3866.mp4",
+      "mp4Small": "lock-screen-approval-zh-sm.9d3dd566.mp4",
+      "poster": "lock-screen-approval-zh.e2d3ac32.webp",
+      "posterAvif": "lock-screen-approval-zh.e2d3ac32.avif",
+      "width": 780,
+      "height": 1696,
+      "duration": 8.03,
+      "alt": "iPhone 模拟器锁屏上的 Latch 待审批实时活动，解锁后在灵动岛展开「编辑 Package.swift」的预览，点「批准」打开 App 里的审批卡（活动由模拟器本机启动，未经 APNs）。"
+    }
+  }
+}

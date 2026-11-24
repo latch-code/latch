@@ -296,6 +296,9 @@ body::before {
 .nav__end .btn--sm {
   margin-left: var(--space-xs);
 }
+.nav__link[aria-current='page'] {
+  color: var(--color-ink);
+}
 
 /* ---------- Hero ---------- */
 .hero {
@@ -426,7 +429,7 @@ html:lang(zh-CN) .hero__joint {
   opacity: 0;
   transition: opacity var(--dur-long) var(--ease-out);
 }
-.film.has-video .film__video {
+.film.has-video .film__video.is-active {
   opacity: 1;
 }
 .film__first,
@@ -582,14 +585,34 @@ html:lang(zh-CN) .hero__joint {
 .chapters[hidden] {
   display: none;
 }
+/* Any number of steps (2 to 8, from src/hero.json): each column at least as wide as its label, sharing the row when
+ * there is room; where there is not, the row scrolls and snaps, its hidden edge fades and the current step stays in view. */
 .chapters__list {
+  position: relative;
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: var(--space-2xs) var(--space-2xs);
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(max-content, 1fr);
   gap: var(--space-sm);
-  width: min(100%, 52rem);
+  width: min(100%, calc(var(--steps, 5) * 10.4rem));
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: var(--space-2xs);
+}
+.chapters__list::-webkit-scrollbar {
+  display: none;
+}
+.chapters__list li {
+  min-width: 0;
+  scroll-snap-align: start;
+}
+.chapters {
+  min-width: 0;
 }
 .chapter {
   display: grid;
@@ -632,13 +655,11 @@ html:lang(zh-CN) .hero__joint {
 }
 .chapter__label {
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
-.film-wait .chapter[data-chapter='needs'] {
+.film-wait .chapter[data-hold] {
   color: var(--color-wait);
 }
-.film-wait .chapter[data-chapter='needs'] .chapter__bar span {
+.film-wait .chapter[data-hold] .chapter__bar span {
   background: var(--color-wait);
 }
 .film__toggle {
@@ -776,9 +797,10 @@ html:lang(zh-CN) .features__title {
   gap: var(--space-xl);
   margin-top: var(--space-xl);
 }
-.tabs__list {
+.tabs__list,
+.pills {
   position: relative;
-  display: none;
+  display: flex;
   justify-self: center;
   max-width: 100%;
   gap: var(--space-2xs);
@@ -790,22 +812,29 @@ html:lang(zh-CN) .features__title {
   scrollbar-width: none;
   overscroll-behavior-x: contain;
 }
-.tabs__list::-webkit-scrollbar {
+.tabs__list {
+  display: none;
+}
+.tabs__list::-webkit-scrollbar,
+.pills::-webkit-scrollbar {
   display: none;
 }
 .js .tabs__list {
   display: flex;
 }
-/* Wherever the strip has to scroll, the edge with more tabs behind it fades. */
-.tabs__list.can-right {
+.pills {
+  justify-self: center;
+}
+/* Wherever a strip has to scroll, the edge with more behind it fades. */
+.can-right {
   -webkit-mask-image: linear-gradient(90deg, var(--color-paper) 82%, transparent);
   mask-image: linear-gradient(90deg, var(--color-paper) 82%, transparent);
 }
-.tabs__list.can-left {
+.can-left {
   -webkit-mask-image: linear-gradient(270deg, var(--color-paper) 82%, transparent);
   mask-image: linear-gradient(270deg, var(--color-paper) 82%, transparent);
 }
-.tabs__list.can-left.can-right {
+.can-left.can-right {
   -webkit-mask-image: linear-gradient(90deg, transparent, var(--color-paper) 18%, var(--color-paper) 82%, transparent);
   mask-image: linear-gradient(90deg, transparent, var(--color-paper) 18%, var(--color-paper) 82%, transparent);
 }
@@ -839,11 +868,16 @@ html:lang(zh-CN) .features__title {
   outline: 2px solid var(--color-focus);
   outline-offset: -2px;
 }
-.tab[aria-selected='true'] {
+.tab {
+  text-decoration: none;
+}
+.tab[aria-selected='true'],
+.tab[aria-pressed='true'] {
   color: var(--color-on-panel);
   background: var(--color-panel);
 }
-.tab[aria-selected='true']:hover {
+.tab[aria-selected='true']:hover,
+.tab[aria-pressed='true']:hover {
   background: var(--color-panel-hover);
 }
 /* A panel is the whole window, uncropped, with its heading and one sentence above it. */
@@ -880,9 +914,24 @@ html:lang(zh-CN) .feature__cap h3 {
   line-height: 1.55;
   max-width: 36em;
 }
+@media (min-width: 64.0625rem) {
+  .feature__cap p {
+    min-height: 3lh;
+  }
+}
 .feature__window {
   aspect-ratio: 3024 / 1964;
   border-radius: var(--radius-shot);
+}
+/* A film in a panel takes the still's box, so switching tabs does not move the page; its own frame is a little wider
+   and ends in black, which the box continues. */
+.clip.feature__film {
+  aspect-ratio: 3024 / 1964 !important;
+  background: #000;
+}
+.feature__film .clip__poster,
+.feature__film .clip__video {
+  object-fit: contain;
 }
 .feature__window picture,
 .feature__window img {
@@ -925,6 +974,198 @@ html:lang(zh-CN) .feature__cap h3 {
 }
 .js .feature + .feature {
   margin-top: 0;
+}
+
+/* New in Latch: one wide tile and two beside each other, each a headline, a sentence and its picture or film. */
+.news__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-lg);
+  margin-top: var(--space-xl);
+}
+.tile {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 22px;
+  background: var(--color-paper-2);
+  box-shadow:
+    0 0 0 1px var(--color-rule),
+    0 40px 90px -60px var(--color-shot-shadow);
+}
+.tile--wide {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  grid-template-rows: none;
+  align-items: center;
+}
+.tile__text {
+  display: grid;
+  gap: var(--space-sm);
+  align-content: start;
+  padding: var(--space-xl);
+}
+.tile__text h3 {
+  font-size: var(--text-2xl);
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  max-width: 15em;
+}
+html:lang(zh-CN) .tile__text h3 {
+  line-height: 1.3;
+}
+.tile__text p {
+  color: var(--color-muted);
+  max-width: 34em;
+}
+.tile__link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  justify-self: start;
+  min-height: 44px;
+  margin-top: var(--space-xs);
+  color: var(--color-ink);
+  font-weight: 500;
+  text-decoration: none;
+  border-radius: var(--radius-chip);
+}
+.tile__link .i {
+  transition: transform var(--dur-short) var(--ease-out);
+}
+.tile__link:hover .i {
+  transform: translateX(3px);
+}
+.tile__link:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+.tile__media {
+  align-self: end;
+  min-width: 0;
+  padding: 0 var(--space-xl) var(--space-xl);
+}
+.tile--wide .tile__media {
+  align-self: center;
+  padding: var(--space-xl) var(--space-xl) var(--space-xl) 0;
+}
+.tile__facts {
+  margin-top: var(--space-md);
+}
+.tile .tile__facts li {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: baseline;
+  padding: var(--space-sm) 0;
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+}
+.tile__facts .i {
+  flex: none;
+  transform: translateY(3px);
+  color: var(--color-muted);
+}
+.covers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-sm);
+}
+.covers__item,
+.tile__cover {
+  overflow: hidden;
+  border-radius: var(--radius-control);
+  box-shadow: 0 0 0 1px var(--color-rule-strong);
+  container-type: inline-size;
+}
+.tile__cover .market-feature[data-preview] {
+  aspect-ratio: 16 / 9;
+  min-block-size: 0;
+}
+@container (min-width: 420px) {
+  .tile__cover .market-feature-content {
+    zoom: 1.4;
+  }
+}
+/* The shared covers are drawn for at least 262px; narrower slots scale them down rather than crop them. */
+@container (max-width: 280px) {
+  .market-feature-content {
+    zoom: 0.86;
+  }
+}
+
+/* With a film the wide tile stacks, so the window plays close to its real size. */
+.tile--stacked {
+  grid-template-columns: minmax(0, 1fr);
+}
+.tile--stacked .tile__media {
+  padding: 0 var(--space-xl) var(--space-xl);
+}
+.tile__media--phone .clip {
+  width: min(100%, 280px);
+  margin-inline: auto;
+}
+/* A short film in a slot: the poster until the video plays, the control in its corner. */
+.clip {
+  position: relative;
+  margin: 0;
+  overflow: hidden;
+  border-radius: var(--radius-shot);
+  background: var(--color-paper-2);
+  box-shadow: 0 0 0 1px var(--color-shot-ring);
+}
+.clip__poster,
+.clip__video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.clip__video {
+  opacity: 0;
+  transition: opacity var(--dur-long) var(--ease-out);
+}
+.clip.is-playing .clip__video {
+  opacity: 1;
+}
+.clip__toggle {
+  position: absolute;
+  right: var(--space-sm);
+  bottom: var(--space-sm);
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--color-rule-strong);
+  border-radius: 50%;
+  background: var(--color-glass);
+  color: var(--color-ink);
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  transition: background-color var(--dur-short) var(--ease-out);
+}
+.clip__toggle:hover {
+  background: var(--color-paper-4);
+}
+.clip__toggle:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+.clip__toggle .i {
+  width: 14px;
+  height: 14px;
+}
+.clip__toggle.is-paused .vid__pause {
+  display: none;
+}
+.clip__toggle.is-paused .vid__play {
+  display: block;
+}
+.phone__film {
+  margin-top: var(--space-2xl);
 }
 
 /* Phone */
@@ -1137,7 +1378,7 @@ html:lang(zh-CN) .trust__text h2 {
 }
 .foot__cols {
   display: grid;
-  grid-template-columns: repeat(2, minmax(9rem, auto));
+  grid-template-columns: repeat(3, minmax(9rem, auto));
   gap: var(--space-2xl);
 }
 .foot__cols div {
@@ -1192,7 +1433,9 @@ html:lang(zh-CN) .trust__text h2 {
   color: var(--color-faint);
 }
 .lang--foot {
+  flex: none;
   margin-right: calc(-1 * var(--space-sm));
+  white-space: nowrap;
 }
 
 .lost {
@@ -1512,6 +1755,15 @@ html:lang(zh-CN) .trust__text h2 {
 
 /* ---------- Responsive ---------- */
 @media (max-width: 64rem) {
+  .foot__inner {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tile--wide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tile--wide .tile__media {
+    padding: 0 var(--space-xl) var(--space-xl);
+  }
   .phone__inner {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-xl);
@@ -1566,11 +1818,55 @@ html:lang(zh-CN) .trust__text h2 {
     right: 4%;
     width: 50%;
   }
+  .chapters {
+    gap: var(--space-sm);
+  }
   .chapters__list {
-    gap: var(--space-xs);
+    gap: var(--space-md);
   }
   .chapter {
+    min-height: 44px;
     font-size: var(--text-xs);
+  }
+  .film__toggle,
+  .clip__toggle {
+    width: 44px;
+    height: 44px;
+  }
+  .news__grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-md);
+  }
+  .tile__text {
+    padding: var(--space-lg);
+  }
+  .tile__text h3 {
+    font-size: var(--text-xl);
+  }
+  .tile__media,
+  .tile--wide .tile__media {
+    padding: 0 var(--space-lg) var(--space-lg);
+  }
+  /* On a phone two covers, one above the other, read better than four at quarter size. */
+  .covers {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-xs);
+  }
+  .covers__item:nth-child(n + 3) {
+    display: none;
+  }
+  .nav__inner {
+    gap: var(--space-md);
+  }
+  .nav .lang,
+  .nav__gh,
+  .nav__end .btn--sm {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .nav .lang {
+    justify-content: center;
+    padding: 0 var(--space-xs);
   }
   .works {
     margin-top: var(--space-2xl);
@@ -1611,7 +1907,7 @@ html:lang(zh-CN) .trust__text h2 {
     border-radius: var(--radius-control);
   }
   .tab {
-    min-height: 40px;
+    min-height: 44px;
     padding: 0 var(--space-sm);
     border-radius: 9px;
   }
@@ -1661,9 +1957,14 @@ html:lang(zh-CN) .trust__text h2 {
   }
 }
 
-@media (max-width: 25rem) {
-  .chapter__label {
-    font-size: 0.6875rem;
+@media (max-width: 26rem) {
+  .nav .brand span {
+    display: none;
+  }
+}
+@media (max-width: 22.5rem) {
+  .nav__gh {
+    display: none;
   }
 }
 

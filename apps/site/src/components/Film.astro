@@ -1,0 +1,41 @@
+---
+// A short product film for one slot (src/films.json, contract in src/media.ts). Without an entry for the page's
+// language the slot renders its own content instead: a real still, or nothing. The poster is a plain picture, so the
+// slot reads the same without scripting; the page script loads the video only near the viewport, plays it muted and
+// looped unless motion is reduced, and shows the play-pause control.
+import { film } from '../build-data'
+import { COPY, type Lang } from '../i18n'
+import type { FilmId } from '../media'
+
+interface Props { id: FilmId; lang: Lang; class?: string }
+const { id, lang } = Astro.props
+const f = film(id, lang)
+const t = COPY[lang].film
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/')
+const play = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7.5-4.5z"/></svg>'
+const pause = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.25 3.25v9.5M10.75 3.25v9.5"/></svg>'
+---
+{f ? (
+  <figure class:list={['clip', Astro.props.class]} data-clip={id} style={`aspect-ratio: ${f.width} / ${f.height}`}>
+    <picture>
+      {f.posterAvif && <source type="image/avif" srcset={`${base}img/${f.posterAvif}`} />}
+      <img class="clip__poster" src={`${base}img/${f.poster}`} width={f.width} height={f.height} alt={f.alt} loading="lazy" decoding="async" />
+    </picture>
+    <video
+      class="clip__video"
+      muted
+      loop
+      playsinline
+      preload="none"
+      width={f.width}
+      height={f.height}
+      aria-hidden="true"
+      tabindex="-1"
+      data-src={`${base}video/${f.mp4}`}
+      data-src-small={f.mp4Small ? `${base}video/${f.mp4Small}` : undefined}
+    ></video>
+    <button type="button" class="clip__toggle" data-clip-toggle aria-label={t.play} data-play={t.play} data-pause={t.pause} hidden>
+      <span class="vid__pause"><Fragment set:html={pause} /></span><span class="vid__play"><Fragment set:html={play} /></span>
+    </button>
+  </figure>
+) : <slot />}
