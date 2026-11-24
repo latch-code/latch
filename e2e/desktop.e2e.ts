@@ -891,9 +891,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       )
       await page.screenshot({ path: 'test-results/native-desktop.png', animations: 'disabled' })
 
-      // The desktop app's own keys, never a browser's: ⌘/ lays them over the running session with ⌘ caps and takes
-      // itself away again; ⌥⌘1 opens the Harness menu, Alt Shift 1 does nothing here; ⌘1 is the app's (the first row,
-      // already open) and types nothing; 新会话 and 搜索 wear ⌘N and ⌘K.
+      // ⌘/ opens and closes the shortcut overlay on the running session. ⌥⌘1 opens the Harness menu, Alt Shift 1
+      // leaves it closed, and 新会话 and 搜索 wear ⌘N and ⌘K.
       const keysOverlay = page.getByRole('dialog', { name: '快捷键', exact: true })
       await page.keyboard.press('Meta+/')
       await keysOverlay.waitFor()
@@ -912,21 +911,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await waitFor(async () => (await harnessTrigger.getAttribute('aria-expanded')) === 'true')
       await page.keyboard.press('Escape')
       await waitFor(async () => (await harnessTrigger.getAttribute('aria-expanded')) !== 'true')
-      // A key press the page never hears fails here within seconds instead of holding the test to its timeout.
-      const jumped = page.evaluate(
-        () =>
-          new Promise<boolean | 'not heard'>(done => {
-            const heard = (event: KeyboardEvent) => {
-              if (event.code !== 'Digit1') return
-              removeEventListener('keydown', heard)
-              setTimeout(() => done(event.defaultPrevented))
-            }
-            addEventListener('keydown', heard)
-            setTimeout(() => done('not heard'), 5000)
-          }),
-      )
-      await page.keyboard.press('Meta+Digit1')
-      expect(await jumped).toBe(true)
       expect(await page.locator('.sidebar-top [aria-keyshortcuts="Meta+N"] .ui-kbd').allTextContents()).toEqual(['⌘N'])
       expect(await page.locator('.sidebar-top [aria-keyshortcuts="Meta+K"] .ui-kbd').allTextContents()).toEqual(['⌘K'])
       await page.locator('.sidebar-top').screenshot({ path: 'test-results/native-desktop-sidebar-keys.png', animations: 'disabled' })
@@ -1011,7 +995,13 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         model: { providerId: 'e2e-desktop', model: 'e2e' },
       })
       await waitFor(() => host.bridge.approvals().some(approval => approval.sessionId === sessionId))
-      await page.getByText(R2_PROMPT).first().click()
+      // ⌘1 moves from the current session to the first row in the sidebar.
+      const firstSession = page.locator('#session-navigation [data-task-id]').first()
+      const runningSession = page.locator(`#session-navigation [data-task-id="${longTask.id}"]`)
+      await expect.poll(() => firstSession.getAttribute('data-task-id')).toBe(sessionId)
+      expect(await runningSession.getAttribute('aria-current')).toBe('page')
+      await runningSession.press('Meta+Digit1')
+      await expect.poll(() => firstSession.getAttribute('aria-current'), { timeout: 5000 }).toBe('page')
       await page.locator('[data-approval-id] .approval-clause').waitFor()
       const card = page.locator('[data-approval-id]')
       // The buttons arm a moment after the card shows and then fade in: compare the armed card.
