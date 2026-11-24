@@ -504,7 +504,7 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
       await page.getByRole('button', { name: '新建 Agent', exact: true }).filter({ visible: true }).first().click()
       const creating = page.locator('.agents-page[data-view="new"]')
       const createComputer = creating.getByRole('button', { name: '工作电脑：这台 Mac', exact: true })
-      const createNotice = '新委托会使用目标助手的配置。'
+      const createNotice = '新委托会使用工作电脑上所选 Agent 的配置。'
 
       await sizeA(390)
       await page.locator('.app-shell[data-viewport="phone"]').waitFor()
@@ -533,7 +533,7 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
       expect(await computersMenu.getByText(/定时/u).count()).toBe(0)
       await cloudComputer.click()
       const form = creating.getByRole('form', { name: '新建 Agent' })
-      await form.getByRole('heading', { name: '添加工作电脑上的助手' }).waitFor()
+      await form.getByRole('heading', { name: '添加工作电脑上的 Agent' }).waitFor()
       expect(await form.locator('.helper-cards,.helper-chosen').count()).toBe(0)
       await form.getByLabel('名字', { exact: true }).fill('云端助手本地入口')
       await page.screenshot({ path: join(SHOTS, 'assistant-work-computer-create.png'), animations: 'disabled' })
@@ -597,7 +597,7 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
       await page.keyboard.press('Escape')
       await computersMenu.waitFor({ state: 'hidden' })
       const destination = page.locator('.agent-chat-main [data-work-destination]')
-      const openWorker = destination.getByRole('button')
+      const openWorker = destination.getByRole('button', { name: `在 ${bName} 上打开 Agent`, exact: true })
       await openWorker.waitFor()
       expect(await page.locator('[data-work-destination]').filter({ visible: true }).count()).toBe(1)
       expect(await page.getByRole('button', { name: '去修复', exact: true }).filter({ visible: true }).count()).toBe(0)
@@ -617,7 +617,7 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
       // Revocation and a remote deletion both leave A's binding in place and no local composer.
       const remoteBlocked = async () => {
         await openWorker.click()
-        await destination.getByText(/无法打开该助手/u).waitFor()
+        await destination.getByText(/^无法打开这个 Agent。/u).waitFor()
         await expect.poll(() => openWorker.isEnabled()).toBe(true)
         expect(
           await app.evaluate(({ BrowserWindow }) => BrowserWindow.getFocusedWindow()?.webContents.getURL().startsWith('latch://app/')),
