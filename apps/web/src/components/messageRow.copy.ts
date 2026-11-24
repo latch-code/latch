@@ -18,6 +18,7 @@ export const MESSAGE_COPY = defineCopy(
     steeredTip: (harness: string) => `发送时这一轮还在运行，${harness} 收到了；有没有读到，看它后面的回复`,
     steered: '已追加到本轮',
     fromMcp: '来自 MCP 提示',
+    readReference: '读取了引用的会话',
     nativeFork: (harness: string, title: string, turns: number) => `${harness} 带着「${title}」的前 ${formatNumber(turns)} 轮`,
     textFork: (title: string, turns: number) => `「${title}」的前 ${formatNumber(turns)} 轮`,
     imported: (harness: string) => `按 ${harness} 会话的文字重建`,
@@ -48,6 +49,7 @@ export const MESSAGE_COPY = defineCopy(
     steeredTip: (harness: string) => `Sent while this turn was running. ${harness} received it. Its later replies show whether it read it.`,
     steered: 'Added to this turn',
     fromMcp: 'From an MCP prompt',
+    readReference: 'Read a referenced conversation',
     nativeFork: (harness: string, title: string, turns: number) =>
       `${harness} carries ${plural(turns, { one: 'the first {n} turn', other: 'the first {n} turns' })} of “${title}”`,
     textFork: (title: string, turns: number) => `${plural(turns, { one: 'First {n} turn', other: 'First {n} turns' })} of “${title}”`,

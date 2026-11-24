@@ -5819,6 +5819,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return Promise.all(scopeFolders(session, workspaceRoot).map(async folder => ({ id: folder.id, ...(await folderOf(folder.path)) })))
     }
 
+    /** Sessions whose current run got the Host's own conversation-reference read (`builtinMcpTools`), with that run. */
+    const referenceOffered = new Map<string, string>()
     async function classifyCall(input: { toolName: string; arguments: Record<string, unknown>; sessionId?: string } & SessionScope) {
       const pluginId = toolOwner(input.toolName)
       const browser = pluginId === BROWSER_PLUGIN && isBrowserTool(input.toolName) ? browserFacts(input) : undefined
@@ -5829,6 +5831,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         demo: options.demo,
         folders: await callFolders(input),
         ...(browser ? { browser } : {}),
+        ...(input.sessionId !== undefined && referenceOffered.has(input.sessionId) ? { hostReference: true } : {}),
       })
     }
 
@@ -6465,7 +6468,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const source = await harnessHub.detail(ref.source)
       privateAccess(check(), source.summary)
       await audited({ action: 'task.conversation-reference.read', actor: { listener: 'host' }, detail: { source: ref.source, target } })
-      await harnessHub.markOutsideContent(target)
+      await harnessHub.markOutsideContent(target, 'conversation-reference')
       const currentSource = await harnessHub.detail(ref.source)
       const latest = await harnessHub.summary(target)
       checkTurn(latest)
@@ -6484,6 +6487,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       runId,
       unattended,
     }: Parameters<NonNullable<HarnessHostOptions['mcpTools']>>[0]): Promise<ToolDefinition[]> {
+      // Each run's tools are listed anew: the last run's offer says nothing about this one.
+      referenceOffered.delete(sessionId)
       const summary = await hub!
         .detail(sessionId)
         .then(detail => detail.summary)
@@ -6592,7 +6597,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ]
         }),
       )
-      if (!runId || unattended !== false || !conversationRefs.has(sessionId)) return remote
+      if (!runId || unattended !== false || !conversationRefs.has(sessionId) || toolOwner(REFERENCE_TOOL.name) !== undefined) return remote
+      referenceOffered.set(sessionId, runId)
       return [
         ...remote,
         {

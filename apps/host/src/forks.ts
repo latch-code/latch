@@ -60,7 +60,7 @@ export function forkSeed(
     if (message.role === 'user' && !message.steered) turn++
     if (index < start) continue
     if (brief && index !== end) continue
-    if (message.role === 'tool' || message.subagent || message.origin === 'mcp-prompt') outside = true
+    if (message.role === 'tool' || message.subagent || message.origin !== undefined) outside = true
     // A first message that itself began from a record (a fork, or a conversation that moved Harness) carries that
     // record before the person's words: it is written out once, as the turns it was, not as a record inside a record.
     let said = message.text

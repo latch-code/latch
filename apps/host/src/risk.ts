@@ -24,6 +24,8 @@ export interface StandardCallInput {
   folders: readonly CallFolder[]
   /** For a browser tool: what the broker's tab table says about the tab the call names. */
   browser?: BrowserCallFacts
+  /** The Host itself put its conversation-reference read among this run's tools; no plugin's tool has that name in it. */
+  hostReference?: boolean
 }
 
 /** What the Host knows of the tab a browser call names, from the desktop app's reports. */
@@ -51,6 +53,12 @@ export const R0_TOOLS: readonly string[] = [
   'workspace-files:read_file',
   'user-questions:ask_user',
 ]
+/**
+ * The Host's own tool that reads a conversation the person referenced in this turn's message. No plugin owns it; the
+ * Host offers it only on that turn, and before and after each read checks the reference, the granting device's rights
+ * and the private boundary, records the read, and marks the context as holding outside content.
+ */
+export const REFERENCE_READ_TOOL = 'read_conversation_reference'
 /** Bounded demo tools, honoured only while the Host runs with the explicit demo model. */
 export const DEMO_TOOLS: { R0: readonly string[]; R1: readonly string[] } = {
   R0: ['safe-tools:long_task'],
@@ -88,12 +96,15 @@ export function targetFolder<T extends { id: string }>(args: unknown, folders: r
 
 /**
  * Host classification of a Standard tool call. Whatever a plugin declares (`requiresApproval`) is ignored:
- * only the listed built-in tools are below R2; a remote MCP server's tool is R2 (`mcp-tool`). Reads in any folder of the session are R0 and ordinary writes R1; a call
+ * only the listed built-in tools and the Host's own conversation-reference read are below R2; a remote MCP server's tool is R2 (`mcp-tool`). Reads in any folder of the session are R0 and ordinary writes R1; a call
  * that names a folder outside the session is R2. Pure and synchronous; the tools themselves refuse symlinks.
  */
 export function classifyStandardCall(input: StandardCallInput): { risk: RiskLevel; reason?: RiskReason } {
   // A remote MCP server's tool (`mcp__<server>__<tool>`, no plugin's): asked every time, whatever the server says of it.
   if (input.pluginId === undefined && input.toolName.startsWith(MCP_TOOL_PREFIX)) return { risk: 'R2', reason: 'mcp-tool' }
+  // A read, like the file reads. Only the tool the Host offered this run: a plugin's tool of this name is not it,
+  // with an owner or (its plugin switched off mid-run) without one.
+  if (input.hostReference === true && input.pluginId === undefined && input.toolName === REFERENCE_READ_TOOL) return { risk: 'R0' }
   const key = `${input.pluginId ?? ''}:${input.toolName}`
   const builtin = input.pluginId !== undefined
   if (input.pluginId === BROWSER_PLUGIN && isBrowserTool(input.toolName))

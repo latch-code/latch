@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import type { Message, TaskDetail } from '@latch/protocol'
 import type { ModelProvider } from '@latch/sdk'
 import { ConversationReferences, privateReferenceSource, REFERENCE_TOOL, referenceMarker } from '../src/conversation-references.ts'
+import { classifyStandardCall } from '../src/risk.ts'
 import { startTestHost } from './helpers/host.ts'
 
 describe('explicit on-demand conversation references', () => {
@@ -16,6 +17,14 @@ describe('explicit on-demand conversation references', () => {
     expect(privateReferenceSource(ordinary, () => true)).toBe(true)
     expect(privateReferenceSource({ ...ordinary, agent: { customAgentId: 'helper' } }, publicAtHost)).toBe(true)
     expect(privateReferenceSource({ ...ordinary, personal: { assistantId: 'assistant', groupId: 'group' } }, publicAtHost)).toBe(true)
+  })
+  it('classifies the read the Host offered as a read, and any other tool of the same name as unknown', () => {
+    const call = { toolName: REFERENCE_TOOL.name, args: {}, demo: false, folders: [] }
+    const unknown = { risk: 'R2', reason: 'unlisted-tool' }
+    expect(classifyStandardCall({ ...call, pluginId: undefined, hostReference: true })).toEqual({ risk: 'R0' })
+    expect(classifyStandardCall({ ...call, pluginId: 'someone-else', hostReference: true })).toEqual(unknown)
+    // A plugin switched off mid-run leaves its tool without an owner; the Host offered nothing in that run.
+    expect(classifyStandardCall({ ...call, pluginId: undefined })).toEqual(unknown)
   })
   it('retains message identities across restart, excludes new and changed text and restricts the caller to its named reference', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'latch-session-ref-'))
@@ -126,14 +135,24 @@ describe('explicit on-demand conversation references', () => {
           method: 'POST',
           body: { requestId: randomUUID(), prompt: referenceMarker(result.reference) },
         })
-        await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${target}`)).approvals.length).toBe(1)
-        const detail = await owner.json<TaskDetail>(`tasks/${target}`)
-        await owner.json(`approvals/${detail.approvals[0]!.id}`, { method: 'POST', body: { decision: 'allow' } })
-        await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${target}`)).summary.status).toBe('idle')
+        // The read is the Host's own and never asks: the turn settles with nobody deciding anything.
+        await expect
+          .poll(async () => {
+            const detail = await owner.json<TaskDetail>(`tasks/${target}`)
+            expect(detail.approvals).toEqual([])
+            return detail.summary.status
+          })
+          .toBe('idle')
+        return owner.json<TaskDetail>(`tasks/${target}`)
       }
-      await ask()
+      const read = await ask()
       expect(inputs.at(-1)).toBe(referenceMarker(result.reference))
       expect(outputs.at(-1)).toContain(sourceText)
+      const call = read.messages.findLast(message => message.role === 'tool')
+      expect(call).toMatchObject({ toolName: REFERENCE_TOOL.name, state: 'completed' })
+      expect(call?.tool?.decision).toBeUndefined()
+      // Unasked, the turn still says what entered it: the Host marked the context before handing the text over.
+      expect(read.messages.findLast(message => message.role === 'user')).toMatchObject({ origin: 'conversation-reference' })
       await owner.json(`devices/${reader.id}`, { method: 'PATCH', body: { scopes: ['view'] } })
       await ask()
       expect(outputs.at(-1)).not.toContain(sourceText)

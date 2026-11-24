@@ -497,6 +497,9 @@ export interface ToolAction {
   query?: string
 }
 
+/** How outside content reached a user's turn (`Message.origin`). */
+export type MessageOrigin = 'mcp-prompt' | 'conversation-reference'
+
 /** Structured presentation of one tool call. `Message.text` keeps the plain-text form. */
 export interface ToolDetail {
   kind?: ToolKind
@@ -585,10 +588,12 @@ export interface Message {
   /** User input request identity, kept across retries and restarts. */
   requestId?: string
   /**
-   * User: the local `latch-mcp` bridge was allowed to fetch an MCP prompt during this turn. The message says
-   * 来自 MCP 提示, and the context's proposals are marked external until it starts over.
+   * User: outside content was allowed into this turn by a way the message itself does not show. `mcp-prompt`: the local
+   * `latch-mcp` bridge was allowed to fetch an MCP prompt (来自 MCP 提示). `conversation-reference`: the Host was about
+   * to hand over a referenced conversation's messages (读取了引用的会话). The context's proposals are marked external
+   * until it starts over.
    */
-  origin?: 'mcp-prompt'
+  origin?: MessageOrigin
   /** When this input entered the Host queue, before it was actually sent. */
   queuedAt?: string
   /**

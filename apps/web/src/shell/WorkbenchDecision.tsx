@@ -201,7 +201,9 @@ export function WorkbenchDecision({
   const approvalUnknown =
     unknownIndex >= 0 || shell.snapshot.approvals.some(item => item.sessionId === task.id && shell.statuses.get(item.id)?.uncertain)
   const toolMessage = approval ? detail?.messages.find(message => message.id === toolRowId(approval)) : undefined
-  const action = approval ? toolHeading(toolMessage?.tool ?? approval.tool, toolMessage?.toolName ?? approval.toolName) : undefined
+  const action = approval
+    ? toolHeading(toolMessage?.tool ?? approval.tool, toolMessage?.toolName ?? approval.toolName, detail?.summary.harnessId !== 'standard')
+    : undefined
   const failure = detail?.messages.findLast(message => message.role === 'system' && message.state === 'failed')
   const retryable =
     enabled

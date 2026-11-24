@@ -1,5 +1,6 @@
 import { isFileMention, type FileDiff, type FileOpenTarget, type TaskDetail } from '@latch/protocol'
 import { appliedDiffs } from '../conversation.ts'
+import { shownToolTitle } from '../conversation/toolTitles.ts'
 import { defineCopy } from '../core/i18n.ts'
 
 const FILE_HISTORY_COPY = defineCopy(
@@ -77,7 +78,9 @@ export function fileHistories(detail: Pick<TaskDetail, 'summary' | 'messages'>):
         id: `${message.id}:${index}`,
         toolId: message.id,
         ...(turnId ? { turnId } : {}),
-        tool: message.tool?.toolTitle ?? message.tool?.title ?? FILE_HISTORY_COPY.toolEdit,
+        tool: message.tool?.toolTitle
+          ? shownToolTitle(message.tool.toolTitle, message.toolName)
+          : (message.tool?.title ?? FILE_HISTORY_COPY.toolEdit),
         ...(message.startedAt ? { at: message.startedAt } : {}),
         diff,
       })

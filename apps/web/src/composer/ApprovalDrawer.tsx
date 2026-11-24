@@ -453,7 +453,7 @@ function ApprovalPanel({
   const action =
     builtin && toolName === 'write_file' && tool?.kind === 'edit' && tool.toolTitle === '写入文件' && headingPath !== undefined
       ? COPY.writeFile(headingPath)
-      : toolHeading(tool, toolName)
+      : toolHeading(tool, toolName, !builtin)
   // Show the command carried by the approval in full, with its shell below and the Agent's description on hover.
   const plan = approval.plan
   const command =

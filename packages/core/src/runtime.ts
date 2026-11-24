@@ -35,6 +35,7 @@ import type {
   Approval,
   ApprovalOption,
   Message,
+  MessageOrigin,
   ModelRef,
   AgentExecutionContext,
   RiskLevel,
@@ -1424,13 +1425,14 @@ class HarnessRuntime implements Bridge {
   /** A run reads the roster when it starts (`teamRoster`): nothing is kept here to bring up to date. */
   async teamChanged(_sessionId: string): Promise<void> {}
 
-  async markOutsideContent(sessionId: string): Promise<void> {
+  async markOutsideContent(sessionId: string, origin: MessageOrigin = 'mcp-prompt'): Promise<void> {
     await this.ready()
     const turn = this.runs.get(sessionId)?.userMessageId
     await this.change(sessionId, task => {
       task.outsideRead = true
       const message = turn ? task.messages.find(item => item.id === turn && item.role === 'user') : undefined
-      if (message) message.origin = 'mcp-prompt'
+      // An MCP prompt's label is always said: a later reference read in the same turn does not replace it.
+      if (message && message.origin !== 'mcp-prompt') message.origin = origin
     })
   }
 
