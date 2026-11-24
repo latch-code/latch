@@ -272,7 +272,10 @@ describe('streamed task state', () => {
     expect(streaming.length).toBeLessThanOrEqual(12)
     expect(streaming.every(event => event.sessionId === sessionId && event.detail.activity?.phase === 'model')).toBe(true)
     expect(other.filter(event => event.type === 'task-state')).toHaveLength(0)
-    expect(other.filter(event => event.type === 'tasks-invalidated').length).toBeLessThanOrEqual(1)
+    // Starting a turn changes the list row a few times, and how many of those the other stream sees depends on when it
+    // subscribed. The flood itself must add none: nothing after the first streamed text reaches another session's stream.
+    const firstText = streaming.find(event => event.detail.liveText.length > 0)!
+    expect(other.filter(event => event.type === 'tasks-invalidated' && event.revision > firstText.revision)).toHaveLength(0)
     const lastLive = streaming.at(-1)!
     expect(lastLive.detail.liveMessageId).toBeTruthy()
     finish.resolve()
