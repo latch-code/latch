@@ -3,7 +3,7 @@ import type { AppSnapshot, PluginCatalogUpdateStatus, PluginPackageSummary } fro
 import { Button, EmptyState, Icon, InlineNotice, PlusGlyph, SearchField, Tabs } from '@latch/ui'
 import { ArrowLeft, ArrowRight, LibraryBig, Package } from 'lucide-react'
 import type { CatalogEntry } from '../../../../examples/marketplace/bundles.ts'
-import { plugins as catalog } from '../../../../examples/latch.catelog.json'
+import { plugins as catalog } from '../../../../examples/latch.catalog.json'
 import releasePreview from '../../../../examples/marketplace/release-check-preview.webp?url'
 import { api, inlineError } from '../core/api.ts'
 import { defineCopy, formatNumber, plural, useLocale } from '../core/i18n.ts'

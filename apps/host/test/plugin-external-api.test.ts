@@ -226,7 +226,7 @@ it('updates a catalog release whose content-addressed package filename changes',
     const file = `${pluginId}-${version}-${sha256.slice(0, 12)}.latch-plugin.json`
     await writeFile(join(root, file), bytes)
     await writeFile(
-      join(root, 'latch.catelog.json'),
+      join(root, 'latch.catalog.json'),
       JSON.stringify({
         formatVersion: 1,
         plugins: [{ id: pluginId, bundle: file, sha256, version }],

@@ -223,7 +223,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
     }
     const githubOtherTitle = '团队交接指南'
     const githubPackages = [published(githubId, githubTitle), published('team-handoff', githubOtherTitle)]
-    sourceFiles.set('latch.catelog.json', JSON.stringify({ formatVersion: 1, plugins: githubPackages }))
+    sourceFiles.set('latch.catalog.json', JSON.stringify({ formatVersion: 1, plugins: githubPackages }))
     const sourceRequests: string[] = []
     const host = await startTestHost({
       hostName: '工作电脑',
@@ -280,7 +280,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         return { id, folder: id, manifest: 'latch-plugin.json', files: bundle.files.map(file => file.path) }
       }
       const plugins = await Promise.all([writePackage(id, title, '1.0.0'), writePackage(anotherId, anotherTitle, '1.0.0')])
-      await writeFile(join(directory, 'latch.catelog.json'), JSON.stringify({ formatVersion: 1, plugins }))
+      await writeFile(join(directory, 'latch.catalog.json'), JSON.stringify({ formatVersion: 1, plugins }))
       const owner = await host.enroll({ listener: 'unix' })
       const record = async () => (await owner.json<{ package: PluginPackageDetail }>(`plugin-packages/${id}`)).package
       const desktop = await launchDesktop(host)

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createPluginPackageTemplate } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
-import catalog from '../../../examples/latch.catelog.json' with { type: 'json' }
+import catalog from '../../../examples/latch.catalog.json' with { type: 'json' }
 import { APP_GUIDE, APP_SDK_DTS, appSkeleton } from './app-sdk-types.ts'
 
 const CREATOR_SKILL = `---

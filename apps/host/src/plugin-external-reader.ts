@@ -21,7 +21,7 @@ import {
 import { checkedPluginBundle, containsPluginSourceSecret, PLUGIN_PACKAGE_BYTES } from './plugin-package-bundle.ts'
 import { pluginManifestSchema } from './plugin-packages.ts'
 
-const CATALOG = 'latch.catelog.json'
+const CATALOG = 'latch.catalog.json'
 const APP_MANIFEST = 'latch-app.json'
 const PLUGIN_MANIFEST = 'latch-plugin.json'
 const MANIFEST_LIMIT = 65_536
@@ -58,7 +58,7 @@ const noPackage = () =>
   new AppError(
     404,
     'plugin-external-package-missing',
-    '这里找不到 Latch 插件。请选择含 latch.catelog.json、latch-plugin.json 或 latch-app.json 的目录。',
+    '这里找不到 Latch 插件。请选择含 latch.catalog.json、latch-plugin.json 或 latch-app.json 的目录。',
   )
 const secretFile = () => new AppError(400, 'plugin-external-secret', '来源中有可能含密钥的文本或文件名。请移除后重试。')
 const unique = (paths: string[]) => new Set(paths.map(path => path.normalize('NFC').toLowerCase())).size === paths.length

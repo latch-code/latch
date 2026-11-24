@@ -1,4 +1,4 @@
-import type catalog from '../latch.catelog.json'
+import type catalog from '../latch.catalog.json'
 
 export type CatalogEntry = (typeof catalog.plugins)[number]
 declare const __LATCH_CATALOG_PACKAGES__: Record<

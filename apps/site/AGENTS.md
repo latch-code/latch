@@ -1,6 +1,6 @@
 # @latch/site
 
-Latch 官网：Astro 静态站。英文 `/`、`/download/`，中文 `/zh/`、`/zh/download/`；插件目录在 `/plugins/`、`/zh/plugins/`，与工作台共享 `examples/latch.catelog.json` 的条目。构建时生成 `/plugins/latch.catelog.json`、兼容的 `/plugins/catalog.json` 和按字节摘要命名的包。另有 404、`robots.txt` 与 `sitemap.xml`。不用 workspace 包，也不被其他项目导入。
+Latch 官网：Astro 静态站。英文 `/`、`/download/`，中文 `/zh/`、`/zh/download/`；插件目录在 `/plugins/`、`/zh/plugins/`，与工作台共享 `examples/latch.catalog.json` 的条目。构建时生成 `/plugins/latch.catalog.json`、兼容的 `/plugins/catalog.json` 和按字节摘要命名的包。另有 404、`robots.txt` 与 `sitemap.xml`。不用 workspace 包，也不被其他项目导入。
 
 - 运行环境 `browser`：`src/scripts/site.ts` 是唯一的页面脚本；`src/` 的其余文件在 Astro 构建时运行，同样不用 Node 全局变量。`astro.config.ts` 与 `scripts/` 是 Node 工具。
 - 命令：根目录 `pnpm build:site`（输出 `apps/site/dist`，地址是 `https://latch.codes`，`SITE_URL` 可另设）、`pnpm dev:site`；本目录 `pnpm preview [端口]`（带 gzip 的本地服务，端口 0 自选）、`pnpm check:seo [目录]`、`pnpm measure <URL…>`（本机 Chrome 按 Lighthouse 的节流实测）。Astro 遥测由脚本关闭。

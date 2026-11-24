@@ -1,4 +1,4 @@
-import catalog from '../../../examples/latch.catelog.json'
+import catalog from '../../../examples/latch.catalog.json'
 import { loadCatalogBundle } from '../../../examples/marketplace/bundles.ts'
 
 // The URL pins the actual bytes of the package. The index can change without changing existing download URLs.
