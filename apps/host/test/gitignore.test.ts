@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { ignoreVerdict, isGitignored, matchBudget, parseGitignore, readIgnoreRules, type IgnoreRules } from '../src/files/gitignore.ts'
 import { beginLoopWork, YIELD_MS } from '../src/files/loop-turn.ts'
 import { GREP_LIMITS, grepFiles } from '../src/files/grep.ts'
@@ -296,17 +296,31 @@ describe('ordinary repositories and many walks at once', () => {
   const guard = new ProtectedPaths([])
   const GAP = 60
 
-  async function ordinary(files: number, folders = 20) {
-    const parent = await realpath(await mkdtemp(join(tmpdir(), 'latch-ordinary-')))
-    cleanups.push(() => rm(parent, { recursive: true, force: true }))
-    const root = join(parent, 'repo')
+  async function ordinary(
+    files: number,
+    folders = 20,
+    options: { cleanups?: Array<() => Promise<void>>; concurrency?: number; signal?: AbortSignal } = {},
+  ) {
+    const parent = await mkdtemp(join(tmpdir(), 'latch-ordinary-'))
+    const fixtureCleanups = options.cleanups ?? cleanups
+    fixtureCleanups.push(() => rm(parent, { recursive: true, force: true }))
+    const root = join(await realpath(parent), 'repo')
     await mkdir(join(root, '.git'), { recursive: true })
     await writeFile(join(root, '.gitignore'), 'node_modules/\ndist/\n*.log\n.env\ncoverage/\n*.tmp\nbuild/\n.cache/\n*.swp\n.DS_Store\n')
-    for (let folder = 0; folder < folders; folder++) {
-      const at = join(root, `pkg-${folder}`, 'src')
-      await mkdir(at, { recursive: true })
-      for (let index = 0; index < files / folders; index++) await writeFile(join(at, `file-${index}.ts`), 'export const needle = 1\n')
-    }
+    let nextFolder = 0
+    const writers = Array.from({ length: Math.min(folders, options.concurrency ?? 1) }, async () => {
+      while (nextFolder < folders) {
+        options.signal?.throwIfAborted()
+        const at = join(root, `pkg-${nextFolder++}`, 'src')
+        await mkdir(at, { recursive: true })
+        for (let index = 0; index < files / folders; index++) {
+          options.signal?.throwIfAborted()
+          await writeFile(join(at, `file-${index}.ts`), 'export const needle = 1\n', { signal: options.signal })
+        }
+      }
+    })
+    // A failed writer must not leave other writes running when the fixture's owner starts cleanup.
+    for (const result of await Promise.allSettled(writers)) if (result.status === 'rejected') throw result.reason
     return { id: 'default', path: root }
   }
 
@@ -363,9 +377,25 @@ describe('ordinary repositories and many walks at once', () => {
     expect(gap).toBeLessThan(GAP)
   })
 
-  it('ranks many candidates without one long stretch', async () => {
-    const root = await ordinary(12_000, 24)
-    const { gap } = await longestGap(() => searchFiles([root], guard, '', 50, () => false))
-    expect(gap).toBeLessThan(GAP)
-  }, 60_000)
+  describe('ranking a large repository', () => {
+    const fixtureCleanups: Array<() => Promise<void>> = []
+    const preparation = new AbortController()
+    let creating: ReturnType<typeof ordinary> | undefined
+    let root: Awaited<ReturnType<typeof ordinary>>
+    beforeAll(async () => {
+      // Building 12,000 files is fixture I/O, outside the ranking and event-loop budgets below.
+      creating = ordinary(12_000, 24, { cleanups: fixtureCleanups, concurrency: 4, signal: preparation.signal })
+      root = await creating
+    }, 120_000)
+    afterAll(async () => {
+      // Vitest timeouts do not cancel async hooks: stop and settle every writer before removing its directory.
+      preparation.abort()
+      await creating?.catch(() => {})
+      for (const close of fixtureCleanups.splice(0).reverse()) await close()
+    }, 120_000)
+    it('ranks many candidates without one long stretch', async () => {
+      const { gap } = await longestGap(() => searchFiles([root], guard, '', 50, () => false))
+      expect(gap).toBeLessThan(GAP)
+    }, 60_000)
+  })
 })
