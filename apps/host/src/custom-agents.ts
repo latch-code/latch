@@ -417,6 +417,9 @@ function changed(): AppError {
 export function harnessFixed(status: 400 | 409 = 409): AppError {
   return new AppError(status, 'agent-harness-fixed', 'Agent 建好后不能换 Harness，要用别的 Harness 就新建一个 Agent。')
 }
+export function assertAgentWorksHere(agent: Pick<CustomAgent, 'workComputer'> | undefined): void {
+  if (agent?.workComputer) throw new AppError(409, 'agent-work-computer', '请在这个助手的工作电脑上继续。')
+}
 function keep<K extends string>(receipts: Record<K, unknown>): void {
   const keys = Object.keys(receipts) as K[]
   for (const key of keys.slice(0, Math.max(0, keys.length - MAX_RECEIPTS))) delete receipts[key]
@@ -460,7 +463,7 @@ export class CustomAgents {
   }
   /** A missing owner is handled separately by each workflow (including read-only history). */
   assertWorksHere(id: string | undefined): void {
-    if (this.worksElsewhere(id)) throw new AppError(409, 'agent-work-computer', '请在这个助手的工作电脑上继续。')
+    if (id !== undefined) assertAgentWorksHere(this.list().find(agent => agent.id === id))
   }
   get(id: string): CustomAgent {
     const found = this.journal.read().agents.find(agent => agent.id === id)

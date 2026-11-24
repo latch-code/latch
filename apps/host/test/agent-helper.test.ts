@@ -68,10 +68,10 @@ function plans(saved: CustomAgent, general: AgentMemory[], own: AgentMemory[] = 
   return new AgentPlans({
     agents: {
       get: () => saved,
-      general: () => ({ instructions: '通用的指令', skills: undefined }),
+      general: () => ({ id: GENERAL_AGENT_ID, instructions: '通用的指令', revision: 1 }),
       memories: (owner: string) => (owner === GENERAL_AGENT_ID ? general : own),
       definitionHash: (owner: string) => `definition-${owner}`,
-    } as never,
+    },
     harness: id => harnesses[id],
     plugins: () => [],
     skills: () => [],
@@ -87,6 +87,13 @@ function plans(saved: CustomAgent, general: AgentMemory[], own: AgentMemory[] = 
     digest: () => digest,
   })
 }
+
+it('refuses to build a local turn for an Agent assigned to another computer', () => {
+  const moved = agent({ workComputer: { hostId: 'a'.repeat(52), agentId: OTHER_ID } })
+  expect(() => plans(moved, []).agentContext(AGENT_ID, 'standard', 'all')).toThrow(
+    expect.objectContaining({ status: 409, code: 'agent-work-computer' }),
+  )
+})
 
 describe('「认识你」: what the person confirmed in 通用', () => {
   it('takes only the person’s own words: never imported or external memories, and the person-claimed ones again', () => {
