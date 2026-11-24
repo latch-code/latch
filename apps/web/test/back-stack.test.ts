@@ -9,16 +9,26 @@ class FakeHistory implements SessionHistory {
   entries: unknown[]
   index: number
   stack: BackStack | undefined
+  urls: string[]
   constructor(entries: unknown[] = [null], index = entries.length - 1) {
     this.entries = entries
     this.index = index
+    this.urls = entries.map(() => '/link/')
   }
   get state(): unknown {
     return this.entries[this.index]
   }
-  pushState(state: unknown): void {
+  get url(): string {
+    return this.urls[this.index]!
+  }
+  pushState(state: unknown, _unused: string, url = this.url): void {
     this.entries = [...this.entries.slice(0, this.index + 1), state]
+    this.urls = [...this.urls.slice(0, this.index + 1), url]
     this.index += 1
+  }
+  replaceState(state: unknown, _unused: string, url = this.url): void {
+    this.entries[this.index] = state
+    this.urls[this.index] = url
   }
   go(delta: number): void {
     setTimeout(() => {
@@ -92,6 +102,25 @@ describe('back stack', () => {
     expect(history.entries).toHaveLength(3)
     history.back()
     expect(confirm).toHaveBeenCalledOnce()
+  })
+
+  it('reuses settings history for the workspace page URL and keeps modal reviews above it', async () => {
+    const { history, stack } = setup()
+    const closeSettings = stack.open(vi.fn())
+    closeSettings()
+    const closeMarket = vi.fn()
+    stack.open(closeMarket, '/link/?page=marketplace')
+    const closeReview = vi.fn()
+    stack.open(closeReview)
+    expect(history.url).toBe('/link/?page=marketplace')
+    history.back()
+    expect(closeReview).toHaveBeenCalledOnce()
+    expect(closeMarket).not.toHaveBeenCalled()
+    expect(history.url).toBe('/link/?page=marketplace')
+    history.back()
+    expect(closeMarket).toHaveBeenCalledOnce()
+    expect(history.url).toBe('/link/')
+    await settle()
   })
 
   it('gives a layer that opens during its own traversal an entry once it lands, so the traversal never closes it', async () => {

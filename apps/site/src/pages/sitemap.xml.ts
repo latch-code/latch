@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro'
 import { href, LANGS, type Lang } from '../i18n'
 
-const PAGES = ['/', '/download/']
+const PAGES = ['/', '/download/', '/plugins/']
 const LANG_LIST: Lang[] = ['en', 'zh']
 
 export const GET: APIRoute = ({ site }) => {

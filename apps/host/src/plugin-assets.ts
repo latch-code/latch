@@ -3,12 +3,30 @@ import { lstat, mkdir, open, rename, rm } from 'node:fs/promises'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
-import type { PluginPackageBundle } from '@latch/protocol'
+import type {
+  PluginCatalogStage,
+  PluginExternalRelease,
+  PluginExternalStage,
+  PluginNpmRelease,
+  PluginNpmStage,
+  PluginPackageBundle,
+} from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, syncDirectory, writeFileAtomic, type AtomicWriteFs } from '@latch/core/node-kit'
 import type { AuditActor, AuditLog } from './audit.ts'
 import { checkedPluginBundle } from './plugin-package-bundle.ts'
 import { appCapabilitiesSchema, capabilitySet, withinApproved, type AppSet } from './app-capabilities.ts'
+import { newerNpmVersion, npmOriginSchema, npmReleaseSchema, releaseVersionSchema } from './npm-source.ts'
+import { catalogUpdate, catalogUpdateError } from './plugin-catalog.ts'
+import {
+  externalOriginSchema,
+  externalReviewSourceSchema,
+  externalSourceIdentity,
+  externalStagePayload,
+  externalUpdate,
+  externalUpdateError,
+} from './plugin-external-source.ts'
+import { pluginReviewSource } from './plugin-package-review.ts'
 
 const LIMIT = 64 * 1024 * 1024,
   MAX_RECEIPTS = 10000
@@ -16,7 +34,8 @@ const LIMIT = 64 * 1024 * 1024,
 export const ROLLBACK_REVISIONS = 5
 const idSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/u),
   hash = z.string().regex(/^[a-f0-9]{64}$/u),
-  rid = z.string().min(8).max(128)
+  rid = z.string().min(8).max(128),
+  installIdSchema = z.string().regex(/^[A-Za-z0-9_-]{22}$/u)
 const bundleSchema = z.custom<PluginPackageBundle>(value => {
   try {
     checkedPluginBundle(value)
@@ -25,6 +44,13 @@ const bundleSchema = z.custom<PluginPackageBundle>(value => {
     return false
   }
 })
+const catalogOriginSchema = z.strictObject({ revision: hash, version: releaseVersionSchema })
+const originSchema = z.union([
+  z.strictObject({ kind: z.enum(['local', 'creator']) }),
+  z.strictObject({ kind: z.literal('catalog'), version: releaseVersionSchema, modified: z.literal(true).optional() }),
+  npmReleaseSchema.extend({ kind: z.literal('npm'), modified: z.literal(true).optional() }),
+  externalReviewSourceSchema,
+])
 const recordSchema = z.strictObject({
   id: idSchema,
   bundle: bundleSchema,
@@ -35,10 +61,7 @@ const recordSchema = z.strictObject({
   enabled: z.boolean(),
   trusted: z.array(hash).max(128),
   /** This record's own identity: a plugin created again under a deleted one's ID gets a new one (its pages' data and sessions). */
-  installId: z
-    .string()
-    .regex(/^[A-Za-z0-9_-]{22}$/u)
-    .optional(),
+  installId: installIdSchema.optional(),
   /** The page capabilities this computer confirmed, by page ID: code that asks for no more applies without a confirmation. */
   approvedApps: z.record(idSchema, appCapabilitiesSchema).optional(),
   /**
@@ -49,28 +72,42 @@ const recordSchema = z.strictObject({
     .strictObject({
       sessionId: z.string().min(1).max(256),
       dev: z.boolean(),
+      kind: z.literal('plugin').optional(),
       devDevice: z
         .string()
         .regex(/^dev_[A-Za-z0-9_-]{22}$/u)
         .optional(),
     })
     .optional(),
+  npm: npmOriginSchema.optional(),
+  catalog: catalogOriginSchema.optional(),
+  external: externalOriginSchema.optional(),
+  appliedOrigin: originSchema.optional(),
   /** Earlier applied snapshots, newest first. */
   history: z
-    .array(z.strictObject({ revision: hash, bundle: bundleSchema }))
+    .array(z.strictObject({ revision: hash, bundle: bundleSchema, origin: originSchema.optional() }))
     .max(ROLLBACK_REVISIONS)
     .optional(),
 })
-const receiptSchema = z.strictObject({ hash, id: idSchema })
+const receiptSchema = z.strictObject({
+  hash,
+  id: idSchema,
+  /** The first snapshot read for this import. Older records can still be matched by their original intent hash. */
+  imported: z.strictObject({ revision: hash, installId: installIdSchema }).optional(),
+  downloaded: installIdSchema.optional(),
+  reviewedInstallId: installIdSchema.optional(),
+  adopt: z.strictObject({ revision: hash, installId: installIdSchema }).optional(),
+})
 const stateSchema = z.strictObject({
   version: z.literal(1),
   packages: z.array(recordSchema).max(64),
   receipts: z.record(hash, receiptSchema),
 })
 export type PluginAssetRecord = z.infer<typeof recordSchema>
-export type PluginAssetDescriptor = Omit<PluginAssetRecord, 'bundle' | 'appliedBundle' | 'history'> & {
+export type PluginAssetDescriptor = Omit<PluginAssetRecord, 'bundle' | 'appliedBundle' | 'history' | 'appliedOrigin'> & {
   name: string
   version: string
+  appliedVersion?: string
   description: string
   rollbackRevisions: Array<{ revision: string; version: string }>
 }
@@ -79,18 +116,20 @@ export function installIdOf(record: Pick<PluginAssetRecord, 'id' | 'installId'>)
   return record.installId ?? sha256Hex(canonicalJson(['plugin-install', record.id])).slice(0, 22)
 }
 export function describePluginAsset(record: PluginAssetRecord): PluginAssetDescriptor {
-  const { bundle, appliedBundle: _, history, ...rest } = record
+  const { bundle, appliedBundle, appliedOrigin: _, history, ...rest } = record
   return {
     ...rest,
     trusted: [...rest.trusted],
     rollbackRevisions: (history ?? []).map(entry => ({ revision: entry.revision, version: entry.bundle.manifest.version })),
     name: bundle.manifest.name,
     version: bundle.manifest.version,
+    ...(appliedBundle ? { appliedVersion: appliedBundle.manifest.version } : {}),
     description: bundle.manifest.description,
   }
 }
 type State = z.infer<typeof stateSchema>
-type Operation = 'create' | 'save' | 'import' | 'dev' | 'trust' | 'apply' | 'rollback' | 'enable' | 'disable' | 'delete'
+type DownloadOperation = 'npm-stage' | 'catalog-stage' | 'external-stage'
+type Operation = 'create' | 'save' | 'import' | DownloadOperation | 'dev' | 'trust' | 'apply' | 'rollback' | 'enable' | 'disable' | 'delete'
 export interface PluginAssetActor {
   actor: AuditActor & { deviceId: string }
   authorize(): void
@@ -110,10 +149,86 @@ export interface PluginAssetMutation {
   record?: PluginAssetRecord
   audited: boolean
   replay?: true
+  importedRevision?: string
+  adoptOwner?: string
 }
 export type PluginAssetEffect = (next: { packages: PluginAssetRecord[] }, commit: () => Promise<void>) => Promise<void>
 type Effect = PluginAssetEffect
 export const pluginTrustRequestId = (requestId: string): string => sha256Hex(canonicalJson(['plugin-execution-trust', requestId]))
+
+const importPayload = (revision: string, sessionId: string, kind: 'app' | 'plugin') => ({
+  revision,
+  sessionId,
+  ...(kind === 'plugin' ? { kind } : {}),
+})
+const catalogPayload = ({ pluginId, revision, update }: PluginCatalogStage) => ({ pluginId, revision, update: update ?? null })
+
+export interface PluginReviewBinding {
+  baseAppliedRevision?: string | null
+  reviewedInstallId?: string
+}
+
+function reviewPayload(binding: PluginReviewBinding = {}): PluginReviewBinding {
+  return {
+    ...(binding.baseAppliedRevision !== undefined ? { baseAppliedRevision: binding.baseAppliedRevision } : {}),
+    ...(binding.reviewedInstallId !== undefined ? { reviewedInstallId: binding.reviewedInstallId } : {}),
+  }
+}
+
+export function pluginApplyPayload(revision: string, binding?: PluginReviewBinding) {
+  return { revision, ...reviewPayload(binding) }
+}
+
+export function pluginEnablePayload(enabled: boolean, binding?: PluginReviewBinding) {
+  return { enabled, ...(enabled ? reviewPayload(binding) : {}) }
+}
+
+function assertReviewBinding(record: PluginAssetRecord, binding: PluginReviewBinding | undefined): void {
+  if (binding?.reviewedInstallId !== undefined && installIdOf(record) !== binding.reviewedInstallId)
+    throw new AppError(409, 'plugin-package-changed', '插件安装记录已变化，请重新审阅。')
+  if (binding?.baseAppliedRevision !== undefined && (record.appliedRevision ?? null) !== binding.baseAppliedRevision)
+    throw new AppError(409, 'plugin-package-changed', '已应用的版本发生变化，请重新审阅。')
+}
+
+const npmPayload = ({ release, revision, update }: PluginNpmStage) => ({ release, revision, update: update ?? null })
+
+export function matchesNpmOrigin(record: Pick<PluginAssetRecord, 'npm'>, source: Pick<PluginNpmRelease, 'registry' | 'name'>): boolean {
+  return record.npm?.registry === source.registry && record.npm.name === source.name
+}
+
+export function requireNpmOrigin(record: Pick<PluginAssetRecord, 'npm'>, source: Pick<PluginNpmRelease, 'registry' | 'name'>): void {
+  if (!matchesNpmOrigin(record, source)) throw new AppError(409, 'plugin-npm-source-mismatch', '请使用此插件原来下载时的 npm 仓库和包名。')
+}
+
+function checkNpmUpdate(record: PluginAssetDescriptor | PluginAssetRecord, input: PluginNpmStage): void {
+  const update = input.update!
+  requireNpmOrigin(record, input.release)
+  if (record.revision !== update.baseRevision || installIdOf(record) !== update.installId)
+    throw new AppError(409, 'plugin-package-changed', '插件草稿或安装记录已变化，请重新预览再下载。')
+  if (record.revision !== record.npm!.revision && update.replaceLocalDraft !== true)
+    throw new AppError(409, 'plugin-npm-local-changes', '草稿有本机改动，请保留现有草稿后再更新。')
+  const appliedVersion = 'bundle' in record ? record.appliedBundle?.manifest.version : record.appliedVersion
+  if (!npmUpdateIsNewer(input.release, record.npm!, appliedVersion))
+    throw new AppError(409, 'plugin-npm-not-newer', '这个 npm 版本没有比已下载的版本更新。')
+}
+
+/** Any version matching the applied release by precedence is also a no-op, even when metadata differs. */
+export function npmUpdateIsNewer(release: PluginNpmRelease, staged: PluginNpmRelease, appliedVersion?: string): boolean {
+  return (
+    newerNpmVersion(release.version, staged.version) && (appliedVersion === undefined || newerNpmVersion(release.version, appliedVersion))
+  )
+}
+
+function checkAppliedOrigin(origin: z.infer<typeof originSchema> | undefined, version: string, record: PluginAssetRecord): void {
+  if (!origin || !('version' in origin)) return
+  if (
+    (!origin.modified && origin.version !== version)
+    || (origin.kind === 'catalog' && !record.catalog)
+    || (origin.kind === 'npm' && !matchesNpmOrigin(record, origin))
+    || (origin.kind === 'external' && (!record.external || externalSourceIdentity(record.external) !== externalSourceIdentity(origin)))
+  )
+    throw new Error('Invalid applied source')
+}
 
 /** Editable data and applied snapshots are separate. A failed atomic publication blocks reads until the exact write is retried. */
 export class PluginAssets {
@@ -158,6 +273,27 @@ export class PluginAssets {
           const draft = checkedPluginBundle(record.bundle)
           if (draft.bundle.manifest.id !== record.id || draft.revision !== record.revision || draft.executionHash !== record.executionHash)
             throw new Error('Draft digest')
+          if (
+            record.npm
+            && (record.source || (record.npm.revision === draft.revision && record.npm.version !== draft.bundle.manifest.version))
+          )
+            throw new Error('npm origin')
+          if (
+            record.catalog
+            && (record.source
+              || record.npm
+              || (record.catalog.revision === draft.revision && record.catalog.version !== draft.bundle.manifest.version))
+          )
+            throw new Error('Bundled source')
+          if (
+            record.external
+            && (record.source
+              || record.npm
+              || record.catalog
+              || record.external.pluginId !== record.id
+              || (record.external.revision === draft.revision && record.external.version !== draft.bundle.manifest.version))
+          )
+            throw new Error('External source')
           if (record.appliedBundle) {
             const applied = checkedPluginBundle(record.appliedBundle)
             if (
@@ -166,7 +302,9 @@ export class PluginAssets {
               || (applied.executionHash && !record.trusted.includes(applied.executionHash))
             )
               throw new Error('Untrusted applied snapshot')
-          } else if (record.appliedRevision || record.enabled || record.history?.length) throw new Error('Missing applied snapshot')
+            checkAppliedOrigin(record.appliedOrigin, applied.bundle.manifest.version, record)
+          } else if (record.appliedRevision || record.appliedOrigin || record.enabled || record.history?.length)
+            throw new Error('Missing applied snapshot')
           for (const entry of record.history ?? []) {
             const earlier = checkedPluginBundle(entry.bundle)
             if (
@@ -175,6 +313,7 @@ export class PluginAssets {
               || (earlier.executionHash && !record.trusted.includes(earlier.executionHash))
             )
               throw new Error('Untrusted earlier snapshot')
+            checkAppliedOrigin(entry.origin, earlier.bundle.manifest.version, record)
           }
         }
       } finally {
@@ -213,7 +352,27 @@ export class PluginAssets {
     if (!receipt) return undefined
     if (receipt.hash !== sha256Hex(canonicalJson([operation, id, payload])))
       throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同修改。')
-    return { record: structuredClone(this.state.packages.find(record => record.id === id)), audited: true, replay: true }
+    return this.mutationResult(id, receipt, true, true)
+  }
+  private mutationResult(
+    id: string,
+    receipt: z.infer<typeof receiptSchema> | undefined,
+    audited: boolean,
+    replay: boolean,
+  ): PluginAssetMutation {
+    const record = this.state.packages.find(item => item.id === id)
+    if (receipt?.reviewedInstallId && (!record || installIdOf(record) !== receipt.reviewedInstallId))
+      throw new AppError(410, 'plugin-package-removed', '这次修改已完成，原插件后来已被删除。')
+    const adopt = receipt?.adopt
+    const adoptOwner =
+      record && adopt && record.appliedRevision === adopt.revision && installIdOf(record) === adopt.installId ? adopt.installId : undefined
+    return {
+      record: structuredClone(record),
+      audited,
+      ...(replay ? { replay: true } : {}),
+      ...(receipt?.imported ? { importedRevision: receipt.imported.revision } : {}),
+      ...(adoptOwner ? { adoptOwner } : {}),
+    }
   }
   /** Only the same device/request can recover a candidate whose durable commit was uncertain. */
   candidate(id: string, revision: string, requestId: string, actor: PluginAssetActor): PluginAssetRecord {
@@ -227,6 +386,16 @@ export class PluginAssets {
     const record = this.find(this.pending?.state ?? this.state, id)
     if (record.revision !== revision) throw new AppError(409, 'plugin-package-changed', '插件草稿已变化，请重新检查后应用。')
     return structuredClone(record)
+  }
+  pendingAdoption(id: string, revision: string, requestId: string, actor: PluginAssetActor): boolean {
+    actor.authorize()
+    if (!this.pending || this.pending.id !== id) return false
+    const key = sha256Hex(canonicalJson([actor.actor.deviceId, requestId]))
+    return this.pending.key === key && this.pending.state.receipts[key]?.adopt?.revision === revision
+  }
+  checkReview(id: string, binding: PluginReviewBinding): void {
+    if (binding.reviewedInstallId !== undefined || binding.baseAppliedRevision !== undefined)
+      assertReviewBinding(this.find(this.state, id), binding)
   }
   private find(state: State, id: string): PluginAssetRecord {
     const record = state.packages.find(record => record.id === id)
@@ -251,6 +420,7 @@ export class PluginAssets {
     actor: PluginAssetActor,
     mutate: (state: State) => void,
     effect?: Effect,
+    reviewed?: { adoptsData?: true; reviewedInstallId?: string },
   ): Promise<PluginAssetMutation> {
     const operationPromise = this.tail
       .catch(() => {})
@@ -260,11 +430,7 @@ export class PluginAssets {
         rid.parse(requestId)
         const key = sha256Hex(canonicalJson([actor.actor.deviceId, requestId])),
           intentHash = sha256Hex(canonicalJson([operation, id, payload]))
-        const result = (audited: boolean, replay = false): PluginAssetMutation => ({
-          record: structuredClone(this.state.packages.find(record => record.id === id)),
-          audited,
-          ...(replay ? { replay: true as const } : {}),
-        })
+        const result = (audited: boolean, replay = false) => this.mutationResult(id, this.state.receipts[key], audited, replay)
         if (this.pending) {
           const pending = this.pending
           if (pending.key !== key) this.certain()
@@ -283,7 +449,20 @@ export class PluginAssets {
           throw new AppError(429, 'plugin-package-receipt-limit', '插件修改回执已满，请在电脑上整理记录。')
         const next = structuredClone(this.state)
         mutate(next)
-        next.receipts[key] = { hash: intentHash, id }
+        const imported = operation === 'import' ? this.find(next, id) : undefined
+        const downloaded =
+          operation === 'npm-stage' || operation === 'catalog-stage' || operation === 'external-stage'
+            ? installIdOf(this.find(next, id))
+            : undefined
+        const adopting = reviewed?.adoptsData ? this.find(next, id) : undefined
+        next.receipts[key] = {
+          hash: intentHash,
+          id,
+          ...(imported ? { imported: { revision: imported.revision, installId: installIdOf(imported) } } : {}),
+          ...(downloaded ? { downloaded } : {}),
+          ...(reviewed?.reviewedInstallId ? { reviewedInstallId: reviewed.reviewedInstallId } : {}),
+          ...(adopting?.appliedRevision ? { adopt: { revision: adopting.appliedRevision, installId: installIdOf(adopting) } } : {}),
+        }
         stateSchema.parse(next)
         if (Buffer.byteLength(JSON.stringify(next)) > LIMIT)
           throw new AppError(413, 'plugin-package-storage-limit', '插件资产达到 64 MiB 上限。')
@@ -311,6 +490,163 @@ export class PluginAssets {
       })
     this.tail = operationPromise
     return operationPromise
+  }
+
+  /** The exact device/request can finish the original write with the bytes already captured, even if its source is gone. */
+  replayNpm(input: PluginNpmStage, actor: PluginAssetActor): Promise<PluginAssetMutation | undefined> {
+    return this.replayDownload('npm-stage', input.requestId, npmPayload(input), actor)
+  }
+
+  replayCatalog(input: PluginCatalogStage, actor: PluginAssetActor): Promise<PluginAssetMutation | undefined> {
+    return this.replayDownload('catalog-stage', input.requestId, catalogPayload(input), actor)
+  }
+
+  replayExternal(input: PluginExternalStage, actor: PluginAssetActor): Promise<PluginAssetMutation | undefined> {
+    return this.replayDownload('external-stage', input.requestId, externalStagePayload(input), actor)
+  }
+
+  private async replayDownload(
+    operation: DownloadOperation,
+    requestId: string,
+    payload: unknown,
+    actor: PluginAssetActor,
+  ): Promise<PluginAssetMutation | undefined> {
+    actor.authorize()
+    const key = sha256Hex(canonicalJson([actor.actor.deviceId, requestId]))
+    if (this.pending && this.pending.key !== key) this.certain()
+    const state = this.pending?.state ?? this.state
+    const receipt = state.receipts[key]
+    if (!receipt) return undefined
+    if (!receipt.downloaded || receipt.hash !== sha256Hex(canonicalJson([operation, receipt.id, payload])))
+      throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同修改。')
+    const record = state.packages.find(candidate => candidate.id === receipt.id)
+    if (!record || receipt.downloaded !== installIdOf(record))
+      throw new AppError(410, 'plugin-package-removed', '这次下载已完成，原插件后来已被删除。')
+    if (this.pending) return this.change(record.id, operation, requestId, payload, actor, () => {})
+    return { record: structuredClone(record), audited: true, replay: true }
+  }
+
+  checkNpmStage(input: PluginNpmStage): void {
+    this.certain()
+    if (input.update) checkNpmUpdate(this.find(this.state, input.update.pluginId), input)
+    else if (this.state.packages.some(record => matchesNpmOrigin(record, input.release)))
+      throw new AppError(409, 'plugin-package-exists', '这个 npm 包已下载，请打开现有插件。')
+  }
+
+  stageNpm(
+    input: PluginNpmStage,
+    downloaded: ReturnType<typeof checkedPluginBundle>,
+    actor: PluginAssetActor,
+  ): Promise<PluginAssetMutation> {
+    const { bundle, revision, executionHash } = downloaded,
+      id = bundle.manifest.id
+    if (input.revision !== revision) throw new AppError(409, 'plugin-package-changed', '仓库插件内容已变化，请重新预览。')
+    if (input.update && input.update.pluginId !== id)
+      throw new AppError(409, 'plugin-npm-source-mismatch', 'npm 新版本的插件标识与已下载版本不同。')
+    return this.change(id, 'npm-stage', input.requestId, npmPayload(input), actor, state => {
+      const npm = { ...input.release, revision }
+      if (input.update) {
+        const existing = this.find(state, id)
+        checkNpmUpdate(existing, input)
+        if (existing.appliedRevision && !existing.appliedOrigin)
+          existing.appliedOrigin = pluginReviewSource(existing, existing.appliedRevision)
+        Object.assign(existing, { bundle, revision, npm })
+        if (executionHash) existing.executionHash = executionHash
+        else delete existing.executionHash
+        return
+      }
+      if (state.packages.some(record => record.id === id || matchesNpmOrigin(record, input.release)))
+        throw new AppError(409, 'plugin-package-exists', '这个标识已被现有草稿或插件使用，请打开现有插件。')
+      if (state.packages.length >= 64) throw new AppError(409, 'plugin-package-limit', '最多保存 64 个自定义插件。')
+      state.packages.push({
+        id,
+        bundle,
+        revision,
+        npm,
+        ...(executionHash ? { executionHash } : {}),
+        enabled: false,
+        trusted: [],
+        installId: randomBytes(16).toString('base64url'),
+      })
+    })
+  }
+  stageCatalog(
+    input: PluginCatalogStage,
+    candidate: ReturnType<typeof checkedPluginBundle>,
+    actor: PluginAssetActor,
+  ): Promise<PluginAssetMutation> {
+    const { bundle, revision, executionHash } = candidate
+    const id = input.pluginId
+    if (input.revision !== revision || bundle.manifest.id !== id)
+      throw new AppError(409, 'plugin-package-changed', '随附插件内容已变化，请重新预览。')
+    return this.change(id, 'catalog-stage', input.requestId, catalogPayload(input), actor, state => {
+      const existing = state.packages.find(record => record.id === id)
+      const catalog = { revision, version: bundle.manifest.version }
+      if (input.update) {
+        if (!existing || existing.revision !== input.update.baseRevision || installIdOf(existing) !== input.update.installId)
+          throw new AppError(409, 'plugin-package-changed', '插件草稿或安装记录已变化，请重新预览。')
+        const status = catalogUpdate(candidate, describePluginAsset(existing))
+        if (status !== 'available') throw catalogUpdateError(status)
+        if (existing.appliedRevision && !existing.appliedOrigin)
+          existing.appliedOrigin = pluginReviewSource(existing, existing.appliedRevision)
+        Object.assign(existing, { bundle, revision, catalog })
+        if (executionHash) existing.executionHash = executionHash
+        else delete existing.executionHash
+        return
+      }
+      if (existing) throw catalogUpdateError('different-source')
+      if (state.packages.length >= 64) throw new AppError(409, 'plugin-package-limit', '最多保存 64 个自定义插件。')
+      state.packages.push({
+        id,
+        bundle,
+        revision,
+        catalog,
+        ...(executionHash ? { executionHash } : {}),
+        enabled: false,
+        trusted: [],
+        installId: randomBytes(16).toString('base64url'),
+      })
+    })
+  }
+
+  stageExternal(
+    input: PluginExternalStage,
+    release: PluginExternalRelease,
+    candidate: ReturnType<typeof checkedPluginBundle>,
+    actor: PluginAssetActor,
+  ): Promise<PluginAssetMutation> {
+    const { bundle, revision, executionHash } = candidate
+    if (input.revision !== revision || bundle.manifest.id !== release.pluginId || bundle.manifest.version !== release.version)
+      throw new AppError(409, 'plugin-package-changed', '插件来源的内容已变化，请重新预览。')
+    const id = bundle.manifest.id
+    const external = { ...release, revision }
+    return this.change(id, 'external-stage', input.requestId, externalStagePayload(input), actor, state => {
+      const existing = state.packages.find(record => record.id === id)
+      if (input.update) {
+        if (!existing || existing.revision !== input.update.baseRevision || installIdOf(existing) !== input.update.installId)
+          throw new AppError(409, 'plugin-package-changed', '插件草稿或安装记录已变化，请重新预览。')
+        const status = externalUpdate(external, describePluginAsset(existing))
+        if (status !== 'available') throw externalUpdateError(status)
+        if (existing.appliedRevision && !existing.appliedOrigin)
+          existing.appliedOrigin = pluginReviewSource(existing, existing.appliedRevision)
+        Object.assign(existing, { bundle, revision, external })
+        if (executionHash) existing.executionHash = executionHash
+        else delete existing.executionHash
+        return
+      }
+      if (existing) throw externalUpdateError('different-source')
+      if (state.packages.length >= 64) throw new AppError(409, 'plugin-package-limit', '最多保存 64 个自定义插件。')
+      state.packages.push({
+        id,
+        bundle,
+        revision,
+        external,
+        ...(executionHash ? { executionHash } : {}),
+        enabled: false,
+        trusted: [],
+        installId: randomBytes(16).toString('base64url'),
+      })
+    })
   }
   save(bundleInput: unknown, requestId: string, actor: PluginAssetActor, baseRevision?: string): Promise<PluginAssetMutation> {
     const { bundle, revision, executionHash } = checkedPluginBundle(bundleInput),
@@ -346,14 +682,58 @@ export class PluginAssets {
     )
   }
   /**
+   * Settle a retry from the saved intent before looking at the session's live files. A lost response must not require
+   * an Agent to keep the original files on disk. A pending import publishes only its already-audited, captured state.
+   */
+  async replayImport(
+    sessionId: string,
+    kind: 'app' | 'plugin',
+    requestId: string,
+    actor: PluginAssetActor,
+  ): Promise<PluginAssetMutation | undefined> {
+    actor.authorize()
+    rid.parse(requestId)
+    const key = sha256Hex(canonicalJson([actor.actor.deviceId, requestId]))
+    if (this.pending && this.pending.key !== key) this.certain()
+    const state = this.pending?.state ?? this.state
+    const receipt = state.receipts[key]
+    if (!receipt) return undefined
+    const record = state.packages.find(candidate => candidate.id === receipt.id)
+    // Before the revision was recorded on the receipt, accept only versions its original digest can prove. When a
+    // later edit left none of them here, the old path can still match the draft read from the original source.
+    const candidates = receipt.imported
+      ? [receipt.imported.revision]
+      : [record?.revision, record?.appliedRevision, ...(record?.history?.map(item => item.revision) ?? [])]
+    const revision = candidates.find(
+      value => value && receipt.hash === sha256Hex(canonicalJson(['import', receipt.id, importPayload(value, sessionId, kind)])),
+    )
+    if (!revision) {
+      if (this.pending || receipt.imported) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同的导入。')
+      return undefined
+    }
+    if (!record || (receipt.imported && receipt.imported.installId !== installIdOf(record)))
+      throw new AppError(410, 'plugin-package-removed', '这次导入已完成，原插件后来已被删除。')
+    if (this.pending) return this.importDraft(record.bundle, sessionId, requestId, actor, kind)
+    return { record: structuredClone(record), importedRevision: revision, audited: true, replay: true }
+  }
+
+  /**
    * A page draft read from a session (`app-import.ts`): a new record, or a new draft revision of one that came from a
    * session before. A record made another way keeps its draft; the draft's `id` must change.
    */
-  importDraft(bundleInput: unknown, sessionId: string, requestId: string, actor: PluginAssetActor): Promise<PluginAssetMutation> {
+  importDraft(
+    bundleInput: unknown,
+    sessionId: string,
+    requestId: string,
+    actor: PluginAssetActor,
+    kind: 'app' | 'plugin' = 'app',
+  ): Promise<PluginAssetMutation> {
     const { bundle, revision, executionHash } = checkedPluginBundle(bundleInput),
       id = bundle.manifest.id
-    if (executionHash) throw new AppError(400, 'app-import-code', '应用草稿只能有页面；Host 模块与面板请用插件的高级导入。')
-    return this.change(id, 'import', requestId, { revision, sessionId }, actor, state => {
+    if (kind === 'app' && executionHash)
+      throw new AppError(400, 'app-import-code', '应用草稿只能有页面；Host 模块与面板请用插件的高级导入。')
+    const source = { sessionId, dev: false, ...(kind === 'plugin' ? { kind } : {}) }
+    return this.change(id, 'import', requestId, importPayload(revision, sessionId, kind), actor, state => {
       const existing = state.packages.find(record => record.id === id)
       if (!existing) {
         if (state.packages.length >= 64) throw new AppError(409, 'plugin-package-limit', '最多保存 64 个自定义插件。')
@@ -364,15 +744,17 @@ export class PluginAssets {
           enabled: false,
           trusted: [],
           installId: randomBytes(16).toString('base64url'),
-          source: { sessionId, dev: false },
+          source,
+          ...(executionHash ? { executionHash } : {}),
         })
         return
       }
-      if (!existing.source)
-        throw new AppError(409, 'plugin-package-exists', '这个插件标识已被别的插件使用，请在 latch-app.json 里换一个 id。')
+      if (!existing.source || (existing.source.kind ?? 'app') !== kind || (kind === 'plugin' && existing.source.sessionId !== sessionId))
+        throw new AppError(409, 'plugin-package-exists', '这个标识已被其他草稿或插件使用，请在声明里换一个 id。')
       Object.assign(existing, { bundle, revision })
-      delete existing.executionHash
-      if (existing.source.sessionId !== sessionId) existing.source = { sessionId, dev: false }
+      if (executionHash) existing.executionHash = executionHash
+      else delete existing.executionHash
+      if (existing.source.sessionId !== sessionId) existing.source = source
     })
   }
   /**
@@ -393,7 +775,8 @@ export class PluginAssets {
   setDev(id: string, dev: boolean, requestId: string, actor: PluginAssetActor): Promise<PluginAssetMutation> {
     return this.change(id, 'dev', requestId, { dev }, actor, state => {
       const record = this.find(state, id)
-      if (!record.source) throw new AppError(409, 'app-draft-no-source', '这个插件不是从会话导入的。')
+      if (!record.source || record.source.kind === 'plugin')
+        throw new AppError(409, 'app-draft-no-source', '自动构建只用于从会话导入的隔离页面。')
       record.source = { sessionId: record.source.sessionId, dev, ...(dev ? { devDevice: actor.actor.deviceId } : {}) }
     })
   }
@@ -421,21 +804,25 @@ export class PluginAssets {
     actor: PluginAssetActor,
     effect: Effect,
     approve?: AppSet,
+    binding?: PluginReviewBinding,
+    adoptsData?: true,
   ): Promise<PluginAssetMutation> {
     return this.change(
       id,
       'apply',
       requestId,
-      { revision },
+      pluginApplyPayload(revision, binding),
       actor,
       state => {
         const record = this.find(state, id)
+        assertReviewBinding(record, binding)
         if (record.revision !== revision) throw new AppError(409, 'plugin-package-changed', '插件草稿已变化，请重新检查后应用。')
         if (record.executionHash && !record.trusted.includes(record.executionHash))
           throw new AppError(403, 'plugin-package-untrusted', '请先在这台电脑上批准插件的可执行内容。')
-        this.publishApplied(state, record, revision, structuredClone(record.bundle), approve)
+        this.publishApplied(state, record, revision, structuredClone(record.bundle), pluginReviewSource(record, revision, true), approve)
       },
       effect,
+      { adoptsData, reviewedInstallId: binding?.reviewedInstallId },
     )
   }
   /** Applies an earlier applied snapshot again; the draft is left as it is. */
@@ -446,24 +833,29 @@ export class PluginAssets {
     actor: PluginAssetActor,
     effect: Effect,
     approve?: AppSet,
+    binding?: PluginReviewBinding,
+    adoptsData?: true,
   ): Promise<PluginAssetMutation> {
     return this.change(
       id,
       'rollback',
       requestId,
-      { revision },
+      pluginApplyPayload(revision, binding),
       actor,
       state => {
         const record = this.find(state, id)
+        assertReviewBinding(record, binding)
         const earlier = record.history?.find(entry => entry.revision === revision)
         if (!earlier) throw new AppError(404, 'plugin-package-revision-not-found', '找不到这个已应用过的版本。')
         const checked = checkedPluginBundle(earlier.bundle)
         if (checked.executionHash && !record.trusted.includes(checked.executionHash))
           throw new AppError(403, 'plugin-package-untrusted', '请先在这台电脑上批准插件的可执行内容。')
+        const origin = pluginReviewSource(record, revision)
         record.history = record.history!.filter(entry => entry.revision !== revision)
-        this.publishApplied(state, record, revision, structuredClone(earlier.bundle), approve)
+        this.publishApplied(state, record, revision, structuredClone(earlier.bundle), origin, approve)
       },
       effect,
+      { adoptsData, reviewedInstallId: binding?.reviewedInstallId },
     )
   }
   /** A rollback's target snapshot; like `candidate`, only the same device/request recovers an uncertain commit. */
@@ -486,17 +878,25 @@ export class PluginAssets {
     if (!entry) throw new AppError(404, 'plugin-package-revision-not-found', '找不到这个已应用过的版本。')
     return { bundle: structuredClone(entry.bundle), record: structuredClone(record) }
   }
-  private publishApplied(state: State, record: PluginAssetRecord, revision: string, bundle: PluginPackageBundle, approve?: AppSet): void {
+  private publishApplied(
+    state: State,
+    record: PluginAssetRecord,
+    revision: string,
+    bundle: PluginPackageBundle,
+    origin: z.infer<typeof originSchema>,
+    approve?: AppSet,
+  ): void {
     if (approve) record.approvedApps = structuredClone(approve)
     if (!withinApproved(capabilitySet(bundle.manifest), record.approvedApps))
       throw new AppError(403, 'plugin-package-capabilities', '页面要求的能力还没有在这台电脑上确认。')
     if (record.appliedBundle && record.appliedRevision && record.appliedRevision !== revision)
       record.history = [
-        { revision: record.appliedRevision, bundle: record.appliedBundle },
+        { revision: record.appliedRevision, bundle: record.appliedBundle, origin: pluginReviewSource(record, record.appliedRevision) },
         ...(record.history ?? []).filter(entry => entry.revision !== record.appliedRevision && entry.revision !== revision),
       ].slice(0, ROLLBACK_REVISIONS)
     record.appliedBundle = bundle
     record.appliedRevision = revision
+    record.appliedOrigin = origin
     record.enabled = true
     if (!record.history?.length) delete record.history
     // Earlier snapshots give way to the asset budget before an apply would be refused for it.
@@ -505,19 +905,28 @@ export class PluginAssets {
       if (!record.history.length) delete record.history
     }
   }
-  setEnabled(id: string, enabled: boolean, requestId: string, actor: PluginAssetActor, effect: Effect): Promise<PluginAssetMutation> {
+  setEnabled(
+    id: string,
+    enabled: boolean,
+    requestId: string,
+    actor: PluginAssetActor,
+    effect: Effect,
+    binding?: PluginReviewBinding,
+  ): Promise<PluginAssetMutation> {
     return this.change(
       id,
       enabled ? 'enable' : 'disable',
       requestId,
-      { enabled },
+      pluginEnablePayload(enabled, binding),
       actor,
       state => {
         const record = this.find(state, id)
+        if (enabled) assertReviewBinding(record, binding)
         if (!record.appliedBundle) throw new AppError(409, 'plugin-package-not-applied', '请先应用这个插件。')
         record.enabled = enabled
       },
       effect,
+      enabled ? { reviewedInstallId: binding?.reviewedInstallId } : undefined,
     )
   }
   remove(id: string, revision: string, requestId: string, actor: PluginAssetActor, effect: Effect): Promise<PluginAssetMutation> {

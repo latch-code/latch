@@ -5,11 +5,18 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createPluginPackageTemplate,
+  PLUGIN_MARKETPLACE_PAGE,
+  type AppSnapshot,
+  type CustomAgent,
   type PluginInfo,
+  type PluginCatalogPreview,
+  type PluginPackageReview,
   type PluginPackageDetail,
   type ConfirmationTicket,
   type PluginPackageBundle,
+  type TaskDetail,
 } from '@latch/protocol'
+import type { ModelMessage, ModelProvider } from '@latch/sdk'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import type { TestDevice } from '@latch/testkit'
 const cleanup: Array<() => Promise<void>> = []
@@ -45,7 +52,321 @@ async function granted(owner: TestDevice, host: TestHost, record: PluginPackageD
   const applied = await owner.json<{ package: PluginPackageDetail }>(route, { body: input, confirmation: confirmation.id })
   return { ...applied, input, confirmation }
 }
+it('ships the marketplace as a plugin, persists disable, and withdraws only its workspace contribution', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'latch-marketplace-restart-'))
+  cleanup.push(() => rm(root, { recursive: true, force: true }))
+  const workspaceRoot = join(root, 'workspace')
+  const dataDir = join(root, 'data')
+  await mkdir(workspaceRoot)
+  const { host, owner } = await fixture({ workspaceRoot, dataDir })
+  const browser = await host.enroll({ scopes: ['view'] })
+  const { pluginId } = PLUGIN_MARKETPLACE_PAGE
+  const pluginRoute = `plugins/${encodeURIComponent(pluginId)}`
+  const catalog = async (device: TestDevice) => (await device.json<AppSnapshot>('snapshot')).catalog
+  expect((await catalog(browser))?.workspacePages).toContainEqual(PLUGIN_MARKETPLACE_PAGE)
+  expect((await browser.request('plugin-packages')).status).toBe(403)
+  expect((await browser.request(pluginRoute, { body: { enabled: false } })).status).toBe(403)
+  expect(host.host.registry.list().find(plugin => plugin.id === pluginId)?.enabled).toBe(true)
+
+  const { plugins } = await owner.json<{ plugins: PluginInfo[] }>(pluginRoute, { body: { enabled: false } })
+  expect(plugins.find(plugin => plugin.id === pluginId)).toMatchObject({ enabled: false, builtIn: true, capabilities: [] })
+  expect((await catalog(browser))?.workspacePages).toBeUndefined()
+  expect((await owner.json<AppSnapshot>('snapshot')).tasksComplete).toBe(true)
+  expect((await catalog(owner))?.features).toMatchObject({ pluginPackages: true, pluginNpmRegistry: true })
+  expect((await owner.request('plugin-packages')).status).toBe(200)
+  await host.close()
+
+  const restarted = await fixture({ workspaceRoot, dataDir })
+  expect((await catalog(restarted.owner))?.workspacePages).toBeUndefined()
+  const enabled = await restarted.owner.json<{ plugins: PluginInfo[] }>(pluginRoute, { body: { enabled: true } })
+  expect(enabled.plugins.find(plugin => plugin.id === pluginId)).toMatchObject({
+    enabled: true,
+    builtIn: true,
+    capabilities: ['workspace:marketplace'],
+  })
+  expect((await catalog(restarted.owner))?.workspacePages).toContainEqual(PLUGIN_MARKETPLACE_PAGE)
+})
+
+it('keeps loading a legacy module that previously chose the marketplace ID without offering it as a bundled page', async () => {
+  const id = PLUGIN_MARKETPLACE_PAGE.pluginId
+  const { owner } = await fixture({
+    plugins: [
+      {
+        id,
+        name: 'Existing user module',
+        version: '1',
+        description: '',
+        activate: ctx => ctx.registerSkill({ id: 'review', name: 'Review', description: '', content: 'Review the work.' }),
+      },
+    ],
+  })
+  const catalog = (await owner.json<AppSnapshot>('snapshot')).catalog
+  expect(catalog?.workspacePages).toBeUndefined()
+  expect(catalog?.skills).toContainEqual(expect.objectContaining({ pluginId: id, id: `${id}:review` }))
+  const { plugins } = await owner.json<{ plugins: PluginInfo[] }>('plugins')
+  expect(plugins.find(plugin => plugin.id === id)).not.toHaveProperty('builtIn')
+})
+
+it('reviews and stages the exact bundled release, keeping other sources and never enabling a reviewed draft', async () => {
+  const { host, owner } = await fixture()
+  const viewer = await host.enroll({ listener: 'loopback-tcp' })
+  const pluginId = 'release-review'
+  const route = 'plugin-packages/catalog'
+  const preview = (id: string) => owner.json<PluginCatalogPreview>(`${route}/preview`, { body: { pluginId: id } })
+  const body = (revision: string, id = pluginId) => ({ pluginId: id, revision, requestId: randomUUID() })
+  expect((await viewer.request(`${route}/preview`, { body: { pluginId } })).status).toBe(403)
+  expect((await viewer.request('plugin-packages/review', { body: { bundle: createPluginPackageTemplate('tool') } })).status).toBe(403)
+  expect((await owner.request(`${route}/preview`, { body: { pluginId: 'not-in-the-catalog' } })).status).toBe(404)
+
+  const candidate = await preview(pluginId)
+  expect(candidate.review).toMatchObject({
+    version: candidate.bundle.manifest.version,
+    source: { kind: 'catalog', version: candidate.bundle.manifest.version },
+    confirmationRequired: true,
+    hostModules: ['host.mjs'],
+    panels: [expect.objectContaining({ entry: 'panel.mjs' })],
+    findings: expect.arrayContaining([
+      expect.objectContaining({ kind: 'host-access' }),
+      expect.objectContaining({ kind: 'workbench-access' }),
+    ]),
+  })
+  expect(candidate.review.toolNames).toHaveLength(1)
+  expect((await owner.request(`plugin-packages/${pluginId}`)).status).toBe(404)
+  expect((await owner.request(`${route}/stage`, { body: body('0'.repeat(64)) })).status).toBe(409)
+  const request = body(candidate.review.revision)
+  const staged = await owner.json<{ package: PluginPackageDetail }>(`${route}/stage`, { body: request })
+  expect(staged.package).toMatchObject({
+    catalog: { revision: candidate.review.revision, version: candidate.review.version },
+    catalogUpdate: { version: candidate.review.version, status: 'current' },
+    review: candidate.review,
+    enabled: false,
+  })
+  expect(host.host.registry.list().some(item => item.id === pluginId)).toBe(false)
+  expect((await owner.request(`${route}/stage`, { body: request })).status).toBe(201)
+  expect(host.presence.requests.filter(item => item.preview.action === 'plugin.package.apply')).toHaveLength(0)
+
+  const text = await preview('shift-handoff')
+  const unrelated = await create(owner, text.bundle)
+  const collision = await preview(unrelated.id)
+  expect(collision).toMatchObject({ updateStatus: 'different-source', updateAvailable: false })
+  const update = { installId: collision.installed!.installId, baseRevision: unrelated.revision }
+  expect((await owner.request(`${route}/stage`, { body: { ...body(text.review.revision, unrelated.id), update } })).status).toBe(409)
+  expect((await owner.json<{ package: PluginPackageDetail }>(`plugin-packages/${unrelated.id}`)).package).toEqual(unrelated)
+})
+
+it('projects actual contents and permission changes while rejecting stale reviewed activation', async () => {
+  const { host, owner } = await fixture()
+  const id = 'review-scope'
+  const bundle = createPluginPackageTemplate('skill', id)
+  const first = await create(owner, bundle)
+  const route = `plugin-packages/${id}`
+  const activate = (revision: string, baseAppliedRevision: string | null) =>
+    owner.request(`${route}/apply`, { body: { revision, baseAppliedRevision, requestId: randomUUID() } })
+  expect((await activate(first.revision, null)).status).toBe(200)
+  const secondBundle = structuredClone(bundle)
+  secondBundle.manifest.version = '1.1.0'
+  secondBundle.files[0]!.content += 'Edited guidance.'
+  const second = (
+    await owner.json<{ package: PluginPackageDetail }>(route, {
+      method: 'PUT',
+      body: { bundle: secondBundle, baseRevision: first.revision, requestId: randomUUID() },
+    })
+  ).package
+  expect(second.review).toMatchObject({
+    baseAppliedRevision: first.revision,
+    comparison: {
+      revision: first.revision,
+      version: first.version,
+      manifestChanged: true,
+      changedExecution: false,
+      changedFiles: [{ path: 'SKILL.md', change: 'modified' }],
+    },
+  })
+  expect((await activate(second.revision, null)).status).toBe(409)
+  expect((await activate(second.revision, first.revision)).status).toBe(200)
+  const { review } = await owner.json<{ review: PluginPackageReview }>(`${route}/review?operation=rollback&revision=${first.revision}`)
+  expect(review).toMatchObject({
+    revision: first.revision,
+    baseAppliedRevision: second.revision,
+    comparison: { revision: second.revision },
+  })
+  expect(
+    (
+      await owner.request(`${route}/rollback`, {
+        body: { revision: first.revision, baseAppliedRevision: review.baseAppliedRevision, requestId: randomUUID() },
+      })
+    ).status,
+  ).toBe(200)
+  expect((await owner.request(`${route}/enabled`, { body: { enabled: false, requestId: randomUUID() } })).status).toBe(200)
+  expect(
+    (
+      await owner.request(`${route}/enabled`, {
+        body: { enabled: true, baseAppliedRevision: second.revision, requestId: randomUUID() },
+      })
+    ).status,
+  ).toBe(409)
+  expect(host.host.registry.list().find(item => item.id === id)?.enabled ?? false).toBe(false)
+  expect(
+    (
+      await owner.request(`${route}/enabled`, {
+        body: { enabled: true, baseAppliedRevision: first.revision, requestId: randomUUID() },
+      })
+    ).status,
+  ).toBe(200)
+  expect(host.host.registry.list().find(item => item.id === id)?.enabled).toBe(true)
+})
+
+it('rejects a review from a removed installation even when its replacement has identical revisions', async () => {
+  const { host, owner } = await fixture()
+  const id = 'reviewed-installation'
+  const route = `plugin-packages/${id}`
+  const firstBundle = createPluginPackageTemplate('skill', id)
+  const secondBundle = structuredClone(firstBundle)
+  secondBundle.manifest.version = '2.0.0'
+  const reviewFor = async (operation: 'apply' | 'rollback' | 'enable', revision: string) =>
+    (await owner.json<{ review: PluginPackageReview }>(`${route}/review?operation=${operation}&revision=${revision}`)).review
+  const reviewed = ({ installId, baseAppliedRevision }: PluginPackageReview) => ({ reviewedInstallId: installId, baseAppliedRevision })
+  const write = (action: string, body: Record<string, unknown>) =>
+    owner.request(`${route}/${action}`, { body: { requestId: randomUUID(), ...body } })
+  const updateAndDisable = async (first: PluginPackageDetail) => {
+    const second = (
+      await owner.json<{ package: PluginPackageDetail }>(route, {
+        method: 'PUT',
+        body: { bundle: secondBundle, baseRevision: first.revision, requestId: randomUUID() },
+      })
+    ).package
+    expect((await apply(owner, second)).status).toBe(200)
+    expect((await write('enabled', { enabled: false })).status).toBe(200)
+    return second
+  }
+
+  const first = await create(owner, firstBundle)
+  const oldApply = await reviewFor('apply', first.revision)
+  expect(oldApply).toMatchObject({ baseAppliedRevision: null, installId: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/u) })
+  const appliedRequest = { requestId: randomUUID(), revision: first.revision, ...reviewed(oldApply) }
+  expect((await owner.request(`${route}/apply`, { body: appliedRequest })).status).toBe(200)
+  expect((await owner.request(`${route}/apply`, { body: appliedRequest })).status).toBe(200)
+  const second = await updateAndDisable(first)
+  const oldRollback = await reviewFor('rollback', first.revision)
+  const oldEnable = await reviewFor('enable', second.revision)
+  expect(oldRollback.installId).toBe(oldApply.installId)
+  expect(oldEnable.installId).toBe(oldApply.installId)
+  expect((await owner.request(route, { method: 'DELETE', body: { requestId: randomUUID(), baseRevision: second.revision } })).status).toBe(
+    200,
+  )
+
+  const recreated = await create(owner, firstBundle)
+  const freshApply = await reviewFor('apply', recreated.revision)
+  expect(freshApply).toMatchObject({ revision: oldApply.revision, baseAppliedRevision: oldApply.baseAppliedRevision })
+  expect(freshApply.installId).not.toBe(oldApply.installId)
+  expect((await write('apply', { revision: first.revision, ...reviewed(oldApply) })).status).toBe(409)
+  expect((await owner.request(`${route}/apply`, { body: appliedRequest })).status).toBe(410)
+  expect(host.host.registry.list().find(item => item.id === id)?.enabled ?? false).toBe(false)
+  expect((await write('apply', { revision: first.revision, ...reviewed(freshApply) })).status).toBe(200)
+
+  const latest = await updateAndDisable(recreated)
+  const freshRollback = await reviewFor('rollback', recreated.revision)
+  const freshEnable = await reviewFor('enable', latest.revision)
+  expect(freshRollback).toMatchObject({ revision: oldRollback.revision, baseAppliedRevision: oldRollback.baseAppliedRevision })
+  expect(freshEnable).toMatchObject({ revision: oldEnable.revision, baseAppliedRevision: oldEnable.baseAppliedRevision })
+  expect((await write('rollback', { revision: first.revision, ...reviewed(oldRollback) })).status).toBe(409)
+  expect((await write('enabled', { enabled: true, ...reviewed(oldEnable) })).status).toBe(409)
+  const unchanged = (await owner.json<{ package: PluginPackageDetail }>(route)).package
+  expect(unchanged).toMatchObject({ appliedRevision: second.revision, enabled: false })
+  expect((await write('enabled', { enabled: true, ...reviewed(freshEnable) })).status).toBe(200)
+  expect((await write('rollback', { revision: first.revision, ...reviewed(freshRollback) })).status).toBe(200)
+})
+
+it('binds a completed Mac confirmation to the reviewed installation', async () => {
+  const { host, owner } = await fixture()
+  const bundle = createPluginPackageTemplate('tool', 'review-confirmed-installation')
+  const first = await create(owner, bundle)
+  const route = `plugin-packages/${first.id}`
+  const request = {
+    revision: first.revision,
+    reviewedInstallId: first.review.installId,
+    baseAppliedRevision: null,
+    requestId: randomUUID(),
+  }
+  const stepup = await owner.request(`${route}/apply`, { body: request })
+  expect(stepup.status).toBe(403)
+  const { confirmation } = (await stepup.json()) as { confirmation: ConfirmationTicket }
+  await expect
+    .poll(async () => (await owner.json<{ confirmation: ConfirmationTicket }>(`confirmations/${confirmation.id}`)).confirmation.status)
+    .toBe('approved')
+  expect((await owner.request(route, { method: 'DELETE', body: { requestId: randomUUID(), baseRevision: first.revision } })).status).toBe(
+    200,
+  )
+  const replacement = await create(owner, bundle)
+
+  const changed = await owner.request(`${route}/apply`, {
+    body: { ...request, reviewedInstallId: replacement.review.installId },
+    confirmation: confirmation.id,
+  })
+  expect(changed.status).toBe(409)
+  expect(await changed.json()).toMatchObject({ error: 'confirmation-mismatch' })
+  expect(host.host.registry.list().some(item => item.id === first.id)).toBe(false)
+})
+
 describe('local custom plugin application', () => {
+  it('sends the selected installed skill and tool to a Standard Agent and returns the approved tool result to the model', async () => {
+    const bundle = createPluginPackageTemplate('tool', 'handoff-check')
+    const toolName = 'handoff_check_uppercase'
+    const skillText = 'Use the uppercase tool on the handoff reference.'
+    bundle.manifest.skills = [{ id: 'handoff', name: '交接清单', description: '', file: 'SKILL.md' }]
+    bundle.files.push({ path: 'SKILL.md', content: skillText })
+
+    const requests: Array<{ tools: string[]; messages: ModelMessage[] }> = []
+    const provider: ModelProvider = {
+      id: 'handoff-provider',
+      name: 'Local fixture',
+      model: 'local',
+      async *stream({ tools, messages }) {
+        const names = tools.map(tool => tool.name)
+        requests.push({ tools: names, messages: structuredClone(messages) })
+        const last = messages.at(-1)
+        if (last?.role === 'user' && names.includes(toolName)) {
+          yield { type: 'tool-call', call: { id: 'handoff-call', name: toolName, arguments: { text: last.content } } }
+          yield { type: 'finish', reason: 'tool-calls' }
+        } else {
+          yield { type: 'text', text: last?.role === 'tool' ? last.content : 'No tool result' }
+          yield { type: 'finish', reason: 'stop' }
+        }
+      },
+    }
+    const { host, owner } = await fixture({
+      demo: false,
+      plugins: [{ id: provider.id, name: provider.name, version: '1', description: '', activate: ctx => ctx.registerProvider(provider) }],
+    })
+    const installed = await granted(owner, host, await create(owner, bundle))
+    const packageId = installed.package.id
+    const agent = await owner.json<CustomAgent>('custom-agents', {
+      body: {
+        requestId: randomUUID(),
+        name: '交接核对',
+        harnessId: 'standard',
+        mode: 'agent',
+        model: { providerId: provider.id, model: provider.model },
+        skills: [`${packageId}:handoff`],
+        tools: [packageId],
+      },
+    })
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      body: { requestId: randomUUID(), customAgentId: agent.id, prompt: 'handoff-42' },
+    })
+    const detail = () => owner.json<TaskDetail>(`tasks/${sessionId}`)
+    await expect.poll(async () => (await detail()).summary.status).toBe('waiting-approval')
+    expect(requests).toHaveLength(1)
+    expect(requests.at(0)?.tools).toContain(toolName)
+    expect(requests.at(0)?.messages).toContainEqual({ role: 'system', content: expect.stringContaining(skillText) })
+    const approval = (await detail()).approvals.at(0)
+    expect(approval).toMatchObject({ risk: 'R2', toolName, toolCallId: 'handoff-call' })
+    await owner.json(`approvals/${approval?.id}`, { body: { decision: 'allow' } })
+    await expect.poll(async () => (await detail()).summary.status).toBe('idle')
+    expect(requests).toHaveLength(2)
+    expect(requests.at(1)?.messages.at(-1)).toMatchObject({ role: 'tool', toolCallId: 'handoff-call', content: 'HANDOFF-42' })
+    expect((await detail()).messages.at(-1)).toMatchObject({ role: 'assistant', text: 'HANDOFF-42' })
+  })
   it('binds imported executable dependencies to a fresh approval and refuses disguising a module as a skill', async () => {
     const { host, owner } = await fixture(),
       bundle = createPluginPackageTemplate('tool', 'dependency-tool')
@@ -347,6 +668,28 @@ export default {activate(ctx) {ctx.registerHarness({id:'custom-harness',name:'Cu
     expect(changed.trusted).toBe(false)
     await granted(owner, host, changed)
     expect(host.presence.requests.filter(request => request.preview.action === 'plugin.package.apply')).toHaveLength(2)
+  })
+  it('names the Context projection in the confirmation when a trusted client panel opts in', async () => {
+    const { host, owner } = await fixture()
+    const bundle = createPluginPackageTemplate('react-ui', 'context-review')
+    const draft = await create(owner, bundle)
+    await granted(owner, host, draft)
+    const confirmLines = () =>
+      host.presence.requests.filter(request => request.preview.action === 'plugin.package.apply').at(-1)?.preview.lines
+    const contextLine = { label: '读取会话上下文统计的面板', value: '1' }
+    expect(confirmLines()).not.toContainEqual(contextLine)
+    bundle.manifest.panels![0]!.context = true
+    const changed = (
+      await owner.json<{ package: PluginPackageDetail }>('plugin-packages/' + draft.id, {
+        method: 'PUT',
+        body: { requestId: randomUUID(), baseRevision: draft.revision, bundle },
+      })
+    ).package
+    expect(changed).toMatchObject({ trusted: false, appliedRevision: draft.revision })
+    expect(host.host.registry.uiPanels().find(panel => panel.pluginId === draft.id)).not.toHaveProperty('context')
+    await granted(owner, host, changed)
+    expect(confirmLines()).toContainEqual(contextLine)
+    expect(host.host.registry.uiPanels().find(panel => panel.pluginId === draft.id)).toHaveProperty('context', true)
   })
   it('restores the applied generation and exact trust across Host restarts without applying an unapproved draft', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-package-restart-'))

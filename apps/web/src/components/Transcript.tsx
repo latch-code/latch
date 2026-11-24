@@ -130,7 +130,7 @@ function QuestionRow({ message, context }: { message: Message; context: RowConte
   const question = context.questions.find(item => `tool:${item.toolCallId}` === message.id)
   if (question) return null
   if (message.state === 'completed' && message.text.startsWith('{"kind":"latch.question-result"'))
-    return <QuestionResultCard text={message.text} />
+    return <QuestionResultCard text={message.text} messageId={message.id} />
   return <ToolRow message={message} context={context} />
 }
 
@@ -297,6 +297,8 @@ interface TurnViewProps {
   changesRevision: string
   changesEnabled: boolean
   onChangesError?: (error: unknown) => void
+  /** A context contributor points to this tool row even when the device shows only failures. */
+  contextToolMessageId?: string
 }
 
 /**
@@ -479,13 +481,15 @@ const TurnView = memo(function TurnView({
   changesRevision,
   changesEnabled,
   onChangesError,
+  contextToolMessageId,
 }: TurnViewProps) {
   useLocale()
   const [tapped, setTapped] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [foldChoice, setFoldChoice] = useState<boolean | null>(null)
   // 工作过程, this device's choice: what always shows (approvals, failures, unknown results) is never among what it hides.
-  const level = usePreferences().workDisplay
+  const workDisplay = usePreferences().workDisplay
+  const level = contextToolMessageId && workDisplay === 'failures' ? 'folded' : workDisplay
   const blocks = useMemo(() => turnBlocks(turn, level), [turn, level])
   // What the turn's generated pictures measure, so the reply's 「下载原图」 to the same file is not shown again.
   const pictured = useMemo(
@@ -827,6 +831,7 @@ interface TranscriptProps {
   onStopSubagent?: (subagentId: string) => Promise<void>
   /** Brings a row into view, for what the status line points at. */
   onReveal?: (messageId: string) => void
+  contextToolMessageId?: string | undefined
   /** The Host's per-turn records and what this device may do with them. */
   changes?: Pick<TurnSummaryOptionsValue, 'undo' | 'offline'> & { enabled: boolean }
   /** 交给代码任务… from a message or a turn's reply. */
@@ -866,6 +871,7 @@ export function Transcript(props: TranscriptProps) {
     onStop,
     onStopSubagent,
     onReveal,
+    contextToolMessageId,
     changes,
     onHandoff,
     placed,
@@ -1043,6 +1049,7 @@ export function Transcript(props: TranscriptProps) {
           changesRevision={hasChangeRecord ? cardsRevision : ''}
           changesEnabled={changes?.enabled === true}
           onChangesError={changesError}
+          {...(contextToolMessageId && turn.replies.some(message => message.id === contextToolMessageId) ? { contextToolMessageId } : {})}
           {...(onHandoff && !trailingLive ? { onHandoff: handoff } : {})}
         />
         {insert}

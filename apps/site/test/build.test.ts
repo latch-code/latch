@@ -1,10 +1,12 @@
+import { createHash } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { link, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterAll, beforeAll, expect, it } from 'vitest'
+import { catalogPackages } from '../../../examples/marketplace/build.ts'
 import { checkSeo } from '../scripts/seo-check.ts'
 
 const run = promisify(execFile)
@@ -34,8 +36,10 @@ it('builds every page in both languages with no SEO or link problems', () => {
     ['/404.html', 'en'],
     ['/download/', 'en'],
     ['/', 'en'],
+    ['/plugins/', 'en'],
     ['/zh/download/', 'zh-CN'],
     ['/zh/', 'zh-CN'],
+    ['/zh/plugins/', 'zh-CN'],
   ])
 })
 
@@ -44,9 +48,92 @@ it('derives canonical links, the sitemap and robots.txt from SITE_URL', async ()
   expect(home).toContain(`<link rel="canonical" href="${ORIGIN}/zh/download/"`)
   const sitemap = await readFile(join(dist, 'sitemap.xml'), 'utf8')
   const listed = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/gu)].map(match => match[1])
-  expect(listed.toSorted()).toEqual([`${ORIGIN}/`, `${ORIGIN}/download/`, `${ORIGIN}/zh/`, `${ORIGIN}/zh/download/`])
+  expect(listed.toSorted()).toEqual([
+    `${ORIGIN}/`,
+    `${ORIGIN}/download/`,
+    `${ORIGIN}/plugins/`,
+    `${ORIGIN}/zh/`,
+    `${ORIGIN}/zh/download/`,
+    `${ORIGIN}/zh/plugins/`,
+  ])
   expect(await readFile(join(dist, 'robots.txt'), 'utf8')).toContain(`Sitemap: ${ORIGIN}/sitemap.xml`)
   expect(await readFile(join(dist, '404.html'), 'utf8')).toMatch(/name="robots" content="noindex"/u)
+})
+
+it('publishes the package a marketplace visitor actually downloads at its advertised digest', async () => {
+  const catalog = JSON.parse(await readFile(join(dist, 'plugins/latch.catelog.json'), 'utf8')) as {
+    formatVersion: number
+    plugins: { id: string; version: string; sha256: string; bundle: string }[]
+  }
+  const index = JSON.parse(await readFile(join(dist, 'plugins/catalog.json'), 'utf8')) as {
+    formatVersion: number
+    plugins: { id: string; version: string; sha256: string; url: string }[]
+  }
+  expect(catalog.formatVersion).toBe(1)
+  expect(index.plugins).toEqual(catalog.plugins.map(({ bundle, ...plugin }) => ({ ...plugin, url: '/plugins/' + bundle })))
+  const page = await readFile(join(dist, 'zh/plugins/index.html'), 'utf8')
+  expect(index.plugins.map(plugin => plugin.id)).toContain('context-insights')
+  for (const { id, version, sha256, url } of index.plugins) {
+    expect(page).toContain(`href="${url}"`)
+    const bytes = await readFile(join(dist, url))
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(sha256)
+    expect(JSON.parse(bytes.toString())).toMatchObject({ manifest: { id, version }, files: expect.any(Array) })
+  }
+})
+
+it.each([
+  ['examples', 'directory', 'symlink'],
+  ['examples/latch.catelog.json', 'file', 'symlink'],
+  ['examples/sample', 'directory', 'symlink'],
+  ['examples/sample/latch-plugin.json', 'file', 'symlink'],
+  ['examples/sample/src', 'directory', 'symlink'],
+  ['examples/sample/src/panel.mjs', 'file', 'symlink'],
+  ['examples/sample/src/panel.mjs', 'file', 'hardlink'],
+  ['examples/sample/src/panel.mjs', 'file', 'directory'],
+] as const)('rejects a release input at %s when it is a %s replaced with a %s', async (input, kind, replacement) => {
+  const fixture = await mkdtemp(join(folder, 'catalog-'))
+  const repository = join(fixture, 'checkout')
+  const examples = join(repository, 'examples')
+  const manifest = { id: 'sample', version: '1.0.0' }
+  const content = 'export default function Panel() { return null }\n'
+  await mkdir(join(examples, 'sample/src'), { recursive: true })
+  await writeFile(
+    join(examples, 'latch.catelog.json'),
+    JSON.stringify({ plugins: [{ id: 'sample', folder: 'sample', manifest: 'latch-plugin.json', files: ['src/panel.mjs'] }] }),
+  )
+  await writeFile(join(examples, 'sample/latch-plugin.json'), JSON.stringify(manifest))
+  await writeFile(join(examples, 'sample/src/panel.mjs'), content)
+  expect(catalogPackages(repository)).toEqual({ sample: { manifest, files: [{ path: 'src/panel.mjs', content }] } })
+
+  const original = join(fixture, 'outside-source')
+  const path = join(repository, input)
+  await rename(path, original)
+  if (replacement === 'symlink') await symlink(original, path, kind === 'file' ? 'file' : 'dir')
+  else if (replacement === 'hardlink') await link(original, path)
+  else await mkdir(path)
+  expect(() => catalogPackages(repository)).toThrow(/Invalid catalog source/u)
+})
+
+it('renders the four featured cover samples in both languages', async () => {
+  for (const [pagePath, request, toolDefinitions] of [
+    ['plugins/index.html', 'Request 4', 'Tool definitions'],
+    ['zh/plugins/index.html', '第 4 次请求', '工具定义'],
+  ] as const) {
+    const page = await readFile(join(dist, pagePath), 'utf8')
+    const article = (id: string) => page.match(new RegExp(`<article\\b[^>]*\\bid="${id}"[^>]*>(.*?)</article>`, 'su'))?.[1] ?? ''
+    const handoff = article('shift-handoff')
+    expect(handoff).toContain('data-note="done"')
+    expect(handoff).toContain('data-note="next"')
+    expect([...article('release-review').matchAll(/\bdata-complete\b/gu)]).toHaveLength(2)
+    const release = article('release-check')
+    expect(release).toContain('data-state="passed"')
+    expect(release).toContain('data-state="pending"')
+    const context = article('context-insights')
+    expect(context).toContain(request)
+    expect(context).toContain(toolDefinitions)
+    expect([...context.matchAll(/\bdata-selected\b/gu)]).toHaveLength(1)
+    expect([...context.matchAll(/\bflex-grow:\s*(\d+)/gu)].map(match => match[1])).toEqual(['55', '42', '2', '1'])
+  }
 })
 
 it('reports a page that breaks the invariants', async () => {

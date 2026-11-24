@@ -13,11 +13,13 @@ import {
 } from '../core/api.ts'
 import {
   draftStart,
+  findHarness,
   harnessPicks,
   pinnedChoice,
   readChoice,
   resolveChoice,
   startChoices,
+  withServicePick,
   writeChoice,
   worktreeProject,
   type ComposerChoice,
@@ -44,10 +46,13 @@ import { defineCopy } from '../core/i18n.ts'
 const COPY = defineCopy(
   {
     cannotStore: '无法保存待发送内容。请允许浏览器存储后重试，避免断线时重复提交。',
+    pendingRestricted: '还有一条提交未确认。请在这台 Mac 上用具备完整权限的 Latch 处理后再发送。',
   },
   {
     cannotStore:
       'Could not save the outgoing message. Allow browser storage and try again to avoid sending it twice if the connection drops.',
+    pendingRestricted:
+      'A submission is still unconfirmed. Open Latch on the host computer with full access to resolve it before sending again.',
   },
 )
 
@@ -82,8 +87,8 @@ const without = (set: ReadonlySet<string>, id: string): ReadonlySet<string> => {
   return next
 }
 
-const storedOwnsInput = (pending: PendingSubmission, selectedId: string | null): boolean =>
-  pending.sessionId === undefined ? selectedId === null : selectedId === pending.sessionId
+const storedOwnsInput = (pending: PendingSubmission, selectedId: string | null, creating: boolean): boolean =>
+  pending.sessionId === undefined ? selectedId === null && (pending.pluginCreation === true) === creating : selectedId === pending.sessionId
 
 /**
  * Draft, composer choice and the at-most-one unconfirmed submission of this
@@ -99,6 +104,8 @@ export function useSubmission({
   access,
   selectedId,
   atStart,
+  creating,
+  creatorAllowed,
   select,
   refresh,
   onSent,
@@ -110,6 +117,8 @@ export function useSubmission({
   selectedId: string | null
   /** Whether Code still has the new-session input open, including under settings or the board. */
   atStart: () => boolean
+  creating: boolean
+  creatorAllowed: boolean
   select: (id: string | null) => void
   refresh: () => Promise<void>
   onSent: (
@@ -130,23 +139,32 @@ export function useSubmission({
   const pendingKey = `latch.pending.${location.origin}.${deviceId}`
   const [draft, setDraft] = useState('')
   const [fork, setFork] = useState<ForkDraft | null>(null)
-  const [pending, setPending] = useState<PendingSubmission | null>(null)
+  const [held, setPending] = useState<PendingSubmission | null>(null)
+  const [loadedPendingKey, setLoadedPendingKey] = useState(pendingKey)
+  const creatorAccess = useRef({ pendingKey, creatorAllowed })
+  if (creatorAccess.current.pendingKey !== pendingKey || creatorAccess.current.creatorAllowed !== creatorAllowed)
+    creatorAccess.current = { pendingKey, creatorAllowed }
+  const creatorAccessAtRender = creatorAccess.current
+  const canShowCreator = creatorAllowed && loadedPendingKey === pendingKey
+  const pending = held?.pluginCreation && !canShowCreator ? null : held
   useEffect(() => {
-    heldHere = pending
+    heldHere = held
     return () => {
       heldHere = null
     }
-  }, [pending])
+  }, [held])
   const [sending, setSending] = useState(false)
-  const [sendingMessage, setSendingMessage] = useState<SendingMessage | null>(null)
+  const [outgoing, setSendingMessage] = useState<SendingMessage | null>(null)
+  const sendingMessage = outgoing?.submission.pluginCreation && !canShowCreator ? null : outgoing
   /** Why the pending submission is still unconfirmed after this page's last try; '' before one. */
   const [pendingReason, setPendingReason] = useState('')
   /** Another window of this device is sending or retrying the pending submission now. */
   const [sendingElsewhere, setSendingElsewhere] = useState(false)
   const sendingRef = useRef(false)
   const mounted = useRef(true)
-  const destination = useRef({ selectedId, epoch: 0 })
-  if (destination.current.selectedId !== selectedId) destination.current = { selectedId, epoch: destination.current.epoch + 1 }
+  const destination = useRef({ selectedId, creating, epoch: 0 })
+  if (destination.current.selectedId !== selectedId || destination.current.creating !== creating)
+    destination.current = { selectedId, creating, epoch: destination.current.epoch + 1 }
   const requestOrigins = useRef(new Map<string, { epoch: number; consumedDraft: boolean; stay: boolean }>())
   /** A new session started now stays in the background: the person started it from the board's 新建. */
   const stayRef = useRef(false)
@@ -183,7 +201,15 @@ export function useSubmission({
     () => (borrowed ? forkedChoice(catalog, start, borrowed, forkSource) : undefined),
     [catalog, start, borrowed, forkSource],
   )
-  const choice = forked?.choice ?? remembered
+  const picked = forked?.choice ?? remembered
+  let choice: ComposerChoice = creating ? { ...picked, mode: 'agent', workspaceId: 'default' } : picked
+  // While locked, show the original launch options even if this computer's pin has changed.
+  if (creating && pending?.pluginCreation) {
+    const { harnessId, model, config } = restoredChoice(pending)
+    const harness = findHarness(catalog, harnessId)
+    choice = { mode: 'agent', harnessId, model, config, workspaceId: 'default' }
+    if (harness?.capabilities.models.owner === 'harness' && model) choice.config = withServicePick(config, model)
+  }
   /** Model switches chosen for existing sessions; sent with that session's next prompt. */
   const [overrides, setOverrides] = useState<Record<string, ModelRef>>({})
   /**
@@ -250,8 +276,9 @@ export function useSubmission({
 
   useEffect(() => {
     const stored = readPending(pendingKey)
+    setLoadedPendingKey(pendingKey)
     // A prompt sent again was never the input's text, so it does not take the input over on a reload.
-    const owner = stored && fromInput(stored) && storedOwnsInput(stored, selectedId)
+    const owner = stored && (!stored.pluginCreation || creatorAllowed) && fromInput(stored) && storedOwnsInput(stored, selectedId, creating)
     setPending(stored)
     setPendingReason(stored ? readPendingReason(pendingKey, stored.requestId) : '')
     setSendingMessage(
@@ -269,7 +296,7 @@ export function useSubmission({
       )
     }
     if (stored.sessionId === undefined) {
-      if (!stored.forkOf && !stored.editOf) {
+      if (!stored.forkOf && !stored.editOf && !stored.pluginCreation) {
         const restored = restoredChoice(stored)
         setStored(previous => ({ ...previous, ...restored }))
         // Under a pin too, what shows is what this unconfirmed request carries.
@@ -352,10 +379,17 @@ export function useSubmission({
     followUp?: 'queue' | 'steer',
     attachmentIds?: string[],
     fileRefs?: FileMention[],
+    pluginCreation = false,
   ): Promise<boolean> => {
     if (sendingRef.current || (!retry && resend === undefined && !draft.trim() && !attachmentIds?.length)) return false
     if (resend !== undefined && (selectedId === null || !resend.trim())) return false
+    if (pluginCreation && (selectedId !== null || fork || itemRef.current || fileRefs?.length || choice.mode !== 'agent')) return false
+    const creatorRequest = pluginCreation || retry?.pluginCreation === true
+    const creatorRequestAllowed = () =>
+      !creatorRequest || (creatorAllowed && mounted.current && creatorAccess.current === creatorAccessAtRender)
+    if (!creatorRequestAllowed()) return false
     if (!retry && selectedId === null && !(await saveOfferedHarness())) return false
+    if (!creatorRequestAllowed()) return false
     const override = selectedId === null ? undefined : overrides[selectedId]
     const submission: PendingSubmission =
       retry
@@ -374,6 +408,7 @@ export function useSubmission({
             requestId: newRequestId(),
             prompt: draft.trim(),
             mode: choice.mode,
+            ...(pluginCreation ? { pluginCreation: true as const } : {}),
             ...(fork
               ? fork.upToMessageId
                 ? {
@@ -387,9 +422,9 @@ export function useSubmission({
                 : { editOf: { taskId: fork.taskId } }
               : {}),
             ...(choice.harnessId ? { harnessId: choice.harnessId } : {}),
-            ...(choice.workspaceId ? { workspaceId: choice.workspaceId } : {}),
+            ...(!pluginCreation && choice.workspaceId ? { workspaceId: choice.workspaceId } : {}),
             ...startChoices(catalog, choice, fork !== null),
-            ...(worktree ? { worktree: worktree.from === 'head' ? (true as const) : worktree } : {}),
+            ...(!pluginCreation && worktree ? { worktree: worktree.from === 'head' ? (true as const) : worktree } : {}),
             ...(itemRef.current && !fork ? { itemId: itemRef.current.id, itemRevision: itemRef.current.revision } : {}),
             // Stored with the submission, so a start whose result stayed unknown still stays on the board after a reload.
             ...(stayRef.current ? { stay: true as const } : {}),
@@ -418,7 +453,7 @@ export function useSubmission({
       consumedDraft: earlier?.consumedDraft ?? (resend === undefined && fromInput(submission)),
       stay: earlier?.stay ?? submission.stay === true,
     }
-    if (earlier && !storedOwnsInput(submission, destination.current.selectedId)) origin.epoch = earlier.epoch
+    if (earlier && !storedOwnsInput(submission, destination.current.selectedId, destination.current.creating)) origin.epoch = earlier.epoch
     if (!retry) requestOrigins.current.clear()
     requestOrigins.current.set(submission.requestId, origin)
     // Another window of this device may have stored its own unconfirmed message meanwhile: that one is shown, and this
@@ -426,6 +461,7 @@ export function useSubmission({
     const elsewhere = readPending(pendingKey)
     if (elsewhere && elsewhere.requestId !== submission.requestId) {
       requestOrigins.current.delete(submission.requestId)
+      if (elsewhere.pluginCreation && !creatorAccess.current.creatorAllowed) setError(COPY.pendingRestricted)
       setPending(elsewhere)
       setSendingMessage(
         elsewhere.queue || elsewhere.steer
@@ -454,16 +490,26 @@ export function useSubmission({
     try {
       const { path, body } = submissionRequest(submission)
       // A Harness saved before confirmations is confirmed on this Mac at its first start; the same request goes again.
-      const result = await withConfirmation(confirmation =>
-        api<{ sessionId?: string; queued?: { id: string }; memoryRefused?: string; outside?: WorkItemStartAnswer['outside'] }>(path, {
-          method: 'POST',
-          body,
-          ...(confirmation ? { confirmation } : {}),
-        }),
-      )
+      const result = await withConfirmation(confirmation => {
+        if (!creatorRequestAllowed()) throw new Error('Creator access changed')
+        return api<{ sessionId?: string; queued?: { id: string }; memoryRefused?: string; outside?: WorkItemStartAnswer['outside'] }>(
+          path,
+          {
+            method: 'POST',
+            body,
+            ...(confirmation ? { confirmation } : {}),
+          },
+        )
+      })
       // An Agent's chat the Host had to start anew (its home moved) answers a message with the chat that took it.
       const sessionId = result.sessionId ?? submission.sessionId
       if (sessionId === undefined) throw new Error('missing session id')
+      if (!creatorRequestAllowed()) {
+        // The Host supplied a receipt. Settle it without restoring private content or navigating the current page.
+        releaseStored(pendingKey, submission.requestId)
+        release(submission)
+        return false
+      }
       setSendingMessage(
         submission.queue || submission.steer
           ? null
@@ -493,7 +539,7 @@ export function useSubmission({
       // A resent prompt never came from the composer, so whatever is being drafted stays.
       if (origin.consumedDraft && foreground) setDraft('')
       if (submission.sessionId === undefined && foreground) setFork(null)
-      if (submission.sessionId === undefined) setWorktreePicked(null)
+      if (submission.sessionId === undefined && !submission.pluginCreation) setWorktreePicked(null)
       // The pick went with this session, unless another was made while a slow start was waiting.
       if (submission.sessionId === undefined) setDraftPick(current => (current === draftPick ? null : current))
       if (submission.sessionId !== undefined)
@@ -506,6 +552,13 @@ export function useSubmission({
       await refresh()
       return true
     } catch (cause) {
+      if (!creatorRequestAllowed()) {
+        // Losing access while a write was in flight does not answer whether the Host took the original request.
+        setSendingMessage(previous =>
+          previous?.submission.requestId === submission.requestId ? { ...previous, state: 'unknown' } : previous,
+        )
+        return false
+      }
       const online = typeof navigator === 'undefined' || navigator.onLine !== false
       const reason = unconfirmedReason(cause, online)
       const uncertain = reason !== null
@@ -521,7 +574,7 @@ export function useSubmission({
       // This device's own network says nothing that should outlive it: the row says so only while it lasts.
       if (uncertain && online) writePendingReason(pendingKey, submission.requestId, reason)
       if (!uncertain && cause instanceof ApiError && cause.code === 'attachment-released' && fromInput(submission)) {
-        const restored = mounted.current && storedOwnsInput(submission, destination.current.selectedId)
+        const restored = mounted.current && storedOwnsInput(submission, destination.current.selectedId, destination.current.creating)
         if (restored) setDraft(previous => (previous.trim() ? previous : submission.prompt))
         onReleased?.(submission, restored)
       }
@@ -555,7 +608,7 @@ export function useSubmission({
     if (sendingRef.current || pending === null || readFlight(pendingKey)?.requestId === pending.requestId) return null
     const home = abandonSubmission(pendingKey, pending)
     release(pending)
-    const restored = storedOwnsInput(pending, destination.current.selectedId)
+    const restored = storedOwnsInput(pending, destination.current.selectedId, destination.current.creating)
     if (restored) setDraft(previous => (previous.trim() ? previous : home.text))
     return { ...home, restored }
   }
@@ -566,7 +619,7 @@ export function useSubmission({
     abandonSubmission(pendingKey, submission)
     release(submission)
     const sessionId = submission.sessionId
-    if (storedOwnsInput(submission, destination.current.selectedId))
+    if (storedOwnsInput(submission, destination.current.selectedId, destination.current.creating))
       setDraft(previous => (previous.trim() === submission.prompt.trim() ? '' : previous))
     if (submission.model)
       setOverrides(previous => {
@@ -584,7 +637,7 @@ export function useSubmission({
     fork,
     setFork,
     pending,
-    pendingReason,
+    pendingReason: pending ? pendingReason : '',
     sendingElsewhere,
     abandon,
     delivered,

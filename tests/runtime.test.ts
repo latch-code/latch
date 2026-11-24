@@ -117,9 +117,358 @@ describe('independent harness runtime', () => {
     const { sessionId } = await bridge.createTask({ prompt: 'Write the note', requestId: 'image-file-summary' })
     await waitStatus(bridge, sessionId, 'idle')
     const message = (await bridge.detail(sessionId)).messages.find(item => item.role === 'tool')!
+    expect((await bridge.detail(sessionId)).requestContext).toEqual({
+      at: expect.any(String),
+      userMessages: 1,
+      assistantMessages: 1,
+      toolResults: 1,
+      tools: 1,
+      skills: 0,
+      images: 0,
+    })
     expect(message.tool!.outputWithoutFiles).toBe(safe + '\n\n（write_note 的部分图片没有保存。）')
     expect(message.text).toBe(text + '\n\n（write_note 的部分图片没有保存。）')
     expect(seen.at(-1)?.at(-1)).toMatchObject({ role: 'tool', content: message.text })
+    const { contextSteps, messages } = await bridge.detail(sessionId)
+    const schemaBytes = Buffer.byteLength(
+      JSON.stringify({ name: writing.name, description: writing.description, parameters: writing.parameters }),
+    )
+    const callBytes = Buffer.byteLength(JSON.stringify({ name: writing.name, arguments: { text: 'example' } }))
+    expect(contextSteps).toEqual([
+      expect.objectContaining({
+        sequence: 1,
+        turnId: messages[0]!.id,
+        toolCalls: 1,
+        status: 'completed',
+        bytes: {
+          instructions: Buffer.byteLength(seen[0]![0]!.content),
+          skills: 0,
+          toolSchemas: schemaBytes,
+          user: Buffer.byteLength('Write the note'),
+          assistant: 0,
+          toolResults: 0,
+        },
+      }),
+      expect.objectContaining({
+        sequence: 2,
+        turnId: messages[0]!.id,
+        toolCalls: 0,
+        status: 'completed',
+        images: 0,
+        bytes: {
+          instructions: Buffer.byteLength(seen[1]![0]!.content),
+          skills: 0,
+          toolSchemas: schemaBytes,
+          user: Buffer.byteLength('Write the note'),
+          assistant: Buffer.byteLength('准备执行') + callBytes,
+          toolResults: Buffer.byteLength(message.text),
+        },
+      }),
+    ])
+    expect(contextSteps![1]).not.toHaveProperty('outputTokens')
+    expect(JSON.stringify(contextSteps)).not.toContain(text)
+  })
+
+  it('bounds tool contributions from the assembled input and distinguishes new results from prior results', async () => {
+    const dataDir = await directory()
+    const seen: ModelMessage[][] = []
+    const callId = (index: number) => `private-provider-call-${index}`
+    const provider: ModelProvider = {
+      ...textProvider(),
+      modelCapabilities: { 'fixture-model': { vision: true } },
+      async *stream({ messages }) {
+        seen.push(structuredClone(messages))
+        const calls =
+          messages.at(-1)?.content === 'collect'
+            ? Array.from({ length: 6 }, (_, index) => ({ id: callId(index), count: (6 - index) * 100 }))
+            : seen.length === 2
+              ? [{ id: callId(6), count: 1 }]
+              : messages.at(-1)?.content === 'fresh'
+                ? [{ id: callId(0), count: 2 }]
+                : []
+        for (const { id, count } of calls) {
+          yield { type: 'tool-call', call: { id, name: 'write_note', arguments: { count, private: 'private-argument' } } }
+        }
+        yield { type: 'finish', reason: calls.length ? 'tool-calls' : 'stop' }
+      },
+    }
+    const writing = tool(
+      async args => ({
+        text: `私有输出${'🧩'.repeat(Number(args.count))}`,
+        ...(Number(args.count) >= 100 ? { images: [{ mimeType: 'image/png', data: 'AAAA' }] } : {}),
+      }),
+      false,
+    )
+    const open = () =>
+      own(
+        createRuntime({
+          dataDir,
+          workspaceRoot: dataDir,
+          registry: registry(provider, [writing]),
+          providerId: provider.id,
+          saveAttachment: async () => ({
+            id: 'a'.repeat(22),
+            kind: 'image',
+            name: 'screenshot.png',
+            mime: 'image/png',
+            size: 3,
+            sha256: 'b'.repeat(64),
+          }),
+          readAttachment: async () => ({ type: 'image', mimeType: 'image/png', data: 'AAAA' }),
+        }),
+      )
+    let bridge = open()
+    const { sessionId } = await bridge.createTask({ prompt: 'collect', requestId: 'collect-tool-contributions' })
+    await waitStatus(bridge, sessionId, 'idle')
+    const detail = await bridge.detail(sessionId)
+    const [before, initial, later] = detail.contextSteps!
+    const firstTurnId = detail.messages[0]!.id
+    const tools = detail.messages.filter(message => message.role === 'tool')
+    const initialInputs = seen[1]!.filter(message => message.role === 'tool')
+    expect(initialInputs).toHaveLength(6)
+    expect(initialInputs[0]!.content).toContain('已不再发送')
+    const contribution = (index: number, input: ModelMessage, inclusion: 'new' | 'replayed') => ({
+      bytes: Buffer.byteLength(input.content),
+      inclusion,
+      source: { resultId: tools[index]!.contextToolId, turnId: firstTurnId },
+    })
+    const largest = initialInputs.slice(0, 5).map((input, index) => contribution(index, input, 'new'))
+    expect(before!.toolContributions).toEqual({ largest: [], added: [] })
+    expect(initial!.toolContributions).toEqual({ largest, added: largest })
+    expect(initial!.bytes.toolResults).toBe(initialInputs.reduce((bytes, input) => bytes + Buffer.byteLength(input.content), 0))
+    expect(later!.toolContributions).toEqual({
+      largest: initialInputs.slice(0, 5).map((input, index) => contribution(index, input, 'replayed')),
+      added: [contribution(6, seen[2]!.at(-1)!, 'new')],
+    })
+    expect(JSON.stringify(seen)).not.toContain('contextToolSource')
+    const observed = JSON.stringify(detail.contextSteps)
+    for (const privateValue of ['private-provider-call', 'private-argument', '私有输出', 'AAAA']) {
+      expect(observed).not.toContain(privateValue)
+    }
+
+    await bridge.close()
+    const store = createSnapshotStore(dataDir)
+    const legacy = await store.load()
+    delete legacy.tasks[sessionId]!.history.find(message => message.toolCallId === callId(0))!.contextToolSource
+    await store.commit(legacy)
+    await store.close()
+    bridge = open()
+    expect((await bridge.detail(sessionId)).contextSteps).toEqual(detail.contextSteps)
+    await bridge.prompt(sessionId, 'continue', 'continue-tool-contributions')
+    await waitStatus(bridge, sessionId, 'idle')
+    const continued = (await bridge.detail(sessionId)).contextSteps!.at(-1)!
+    expect(continued.toolContributions?.added).toEqual([])
+    expect(continued.toolContributions?.largest.slice(0, 2)).toEqual([
+      { bytes: largest[0]!.bytes, inclusion: 'unknown' },
+      { ...largest[1], inclusion: 'replayed' },
+    ])
+
+    await bridge.prompt(sessionId, 'fresh', 'reset-tool-contributions', { freshContext: true })
+    await waitStatus(bridge, sessionId, 'idle')
+    const fresh = await bridge.detail(sessionId)
+    const [resetStep, afterReset] = fresh.contextSteps!.slice(-2)
+    expect(resetStep).toMatchObject({ freshContext: true, toolContributions: { largest: [], added: [] } })
+    const matchingRows = fresh.messages.filter(message => message.id === `tool:${callId(0)}`)
+    expect(matchingRows).toHaveLength(2)
+    expect(matchingRows[0]).toEqual(tools[0])
+    expect(matchingRows[1]!.contextToolId).not.toBe(tools[0]!.contextToolId)
+    const newResult = {
+      bytes: Buffer.byteLength('私有输出🧩🧩'),
+      inclusion: 'new',
+      source: { resultId: matchingRows[1]!.contextToolId, turnId: fresh.messages.findLast(message => message.role === 'user')!.id },
+    }
+    expect(afterReset!.toolContributions).toEqual({ largest: [newResult], added: [newResult] })
+  })
+
+  it('bounds request observations, restores their numbering, and never attributes a failed reply to an earlier request', async () => {
+    const dataDir = await directory()
+    let step = 0
+    const provider: ModelProvider = {
+      ...textProvider(),
+      async *stream({ messages }) {
+        if (messages.at(-1)?.content === 'fail now') throw new Error('private failure reason')
+        ++step
+        if (step <= 33) yield { type: 'tool-call', call: { id: `call-${step}`, name: 'write_note', arguments: {} } }
+        yield { type: 'usage', inputTokens: step, outputTokens: 0 }
+        yield { type: 'finish', reason: step <= 33 ? 'tool-calls' : 'stop' }
+      },
+    }
+    // This custom Provider accepts the tool directly, even though its schema cannot be sent as JSON.
+    const customTool = { ...tool(async () => ({ text: 'ok' }), false), parameters: { custom: 1n } }
+    const backend = registry(provider, [customTool])
+    const open = () => own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: backend, providerId: 'fixture', maxSteps: 40 }))
+    const original = open()
+    const { sessionId } = await original.createTask({ prompt: 'go', requestId: 'context-bounds' })
+    await waitStatus(original, sessionId, 'idle')
+    await original.close()
+    const restarted = open()
+    const history = (await restarted.detail(sessionId)).contextSteps!
+    expect(history.map(step => step.sequence)).toEqual(Array.from({ length: 32 }, (_, index) => index + 3))
+    expect(history.at(-1)).toMatchObject({ inputTokens: 34, outputTokens: 0, toolCalls: 0, status: 'completed', unmeasuredTools: 1 })
+    await restarted.prompt(sessionId, 'fail now', 'context-fail', { freshContext: true })
+    await waitStatus(restarted, sessionId, 'failed')
+    const last = (await restarted.detail(sessionId)).contextSteps!
+    expect(last).toHaveLength(32)
+    expect(last.at(-2)).toEqual(history.at(-1))
+    expect(last.at(-1)).toMatchObject({
+      sequence: 35,
+      freshContext: true,
+      userMessages: 1,
+      assistantMessages: 0,
+      toolResults: 0,
+      status: 'failed',
+    })
+    expect(last.at(-1)).not.toHaveProperty('inputTokens')
+    expect(last.at(-1)).not.toHaveProperty('outputTokens')
+  })
+
+  it('times only model consumption and measures the actual schema offered on each request', async () => {
+    const dataDir = await directory()
+    const disk = createSnapshotStore(dataDir)
+    let now = Date.parse('2026-01-01T00:00:00.000Z')
+    const parameters = { type: 'object', properties: { text: { type: 'string', description: 'short' } } }
+    const writing = {
+      ...tool(async () => {
+        now += 400
+        parameters.properties.text.description = '本工具在执行后更新了自己的描述'
+        return { text: 'ok' }
+      }, false),
+      parameters,
+    }
+    const widths: number[] = []
+    const dispatchTimes: string[] = []
+    const provider: ModelProvider = {
+      ...textProvider(),
+      async *stream({ messages, tools }) {
+        dispatchTimes.push(new Date(now).toISOString())
+        const { name, description, parameters } = tools[0]!
+        widths.push(Buffer.byteLength(JSON.stringify({ name, description, parameters })))
+        now += 7
+        if (messages.at(-1)?.content === 'fail') throw new Error('fixture failure')
+        if (messages.at(-1)?.role === 'user') {
+          yield { type: 'tool-call', call: { id: 'write', name, arguments: {} } }
+          yield { type: 'finish', reason: 'tool-calls' }
+        } else {
+          yield { type: 'finish', reason: 'stop' }
+        }
+      },
+    }
+    const bridge = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        providerId: provider.id,
+        registry: registry(provider, [writing]),
+        clock: () => now,
+        store: {
+          ...disk,
+          async commit(state) {
+            now += 200
+            await disk.commit(state)
+          },
+        },
+      }),
+    )
+    const { sessionId } = await bridge.createTask({ prompt: 'go', requestId: 'timed-context' })
+    await waitStatus(bridge, sessionId, 'idle')
+    await bridge.prompt(sessionId, 'fail', 'failed-context')
+    await waitStatus(bridge, sessionId, 'failed')
+    const steps = (await bridge.detail(sessionId)).contextSteps!
+    expect(steps.map(step => step.at)).toEqual(dispatchTimes)
+    expect(steps.map(step => step.durationMs)).toEqual([7, 7, 7])
+    expect(steps.map(step => step.status)).toEqual(['completed', 'completed', 'failed'])
+    expect(widths[1]).toBeGreaterThan(widths[0]!)
+    expect(steps.map(step => step.bytes.toolSchemas)).toEqual(widths)
+  })
+
+  it('does not report a request cancelled while the input checkpoint is still being written', async () => {
+    const dataDir = await directory()
+    const disk = createSnapshotStore(dataDir)
+    const saving = deferred()
+    const release = deferred()
+    const provider = textProvider()
+    const stream = vi.spyOn(provider, 'stream')
+    const bridge = own(
+      createRuntime({
+        dataDir,
+        workspaceRoot: dataDir,
+        registry: registry(provider),
+        providerId: provider.id,
+        store: {
+          ...disk,
+          async commit(state) {
+            if (Object.values(state.tasks).some(task => task.pendingContextStep)) {
+              saving.resolve()
+              await release.promise
+            }
+            await disk.commit(state)
+          },
+        },
+      }),
+    )
+    const { sessionId } = await bridge.createTask({ prompt: 'go', requestId: 'cancel-checkpoint' })
+    await saving.promise
+    const cancel = bridge.cancel(sessionId)
+    try {
+      await vi.waitFor(async () => expect((await bridge.detail(sessionId)).activity?.phase).toBe('cancelling'))
+    } finally {
+      release.resolve()
+    }
+    await cancel
+    const detail = await bridge.detail(sessionId)
+    expect(stream).not.toHaveBeenCalled()
+    expect(detail.contextSteps).toBeUndefined()
+    expect(detail.requestContext).toBeUndefined()
+    expect(detail.summary.status).toBe('cancelled')
+  })
+
+  it('starts observing a legacy session and carries a reset past a failed attachment read and restart', async () => {
+    const dataDir = await directory()
+    let readable = false
+    const open = () =>
+      own(
+        createRuntime({
+          dataDir,
+          workspaceRoot: dataDir,
+          registry: registry(textProvider()),
+          providerId: 'fixture',
+          readAttachment: async ref => {
+            if (!readable) throw new Error('missing attachment')
+            return { type: 'text', name: ref.name, text: 'résumé' }
+          },
+        }),
+      )
+    let bridge = open()
+    const { sessionId } = await bridge.createTask({ prompt: 'older turn', requestId: 'legacy-turn' })
+    await waitStatus(bridge, sessionId, 'idle')
+    await bridge.close()
+    const writer = createSnapshotStore(dataDir)
+    const state = await writer.load()
+    delete state.tasks[sessionId]!.contextSteps
+    await writer.commit(state)
+    await writer.close()
+    bridge = open()
+    const legacy = await bridge.detail(sessionId)
+    expect(legacy.requestContext?.userMessages).toBe(1)
+    expect(legacy.contextSteps).toBeUndefined()
+    await bridge.prompt(sessionId, 'observed', 'observed-turn')
+    await waitStatus(bridge, sessionId, 'idle')
+    await bridge.prompt(sessionId, 'read', 'reset-before-read', {
+      freshContext: true,
+      attachments: [{ id: 'a'.repeat(22), kind: 'text', name: 'note.txt', mime: 'text/plain', size: 8, sha256: 'b'.repeat(64) }],
+    })
+    await waitStatus(bridge, sessionId, 'failed')
+    expect((await bridge.detail(sessionId)).requestContext).toBeUndefined()
+    await bridge.close()
+    readable = true
+    bridge = open()
+    await bridge.prompt(sessionId, 'retry', 'next-after-reset')
+    await waitStatus(bridge, sessionId, 'idle')
+    const steps = (await bridge.detail(sessionId)).contextSteps!
+    expect(steps).toMatchObject([
+      { sequence: 1, userMessages: 2, assistantMessages: 1 },
+      { sequence: 2, freshContext: true, userMessages: 2, assistantMessages: 0, bytes: { user: Buffer.byteLength('readrésuméretry') } },
+    ])
   })
 
   it('pauses working time for a user-input tool and acknowledges only its durable result before the model continues', async () => {
@@ -591,18 +940,30 @@ describe('independent harness runtime', () => {
     await waiting.promise
     const live = await bridge.detail(sessionId)
     expect(live.liveText).toBe('partial response')
+    expect(live.contextSteps).toMatchObject([{ sequence: 1, status: 'running' }])
+    const crashImage = JSON.parse(await readFile(join(dataDir, 'runtime.json'), 'utf8')) as RuntimeState
     expect(live.activity?.phase).toBe('model')
     expect(live.liveMessageId).toBeTruthy()
     await bridge.cancel(sessionId)
     expect(observedSignal?.aborted).toBe(true)
     const detail = await bridge.detail(sessionId)
     expect(detail.liveText).toBe('')
+    expect(detail.contextSteps).toMatchObject([{ sequence: 1, status: 'cancelled', durationMs: expect.any(Number) }])
     expect(detail.messages.at(-1)).toMatchObject({
       id: live.liveMessageId,
       role: 'assistant',
       text: 'partial response',
       state: 'cancelled',
     })
+    await bridge.close()
+    const writer = createSnapshotStore(dataDir)
+    await writer.load()
+    await writer.commit(crashImage)
+    await writer.close()
+    const recovered = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(provider), providerId: 'fixture' }))
+    const recoveredSteps = (await recovered.detail(sessionId)).contextSteps!
+    expect(recoveredSteps).toMatchObject([{ sequence: 1, status: 'interrupted' }])
+    expect(recoveredSteps[0]).not.toHaveProperty('durationMs')
   })
 
   it.each(['waiting-approval', 'running-tool'] as const)(
@@ -1119,6 +1480,7 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
     await bridge.prompt(sessionId, 'three', 'three', { freshContext: true })
     await expect(bridge.prompt(sessionId, 'three', 'three')).rejects.toMatchObject({ code: 'request-conflict' })
     const detail = await bridge.detail(sessionId)
+    expect(detail.requestContext).toMatchObject({ userMessages: 2, assistantMessages: 1 })
     expect(detail.clearContext).toBe(true)
     expect(detail.messages.filter(message => message.role === 'user').map(message => [message.text, message.freshContext])).toEqual([
       ['one', undefined],
@@ -1321,6 +1683,7 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
     await waitStatus(bridge, sessionId, 'idle')
     expect((await bridge.detail(sessionId)).messages.find(message => message.role === 'tool')).toEqual({
       id: 'tool:call-1',
+      contextToolId: expect.any(String),
       role: 'tool',
       toolName: 'write_note',
       text: 'note saved',

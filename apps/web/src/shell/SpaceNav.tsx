@@ -2,6 +2,7 @@ import { SHELL_COPY } from './copy.ts'
 import { defineCopy } from '../core/i18n.ts'
 import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import { OverviewGlyph, ScheduleGlyph } from '@latch/ui'
+import { Store } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { AppSnapshot } from '@latch/protocol'
 import {
@@ -196,6 +197,8 @@ export function NavTop({
   className,
   overview,
   onSchedules,
+  onMarketplace,
+  marketplaceActive,
   computerAtFoot = false,
 }: {
   snapshot: AppSnapshot
@@ -210,6 +213,8 @@ export function NavTop({
   className?: string
   overview?: { active: boolean; open: () => void } | undefined
   onSchedules?: () => void
+  onMarketplace?: (() => void) | undefined
+  marketplaceActive?: boolean | undefined
   computerAtFoot?: boolean
 }) {
   useShortcutBindings()
@@ -251,6 +256,17 @@ export function NavTop({
       {onSchedules && (
         <Button variant="ghost" className="sidebar-nav-row" icon={ScheduleGlyph} onClick={onSchedules}>
           {SHELL_COPY.schedules}
+        </Button>
+      )}
+      {onMarketplace && (
+        <Button
+          variant="ghost"
+          className="sidebar-nav-row"
+          icon={Store}
+          aria-current={marketplaceActive ? 'page' : undefined}
+          data-marketplace-nav=""
+          onClick={onMarketplace}>
+          {SHELL_COPY.marketplace}
         </Button>
       )}
     </div>

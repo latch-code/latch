@@ -1,3 +1,4 @@
+import { catalogPackages } from '../../examples/marketplace/build.ts'
 import { createHash, randomBytes } from 'node:crypto'
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
@@ -188,8 +189,16 @@ function newBuildId(now = new Date()): string {
 
 export default defineConfig(async ({ command }): Promise<UserConfig> => {
   const build = command === 'build' ? newBuildId() : ''
+  const packages = catalogPackages()
+  const contextPanel = packages['context-insights']?.files.find(file => file.path === 'panel.mjs')
   return {
-    define: { __LATCH_BUILD__: JSON.stringify(build) },
+    define: {
+      __LATCH_BUILD__: JSON.stringify(build),
+      LATCH_CATALOG_MANIFESTS: JSON.stringify(
+        Object.fromEntries(Object.entries(packages).map(([id, { manifest }]) => [id, { name: manifest.name, version: manifest.version }])),
+      ),
+      __LATCH_CONTEXT_PANEL_HASH__: JSON.stringify(contextPanel ? createHash('sha256').update(contextPanel.content).digest('hex') : ''),
+    },
     // The page lives in this directory, whichever working directory Vite starts in; the Host serves the build from the
     // repository root's dist/web, the path every Host build reads.
     plugins: [

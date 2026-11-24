@@ -15,6 +15,7 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 - 探测只做 initialize（`loginStatus`、`programVersion` 另跑，`loginRequest` 不开会话），同一命令、环境与指纹，20 秒内结束并等进程停止；不发提示词，authMethods 不算未登录证据（`test/probe.test.ts`）。
 - 终端登录只跑会话的程序；登录推送只读 `kind`、`label`（`test/auth.test.ts`）。
 - 新持久字段可选并入 `src/store.ts`。技能和扩展路径不存不发。Team 核父轮、父关系。
+- 上下文仅存白名单计数。
 - 提议保留首轮材料和本机 MCP 来源（MCP）。
 - 审批活动的 `since` 复用 RunClock 的原等待起点（`test/acp.test.ts`）。
 - 不支持的请求共用事件时间，不回退已知输出（HARNESSES）。

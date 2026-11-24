@@ -442,6 +442,8 @@ export interface PendingSubmission {
   harnessId?: string
   model?: ModelRef
   workspaceId?: string
+  /** The new session writes plugins in its own folder. */
+  pluginCreation?: true
   /** `moved`: the same conversation going on with another Harness. */
   forkOf?: { taskId: string; upToMessageId: string; moved?: true; brief?: true }
   /** 从这里编辑 on a session's first message: the Host makes the new session from that session (`editOf`). */
@@ -540,6 +542,20 @@ export function readPending(key: string): PendingSubmission | null {
     )
       return null
     if (item.mode !== undefined && item.mode !== 'chat' && item.mode !== 'agent') return null
+    if (
+      item.pluginCreation !== undefined
+      && (item.pluginCreation !== true
+        || item.mode !== 'agent'
+        || item.sessionId !== undefined
+        || item.workspaceId !== undefined
+        || item.forkOf !== undefined
+        || item.editOf !== undefined
+        || item.worktree !== undefined
+        || item.fileRefs !== undefined
+        || item.customAgentId !== undefined
+        || item.itemId !== undefined)
+    )
+      return null
     if (item.model !== undefined && modelRef(item.model) === undefined) return null
     if (item.queue !== undefined && item.queue !== true) return null
     if (item.stay !== undefined && (item.stay !== true || item.sessionId !== undefined)) return null
@@ -579,6 +595,7 @@ export function readPending(key: string): PendingSubmission | null {
     return {
       requestId: item.requestId,
       prompt: item.prompt,
+      ...(item.pluginCreation === true ? { pluginCreation: true } : {}),
       ...(typeof item.sessionId === 'string' ? { sessionId: item.sessionId } : {}),
       ...(item.mode === 'chat' || item.mode === 'agent' ? { mode: item.mode } : {}),
       ...(typeof item.harnessId === 'string' ? { harnessId: item.harnessId } : {}),
@@ -665,6 +682,7 @@ export function submissionRequest(submission: PendingSubmission): { path: string
     body: {
       prompt,
       requestId,
+      ...(submission.pluginCreation ? { pluginCreation: true } : {}),
       mode: submission.mode ?? 'agent',
       ...attachments,
       ...(submission.harnessId ? { harnessId: submission.harnessId } : {}),

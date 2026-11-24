@@ -3,6 +3,7 @@
  * The runtime keeps speaking ACP; this wire answers its methods with pi's commands and turns pi's events into ACP
  * session updates, so pi runs without an adapter and every check of the runtime applies to it unchanged.
  */
+import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { z } from 'zod'
@@ -311,7 +312,7 @@ export class PiWire implements AgentWire {
   private running = false
   private reply?: Reply
   private replies = 0
-  private compactions = 0
+  private compactionId?: string
   /** The session pi's own commands were listed for; a new session lists them again. */
   private listedFor?: string
   private models: PiModel[] = []
@@ -555,6 +556,7 @@ export class PiWire implements AgentWire {
         )
       throw new RpcError(RPC.authRequired, 'pi has no model it can use')
     }
+    if (this.sessionId !== read.sessionFile) this.compactionId = undefined
     this.sessionId = read.sessionFile
     this.current = { ...(read.model ? { model: read.model } : {}), ...(read.thinkingLevel ? { thinkingLevel: read.thinkingLevel } : {}) }
     await this.readLevels(timeoutMs, signal)
@@ -861,6 +863,7 @@ export class PiWire implements AgentWire {
     if (!turn) return
     this.turn = undefined
     this.reply = undefined
+    this.compactionId = undefined
     this.running = false
     let usage: TurnTokens | undefined
     try {
@@ -984,15 +987,19 @@ export class PiWire implements AgentWire {
       case 'compaction_start':
         this.reply = undefined
         if (this.turn?.compaction) this.turn.compaction.reported = true
-        this.update({ sessionUpdate: 'compaction_update', compactionId: `compaction-${++this.compactions}`, status: 'in_progress' })
+        this.compactionId = randomUUID()
+        this.update({ sessionUpdate: 'compaction_update', compactionId: this.compactionId, status: 'in_progress' })
         return
       case 'compaction_end': {
+        const compactionId = this.compactionId ?? randomUUID()
+        this.compactionId = undefined
+        if (this.turn?.compaction) this.turn.compaction.reported = true
         const result = isRecord(event.result) ? event.result : undefined
         // pi puts its own "Compaction failed: " before the reason, which the row already says.
         const failed = typeof event.errorMessage === 'string' ? event.errorMessage.replace(/^Compaction failed: /u, '') : undefined
         this.update({
           sessionUpdate: 'compaction_update',
-          compactionId: `compaction-${this.compactions}`,
+          compactionId,
           status: event.aborted === true ? 'cancelled' : failed !== undefined ? 'failed' : 'completed',
           ...(typeof result?.summary === 'string' ? { summary: [{ type: 'text', text: result.summary }] } : {}),
           // The summary request goes to the model service, whose error can echo part of a key.

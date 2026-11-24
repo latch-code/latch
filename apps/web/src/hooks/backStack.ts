@@ -4,7 +4,7 @@ import type { OpenLayer } from '@latch/ui'
 /**
  * Phones stack their pages and sheets; each open one holds an entry of the browser's history, so the platform's back
  * (the Android back button, the iOS edge swipe, the browser's back) closes the top one instead of leaving Latch. The
- * entries carry their depth in `history.state`; the page's URL never changes.
+ * entries carry their depth in `history.state`. A workspace page may also give its entry a URL.
  *
  * - Opening a layer pushes an entry, unless the entry the page is on is held by no open layer (a reload, or a layer that
  *   has just closed): the new layer takes that one, so entries never pile up.
@@ -18,7 +18,8 @@ import type { OpenLayer } from '@latch/ui'
 /** What the stack needs of the browser's session history. */
 export interface SessionHistory {
   readonly state: unknown
-  pushState: (state: unknown, unused: string) => void
+  pushState: (state: unknown, unused: string, url?: string) => void
+  replaceState: (state: unknown, unused: string, url?: string) => void
   go: (delta: number) => void
 }
 
@@ -27,6 +28,7 @@ interface Layer {
   depth: number | null
   /** `instant`: the browser has already drawn the way back (its own swipe), so the page does not animate it again. */
   close: (instant: boolean) => void
+  url?: string | undefined
 }
 
 const KEY = 'latchLayer'
@@ -52,8 +54,8 @@ export class BackStack {
   }
 
   /** A layer opens with the way to close it; the call returned says it has closed some other way. */
-  open(close: (instant: boolean) => void): () => void {
-    const layer: Layer = { depth: null, close }
+  open(close: (instant: boolean) => void, url?: string): () => void {
+    const layer: Layer = { depth: null, close, url }
     this.layers.push(layer)
     if (!this.traversing) this.place(layer)
     return () => {
@@ -88,13 +90,13 @@ export class BackStack {
   }
 
   private place(layer: Layer): void {
-    if (this.depth > this.top()) {
-      layer.depth = this.depth
-      return
-    }
     try {
-      this.history.pushState({ [KEY]: this.depth + 1 }, '')
-      this.depth += 1
+      if (this.depth > this.top()) {
+        if (layer.url !== undefined) this.history.replaceState(this.history.state, '', layer.url)
+      } else {
+        this.history.pushState({ [KEY]: this.depth + 1 }, '', layer.url)
+        this.depth += 1
+      }
     } catch {
       // The browser refused another entry (too many in a short time): the layer shares the one it is on.
     }
@@ -166,7 +168,7 @@ export const openLayer: OpenLayer = close =>
   })
 
 /** While `open`, a page holds its place in the stack; going back to before it calls `close`. */
-export function useBackLayer(open: boolean, close: (instant: boolean) => void): void {
+export function useBackLayer(open: boolean, close: (instant: boolean) => void, url?: string): void {
   const latest = useRef(close)
   useLayoutEffect(() => {
     latest.current = close
@@ -175,6 +177,6 @@ export function useBackLayer(open: boolean, close: (instant: boolean) => void): 
     if (!open) return undefined
     return backStack().open(instant => {
       latest.current(instant)
-    })
-  }, [open])
+    }, url)
+  }, [open, url])
 }

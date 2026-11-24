@@ -4499,11 +4499,13 @@ describe('ACP times and usage reports', () => {
     expect(restored.messages.findLast(message => message.role === 'user')).toMatchObject({ requestId, queuedAt })
   })
   it('maps the agent usage report and keeps it across restarts', async () => {
-    const fixture = await setup()
+    const fixture = await setup({ FAKE_ACP_CAPS: 'resume' })
     const bridge = await fixture.open()
     const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid() })
     const detail = await settled(bridge, sessionId)
-    expect(detail.usageReport).toEqual({ contextUsed: 10, contextSize: 100, at: expect.any(String) })
+    expect(detail.usageReport).toEqual({ contextUsed: 10, contextSize: 100, contextSource: 'acp', contextEpoch: 0, at: expect.any(String) })
+    const firstWindow = { at: detail.usageReport!.at, used: 10, size: 100, source: 'acp', epoch: 0 }
+    expect(detail.messages.find(message => message.role === 'user')?.turn?.contextWindow).toEqual(firstWindow)
     expect(detail.summary.createdAt).toEqual(expect.any(String))
     await bridge.close()
     const reopened = await fixture.open()
@@ -4511,6 +4513,12 @@ describe('ACP times and usage reports', () => {
     expect(restored.usageReport).toEqual(detail.usageReport)
     expect(restored.messages).toEqual(detail.messages)
     expect(restored.messages.find(message => message.role === 'user')?.requestId).toEqual(expect.any(String))
+    await reopened.prompt(sessionId, 'hello', rid())
+    const next = await settled(reopened, sessionId)
+    expect(next.messages.filter(message => message.role === 'user').map(message => message.turn?.contextWindow)).toEqual([
+      firstWindow,
+      undefined,
+    ])
   })
 })
 
@@ -4992,6 +5000,28 @@ describe('agent context', () => {
     await bridge.close()
     const restored = await fixture.open()
     expect((await restored.detail(sessionId)).summary.agent).toEqual(agentContext.agent)
+  })
+
+  it('passes the authoring guide as a separate ACP block only in a creation session, including after reopening it', async () => {
+    const fixture = await setup({ FAKE_ACP_CAPS: 'load' })
+    const bridge = await fixture.open()
+    const input = { prompt: 'echo one', requestId: rid() }
+    const { sessionId } = await bridge.createTask({ ...input, pluginCreation: true })
+    await settled(bridge, sessionId)
+    const prompts = () =>
+      fixture.log().then(log => received(log, 'session/prompt').map(entry => (entry.params as { prompt: unknown[] }).prompt))
+    const guide = { type: 'text', text: expect.stringContaining('latch-authoring/SKILL.md') }
+    expect((await prompts())[0]).toEqual([guide, { type: 'text', text: input.prompt }])
+    expect((await bridge.detail(sessionId)).messages[0]?.text).toBe(input.prompt)
+    await expect(bridge.createTask(input)).rejects.toMatchObject({ code: 'request-conflict' })
+    await bridge.close()
+    const restored = await fixture.open()
+    await restored.prompt(sessionId, 'echo two', rid())
+    await settled(restored, sessionId)
+    expect((await prompts())[1]).toEqual([guide, { type: 'text', text: 'echo two' }])
+    const normal = await restored.createTask({ prompt: 'echo ordinary', requestId: rid() })
+    await settled(restored, normal.sessionId)
+    expect((await prompts())[2]).toEqual([{ type: 'text', text: 'echo ordinary' }])
   })
 
   it('sends the digest note before the turn whenever it changed, once per context, and again after the context is cleared', async () => {
@@ -7503,7 +7533,10 @@ describe('sessions on a model service through the gateway', () => {
         {
           modelGateway: {
             open(input) {
-              return { ...stub.access.open(input), modelCapabilities: { 'fake-model-large': { thinking: ['low', 'high'] } } }
+              return {
+                ...stub.access.open(input),
+                modelCapabilities: { 'fake-model-large': { thinking: ['low', 'high'], contextTokens: 64_000 } },
+              }
             },
           },
         },
@@ -7544,6 +7577,8 @@ describe('sessions on a model service through the gateway', () => {
       await bridge.prompt(sessionId, 'model restored', rid())
       detail = await settled(bridge, sessionId)
       expect(detail.config?.find(item => item.category === 'model')?.currentValue).toBe('latch-gateway/fake-model-large')
+      expect(detail.usageReport).toMatchObject({ contextSize: 64_000, configuredContextSize: true })
+      expect(detail.messages.findLast(message => message.role === 'user')?.turn?.contextWindow?.size).toBeUndefined()
       expect(detail.config?.find(item => item.category === 'thought_level')?.currentValue).toBe('high')
       expect(detail.permission?.expectedMode).toBe('plan')
       expect(assistants(detail).at(-1)?.text).toBe('model: pi service answer')

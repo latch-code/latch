@@ -1,0 +1,72 @@
+---
+import Base from '../layouts/Base.astro'
+import { LINKS } from '../config'
+import MarketplaceCover from './MarketplaceCover.astro'
+import { COPY, type Lang } from '../i18n'
+import { marketplaceDownloads } from '../marketplace'
+interface Props { lang: Lang }
+const { lang } = Astro.props
+const t = COPY[lang].marketplace
+const downloads = await marketplaceDownloads()
+---
+<Base lang={lang} path="/plugins/" title={t.metaTitle} description={t.metaDescription}>
+  <section class="wrap dl__head market-hero">
+    <div class="market-intro">
+      <h1>{t.title}</h1>
+      <p class="lead">{t.intro}</p>
+      <p><a href={LINKS.pluginGuide}>{t.author}</a></p>
+    </div>
+    <a class="market-preview" href="#release-check">
+      <MarketplaceCover id="release-check" lang={lang} />
+      <span class="market-preview-link">{t.previewLink} →</span>
+    </a>
+  </section>
+  <nav class="wrap market-jump" aria-label={t.browse}>{downloads.map(({entry}) => <a href={'#' + entry.id}>{entry[lang].name}</a>)}</nav>
+  <div class="wrap market-entries">
+    {downloads.map(({entry, name, version, href}) => (
+      <article id={entry.id}>
+        <div>
+          <p class="market-kind">{entry[lang].kind}</p>
+          <h2>{entry[lang].name}</h2>
+          <p class="market-summary">{entry[lang].summary}</p>
+          <p class="market-version">Latch · v{version} · <a href={LINKS.github + '/tree/main/examples/' + entry.folder}>{entry.id}</a></p>
+          <div class="market-entry-cover"><MarketplaceCover id={entry.id} lang={lang} /></div>
+        </div>
+        <div>
+          <dl>
+            <dt>{t.use}</dt><dd>{entry[lang].use}</dd>
+            <dt>{t.agent}</dt><dd>{entry[lang].agent}</dd>
+            <dt>{t.access}</dt><dd>{entry[lang].access}</dd>
+          </dl>
+          <a class="btn btn--panel" href={href} download={name + '.latch-plugin.json'} aria-label={t.download + ' · ' + entry[lang].name}>{t.download}</a>
+        </div>
+      </article>
+    ))}
+  </div>
+</Base>
+<style>
+  .market-hero { grid-template-columns: 1fr 0.88fr; align-items: center; gap: var(--space-2xl); }
+  .market-intro { display: grid; gap: var(--space-lg); }
+  .market-preview { display: grid; min-width: 0; overflow: hidden; background: var(--color-paper-2); border: 1px solid var(--color-rule-strong); border-radius: var(--radius-card); text-decoration: none; font-size: var(--text-sm); }
+  .market-preview-link { padding: var(--space-sm) var(--space-md); color: var(--color-ink-2); }
+  .market-jump { display: flex; gap: var(--space-lg); flex-wrap: wrap; padding-bottom: var(--space-lg); font-size: var(--text-sm); }
+  @media (max-width: 650px) {
+    .market-hero { grid-template-columns: 1fr; gap: var(--space-lg); padding-block: var(--space-xl); }
+    .market-preview { max-width: 100%; }
+    .market-jump { gap: var(--space-sm); }
+  }
+  .market-entries { padding-block-end: var(--space-3xl); }
+  article { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: var(--space-2xl); padding-block: var(--space-xl); border-top: 1px solid var(--color-rule-strong); }
+  article h2 { font-size: var(--text-2xl); }
+  .market-summary { margin-top: var(--space-md); max-width: 39ch; }
+  .market-version, .market-kind, dd { color: var(--color-ink-2); }
+  .market-version, .market-kind { font-size: var(--text-sm); }
+  .market-kind { margin-bottom: var(--space-sm); }
+  .market-version { margin-top: var(--space-sm); }
+  dl { margin: 0 0 var(--space-lg); }
+  dt { margin-top: var(--space-sm); font-weight: 600; }
+  dt:first-child { margin-top: 0; }
+  dd { margin: var(--space-2xs) 0 0; }
+  .market-entry-cover { width: 100%; max-width: 360px; margin-top: var(--space-lg); overflow: hidden; border: 1px solid var(--color-rule-strong); border-radius: var(--radius-chip); }
+  @media (max-width: 650px) { article { grid-template-columns: 1fr; gap: var(--space-lg); } }
+</style>

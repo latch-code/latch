@@ -52,6 +52,15 @@ export interface TokenUsage {
 
 /** What a turn took, recorded by the Host on the user message that opened it. Times are ISO strings. */
 export interface TurnStats {
+  /** Last measured context size in use during this turn, and the capacity when the same report supplied it. */
+  contextWindow?: {
+    at: string
+    used: number
+    size?: number
+    source?: ContextWindowSource
+    epoch?: number
+    breakdown?: ContextWindowBreakdown
+  }
   /** When the turn settled; absent when it never did (a Host restart interrupted it). */
   endedAt?: string
   /** Working time: from the prompt to `endedAt`, without the time spent waiting for approvals. */
@@ -115,10 +124,79 @@ export interface RoutedModel {
   fallback?: number
 }
 
-/** What an agent reported about its context window and cost; never estimated by Latch. */
+export const CONTEXT_WINDOW_CATEGORY_IDS = [
+  'system_prompt',
+  'system_tools',
+  'mcp_tools',
+  'mcp_instructions',
+  'mcp_tools_deferred',
+  'system_tools_deferred',
+  'custom_agents',
+  'memory_files',
+  'skills',
+  'messages',
+  'autocompact_buffer',
+  'compact_buffer',
+  'free_space',
+] as const
+
+export type ContextWindowSource = 'claude-sdk' | 'acp'
+
+export interface ContextWindowCategory {
+  kind: 'used' | 'free' | 'buffer' | 'deferred'
+  /** A stable SDK ID. Unrecognized rows are grouped by kind and carry no ID or title. */
+  id?: (typeof CONTEXT_WINDOW_CATEGORY_IDS)[number]
+  tokens: number
+}
+
+/** Nested counts within the reported Messages row, in tokens. */
+export interface ContextMessageBreakdown {
+  toolCalls?: number
+  toolResults?: number
+  attachments?: number
+  assistantMessages?: number
+  userMessages?: number
+  redirectedContext?: number
+  unattributed?: number
+}
+
+export interface ContextWindowBreakdown {
+  /** The Claude SDK's full breakdown, from the same query as this window estimate. */
+  measurement: 'full'
+  categories: ContextWindowCategory[]
+  messageBreakdown?: ContextMessageBreakdown
+  /** Token usage from the last provider response, on a different basis from the current window estimate. */
+  providerUsage?: TokenUsage
+}
+
+export const CONTEXT_EVENT_LIMIT = 32
+export const CONTEXT_WINDOW_HISTORY_LIMIT = 32
+
+export interface ContextCompactionEvent {
+  /** Latch-generated identifier. */
+  id: string
+  /** When this explicit compaction was first reported to Latch. */
+  at: string
+  /** Message.id of the user input whose turn was running when the event arrived, when known. */
+  turnId?: string
+  source: ContextWindowSource
+  status: 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'unknown'
+  trigger?: 'auto' | 'manual'
+  beforeTokens?: number
+  afterTokens?: number
+  durationMs?: number
+}
+
+/** What an agent reported about its context window and cost. */
 export interface UsageReport {
   contextUsed?: number
   contextSize?: number
+  contextSource?: ContextWindowSource
+  /** Window samples with different epochs include an explicit compaction or a fresh context between them. */
+  contextEpoch?: number
+  breakdown?: ContextWindowBreakdown
+  /** Latch filled in the routed model's configured capacity when the Harness supplied no reliable size. */
+  configuredContextSize?: true
   cost?: { amount: number; currency: string }
   /** When the agent last reported it. */
   at: string
@@ -212,6 +290,8 @@ export interface DriverTaskSummary {
    * desktop may save it as a project's primary folder. Shared private helper homes do not expose this flag.
    */
   sessionFolder?: true
+  /** This session was explicitly started in 创造模式 on the Host. */
+  pluginCreation?: true
   /**
    * The Host made `cwd` for this session as a Git worktree of the project's folder, on a branch of its own. Files are
    * separate from the project folder's; ports, processes and local permissions are not. `unfiltered`: tracked files left
@@ -533,6 +613,8 @@ export interface Message {
    */
   importContext?: { from: string; prefixLength: number; truncated?: true }
   toolName?: string
+  /** Host-generated identity of a built-in tool row, used to resolve context observations. */
+  contextToolId?: string
   state?: 'queued' | 'awaiting-approval' | 'running' | 'completed' | 'failed' | 'cancelled'
   /**
    * The Host stopped or restarted while this turn ran. Tool: it had not reported a result; with `failed` it had started and
@@ -688,9 +770,68 @@ export interface DriverTaskDetail extends Omit<TaskDetail, 'summary'> {
   summary: DriverTaskSummary
 }
 
+/** Latest input the built-in runtime submitted to its Provider. Counts are post-filter; no prompt or file contents. */
+export interface RequestContext {
+  at: string
+  userMessages: number
+  assistantMessages: number
+  toolResults: number
+  tools: number
+  skills: number
+  images: number
+  /** Input tokens reported for this request, when measured by the Provider. Never a session total. */
+  inputTokens?: number
+  creator?: true
+}
+
+/** UTF-8 bytes at the built-in Provider boundary. Excludes media, opaque signatures and wire framing. */
+export interface RequestContextBytes {
+  instructions: number
+  skills: number
+  toolSchemas: number
+  user: number
+  assistant: number
+  toolResults: number
+}
+
+export const CONTEXT_STEP_LIMIT = 32
+export const CONTEXT_TOOL_CONTRIBUTION_LIMIT = 5
+
+export interface RequestContextToolContribution {
+  bytes: number
+  /** First observed input carrying this result, a later input, or history without recorded provenance. */
+  inclusion: 'new' | 'replayed' | 'unknown'
+  /** Host-owned row and turn identities, never the Provider's tool call ID or result content. */
+  source?: { resultId: string; turnId: string }
+}
+
+export interface RequestContextStep extends RequestContext {
+  /** Monotonic across turns and fresh contexts; the first instrumented request starts at 1. */
+  sequence: number
+  /** Message.id of the user input that started the turn. */
+  turnId: string
+  bytes: RequestContextBytes
+  /** Largest results in this input and largest first inclusions, each ordered by submitted UTF-8 bytes. */
+  toolContributions?: { largest: RequestContextToolContribution[]; added: RequestContextToolContribution[] }
+  /** Number of tool definitions whose schema the custom Provider accepted but JSON could not represent. */
+  unmeasuredTools?: number
+  /** Calls proposed by this response, including those that still require approval. */
+  toolCalls: number
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+  outputTokens?: number
+  /** Wall time of the model step; an abrupt restart has no known completion time. */
+  durationMs?: number
+  freshContext?: true
+}
+
 export interface TaskDetail {
   /** This session has a tool for reading the message references a person attaches. */
   canReferenceConversation?: true
+  requestContext?: RequestContext
+  /** Newest CONTEXT_STEP_LIMIT instrumented requests in order. Older sessions may only have requestContext. */
+  contextSteps?: RequestContextStep[]
+  /** Latest explicit compaction events in report order. Only present when the driver can record them. */
+  contextEvents?: ContextCompactionEvent[]
   /** Actual availability on this conversation's local Codex process, when known. */
   codexTeam?: 'available' | 'disabled'
   /** Authorized detail projection only, never an unverified list/status snapshot. */

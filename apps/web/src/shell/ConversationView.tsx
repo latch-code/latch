@@ -536,6 +536,7 @@ export function ConversationView({
                                       },
                                     })}
                                 onReveal={reading.reveal}
+                                contextToolMessageId={shell.contextToolMessageId}
                                 {...(handing ? { onHandoff: handOff } : {})}
                                 {...(ownTeams.length ? { teams: ownTeams } : {})}
                                 {...(returned.length || placeProposals || placeResults || placeBoard || placeOwnTeams

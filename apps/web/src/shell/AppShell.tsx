@@ -34,6 +34,8 @@ import { PhoneReview } from '../phone-review/PhoneReview.tsx'
 import { TitleBar } from './TitleBar.tsx'
 import { RIGHT_PANEL_MIN } from './panelLayout.ts'
 import { SettingsPage } from '../settings/SettingsPage.tsx'
+import { deferredComponent } from '../components/DeferredContent.tsx'
+import type { PluginMarketplace as MarketplaceView } from '../plugin-marketplace/PluginMarketplace.tsx'
 import { AgentsPage } from '../agents/AgentsPage.tsx'
 import { ProfileLayer } from '../agents/AgentProfile.tsx'
 import { AppsPage } from '../plugin-pages/AppsPage.tsx'
@@ -43,7 +45,7 @@ import { ConversationView } from './ConversationView.tsx'
 import { Overlays } from './Overlays.tsx'
 import { EditLeaveGuard } from '../preview/EditLeaveGuard.tsx'
 import { EditorChooser } from '../components/OpenInEditor.tsx'
-import { RightPanel } from './RightPanel.tsx'
+import { RightPanel, SessionDraftEntry } from './RightPanel.tsx'
 import { TerminalDock } from './TerminalDock.tsx'
 import { workbenchPanes } from './WorkbenchPanes.tsx'
 import { useStagingWrites } from '../panel/changes/useStaging.ts'
@@ -62,6 +64,13 @@ import { conversationInFront } from './conversationShown.ts'
 import { backdropLevel } from '../preferences.ts'
 import type { AppSnapshot } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
+import { canEditPluginPackages } from '../settings/pluginAssets.ts'
+
+const PluginMarketplace = deferredComponent<Parameters<typeof MarketplaceView>[0]>(
+  () => import('../plugin-marketplace/PluginMarketplace.tsx').then(module => ({ default: module.PluginMarketplace })),
+  () => SHELL_COPY.marketplace,
+  (_props, body) => <div className="marketplace-workspace-status">{body}</div>,
+)
 
 type Harness = ReturnType<typeof useHarness>
 
@@ -163,8 +172,9 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
   const startRoute = route.entry === 'sessions' && route.start === true && !board
   const pendingStart = startRoute && catalog?.features?.messageIdentity && submission.startingMessage
   const start = startRoute && !pendingStart
+  const coveredHome = shell.marketplaceOverHome && !submission.startingMessage
   // A conversation going on with another Harness: its source, the Harness it leaves and the one chosen for the next message.
-  const movingFork = start && submission.fork?.moved ? submission.fork : undefined
+  const movingFork = (start || coveredHome) && submission.fork?.moved ? submission.fork : undefined
   const movingSource = movingFork ? snapshot.tasks.find(task => task.id === movingFork.taskId) : undefined
   const movingTo = movingFork ? catalog?.harnesses.find(item => item.id === choice.harnessId) : undefined
   const movingFrom = movingSource ? catalog?.harnesses.find(item => item.id === movingSource.harnessId) : undefined
@@ -221,7 +231,9 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     // The session was parked when the start screen covered it; letting go of it here keeps the new session's draft.
     if (selectedId !== null) harness.select(null)
   }
-  useBackLayer(phone && startRoute, toPhoneList)
+  useBackLayer(phone && (startRoute || shell.marketplaceOverHome), toPhoneList)
+  useBackLayer(shell.marketplace, shell.dismissMarketplace, shell.marketplacePath)
+  useBackLayer(!phone && shell.marketplace && !!settings, closeSettings)
   // False whenever 看板 is in front: the conversation under it is kept, not seen.
   const visibleConversation = conversationInFront({
     entry: route.entry,
@@ -233,12 +245,12 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     phoneReview: phoneReview.present,
   })
   const level = backdropLevel(shell.preferences, phone)
-  const backdropEnabled = level !== 'off' && shell.space === 'code' && !settings
+  const backdropEnabled = level !== 'off' && shell.space === 'code' && !settings && !shell.marketplace
   const homeBackdrop = backdropEnabled && start
   return (
     <FileOpenContext.Provider value={catalog?.features?.filePreview ? openFile : undefined}>
       <DetachedPlace.Provider value={catalog?.features?.terminal === true && !phone ? DETACHED : undefined}>
-        <LayerHistory value={phone ? openLayer : null}>
+        <LayerHistory value={phone || shell.marketplace ? openLayer : null}>
           <LiveChanges value={harness.resyncs}>
             <div
               ref={appShell}
@@ -251,21 +263,23 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               data-connection-strip={hasConnectionStrip ? '' : undefined}
               data-folding={folding ? '' : undefined}
               data-sidebar={sidebarColumn ? (sidebarCollapsed ? 'collapsed' : 'open') : undefined}
-              data-inspector={columnOpen ? (placement?.kind === 'sheet' ? 'sheet' : 'open') : undefined}
-              data-home-inspector={shell.homeInspectorOpen ? '' : undefined}
-              data-terminal-dock={shell.terminalOpen ? '' : undefined}
+              data-inspector={columnOpen && !shell.marketplace ? (placement?.kind === 'sheet' ? 'sheet' : 'open') : undefined}
+              data-home-inspector={shell.homeInspectorOpen && !shell.marketplace ? '' : undefined}
+              data-terminal-dock={shell.terminalOpen && !shell.marketplace ? '' : undefined}
               data-resizing={(sidebarDrag !== null && !sidebarSnapping) || inspectorDrag || shell.dockDrag ? '' : undefined}
               style={{
                 '--sidebar-width': sidebarColumn && !sidebarCollapsed ? `${sidebarWidth}px` : '0px',
                 '--sidebar-open-width': `${sidebarWidth}px`,
-                '--inspector-width': columnOpen && placement?.kind === 'column' ? `${inspectorWidth}px` : '0px',
+                '--inspector-width': columnOpen && placement?.kind === 'column' && !shell.marketplace ? `${inspectorWidth}px` : '0px',
                 '--inspector-open-width': `${inspectorWidth}px`,
-                '--dock-height': shell.terminalOpen ? `${shell.dockHeight}px` : '0px',
+                '--dock-height': shell.terminalOpen && !shell.marketplace ? `${shell.dockHeight}px` : '0px',
                 '--workbench-pane-count': Number(panes.left) + Number(panes.terminal) + Number(panes.right),
               }}>
               {!phone && <TitleBar shell={shell} />}
               {/* One switch for both views, at the end of the window's top row: it stays mounted through a change. */}
-              {!phone && <ViewSwitch className="shell-view-switch" icons value={shell.preferences.workView} waiting={counts.attention} />}
+              {!phone && !shell.marketplace && (
+                <ViewSwitch className="shell-view-switch" icons value={shell.preferences.workView} waiting={counts.attention} />
+              )}
               {viewport === 'tablet' && <TabletRail shell={shell} />}
               <Scrim
                 open={drawerMode && drawer.open}
@@ -312,6 +326,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     onFilter={setFilter}
                     onSelect={choose}
                     onNew={startNew}
+                    onMarketplace={shell.canBrowseMarketplace ? shell.openMarketplace : undefined}
                     onNewIn={startIn}
                     onEditProject={owner ? openProjectSettings : undefined}
                     onProjectsChanged={() => {
@@ -330,7 +345,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   ref={navigation}
                   id="session-navigation"
                   className={`sidebar ${drawer.open ? 'is-open' : ''}`}
-                  inert={route.entry !== 'sessions' || board || undefined}
+                  inert={(route.entry !== 'sessions' && !shell.marketplace) || board || undefined}
                   aria-label={SHELL_COPY.sessionNavigation}
                   role={drawerMode && drawer.open ? 'dialog' : undefined}
                   aria-modal={drawerMode && drawer.open ? true : undefined}
@@ -339,13 +354,15 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     projectTree
                     overview={shellOverview(shell)}
                     onSchedules={catalog?.features?.automations ? () => shell.openMyAgent({ id: 'general', tab: 'schedules' }) : undefined}
+                    onMarketplace={shell.canBrowseMarketplace ? shell.openMarketplace : undefined}
+                    marketplaceActive={shell.marketplace}
                     computerAtFoot={viewport !== 'tablet' && access.scopes.has('view')}
                     {...(viewport !== 'tablet' && access.scopes.has('view') ? { quota: <UsageEntry /> } : {})}
                     update={<ShellUpdateCheck shell={shell} />}
                     snapshot={listed}
                     archiveBatch={archiveBatch}
                     archiveUndo={archiveUndo}
-                    selectedId={selectedId}
+                    selectedId={shell.marketplace ? null : selectedId}
                     isUnread={unread}
                     cancelling={stopping}
                     onSearch={openSearch}
@@ -555,14 +572,17 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 )}
               </LiveChanges>
               <TerminalDock shell={shell} />
-              {start && (
+              {(start || coveredHome) && (
                 <section
                   className={homeBackdrop ? 'workbench-home code-home ui-backdrop-host' : 'workbench-home code-home'}
                   data-moving={moving ? '' : undefined}
+                  hidden={coveredHome}
+                  inert={coveredHome}
                   aria-label={SHELL_COPY.newSession}
                   onDragEnter={event => {
                     if (
-                      catalog?.features?.attachments === true
+                      !shell.creator
+                      && catalog?.features?.attachments === true
                       && homeShell.gate.kind === 'open'
                       && [...event.dataTransfer.types].includes('Files')
                     ) {
@@ -579,7 +599,8 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   }}
                   onDropCapture={event => {
                     attachmentDraft.setDragging(false)
-                    if (catalog?.features?.attachments === true && homeShell.gate.kind === 'open') dropAttachments(event, attachmentDraft)
+                    if (!shell.creator && catalog?.features?.attachments === true && homeShell.gate.kind === 'open')
+                      dropAttachments(event, attachmentDraft)
                     else if ([...event.dataTransfer.types].includes('Files')) event.preventDefault()
                   }}>
                   {homeBackdrop && (
@@ -656,7 +677,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       <SessionComposer shell={shell} home />
                     </div>
                     {!phone && <StartCounts counts={counts} onGroup={shell.askBoardGroup} />}
-                    {!submission.fork && (
+                    {!submission.fork && !shell.creator && (
                       <div className="workbench-home-history">
                         <HistoryImportEntry snapshot={snapshot} workspaceId={choice.workspaceId} phone={phone} onOpen={choose} />
                       </div>
@@ -671,10 +692,11 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   <ViewSwitch value={shell.preferences.workView} waiting={counts.attention} />
                 </div>
               )}
-              {(board || shell.itemReturn) && <BoardSurface shell={shell} />}
+              {(shell.keepBoard || shell.itemReturn) && <BoardSurface shell={shell} />}
               {hasConnectionStrip && <WorkbenchConnection shell={shell} inert={drawer.open || !!settings} />}
               {route.entry === 'agents' && <AgentsPage shell={shell} />}
               {route.entry === 'apps' && <AppsPage shell={shell} />}
+              {shell.showCreatorDraft && <SessionDraftEntry shell={shell} creator />}
               {settings && (
                 <Modal label={SHELL_COPY.settings} variant="page" className="settings-overlay" onClose={closeSettings}>
                   <SettingsPage
@@ -683,6 +705,11 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     onClose={closeSettings}
                     section={settings.section}
                     initialProjectId={settings.projectId}
+                    initialPluginId={settings.pluginId}
+                    {...(shell.canBrowseMarketplace ? { onMarketplace: shell.openMarketplace } : {})}
+                    {...(shell.canAddPlugins ? { onAddPlugin: shell.openAddPlugin } : {})}
+                    {...(shell.creatorAvailable ? { onCreatePlugin: shell.openCreator } : {})}
+                    {...(shell.creatorBlockedReason ? { creatorBlockedReason: shell.creatorBlockedReason } : {})}
                     {...(settings.agent ? { initialAgent: settings.agent } : {})}
                     onSection={openSettings}
                     onOpenSession={id => choose(id, closeSettings)}
@@ -695,6 +722,35 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     }}
                   />
                 </Modal>
+              )}
+              {shell.marketplaceVisited && (
+                <div
+                  ref={shell.marketFocus}
+                  className="marketplace-workspace"
+                  role="main"
+                  aria-label={shell.canBrowseMarketplace ? SHELL_COPY.marketplace : SHELL_COPY.addPlugin}
+                  hidden={!shell.marketplace}
+                  inert={!shell.marketplace || drawer.open}
+                  tabIndex={-1}>
+                  {shell.marketplaceBackInPage && (
+                    <div className="marketplace-workspace-controls">
+                      <IconButton label={SHELL_COPY.back} icon={ChevronLeftGlyph} onClick={shell.dismissMarketplace} />
+                    </div>
+                  )}
+                  <PluginMarketplace
+                    key={`${snapshot.instanceId}:${snapshot.device.id}:${canEditPluginPackages(snapshot, access)}`}
+                    open={shell.marketplace}
+                    connected={connection === 'connected'}
+                    snapshot={snapshot}
+                    access={access}
+                    showBundled={shell.canBrowseMarketplace}
+                    source={shell.marketplaceSource}
+                    onSourceChange={shell.setMarketplaceSource}
+                    onManage={shell.manageMarketPlugin}
+                    {...(shell.creatorAvailable ? { onCreatePlugin: shell.openCreator } : {})}
+                    creatorBlockedReason={shell.creatorBlockedReason}
+                  />
+                </div>
               )}
               {phone && phoneReview.present && phoneReview.target && phoneReview.summary && (
                 <PhoneReview

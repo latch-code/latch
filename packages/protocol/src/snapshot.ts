@@ -1,5 +1,5 @@
 import type { SkillInfo, UiPanelInfo } from './ui.ts'
-import type { HostFeatures } from './features.ts'
+import type { BundledWorkspacePage, HostFeatures } from './features.ts'
 import type { AgentProposalState, CustomAgentSummary, HostComputerState, PersonalAgentChat } from './custom-agents.ts'
 import type { AgentResultState, AutomationSummary } from './automations.ts'
 import type { HandoffSummary } from './handoffs.ts'
@@ -35,6 +35,8 @@ export interface HostView {
 export interface HostCatalog {
   promptTemplatesVersion?: string
   features?: HostFeatures
+  /** Active contributions that the installed Web distribution can load. */
+  workspacePages?: BundledWorkspacePage[]
   harnesses: HarnessInfo[]
   providers: ProviderSummary[]
   /** Enabled services left out of `providers`, so a page can say why; absent from older Hosts. */

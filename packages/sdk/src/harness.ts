@@ -475,6 +475,8 @@ export interface HarnessDriver {
   agentContext?: 'private' | 'first-turn'
   /** How an agent's skills reach the engine: `skillIds` for `native`, `skillBodies` for `server`. Absent: they do not. */
   skills?: 'native' | 'server'
+  /** The driver passes the Host's authoring guide to the model in an explicit creation session. */
+  pluginCreation?: true
   /** What the driver exposes through `Bridge.latestCommandReport`, including a plugin list's availability. */
   extensionSupport?: HarnessExtensionSupport
   id: string

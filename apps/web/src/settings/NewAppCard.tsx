@@ -3,22 +3,22 @@ import { AgentsGlyph } from '../agents/AgentAvatar.tsx'
 import type {
   AppSnapshot,
   AppSummary,
-  HarnessInfo,
   PluginBuild,
   PluginBuildDiagnostic,
   PluginPackageDetail,
   PluginPackageSummary,
 } from '@latch/protocol'
-import { Button, Dialog, Hint, Icon, InlineNotice, Switch, TextAreaField, ValuePicker, CheckGlyph, RefreshGlyph } from '@latch/ui'
+import { Button, Hint, Icon, InlineNotice, Switch, CheckGlyph, RefreshGlyph } from '@latch/ui'
 import { api, inlineError, isUncertain, newRequestId, type ApiOptions } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { handDraft } from '../core/draftHandoff.ts'
-import { harnessName } from '../composerChoice.ts'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { AppFrame, hostInfo } from '../plugin-pages/AppFrame.tsx'
 import { useSecureCover } from '../plugin-pages/secureCover.ts'
 import { useShellTheme } from '../hooks/useShellTheme.ts'
+import { useMounted } from '../hooks/useMounted.ts'
 import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+import { PluginMutationDialog, reviewedPluginMutation, type PluginMutationTarget } from './PluginMutationReview.tsx'
 
 const COPY = defineCopy(
   {
@@ -36,6 +36,8 @@ const COPY = defineCopy(
     buildFailed: '构建没通过',
     noCredentials: '无凭据',
     previewScope: '预览不连接 Latch、不读密钥、不开会话；数据只在这一页里。',
+    sample: '样例预览',
+    previousSample: '上次构建成功的样例预览',
     previewNoSessions: '预览里不会开会话',
     applied: '已应用',
     open: '打开',
@@ -43,16 +45,13 @@ const COPY = defineCopy(
     unknown: '结果尚未确认。',
     builtInBuilder: '用 Latch 自带的工具构建',
     buildScope: '构建只读导入时的快照，不运行草稿里的代码。',
-    approveOnMac: '应用要在这台 Mac 上确认一次',
-    approveScope: '能力变多时要确认；确认后侧栏出现入口。',
+    approveOnMac: '页面权限',
+    approveScope: '首次应用或增加页面能力时，在这台 Mac 上确认。应用后可从侧栏打开。',
     discard: '丢弃',
     returnToAgent: '交回 Agent',
     applyVersion: '应用新版本',
     rebuild: '重新构建',
-    haveAgentBuild: '让 Agent 做',
-    start: '开始',
-    pageYouWant: '想要的页面',
-    noAgentHarness: '没有可以用 Agent 模式开始的 Harness。',
+    pageDrafts: '页面草稿',
     appId: (id: string) => `新应用 ${id}`,
     allDiagnostics: (count: number) => `全部 ${formatNumber(count)} 条`,
     previewFailed: (message: string) => `预览没有打开：${message}`,
@@ -72,6 +71,8 @@ const COPY = defineCopy(
     buildFailed: 'Build failed',
     noCredentials: 'No credentials',
     previewScope: 'The preview stays on this page. It cannot connect to Latch, read secrets or start sessions.',
+    sample: 'Sample preview',
+    previousSample: 'Sample preview from the last successful build',
     previewNoSessions: 'The preview cannot start sessions',
     applied: 'Applied',
     open: 'Open',
@@ -79,16 +80,13 @@ const COPY = defineCopy(
     unknown: 'Result unknown.',
     builtInBuilder: 'Build with Latch tools',
     buildScope: 'The builder reads the imported snapshot. Draft code does not run during the build.',
-    approveOnMac: 'Confirm on this Mac to apply',
-    approveScope: 'Additional capabilities require confirmation. The app appears in the sidebar after confirmation.',
+    approveOnMac: 'Page permissions',
+    approveScope: 'Confirm on this Mac the first time you apply a page or add capabilities. The applied page is available in the sidebar.',
     discard: 'Discard',
     returnToAgent: 'Hand back to Agent',
     applyVersion: 'Apply new version',
     rebuild: 'Rebuild',
-    haveAgentBuild: 'Have an Agent build it',
-    start: 'Start',
-    pageYouWant: 'Describe the page',
-    noAgentHarness: 'No Harness can start in Agent mode.',
+    pageDrafts: 'Page drafts',
     appId: (id: string) => `New app ${id}`,
     allDiagnostics: (count: number) => plural(count, { one: 'All {n} diagnostic', other: 'All {n} diagnostics' }),
     previewFailed: (message: string) => `Couldn’t open the preview. ${message}`,
@@ -140,7 +138,7 @@ interface Pending {
  * One draft imported from a session: its four steps, the build's diagnostics, the preview (same frame and bundle, no
  * credentials) and 应用. Every write keeps its request ID; an unknown result is retried with the same request.
  */
-function AppDraftCard({
+export function AppDraftCard({
   record,
   snapshot,
   onChanged,
@@ -155,6 +153,7 @@ function AppDraftCard({
 }) {
   const [busy, setBusy] = useState<Pending['kind'] | null>(null)
   const [pending, setPending] = useState<Pending | null>(null)
+  const [reviewTarget, setReviewTarget] = useState<PluginMutationTarget | null>(null)
   const [error, setError] = useState('')
   const [detail, setDetail] = useState<PluginPackageDetail | null>(null)
   const [diagnostics, setDiagnostics] = useState<{ revision: string; items: PluginBuildDiagnostic[] } | null>(null)
@@ -163,13 +162,7 @@ function AppDraftCard({
   const previewSurface = useRef<HTMLDivElement>(null)
   const covered = useSecureCover(previewSurface)
   const theme = useShellTheme()
-  const alive = useRef(true)
-  useEffect(
-    () => () => {
-      alive.current = false
-    },
-    [],
-  )
+  const alive = useMounted()
   // The manifest (page titles, preview samples) of the draft revision.
   useEffect(() => {
     let live = true
@@ -203,7 +196,7 @@ function AppDraftCard({
   }, [record.id, build?.id])
 
   const perform = async (change: Pending) => {
-    if (busy) return
+    if (busy || (pending && pending !== change)) return
     setBusy(change.kind)
     setPending(change)
     setError('')
@@ -221,6 +214,7 @@ function AppDraftCard({
     }
   }
   const phase = appPhase(record, busy === 'build' || busy === 'apply' ? busy : null)
+  const locked = busy !== null || pending !== null || reviewTarget !== null
   const marks = phaseMarks(phase)
   const source = record.source
   const sessionTitle = source ? snapshot.tasks.find(task => task.id === source.sessionId)?.title : undefined
@@ -265,7 +259,7 @@ function AppDraftCard({
           <Switch
             label={COPY.inDevelopment}
             checked={source.dev}
-            disabled={busy !== null}
+            disabled={locked}
             onCheckedChange={dev => {
               void perform({
                 kind: 'dev',
@@ -299,7 +293,7 @@ function AppDraftCard({
             <span>{sessionTitle ?? COPY.deletedSession}</span>
           )}
           {sessionTitle && (
-            <Button variant="ghost" size="xs" icon={RefreshGlyph} disabled={busy !== null} onClick={reimport}>
+            <Button variant="ghost" size="xs" icon={RefreshGlyph} disabled={locked} onClick={reimport}>
               {COPY.refreshSession}
             </Button>
           )}
@@ -320,7 +314,9 @@ function AppDraftCard({
       {pagePreview && phase !== 'applied' && (
         <div className="new-app-preview">
           <div className="new-app-preview-label">
-            <span className="new-app-tag">{COPY.preview}</span>
+            <span className="new-app-tag">
+              {failed || record.preview?.revision !== record.revision ? COPY.previousSample : COPY.sample}
+            </span>
             <Hint label={COPY.noCredentials}>{COPY.previewScope}</Hint>
           </div>
           <div ref={previewSurface} className="new-app-preview-frame">
@@ -375,7 +371,7 @@ function AppDraftCard({
           {!applied && (phase === 'draft' || failed) && (
             <Button
               variant="ghost"
-              disabled={busy !== null}
+              disabled={locked}
               onClick={() => {
                 void perform({
                   kind: 'discard',
@@ -386,13 +382,13 @@ function AppDraftCard({
               {COPY.discard}
             </Button>
           )}
-          {failed && source && sessionTitle ? (
+          {failed && source && sessionTitle && onOpenSession && lines.length > 0 ? (
             <Button
               variant="primary"
-              disabled={busy !== null || lines.length === 0}
+              disabled={locked}
               onClick={() => {
                 handDraft(source.sessionId, handBackText(lines))
-                onOpenSession?.(source.sessionId)
+                onOpenSession(source.sessionId)
               }}>
               {COPY.returnToAgent}
             </Button>
@@ -400,13 +396,9 @@ function AppDraftCard({
             <Button
               variant="primary"
               loading={busy === 'apply'}
-              disabled={busy !== null}
+              disabled={locked}
               onClick={() => {
-                void perform({
-                  kind: 'apply',
-                  path: `${route(record.id)}/apply`,
-                  options: { method: 'POST', body: { requestId: newRequestId(), revision: record.revision } },
-                })
+                setReviewTarget({ operation: 'apply', id: record.id, name: record.name, revision: record.revision })
               }}>
               {applied ? COPY.applyVersion : COPY.apply}
             </Button>
@@ -414,7 +406,7 @@ function AppDraftCard({
             <Button
               variant="primary"
               loading={phase === 'building'}
-              disabled={busy !== null}
+              disabled={locked}
               onClick={() => {
                 void perform({
                   kind: 'build',
@@ -427,101 +419,22 @@ function AppDraftCard({
           )}
         </footer>
       )}
+      {reviewTarget && (
+        <PluginMutationDialog
+          target={reviewTarget}
+          onClose={() => setReviewTarget(null)}
+          onConfirm={review => {
+            const request = reviewedPluginMutation(reviewTarget, review)
+            setReviewTarget(null)
+            void perform({ ...request, kind: 'apply' })
+          }}
+        />
+      )}
     </section>
   )
 }
 
-const DEFAULT_PROMPT = '做一个页面：'
-
-/** 让 Agent 做: a normal session in its own folder, which the Host gives a draft skeleton and guide before the first input. */
-function AgentDraftDialog({
-  harnesses,
-  onClose,
-  onStarted,
-}: {
-  harnesses: HarnessInfo[]
-  onClose: () => void
-  onStarted: (sessionId: string) => void
-}) {
-  const usable = harnesses.filter(harness => harness.status === 'ready' && harness.modes.includes('agent'))
-  const [harnessId, setHarnessId] = useState(usable[0]?.id ?? '')
-  const [prompt, setPrompt] = useState(DEFAULT_PROMPT)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const request = useRef(newRequestId())
-  const start = async () => {
-    setBusy(true)
-    setError('')
-    try {
-      const body = {
-        requestId: request.current,
-        prompt: `${prompt.trim()}\n\n按 latch-app/README.md 写这个 Latch 应用，只改 latch-app/ 里的文件。`,
-        mode: 'agent',
-        harnessId,
-        appDraft: true,
-      }
-      const result = await withConfirmation(confirmation =>
-        api<{ sessionId: string }>('tasks', { method: 'POST', body, ...(confirmation ? { confirmation } : {}) }),
-      )
-      onStarted(result.sessionId)
-    } catch (cause) {
-      if (!isUncertain(cause)) request.current = newRequestId()
-      setError(inlineError(cause))
-    } finally {
-      setBusy(false)
-    }
-  }
-  return (
-    <Dialog
-      open
-      title={COPY.haveAgentBuild}
-      size="lg"
-      className="agent-draft-dialog"
-      onClose={() => {
-        if (!busy) onClose()
-      }}
-      footer={
-        <Button
-          variant="primary"
-          loading={busy}
-          disabled={!harnessId || prompt.trim() === DEFAULT_PROMPT.trim() || !prompt.trim()}
-          onClick={() => void start()}>
-          {COPY.start}
-        </Button>
-      }>
-      <div className="settings-form">
-        <TextAreaField
-          label={COPY.pageYouWant}
-          rows={4}
-          value={prompt}
-          maxLength={4000}
-          onChange={event => setPrompt(event.target.value)}
-        />
-        {usable.length > 1 && (
-          <div className="agent-draft-harness">
-            <span className="ui-field-label">Harness</span>
-            <ValuePicker
-              label="Harness"
-              value={harnessId}
-              options={usable.map(harness => ({ value: harness.id, label: harnessName(harness) }))}
-              onValueChange={setHarnessId}
-              disabled={busy}
-            />
-          </div>
-        )}
-        {usable.length === 0 && <InlineNotice tone="warn">{COPY.noAgentHarness}</InlineNotice>}
-        {error && <InlineNotice tone="error">{error}</InlineNotice>}
-        <InlineConfirm active={busy} rank={1} />
-      </div>
-    </Dialog>
-  )
-}
-
-/**
- * 设置 › 插件's 「新应用」: drafts imported from sessions, each with its steps, and 让 Agent 做. Only on this Mac's admin
- * device with all data; the Host checks again.
- */
-export function NewApps({
+export function PageDrafts({
   records,
   snapshot,
   onChanged,
@@ -534,15 +447,12 @@ export function NewApps({
   onOpenSession?: (id: string) => void
   onOpenApp?: (target: { pluginId: string; appId: string }) => void
 }) {
-  const [asking, setAsking] = useState(false)
-  const drafts = records.filter(record => record.source)
+  const drafts = records.filter(record => record.source && record.source.kind !== 'plugin')
+  if (drafts.length === 0) return null
   return (
     <div className="new-apps">
       <div className="new-apps-head">
-        <h3>{COPY.newApp}</h3>
-        <Button icon={AgentsGlyph} onClick={() => setAsking(true)}>
-          {COPY.haveAgentBuild}
-        </Button>
+        <h3>{COPY.pageDrafts}</h3>
       </div>
       {drafts.map(record => (
         <AppDraftCard
@@ -554,17 +464,6 @@ export function NewApps({
           {...(onOpenApp ? { onOpenApp } : {})}
         />
       ))}
-      {asking && (
-        <AgentDraftDialog
-          harnesses={snapshot.catalog?.harnesses ?? []}
-          onClose={() => setAsking(false)}
-          onStarted={sessionId => {
-            setAsking(false)
-            onChanged()
-            onOpenSession?.(sessionId)
-          }}
-        />
-      )}
     </div>
   )
 }

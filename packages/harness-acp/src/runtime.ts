@@ -1,6 +1,9 @@
 import { RunFileTracking, recordFileOutputs } from '@latch/core/file-tracking'
 import {
+  CONTEXT_EVENT_LIMIT,
+  CONTEXT_WINDOW_HISTORY_LIMIT,
   fileMentionContext,
+  PLUGIN_CREATION_GUIDE,
   LADDER_MODE,
   MAX_MODEL_FALLBACKS,
   MODEL_WIRES,
@@ -59,6 +62,7 @@ import type {
   AgentExecutionContext,
   Approval,
   ApprovalOptionKind,
+  ContextCompactionEvent,
   Message,
   SessionConfigOption,
   RunEnd,
@@ -243,6 +247,7 @@ import {
   type RpcId,
   type ToolFields,
 } from './protocol.ts'
+import { compactionStatus } from './context-telemetry.ts'
 import {
   childText,
   childCall,
@@ -447,7 +452,13 @@ interface Run {
    */
   retry?: { id: string; interrupted: boolean; pending?: boolean; reason?: string; attempt?: { attempt: number; of: number } }
   /** The session's tokens before this turn, and this turn's as the Harness reported them (`TurnStats.usage`). */
-  tokens?: { base?: TokenUsage; turn?: TokenUsage; stream?: { outputTokens: number; ms: number }; scope?: 'session' | 'turn' }
+  tokens?: {
+    base?: TokenUsage
+    total?: TokenUsage
+    turn?: TokenUsage
+    stream?: { outputTokens: number; ms: number }
+    scope?: 'session' | 'turn'
+  }
   /** The model calls of this turn that the agent reported one by one (`HarnessProfile.callUsage`), summed; `unknown` once a sum is not exact. */
   calls?: TurnTokens | 'unknown'
   /** What the Harness said the session's login had cost when the turn began, for the turn's own part. */
@@ -584,6 +595,14 @@ function exactTokens(tokens: TurnTokens): boolean {
 }
 
 const TOKEN_PARTS = ['cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const
+
+function precedesTokens(earlier: TokenUsage, later: TokenUsage): boolean {
+  return (
+    earlier.inputTokens <= later.inputTokens
+    && earlier.outputTokens <= later.outputTokens
+    && TOKEN_PARTS.every(part => earlier[part] === undefined || later[part] === undefined || earlier[part] <= later[part])
+  )
+}
 
 function combineTokens(a: TokenUsage, b: TokenUsage | undefined, sign: 1 | -1): TokenUsage {
   // Counts stay whole and finite whatever an agent said: a session total of Infinity would be stored as null, which the
@@ -1171,6 +1190,12 @@ export class AgentRuntime implements Bridge {
             task.revision++
             changed = true
           }
+        for (const event of task.contextEvents ?? []) {
+          if (event.status !== 'in_progress') continue
+          event.status = 'unknown'
+          task.revision++
+          changed = true
+        }
         if (task.summary.status !== 'running' && task.summary.status !== 'waiting-approval') continue
         const at = this.now()
         const unknown = task.messages.flatMap(item =>
@@ -1261,6 +1286,7 @@ export class AgentRuntime implements Bridge {
       ...(active && run ? { activity: run.activity, ...run.clock.live() } : {}),
       ...(active && run?.lastOutputAt !== undefined ? { lastOutputAt: isoTime(run.lastOutputAt) } : {}),
       ...(task.usageReport ? { usageReport: task.usageReport } : {}),
+      ...(task.contextEvents?.length ? { contextEvents: task.contextEvents } : {}),
       ...(task.commands ? { commands: task.commands } : {}),
       ...(task.skills ? { skills: task.skills } : {}),
       ...(task.skills && task.skillsTruncated ? { skillsTruncated: true as const } : {}),
@@ -1287,6 +1313,10 @@ export class AgentRuntime implements Bridge {
     delete task.acp.seed
     if (task.acp.contextCleared) return
     task.acp.contextCleared = true
+    task.acp.contextEpoch = (task.acp.contextEpoch ?? 0) + 1
+    for (const event of task.contextEvents ?? []) if (event.status === 'in_progress') event.status = 'unknown'
+    // The old session's context window and cost say nothing about the new one.
+    delete task.usageReport
     const live = this.lives.get(task.summary.id)
     if (live?.mcp) {
       for (const lease of live.mcp) lease.close()
@@ -1310,8 +1340,6 @@ export class AgentRuntime implements Bridge {
       if (carried.length) task.acp.startConfig = [...chosen, ...carried]
       delete task.acp.acpSessionId
       task.acp.earlierSessionIds = [...(task.acp.earlierSessionIds ?? []), prior]
-      // The old session's context window and cost say nothing about the new one.
-      delete task.usageReport
       delete task.plan
       const brief = task.messages.find(message => message.role === 'user' && message.agentBrief)?.agentBrief
       if (brief && !task.acp.brief) task.acp.brief = brief
@@ -2762,6 +2790,7 @@ export class AgentRuntime implements Bridge {
       ...(Array.isArray(input.folders) && input.folders.length > 1 ? { folders: input.folders.map(({ id, path }) => ({ id, path })) } : {}),
       ...(input.fork ? { fork: forkKey(input.fork) } : {}),
       ...(input.seed ? { seed: digest(input.seed) } : {}),
+      ...(input.pluginCreation ? { pluginCreation: true } : {}),
     })
     const pending = this.creating.get(key)
     if (pending) {
@@ -2806,6 +2835,7 @@ export class AgentRuntime implements Bridge {
       ...(scope && scope.folders.length > 1 ? { folders: (input.folders ?? []).map(({ id, path }) => ({ id, path })) } : {}),
       ...(input.fork ? { fork: forkKey(input.fork) } : {}),
       ...(input.seed ? { seed: digest(input.seed) } : {}),
+      ...(input.pluginCreation ? { pluginCreation: true } : {}),
     })
     const receipt = this.state.receipts[key]
     if (receipt) {
@@ -2858,6 +2888,7 @@ export class AgentRuntime implements Bridge {
       ...(route ? { route } : {}),
       ...(fork ? { fork } : {}),
       ...(input.seed ? { seed: input.seed } : {}),
+      ...(input.pluginCreation ? { pluginCreation: true as const } : {}),
       ...(input.workProposals && this.options.proposeWork ? { workProposals: true as const } : {}),
     }
     if (scope?.passed?.via !== 'acp') return this.record(create)
@@ -2907,6 +2938,7 @@ export class AgentRuntime implements Bridge {
     seed?: string
     /** The Host lets this session's agent propose for the board (`CreateTaskInput.workProposals`). */
     workProposals?: true
+    pluginCreation?: true
   }): Promise<{ sessionId: string }> {
     const { sessionId, prompt, cwd, launch, scope, attachments, fileRefs = [], agentContext, startConfig, route, fork } = create
     this.assertOpen()
@@ -2965,6 +2997,7 @@ export class AgentRuntime implements Bridge {
         ...(agentContext?.skillBodies?.length ? { skills: true as const } : {}),
         ...(this.proposing(agentContext) ? { proposals: true as const } : {}),
         ...(create.workProposals ? { workProposals: true as const } : {}),
+        ...(create.pluginCreation ? { pluginCreation: true as const } : {}),
         // Whether or not it may propose: an unattended run also keeps Code's idle reclaim (`idleFor`).
         ...(agentContext?.unattended ? { unattended: true as const } : {}),
         ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
@@ -3164,6 +3197,11 @@ export class AgentRuntime implements Bridge {
           createdAt: isoTime(run.clock.startedAt),
           ...(attachments.length ? { attachments } : {}),
         })
+        let count = 0
+        const expired = current.messages.findLast(
+          message => message.role === 'user' && !message.steered && ++count > CONTEXT_WINDOW_HISTORY_LIMIT,
+        )
+        if (expired?.turn?.contextWindow) delete expired.turn.contextWindow.breakdown
         current.summary.status = 'running'
         current.summary.runId = run.id
         delete current.summary.runOutcome
@@ -5476,15 +5514,28 @@ export class AgentRuntime implements Bridge {
     const base = run?.tokens?.base
     if (scope === 'session') {
       task.summary.usage = usage
-      if (run) run.tokens = { ...run.tokens, turn: subtractTokens(usage, base), scope }
+      if (run) run.tokens = { ...run.tokens, total: usage, turn: subtractTokens(usage, base), scope }
     } else {
       task.summary.usage = addTokens(base, usage)
       if (run) run.tokens = { ...run.tokens, turn: usage, scope }
     }
     if (run && stream) run.tokens = { ...run.tokens, stream }
+    this.showTurnTokens(task, run)
+  }
+
+  private showTurnTokens(task: AcpTask, run: Run | undefined): void {
     const prompt = run?.userMessageId === undefined ? undefined : task.messages.find(item => item.id === run.userMessageId)
     if (prompt?.role === 'user' && run?.tokens?.turn)
       prompt.turn = { ...prompt.turn, usage: run.tokens.turn, ...(run.tokens.stream ? { stream: run.tokens.stream } : {}) }
+  }
+
+  /** An identified previous turn may refine the baseline independently of the session's newer cumulative sample. */
+  private rebaseCodexTokens(task: AcpTask, run: Run, previous: TokenUsage): boolean {
+    const { base, total } = run.tokens ?? {}
+    if ((base && !precedesTokens(base, previous)) || (total && !precedesTokens(previous, total))) return false
+    run.tokens = { ...run.tokens, base: previous, ...(total ? { turn: subtractTokens(total, previous) } : {}) }
+    this.showTurnTokens(task, run)
+    return true
   }
 
   /**
@@ -5616,6 +5667,7 @@ export class AgentRuntime implements Bridge {
       const lead = [brief, note].flatMap(block =>
         block ? [{ type: 'text', text: block.segments.map(segment => segment.text).join('\n') }] : [],
       )
+      if (task.acp.pluginCreation && !nativeCommand) lead.push({ type: 'text', text: PLUGIN_CREATION_GUIDE })
       const blocks = lead.length ? [...lead, ...content] : content
       if (run.cancelRequested) {
         status = 'cancelled'
@@ -5690,7 +5742,9 @@ export class AgentRuntime implements Bridge {
         : said
     // Agents disagree on whether this counts the turn or the session; the profile says which, and the session otherwise.
     const scope = this.selection.profile?.usageScope ?? 'session'
-    if (reported && task && scope !== 'none') this.noteTokens(task, run, reported, scope)
+    // Direct Codex already sent its total as a live update. Its prompt answer can precede a newer session-wide total.
+    const countedLive = this.selection.profile?.wire === 'codex' && !task?.acp.route
+    if (reported && task && scope !== 'none' && !countedLive) this.noteTokens(task, run, reported, scope)
     const stopReason = parsed.success ? parsed.data.stopReason : undefined
     // The Host's own stop is no cancel by anyone: the turn was interrupted, whatever the agent answered.
     if (run.cancelRequested && this.closed && run.sent) {
@@ -5942,6 +5996,7 @@ export class AgentRuntime implements Bridge {
       if (prompt) {
         prompt.turn = {
           ...run.clock.turn(),
+          ...(prompt.turn?.contextWindow ? { contextWindow: prompt.turn.contextWindow } : {}),
           ...('requests' in routed ? { routed } : {}),
           ...(run.tokens?.turn ? { usage: run.tokens.turn } : {}),
           ...(run.tokens?.stream ? { stream: run.tokens.stream } : {}),
@@ -7749,9 +7804,16 @@ export class AgentRuntime implements Bridge {
     if (update.sessionUpdate === TOKENS_UPDATE) {
       const tokens = this.selection.profile?.wire === 'codex' ? tokensUpdate.safeParse(update) : undefined
       if (!tokens?.success) return
-      const { scope, stream, ...reported } = tokens.data
+      const { scope, stream, turnId, beforeTurnId, ...reported } = tokens.data
       const current = this.runs.get(taskId)
-      this.noteTokens(task, current?.live === live ? current : undefined, reported, scope, stream)
+      const active = current?.sent && current.live === live ? current : undefined
+      const owner = turnId && active?.userMessageId === turnId ? active : undefined
+      const total = task.summary.usage
+      const rebased = beforeTurnId && active?.userMessageId === beforeTurnId && this.rebaseCodexTokens(task, active, tokenUsage(reported))
+      const olderTotal =
+        !owner && scope === 'session' && total && (reported.inputTokens < total.inputTokens || reported.outputTokens < total.outputTokens)
+      if (olderTotal && !rebased) return
+      if (!olderTotal) this.noteTokens(task, owner, reported, scope, stream)
       this.touch(task)
       this.mark()
       this.notify(taskId)
@@ -7880,14 +7942,40 @@ export class AgentRuntime implements Bridge {
         if (!parsed.success) return
         const { used, size, cost } = parsed.data
         if (used === undefined && size === undefined && !cost) return
+        const nativeClaude = this.selection.profile?.wire === 'claude'
+        const nativeCodex = this.selection.profile?.wire === 'codex'
+        const claude = nativeClaude ? parsed.data._meta?.latchClaudeContext : undefined
+        const attributedTurn = nativeCodex ? parsed.data._meta?.latchCodexContext?.turnId : claude?.turnId
+        const source = nativeClaude ? 'claude-sdk' : 'acp'
+        const epoch = task.acp.contextEpoch ?? 0
         const tokensOnly = task.acp.route && this.selection.profile?.gateway?.usage === 'tokens-only'
         // The Harness's own figure first; on a route without one, the window the person declared for the model.
-        const window = !tokensOnly && size !== undefined ? size : this.declaredContext(task, live)
+        const reportedSize = tokensOnly ? undefined : size
+        const window = reportedSize ?? this.declaredContext(task, live)
         task.usageReport = {
-          ...(used !== undefined ? { contextUsed: used } : {}),
+          ...(used !== undefined ? { contextUsed: used, contextSource: source, contextEpoch: epoch } : {}),
           ...(window !== undefined ? { contextSize: window } : {}),
+          ...(window !== undefined && reportedSize === undefined ? { configuredContextSize: true } : {}),
+          ...(used !== undefined && claude?.breakdown ? { breakdown: claude.breakdown } : {}),
           ...(!tokensOnly && cost ? { cost: { amount: cost.amount, currency: cost.currency } } : {}),
           at: this.now(),
+        }
+        // Idle/session-wide reports have no turn to attribute. A cost-only update carries no new window measurement.
+        if (used !== undefined && run?.userMessageId && ((!nativeClaude && !nativeCodex) || attributedTurn === run.userMessageId)) {
+          const prompt = task.messages.findLast(message => message.id === run.userMessageId)
+          if (prompt) {
+            prompt.turn = {
+              ...prompt.turn,
+              contextWindow: {
+                at: task.usageReport.at,
+                used,
+                source,
+                epoch,
+                ...(reportedSize !== undefined ? { size: reportedSize } : {}),
+                ...(claude?.breakdown ? { breakdown: claude.breakdown } : {}),
+              },
+            }
+          }
         }
         break
       }
@@ -7957,9 +8045,15 @@ export class AgentRuntime implements Bridge {
       case 'latch/codex-team-availability':
         if (this.selection.profile?.wire !== 'codex') return
         break
-      case 'compaction_update':
+      case 'compaction_update': {
+        const parsed = compactionUpdate.safeParse(update)
+        if (!parsed.success) return
+        this.recordCompaction(task, run, envelope.data.sessionId, parsed.data)
+        this.applyCompaction(task, run, parsed.data)
+        break
+      }
       case 'compaction_summary_chunk': {
-        const parsed = update.sessionUpdate === 'compaction_update' ? compactionUpdate.safeParse(update) : compactionChunk.safeParse(update)
+        const parsed = compactionChunk.safeParse(update)
         if (!parsed.success) return
         this.applyCompaction(task, run, parsed.data)
         break
@@ -8007,6 +8101,33 @@ export class AgentRuntime implements Bridge {
     // A record that stays true after the turn: the agent never says whether a retry worked, and output that follows may
     // come after a retry of one of its own helper calls.
     return `${this.agent.name} 重试：${title}${state.attempt ? `\n第 ${state.attempt.attempt} 次重试，最多 ${state.attempt.of} 次` : ''}`
+  }
+
+  /** A bounded history of explicit evidence, independent of the transcript and its arbitrary summaries. */
+  private recordCompaction(task: AcpTask, run: Run | undefined, sessionId: string, report: z.infer<typeof compactionUpdate>): void {
+    const id = digest([task.summary.id, sessionId, report.compactionId])
+    const status = compactionStatus.safeParse(report.status).data ?? 'unknown'
+    const native = this.selection.profile?.wire === 'claude' ? report.latchClaudeCompaction : undefined
+    const { turnId: nativeTurn, ...metrics } = native ?? {}
+    const events = (task.contextEvents ??= [])
+    const current = events.find(event => event.id === id)
+    if (current && current.status !== status && current.status !== 'in_progress' && current.status !== 'unknown') return
+    if (status === 'completed' && current?.status !== 'completed') task.acp.contextEpoch = (task.acp.contextEpoch ?? 0) + 1
+    if (current) {
+      Object.assign(current, metrics, { status })
+      return
+    }
+    const turnId = run?.userMessageId
+    const event: ContextCompactionEvent = {
+      id,
+      at: this.now(),
+      source: native ? 'claude-sdk' : 'acp',
+      status,
+      ...(turnId && (!native || nativeTurn === turnId) ? { turnId } : {}),
+      ...metrics,
+    }
+    events.push(event)
+    if (events.length > CONTEXT_EVENT_LIMIT) events.shift()
   }
 
   /**

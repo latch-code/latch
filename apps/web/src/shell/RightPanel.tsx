@@ -16,6 +16,7 @@ import { errorMessage } from '../core/api.ts'
 import { defineCopy } from '../core/i18n.ts'
 import { shellFolders } from '../core/shell.ts'
 import { projectOf } from '../sessions.ts'
+import { switchWorkView } from '../preferences.ts'
 import { SessionFacts, SessionFolders, frozenFolders, liveFolder } from './SessionEnvironment.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 import { SessionOverview } from './SessionOverview.tsx'
@@ -27,9 +28,11 @@ import { shortcutKeys } from '../workbenchShortcuts.ts'
 const COPY = defineCopy(
   {
     importedDraft: '已作为应用草稿导入',
+    importedPlugin: '已导入插件草稿，可以审阅后应用',
   },
   {
     importedDraft: 'Imported as an app draft',
+    importedPlugin: 'Plugin draft imported for review',
   },
 )
 
@@ -40,6 +43,39 @@ const RIGHT_PANEL_COPY = defineCopy(
     quoteStale: (name: string) => `${name} changed. The quote may be out of date.`,
   },
 )
+
+/** Mount once for a creator session; only the destination moves when the person opens Changes. */
+export function SessionDraftEntry({ shell, creator = false }: { shell: ShellState; creator?: boolean }) {
+  const { summary, submission } = shell
+  if (!summary || !shell.canReviewDrafts || (creator && !shell.showCreatorDraft)) return null
+  const canRepair = shell.gate.kind === 'open' && !submission.pending && !submission.sending && !shell.sessionBlock
+  return (
+    <AppDraftEntry
+      key={`${shell.snapshot.host.hostId}:${shell.snapshot.device.id}:${summary.id}`}
+      sessionId={summary.id}
+      revision={`${summary.updatedAt}:${summary.status}`}
+      {...(creator ? { target: shell.creatorDraftTarget } : {})}
+      onImported={(id, kind) => {
+        shell.setToast({
+          get text() {
+            return kind === 'plugin' ? COPY.importedPlugin : COPY.importedDraft
+          },
+          tone: 'ok',
+        })
+        shell.openPluginSettings(id)
+      }}
+      {...(canRepair
+        ? {
+            onRepair: (text: string) => {
+              submission.setDraft(previous => (previous.trim() ? `${previous}\n\n${text}` : text))
+              if (shell.pageMode) shell.setInfoPage(false)
+              shell.composerRef.current?.focus()
+            },
+          }
+        : {})}
+    />
+  )
+}
 
 /** The session's panels: the same surfaces in the column beside the conversation and in the page over it. */
 export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagingWrites: ReturnType<typeof useStagingWrites> }) {
@@ -114,12 +150,13 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
   const readsChanges = canViewChanges && readsProjectFiles(snapshot.device.dataScope)
   // The page pipeline is this Mac's: the desktop's admin device with all data.
   const showing = (key: PanelKey) => panelVisible && panelSelected === key
-  const pageDrafts =
-    catalog?.features?.appPages === 1
-    && catalog.features.pluginPackages === true
-    && access.local
-    && access.admin
-    && snapshot.device.dataScope === 'all'
+  const revealContext = (kind: 'turn' | 'tool', messageId: string) => {
+    if (!summary || !access.scopes.has('view') || current?.summary.id !== summary.id) return
+    if (!shell.revealContextRow(summary.id, kind, messageId)) return
+    switchWorkView('chat')
+    if (shell.placement?.kind === 'sheet') shell.closePanel()
+    else if (pageMode) shell.closeInfoPage()
+  }
   return (
     <SessionPanels
       key={contextKey}
@@ -127,6 +164,8 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
       active={panelShown.active}
       choices={shell.panelChoiceList}
       onChoose={shell.choosePanel}
+      onRevealTurn={messageId => revealContext('turn', messageId)}
+      onRevealTool={messageId => revealContext('tool', messageId)}
       onCloseTab={shell.closePanelTabKey}
       addTrigger={shell.panelAdd}
       addShortcut={shortcutKeys('panel-add', currentShell() !== null)}
@@ -161,25 +200,12 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
                 }}
                 onTotals={setChangesTotals}
                 {...(canDeliver ? { onDeliver: () => showSurface({ kind: 'delivery' }) } : {})}
-                {...(pageDrafts
+                {...(shell.canReviewDrafts
                   ? {
-                      appDraft: (
-                        <AppDraftEntry
-                          sessionId={summary.id}
-                          revision={`${summary.updatedAt}:${summary.status}`}
-                          onImported={() => {
-                            setToast({
-                              get text() {
-                                return COPY.importedDraft
-                              },
-                              tone: 'ok',
-                            })
-                            shell.openSettings('plugins')
-                          }}
-                          onError={text => {
-                            setToast({ text, tone: 'error' })
-                          }}
-                        />
+                      appDraft: summary.pluginCreation ? (
+                        shell.showCreatorDraft && showing('changes') && <div data-draft-place="changes" ref={shell.setCreatorDraftTarget} />
+                      ) : (
+                        <SessionDraftEntry shell={shell} />
                       ),
                     }
                   : {})}
@@ -310,12 +336,13 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
       onQuote={active ? undefined : quoteFile}
       folders={workspaceForFiles?.folders}
       cwd={workspaceForFiles?.path}
-      panels={catalog?.uiPanels ?? []}
+      panels={access.scopes.has('view') ? (catalog?.uiPanels ?? []) : []}
+      panelsVisible={panelVisible && !shell.marketplace && !shell.board && shell.route.entry === 'sessions'}
       files={fileTabs.tabs}
       activeFile={fileTabs.active}
       local={access.local}
       deviceId={snapshot.device.id}
-      detail={current}
+      detail={access.scopes.has('view') ? current : null}
       onFileView={fileTabs.view}
       onCloseFile={id => {
         const last = fileTabs.tabs.length === 1 && panelShown.tabs.length === 0

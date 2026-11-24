@@ -1,3 +1,4 @@
+import { catalogPackages } from '../../examples/marketplace/build.ts'
 import { defineConfig, passthroughImageService } from 'astro/config'
 
 // The public address: canonical links, hreflang, Open Graph URLs and the sitemap are all derived from it.
@@ -6,6 +7,7 @@ const site = process.env.SITE_URL || 'https://latch.codes'
 
 export default defineConfig({
   site,
+  vite: { define: { __LATCH_CATALOG_PACKAGES__: JSON.stringify(catalogPackages()) } },
   trailingSlash: 'always',
   build: { format: 'directory', inlineStylesheets: 'always' },
   compressHTML: true,

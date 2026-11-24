@@ -978,6 +978,61 @@ describe('Codex over its app-server', () => {
     ])
   })
 
+  it('keeps a late native usage report out of the next turn and does not roll back the current window', async () => {
+    const t = await computer()
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'echo first')
+    const first = await settled(bridge, id)
+    const firstWindow = first.messages[0]?.turn?.contextWindow
+    expect(firstWindow).toMatchObject({ used: 30, size: 200000, source: 'acp' })
+
+    await bridge.prompt(id, 'late-usage', rid())
+    const running = await until(bridge, id, detail => detail.summary.status === 'running' && detail.liveText === 'Previous usage arrived.')
+    expect(running.usageReport).toEqual(first.usageReport)
+    expect(running.summary.usage).toMatchObject({ inputTokens: 25, outputTokens: 10 })
+    const nextUser = (detail: DriverTaskDetail) => detail.messages.findLast(message => message.role === 'user')
+    expect(nextUser(running)?.turn?.contextWindow).toBeUndefined()
+    expect(nextUser(running)?.turn?.usage).toBeUndefined()
+
+    await writeFile(join(t.main, 'release-token-usage'), '')
+    const second = await settled(bridge, id)
+    expect(second.messages[0]?.turn?.contextWindow).toEqual(firstWindow)
+    expect(nextUser(second)?.turn?.contextWindow).toMatchObject({ used: 30, size: 200000, source: 'acp' })
+    expect(second.usageReport).toMatchObject({ contextUsed: 30, at: nextUser(second)?.turn?.contextWindow?.at })
+    expect(second.summary.usage).toMatchObject({ inputTokens: 47, outputTokens: 20 })
+    expect(nextUser(second)?.turn?.usage).toMatchObject({ inputTokens: 20, outputTokens: 10 })
+  })
+
+  it('uses an older Codex usage report without a native turn ID only for the session', async () => {
+    const t = await computer()
+    const bridge = await t.open()
+    const detail = await settled(bridge, await start(bridge, t.main, 'legacy-usage'))
+    expect(detail.usageReport).toMatchObject({ contextUsed: 30, contextSize: 200000, contextSource: 'acp' })
+    expect(detail.summary.usage).toMatchObject({ inputTokens: 20, outputTokens: 10 })
+    expect(detail.messages[0]?.turn?.contextWindow).toBeUndefined()
+    expect(detail.messages[0]?.turn?.usage).toBeUndefined()
+  })
+
+  it('rebases an already measured turn when its identified predecessor finally reports its total', async () => {
+    const t = await computer()
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'echo first')
+    await settled(bridge, id)
+    await bridge.prompt(id, 'late-usage-after', rid())
+    const running = await until(bridge, id, detail => detail.summary.status === 'running' && detail.liveText === 'Current usage arrived.')
+    const currentTurn = (detail: DriverTaskDetail) => detail.messages.findLast(message => message.role === 'user')?.turn
+    expect(running.summary.usage).toMatchObject({ inputTokens: 45, outputTokens: 20 })
+    expect(currentTurn(running)?.usage).toMatchObject({ inputTokens: 25, outputTokens: 10 })
+    expect(currentTurn(running)?.contextWindow).toMatchObject({ used: 30 })
+
+    await writeFile(join(t.main, 'release-token-usage'), '')
+    const done = await settled(bridge, id)
+    expect(done.summary.usage).toEqual(running.summary.usage)
+    expect(done.usageReport).toEqual(running.usageReport)
+    expect(currentTurn(done)?.contextWindow).toEqual(currentTurn(running)?.contextWindow)
+    expect(currentTurn(done)?.usage).toMatchObject({ inputTokens: 20, outputTokens: 10 })
+  })
+
   it('keeps the parts of a streamed reasoning summary apart as sections', async () => {
     const t = await computer()
     const bridge = await t.open()

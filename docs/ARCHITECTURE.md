@@ -166,6 +166,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 - **本机确认只留给真实边界。** 动作只有 `PRESENCE_ACTIONS`（`apps/host/src/presence.ts`）列出的：
   - 连接新设备（`device.enroll`、`device.enroll-native`）与扩大设备权限（`device.grant`）；
   - 加入出站地址（`policy.change`）与确认新的模型服务地址（`provider.confirm-origin`）；
+  - 选择或更换 npm 插件仓库（`policy.change`）；
   - 应用含执行内容的自定义插件（`plugin.package.apply`）；
   - 新增或放宽 MCP 服务器（`mcp.server.apply`，见 [MCP.md](./MCP.md)）；
   - 与预设不同的 Harness 命令、参数与变量，或预设命令解析到另一个程序（`harness.command.apply`，见 [HARNESSES.md](./HARNESSES.md)）。预设的原样命令与预设模型服务的 HTTPS 地址不确认，审计照写（stepup `preset` 或 `none`），L3 运行或等待时同样拒绝。
@@ -543,6 +544,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 - **浏览器工具的令牌。** Driver 每次打开、恢复、载入或分叉 Agent 的会话时换一个 `lbt1.` 令牌，写进新建的 0600 文件，`mcpServers` 只拿到文件路径，读出后即删；Host 只存哈希，令牌绑定会话与进程的生命期。它不是 API 的入口类别：持有令牌的进程不能当设备用。调用只在会话正在运行的一轮里执行，完全访问的会话里 R2 一律拒绝（见「设备与浏览器」）。
 - **远程 MCP。** 远程 MCP 服务器只由 Host 连接（`mcp-remote.ts`、`mcp-oauth.ts`）：请求只经出站策略发往本机确认时绑定的源与路径，不跟随重定向，请求头的值与令牌从不离开 Host。见 [MCP.md](./MCP.md#远程地址)。
 - **新版本提示。** Host 只向两个固定源发 GET：`https://registry.npmjs.org` 的 `/-/package/<包>/dist-tags` 与 `https://formulae.brew.sh` 的 `/api/<formula|cask>/<名称>.json`（名称取自 profile，按安装路径选源），经注入的出站 `fetch`，只带 `accept`，不跟随重定向，5 秒上限（设置的读取最多等 2 秒，晚到的结果给下次读取）；不带设备、Host 或人的标识。只在启动脚本传入 `harnessUpdates` 时开启，测试 Host 不发。见 [HARNESSES](HARNESSES.md#新版本提示)。
+- **npm 插件仓库。** `policy.json` 存经本机确认的仓库 URL，现有管理设备的策略读取也能看到该字段。插件包 API 仅限本机管理端与完整数据范围，经相同出站策略下载并校验精确版本，结果只进私有插件草稿。仓库 URL、包内容与下载回执不进 SSE。见 [插件开发](PLUGIN-DEVELOPMENT.md#从-npm-仓库下载)。
 - **会话元数据。** 重命名、置顶、归档、标签、优先级与看板记号保存在 `sessions-meta.json`，对所有 Harness 生效；Driver 自报的 `tags`、`priority`、`board` 被丢弃。删除调用 Driver 的可选 `remove`，不支持时返回 409 `delete-unsupported`；删除成功后一并删除该会话的元数据与回执。接入的会话只有人在这一次删除里选了（`DELETE /tasks/:id?original=1`，Driver 声明 `historyDelete`）才连 Harness 里的原会话一起删，Host 先写审计 `history.original.deleted`（[HARNESSES](HARNESSES.md#持久化与恢复)）。
 - **运行。** Driver 在每次运行开始时给会话写入新的 `TaskSummary.runId` 并持久化。`cancel(sessionId, { runId })` 只在它仍是当前运行时取消，并回答是否取消了什么。
 - **挂载与卸载。** 启停 Harness 插件或修改 Agent 定义时先卸载旧 Driver；仍有运行中或待审批的会话时返回 409 `harness-busy`。
@@ -996,7 +998,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | 路径 | 谁可调用 | 说明 |
 | --- | --- | --- |
 | `GET /snapshot`、`GET /events?sessionId=`、`GET /tasks/:id` | `view` | 状态、事件流、详情 |
-| `POST /tasks` | `run` | L3 写启动审计，不弹确认；带 `via` 时是插件页面开始会话（[APP-PAGES.md](APP-PAGES.md#会话)） |
+| `POST /tasks` | `run` | 带 `pluginCreation` 仅限本机管理端、完整数据范围和显式支持的 Harness，Host 绑定专用目录及创作归属（[插件开发](PLUGIN-DEVELOPMENT.md#创造模式与插件市场)）；L3 写启动审计，不弹确认；带 `via` 时是插件页面开始会话（[APP-PAGES.md](APP-PAGES.md#会话)） |
 | `POST /tasks/:id/prompt` | `run` | L3 会话也可以从任何设备输入；`queue: true` 见「排队输入」 |
 | `PATCH`/`DELETE /tasks/:id`、`POST /tasks/batch` | `run` | 重命名、置顶、归档、标签、优先级（`high`、`mid`、`low`）、删除；私有会话另需 `all`；批处理见「会话搜索与批处理」 |
 | `POST /tasks/:id/attend` | `opened`：`view`；`checked`：`run`；私有会话另需 `all` | 看板记号，见「看板的组」 |
@@ -1031,12 +1033,16 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `/automations…` | `routes/automations.ts` | 读 `view`，写 `run`；都要数据范围 `all` | 「我的 Agent 与定时」 |
 | `/apps/:pluginId/…`、`/app-modules/…` | `routes/apps.ts` | 读 `view`，写 `run`；先核对页面的修订与能力 | [APP-PAGES.md](APP-PAGES.md) |
 | `/ui-modules/:panelId/:sha256.mjs`、`/tasks/:id/ui-panels/:panelId` | `server.ts` | `view` | [PLUGIN-DEVELOPMENT.md](./PLUGIN-DEVELOPMENT.md) |
-| `/plugin-packages…` | `plugin-package-routes.ts` | 见文档 | [PLUGIN-DEVELOPMENT.md](./PLUGIN-DEVELOPMENT.md#应用内的自定义插件资产) |
+| `/plugin-packages…` | `plugin-package-routes.ts` | 本机、管理与完整数据范围；保存 npm 新源经本机确认；更新绑定来源、安装身份与草稿基版，只写草稿；Host 审阅并核对应用的修订和权限 | [PLUGIN-DEVELOPMENT.md](./PLUGIN-DEVELOPMENT.md#应用内的自定义插件资产) |
 | `/mcp/servers…`、`/mcp/import` | `routes/mcp.ts` | 读 `view`；其余本机 `admin`，新增与放宽经本机确认 | [MCP.md](./MCP.md) |
 | `/usage`、`/model-usage`、`/model-spend`、`/model-prices`、`/model-budgets` | `model-usage-routes.ts` | 读 `view`，写 `admin`；Agent 预算另需 `all` | 「模型网关」 |
 | `/customization…` | `routes/customization.ts` | 读 `view` 或匿名；写 `admin`；重置 `admin` 或匿名 | [CUSTOMIZATION.md](CUSTOMIZATION.md) |
 | `/harnesses/:id/(login-status\|login-terminal\|logout)` | `routes/agent-login.ts` | `run`；打开终端只在本机 | [HARNESSES.md](./HARNESSES.md#登录) |
 | `/host/update-window…` | `server.ts`、`update-window.ts` | 本机 `run` | 「桌面端更新与通知」 |
+
+桌面市场是可停用的工作区插件。Host 目录只声明当前启用的发行版页面，客户端匹配随版本提供的实现；市场没有自己的设备凭据。下载与应用仍由 Host 的资产管理路由授权。[工作区页面](PLUGIN-DEVELOPMENT.md#桌面市场的工作区页面)
+
+外部来源的查找和预览各发一枚绑定设备的短期选择标记。暂存重读 GitHub 固定提交或本机选定位置，并核对预览的完整资产摘要。原设备用同一请求号和内容参数重试时，等待同一次重读和保存，或读回已保存的回执，即使标记过期也能结算。外部来源与本机路径只在资产管理接口可见，审计只记录修改摘要。[外部来源](PLUGIN-DEVELOPMENT.md#从-github-或本机添加插件)
 
 **配置**（`server.ts`）
 

@@ -1,13 +1,29 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
-import type { AppManifestEntry, PluginBuild, PluginPackageBundle, PluginPackageDetail, PluginPackageSummary } from '@latch/protocol'
+import type {
+  AppManifestEntry,
+  PluginBuild,
+  PluginCatalogPreview,
+  PluginMarketplaceInstallation,
+  PluginNpmPreview,
+  PluginNpmRegistrySettings,
+  PluginNpmRegistryUpdate,
+  PluginPackageBundle,
+  PluginPackageDetail,
+  PluginPackageReview,
+  PluginPackageReviewSource,
+  PluginPackageSummary,
+} from '@latch/protocol'
 import { AppError, type HarnessPlugin } from '@latch/sdk'
 import type { PluginRegistry } from '@latch/core'
 import { json, jsonBody, safeDecode } from './http-util.ts'
 import {
   PluginAssets,
   pluginTrustRequestId,
+  pluginApplyPayload,
+  pluginEnablePayload,
+  type PluginReviewBinding,
   type PluginAssetActor,
   type PluginAssetRecord,
   type PluginAssetMutation,
@@ -15,31 +31,58 @@ import {
   type PluginAssetEffect,
   describePluginAsset,
   installIdOf,
+  matchesNpmOrigin,
+  npmUpdateIsNewer,
+  requireNpmOrigin,
 } from './plugin-assets.ts'
 import { PLUGIN_PACKAGE_BYTES, checkedPluginBundle } from './plugin-package-bundle.ts'
 import { loadPluginPackage } from './plugin-packages.ts'
 import { capabilitySet, capabilitySetHash, withinApproved } from './app-capabilities.ts'
 import { buildPages, type BuildOutcome } from './app-build.ts'
 import type { AppBuilds } from './app-builds.ts'
-import type { ImportedDraft } from './app-import.ts'
+import type { DraftKind, ImportedDraft } from './app-import.ts'
+import { readNpmPlugin } from './plugin-npm.ts'
+import { npmPreviewSchema, npmRegistryChanged, npmRegistryUpdateSchema, npmRegistryUrl, npmStageSchema } from './npm-source.ts'
+import type { FetchLike } from './egress.ts'
+import { bundledPlugin, catalogUpdate, requireBundledPlugin } from './plugin-catalog.ts'
+import { pluginReviewSource, reviewPluginPackage } from './plugin-package-review.ts'
+import { externalPluginRoutes } from './plugin-external-routes.ts'
 
 const requestId = z.string().min(8).max(128),
   hash = z.string().regex(/^[a-f0-9]{64}$/u)
 const createSchema = z.strictObject({ requestId, bundle: z.unknown() }),
   saveSchema = createSchema.extend({ baseRevision: hash })
-const importSchema = z.strictObject({ requestId, sessionId: z.string().min(1).max(256) }),
+const importSchema = z.strictObject({ requestId, sessionId: z.string().min(1).max(256), kind: z.enum(['app', 'plugin']).default('app') }),
   devSchema = z.strictObject({ requestId, dev: z.boolean() })
-const applySchema = z.strictObject({ requestId, revision: hash }),
+const reviewFields = {
+  baseAppliedRevision: hash.nullable().optional(),
+  reviewedInstallId: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{22}$/u)
+    .optional(),
+}
+const revisionSchema = z.strictObject({ requestId, revision: hash })
+const applySchema = revisionSchema.extend(reviewFields),
   deleteSchema = z.strictObject({ requestId, baseRevision: hash, deleteData: z.boolean().optional() }),
-  enabledSchema = z.strictObject({ requestId, enabled: z.boolean() })
-export interface PluginApplyConfirmation {
+  enabledSchema = z.strictObject({ requestId, enabled: z.boolean(), ...reviewFields })
+const catalogPreviewSchema = z.strictObject({ pluginId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/u) })
+const catalogStageSchema = catalogPreviewSchema.extend({
+  requestId,
+  revision: hash,
+  update: z.strictObject({ installId: z.string().regex(/^[A-Za-z0-9_-]{22}$/u), baseRevision: hash }).optional(),
+})
+const reviewQuerySchema = z.strictObject({ operation: z.enum(['apply', 'rollback', 'enable']), revision: hash })
+export interface PluginApplyConfirmation extends PluginReviewBinding {
   id: string
   name: string
   revision: string
   /** Present when the package's Host or React code is not yet trusted. */
   executionHash?: string
+  installId: string
+  version: string
   hostModules: number
   clientPanels: number
+  contextPanels?: number
   /** Present when the pages ask for more than this computer approved: every page with all its capabilities. */
   apps?: AppManifestEntry[]
   capabilitiesHash?: string
@@ -69,14 +112,19 @@ export const pagesNeedBuild = (bundle: PluginPackageBundle) => (bundle.manifest.
 
 interface Options<Caller> {
   assets: PluginAssets
+  external: { fetch: FetchLike; dataDir: string; home: string; protectedPaths: readonly string[] }
+  npm: {
+    fetch: FetchLike
+    settings(): PluginNpmRegistrySettings
+    configure(req: IncomingMessage, caller: Caller, actor: PluginAssetActor, input: PluginNpmRegistryUpdate): Promise<{ audited: boolean }>
+  }
   /** Page drafts' builds; without it the build routes answer 404. */
   builds?: AppBuilds
   /** Runs one build; tests give their own tools. */
   build?: (bundle: PluginPackageBundle) => Promise<BuildOutcome>
-  /** Reads `latch-app/` in a session's folder (`app-import.ts`). */
-  readDraft?(sessionId: string): Promise<ImportedDraft>
-  /** Whether a session's folder holds `latch-app/latch-app.json`. */
-  hasDraft?(sessionId: string): Promise<boolean>
+  /** Page and plugin drafts live in distinct directories. Only human-initiated imports select 'plugin'. */
+  readDraft?(sessionId: string, kind: DraftKind): Promise<ImportedDraft>
+  draftKinds?(sessionId: string): Promise<DraftKind[]>
   /** Records a build; a failure only marks the response. */
   auditBuild?(actor: PluginAssetActor, id: string, detail: PluginBuildAudit): Promise<boolean>
   /** A build that failed, in each page's diagnostics. */
@@ -126,6 +174,17 @@ export function installedAssetPlugin(assets: PluginAssets, record: PluginAssetRe
   }
 }
 
+const marketplaceInstalled = (
+  record: PluginAssetDescriptor,
+  origin: { version: string; revision: string } | undefined,
+): PluginMarketplaceInstallation => ({
+  id: record.id,
+  installId: installIdOf(record),
+  revision: record.revision,
+  ...(origin ? { version: origin.version } : {}),
+  modified: !origin || origin.revision !== record.revision,
+})
+
 export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
   const { assets, registry } = options
   const installedIds = options.installedIds ?? new Set<string>()
@@ -134,6 +193,7 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
       throw new AppError(409, 'plugin-package-id-in-use', '这个标识已由启动参数或内置插件占用，请换一个插件标识。')
   }
   function summary(record: PluginAssetDescriptor): PluginPackageSummary {
+    const catalog = bundledPlugin(record.id)
     const info = installedIds.has(record.id) ? registry.list().find(plugin => plugin.id === record.id) : undefined
     const unavailableReason = options.held?.isHeld(record.id)
       ? '这个插件与更新后的 Latch 不兼容，已停用；资产仍保留，更新插件后可重新启用。'
@@ -149,6 +209,7 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
       description: record.description,
       revision: record.revision,
       ...(record.appliedRevision ? { appliedRevision: record.appliedRevision } : {}),
+      ...(record.appliedVersion ? { appliedVersion: record.appliedVersion } : {}),
       ...(record.executionHash ? { executionHash: record.executionHash } : {}),
       enabled: record.enabled && info?.enabled === true,
       trusted: record.executionHash === undefined || record.trusted.includes(record.executionHash),
@@ -156,7 +217,19 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
       ...(unavailableReason ? { unavailableReason } : {}),
       state: !record.appliedRevision ? 'draft' : record.revision === record.appliedRevision ? 'applied' : 'update-available',
       ...(record.rollbackRevisions.length ? { rollbackRevisions: record.rollbackRevisions } : {}),
-      ...(record.source ? { source: { sessionId: record.source.sessionId, dev: record.source.dev } } : {}),
+      ...(record.source
+        ? {
+            source: {
+              sessionId: record.source.sessionId,
+              dev: record.source.dev,
+              ...(record.source.kind ? { kind: record.source.kind } : {}),
+            },
+          }
+        : {}),
+      ...(record.npm ? { npm: record.npm } : {}),
+      ...(record.catalog ? { catalog: record.catalog } : {}),
+      ...(record.external ? { external: record.external } : {}),
+      ...(catalog ? { catalogUpdate: { version: catalog.bundle.manifest.version, status: catalogUpdate(catalog, record) } } : {}),
     }
   }
   /** The summary with the draft's pages and its latest build, and the newest build a preview can show. */
@@ -173,9 +246,33 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
       ...(preview ? { preview: { revision: preview.revision, modules: preview.modules } } : {}),
     }
   }
+  const dataTakeover = async (bundle: PluginPackageBundle, owner: { id: string; owner: string }) =>
+    bundle.manifest.apps?.some(app => app.capabilities.storage) && (await options.dataClaim?.(owner)) === 'other'
+      ? (true as const)
+      : undefined
+
+  async function review(
+    checked: ReturnType<typeof checkedPluginBundle>,
+    source: PluginPackageReviewSource,
+    record?: PluginAssetRecord,
+    enable = false,
+  ): Promise<PluginPackageReview> {
+    const owner = { id: checked.bundle.manifest.id, owner: record ? installIdOf(record) : 'preview' }
+    return {
+      ...reviewPluginPackage(checked, source, record, enable ? undefined : await dataTakeover(checked.bundle, owner)),
+      ...(record ? { installId: owner.owner } : {}),
+    }
+  }
+  const handleExternal = externalPluginRoutes({ assets, reader: options.external, serial: options.serial, namespace, review })
+
   const detail = async (record: PluginAssetRecord): Promise<PluginPackageDetail> => ({
     ...(await described(describePluginAsset(record), record.bundle)),
     bundle: structuredClone(record.bundle),
+    review: await review(
+      { bundle: record.bundle, revision: record.revision, executionHash: record.executionHash },
+      pluginReviewSource(record, record.revision, true),
+      record,
+    ),
   })
   const keepOf = (record: PluginAssetRecord) =>
     new Set([
@@ -250,6 +347,8 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
     record: { id: string; installId?: string; trusted: string[]; approvedApps?: PluginAssetRecord['approvedApps'] },
     executionHash: string | undefined,
     operation: PluginAppTrust['operation'],
+    binding: PluginReviewBinding,
+    recoveringAdoption = false,
   ) {
     const apps = bundle.manifest.apps ?? [],
       set = capabilitySet(bundle.manifest),
@@ -257,17 +356,22 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
     const untrusted = executionHash && !record.trusted.includes(executionHash) ? executionHash : undefined
     // Data a deleted plugin with this ID kept is taken over only with a confirmation that says so.
     const owner = { id, owner: installIdOf(record) }
-    const adoptsData =
-      apps.some(app => app.capabilities.storage) && (await options.dataClaim?.(owner)) === 'other' ? (true as const) : undefined
-    const widens = apps.length > 0 && (!withinApproved(set, record.approvedApps) || adoptsData === true)
+    const adoptsData = await dataTakeover(bundle, owner)
+    const widens = apps.length > 0 && (!withinApproved(set, record.approvedApps) || (adoptsData === true && !recoveringAdoption))
+    const contextPanels = bundle.manifest.panels?.filter(panel => panel.context === true).length
     if (untrusted || widens)
       await options.confirm(req, caller, {
         id,
         name: bundle.manifest.name,
         revision,
+        installId: owner.owner,
+        version: bundle.manifest.version,
+        ...(binding.baseAppliedRevision !== undefined ? { baseAppliedRevision: binding.baseAppliedRevision } : {}),
+        ...(binding.reviewedInstallId !== undefined ? { reviewedInstallId: binding.reviewedInstallId } : {}),
         ...(untrusted ? { executionHash: untrusted } : {}),
         hostModules: bundle.manifest.host?.length ?? 0,
         clientPanels: bundle.manifest.panels?.length ?? 0,
+        ...(contextPanels ? { contextPanels } : {}),
         ...(widens ? { apps, capabilitiesHash } : {}),
         ...(adoptsData ? { adoptsData } : {}),
       })
@@ -276,7 +380,7 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
     return {
       approve: widens ? set : undefined,
       capabilitiesHash,
-      adopt: adoptsData ? async () => options.adoptData?.(owner) : async () => {},
+      adoptsData,
     }
   }
   /** Swaps the registered package for the snapshot `state` holds; a failure leaves the previous one mounted. */
@@ -329,7 +433,7 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
           continue
         }
         try {
-          const draft = await options.readDraft(sessionId)
+          const draft = await options.readDraft(sessionId, 'app')
           const checked = checkedPluginBundle(draft.bundle)
           if (checked.bundle.manifest.id !== record.id) {
             options.buildFailed?.(
@@ -369,12 +473,146 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
       try {
         /** `pages`: the plugin whose applied pages this changed (SSE `app.updated`). */
         const reply = async (result: PluginAssetMutation, status = 200, pages?: string) => {
-          const body = result.record ? { package: await detail(result.record) } : { removed: true }
+          if (result.adoptOwner && result.record) {
+            actor.authorize()
+            try {
+              await options.adoptData?.({ id: result.record.id, owner: result.adoptOwner })
+            } catch {
+              throw new AppError(503, 'plugin-package-write-unknown', '插件保存的数据尚未接好，请重试同一次修改。')
+            }
+          }
+          const body = result.record
+            ? { package: await detail(result.record), ...(result.importedRevision ? { importedRevision: result.importedRevision } : {}) }
+            : { removed: true }
           actor.authorize()
           if (!result.audited) res.setHeader('x-latch-audit', 'failed')
           options.changed()
           if (pages !== undefined) options.pagesChanged?.(pages)
           json(res, body, status)
+        }
+        if (await handleExternal(req, res, actor, path, method, reply)) return true
+        if (method === 'POST' && path === '/link/api/plugin-packages/review') {
+          const { bundle } = z.strictObject({ bundle: z.unknown() }).parse(await jsonBody(req, PLUGIN_PACKAGE_BYTES + 65536))
+          const result = await review(checkedPluginBundle(bundle), { kind: 'local' })
+          actor.authorize()
+          json(res, { review: result })
+          return true
+        }
+        const catalogRoute = /^\/link\/api\/plugin-packages\/catalog\/(preview|stage)$/u.exec(path)
+        if (catalogRoute) {
+          if (method !== 'POST') throw new AppError(404, 'not-found', '接口不存在。')
+          if (catalogRoute[1] === 'preview') {
+            const { pluginId } = catalogPreviewSchema.parse(await jsonBody(req))
+            const checked = requireBundledPlugin(pluginId)
+            const record = assets.has(pluginId) ? assets.get(pluginId) : undefined
+            if (!record) namespace(pluginId)
+            const descriptor = record ? describePluginAsset(record) : undefined
+            const status = descriptor ? catalogUpdate(checked, descriptor) : undefined
+            const version = checked.bundle.manifest.version
+            const result = await review(checked, { kind: 'catalog', version }, record)
+            actor.authorize()
+            json(res, {
+              bundle: checked.bundle,
+              review: result,
+              ...(descriptor
+                ? {
+                    installed: marketplaceInstalled(descriptor, descriptor.catalog),
+                    updateStatus: status,
+                    updateAvailable: status === 'available',
+                  }
+                : {}),
+            } satisfies PluginCatalogPreview)
+            return true
+          }
+          const input = catalogStageSchema.parse(await jsonBody(req))
+          await options.serial(actor, async () => {
+            const previous = await assets.replayCatalog(input, actor)
+            if (previous) return reply(previous, 201)
+            namespace(input.pluginId)
+            await reply(await assets.stageCatalog(input, requireBundledPlugin(input.pluginId), actor), 201)
+          })
+          return true
+        }
+        const npmRoute = /^\/link\/api\/plugin-packages\/npm\/(registry|preview|stage)$/u.exec(path)
+        if (npmRoute) {
+          const { npm } = options
+          const suffix = npmRoute[1]
+          if (suffix === 'registry') {
+            if (method === 'PUT') {
+              const input = npmRegistryUpdateSchema.parse(await jsonBody(req))
+              actor.authorize()
+              const result = await npm.configure(req, caller, actor, {
+                ...input,
+                registry: input.registry === null ? null : npmRegistryUrl(input.registry),
+              })
+              if (!result.audited) res.setHeader('x-latch-audit', 'failed')
+            } else if (method !== 'GET') throw new AppError(404, 'not-found', '接口不存在。')
+            actor.authorize()
+            json(res, npm.settings())
+            return true
+          }
+          if (method !== 'POST') throw new AppError(404, 'not-found', '接口不存在。')
+          const guard = (address: string) => {
+            const revision = npm.settings().revision
+            return () => {
+              actor.authorize()
+              const current = npm.settings()
+              if (current.registry !== address || current.revision !== revision) throw npmRegistryChanged()
+            }
+          }
+          if (suffix === 'preview') {
+            const input = npmPreviewSchema.parse(await jsonBody(req))
+            const { registry: address } = npm.settings()
+            if (!address) throw new AppError(409, 'plugin-npm-registry-unconfigured', '请先在这台电脑上配置 npm 仓库。')
+            const source = { registry: address, name: input.name }
+            if (input.pluginId) requireNpmOrigin(assets.get(input.pluginId), source)
+            const check = guard(address)
+            const checked = await readNpmPlugin(npm.fetch, { registry: address, ...input }, check)
+            const { release, revision, bundle } = checked
+            const id = bundle.manifest.id
+            const installedId =
+              input.pluginId ?? assets.descriptors().find(record => matchesNpmOrigin(record, source) || record.id === id)?.id
+            const installed = installedId ? assets.get(installedId) : undefined
+            if (input.pluginId && (id !== input.pluginId || !matchesNpmOrigin(installed!, source)))
+              throw new AppError(409, 'plugin-npm-source-mismatch', 'npm 新版本的插件标识或仓库与已下载版本不同。')
+            if (!installed) namespace(id)
+            const same = installed !== undefined && installed.id === id && matchesNpmOrigin(installed, source)
+            const viewed = await review(checked, { kind: 'npm', ...release }, installed)
+            check()
+            json(res, {
+              release,
+              revision,
+              bundle,
+              review: viewed,
+              ...(installed
+                ? {
+                    installed: marketplaceInstalled(describePluginAsset(installed), installed.npm),
+                    updateAvailable: same && npmUpdateIsNewer(release, installed.npm!, installed.appliedBundle?.manifest.version),
+                  }
+                : {}),
+            } satisfies PluginNpmPreview)
+            return true
+          }
+          const input = npmStageSchema.parse(await jsonBody(req))
+          const replay = () => assets.replayNpm(input, actor)
+          const previous = await options.serial(actor, replay)
+          if (previous) {
+            await reply(previous, 201)
+            return true
+          }
+          const check = guard(input.release.registry)
+          check()
+          assets.checkNpmStage(input)
+          const downloaded = await readNpmPlugin(npm.fetch, input.release, check, input.release.integrity)
+          const result = await options.serial(actor, async () => {
+            const completed = await replay()
+            if (completed) return completed
+            check()
+            namespace(downloaded.bundle.manifest.id)
+            return assets.stageNpm(input, downloaded, actor)
+          })
+          await reply(result, 201)
+          return true
         }
         if (path === '/link/api/plugin-packages') {
           if (method === 'GET') {
@@ -399,24 +637,43 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
         if (path === '/link/api/plugin-packages/import') {
           if (method !== 'POST' || !options.readDraft) throw new AppError(404, 'not-found', '接口不存在。')
           const input = importSchema.parse(await jsonBody(req))
+          const replay = () => assets.replayImport(input.sessionId, input.kind, input.requestId, actor)
+          const previous = await options.serial(actor, replay)
+          if (previous) {
+            await reply(previous, 201)
+            return true
+          }
           actor.authorize()
-          const draft = await options.readDraft(input.sessionId)
+          const draft = await options.readDraft(input.sessionId, input.kind)
           actor.authorize()
           const imported = checkedPluginBundle(draft.bundle).bundle.manifest.id
           await options.serial(actor, async () => {
+            // An overlapping retry may have captured the first snapshot while this request was reading.
+            const completed = await replay()
+            if (completed) return reply(completed, 201)
             namespace(imported)
-            await reply(await assets.importDraft(draft.bundle, input.sessionId, input.requestId, actor), 201)
+            await reply(await assets.importDraft(draft.bundle, input.sessionId, input.requestId, actor, input.kind), 201)
           })
           return true
         }
         if (path === '/link/api/plugin-packages/session-draft') {
-          if (method !== 'GET' || !options.hasDraft) throw new AppError(404, 'not-found', '接口不存在。')
+          if (method !== 'GET' || !options.draftKinds) throw new AppError(404, 'not-found', '接口不存在。')
           const sessionId = new URL(req.url ?? '/', 'http://latch.invalid').searchParams.get('sessionId') ?? ''
           if (!sessionId || sessionId.length > 256) throw new AppError(400, 'invalid-input', '缺少会话。')
-          const present = await options.hasDraft(sessionId)
-          const owner = assets.list().find(record => record.source?.sessionId === sessionId)
+          const kinds = await options.draftKinds(sessionId)
+          const owners = assets.list().filter(record => record.source?.sessionId === sessionId)
+          const kind = kinds[0] ?? 'app'
+          const pluginIds: Partial<Record<DraftKind, string>> = {}
+          for (const item of kinds) {
+            const matching = owners.filter(record => (record.source?.kind ?? 'app') === item)
+            if (matching.length === 1) pluginIds[item] = matching[0].id
+          }
           actor.authorize()
-          json(res, { present, ...(owner ? { pluginId: owner.id } : {}) })
+          json(res, {
+            present: kinds.length > 0,
+            ...(pluginIds[kind] ? { pluginId: pluginIds[kind] } : {}),
+            ...(kinds.includes('plugin') ? { kinds, kind, pluginIds } : {}),
+          })
           return true
         }
         const bundleMatch = /^\/link\/api\/plugin-packages\/([^/]+)\/builds\/([a-f0-9]{64})\.js$/u.exec(path)
@@ -440,7 +697,7 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
           res.end(method === 'HEAD' ? undefined : bytes)
           return true
         }
-        const match = /^\/link\/api\/plugin-packages\/([^/]+)(?:\/(apply|export|enabled|rollback|build|dev))?$/u.exec(path)
+        const match = /^\/link\/api\/plugin-packages\/([^/]+)(?:\/(apply|export|enabled|rollback|build|dev|review))?$/u.exec(path)
         if (!match) throw new AppError(404, 'not-found', '接口不存在。')
         const id = safeDecode(match[1]!),
           action = match[2]
@@ -450,6 +707,29 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
           const body = { package: await detail(record) }
           actor.authorize()
           json(res, body)
+          return true
+        }
+        if (method === 'GET' && action === 'review') {
+          const query = new URL(req.url ?? '/', 'http://latch.invalid').searchParams
+          const { operation, revision } = reviewQuerySchema.parse({ operation: query.get('operation'), revision: query.get('revision') })
+          const record = assets.get(id)
+          const bundle =
+            operation === 'apply' && record.revision === revision
+              ? record.bundle
+              : operation === 'enable' && record.appliedRevision === revision
+                ? record.appliedBundle
+                : operation === 'rollback'
+                  ? record.history?.find(item => item.revision === revision)?.bundle
+                  : undefined
+          if (!bundle) throw new AppError(409, 'plugin-package-changed', '这个待审阅版本已变化，请刷新插件。')
+          const result = await review(
+            checkedPluginBundle(bundle),
+            pluginReviewSource(record, revision, operation === 'apply'),
+            record,
+            operation === 'enable',
+          )
+          actor.authorize()
+          json(res, { review: result })
           return true
         }
         if (method === 'GET' && action === 'build') {
@@ -464,7 +744,7 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
           return true
         }
         if (method === 'POST' && action === 'build') {
-          const input = applySchema.parse(await jsonBody(req))
+          const input = revisionSchema.parse(await jsonBody(req))
           actor.authorize()
           const key = `${deviceId}\n${input.requestId}`
           const known = buildRequests.get(key)
@@ -513,23 +793,48 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
         if (method === 'POST' && action === 'apply') {
           const input = applySchema.parse(await jsonBody(req))
           actor.authorize()
-          const replay = assets.replay(id, 'apply', input.requestId, { revision: input.revision }, actor)
-          if (replay) {
+          const handled = await options.serial(actor, async () => {
+            const replay = assets.replay(id, 'apply', input.requestId, pluginApplyPayload(input.revision, input), actor)
+            if (!replay) return false
             await reply(replay, 200, id)
             return true
-          }
+          })
+          if (handled) return true
           namespace(id)
           const candidate = assets.candidate(id, input.revision, input.requestId, actor)
+          assets.checkReview(id, input)
           await requireBuild(id, input.revision, candidate.bundle)
-          const trust = await trustFor(req, caller, id, input.revision, candidate.bundle, candidate, candidate.executionHash, 'apply')
+          const trust = await trustFor(
+            req,
+            caller,
+            id,
+            input.revision,
+            candidate.bundle,
+            candidate,
+            candidate.executionHash,
+            'apply',
+            input,
+            assets.pendingAdoption(id, input.revision, input.requestId, actor),
+          )
           actor.authorize()
           await options.serial(actor, async () => {
+            const completed = assets.replay(id, 'apply', input.requestId, pluginApplyPayload(input.revision, input), actor)
+            if (completed) return reply(completed, 200, id)
             const fresh = assets.candidate(id, input.revision, input.requestId, actor)
-            if (fresh.executionHash !== candidate.executionHash)
+            assets.checkReview(id, input)
+            if (fresh.executionHash !== candidate.executionHash || installIdOf(fresh) !== installIdOf(candidate))
               throw new AppError(409, 'plugin-package-changed', '插件可执行内容已变化，请重新检查。')
             if (fresh.executionHash) await assets.trust(id, fresh.executionHash, pluginTrustRequestId(input.requestId), actor)
-            const result = await assets.apply(id, input.revision, input.requestId, actor, activate(id, actor), trust.approve)
-            await trust.adopt()
+            const result = await assets.apply(
+              id,
+              input.revision,
+              input.requestId,
+              actor,
+              activate(id, actor),
+              trust.approve,
+              input,
+              trust.adoptsData,
+            )
             await reply(result, 200, id)
           })
           return true
@@ -537,59 +842,101 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
         if (method === 'POST' && action === 'rollback') {
           const input = applySchema.parse(await jsonBody(req))
           actor.authorize()
-          const replay = assets.replay(id, 'rollback', input.requestId, { revision: input.revision }, actor)
-          if (replay) {
+          const handled = await options.serial(actor, async () => {
+            const replay = assets.replay(id, 'rollback', input.requestId, pluginApplyPayload(input.revision, input), actor)
+            if (!replay) return false
             await reply(replay, 200, id)
             return true
-          }
+          })
+          if (handled) return true
           namespace(id)
           const { bundle, record } = assets.rollbackCandidate(id, input.revision, input.requestId, actor)
+          assets.checkReview(id, input)
           await requireBuild(id, input.revision, bundle)
           // Earlier snapshots were trusted when they were applied; only their pages' capabilities are compared again.
-          const trust = await trustFor(req, caller, id, input.revision, bundle, record, undefined, 'rollback')
-          actor.authorize()
-          await options.serial(actor, async () =>
-            reply(await assets.rollback(id, input.revision, input.requestId, actor, activate(id, actor), trust.approve), 200, id),
+          const trust = await trustFor(
+            req,
+            caller,
+            id,
+            input.revision,
+            bundle,
+            record,
+            undefined,
+            'rollback',
+            input,
+            assets.pendingAdoption(id, input.revision, input.requestId, actor),
           )
+          actor.authorize()
+          await options.serial(actor, async () => {
+            const completed = assets.replay(id, 'rollback', input.requestId, pluginApplyPayload(input.revision, input), actor)
+            if (completed) return reply(completed, 200, id)
+            const fresh = assets.rollbackCandidate(id, input.revision, input.requestId, actor)
+            assets.checkReview(id, input)
+            if (installIdOf(fresh.record) !== installIdOf(record))
+              throw new AppError(409, 'plugin-package-changed', '插件安装记录已变化，请重新审阅。')
+            const result = await assets.rollback(
+              id,
+              input.revision,
+              input.requestId,
+              actor,
+              activate(id, actor),
+              trust.approve,
+              input,
+              trust.adoptsData,
+            )
+            await reply(result, 200, id)
+          })
           return true
         }
         if (method === 'POST' && action === 'enabled') {
           const input = enabledSchema.parse(await jsonBody(req))
           actor.authorize()
-          await options.serial(actor, async () =>
-            reply(
-              await assets.setEnabled(id, input.enabled, input.requestId, actor, async (state, commit) => {
-                if (input.enabled) namespace(id)
-                if (installedIds.has(id)) await options.unmount(id)
-                actor.authorize()
-                if (input.enabled) {
-                  try {
-                    await registry.replace(
-                      installedAssetPlugin(
-                        assets,
-                        state.packages.find(record => record.id === id)!,
-                      ),
-                      async () => {
-                        actor.authorize()
-                        await commit()
-                      },
-                      { revision: state.packages.find(record => record.id === id)!.appliedRevision },
-                    )
-                    installedIds.add(id)
-                  } catch (cause) {
+          await options.serial(actor, async () => {
+            if (input.enabled) {
+              const replay = assets.replay(id, 'enable', input.requestId, pluginEnablePayload(true, input), actor)
+              if (replay) return reply(replay, 200, id)
+              assets.checkReview(id, input)
+            }
+            await reply(
+              await assets.setEnabled(
+                id,
+                input.enabled,
+                input.requestId,
+                actor,
+                async (state, commit) => {
+                  if (input.enabled) namespace(id)
+                  if (installedIds.has(id)) await options.unmount(id)
+                  actor.authorize()
+                  if (input.enabled) {
+                    try {
+                      await registry.replace(
+                        installedAssetPlugin(
+                          assets,
+                          state.packages.find(record => record.id === id)!,
+                        ),
+                        async () => {
+                          actor.authorize()
+                          await commit()
+                        },
+                        { revision: state.packages.find(record => record.id === id)!.appliedRevision },
+                      )
+                      installedIds.add(id)
+                    } catch (cause) {
+                      await options.mount(id)
+                      throw cause
+                    }
                     await options.mount(id)
-                    throw cause
+                  } else {
+                    if (installedIds.has(id) && registry.list().some(plugin => plugin.id === id)) registry.retire(id)
+                    await commit()
                   }
-                  await options.mount(id)
-                } else {
-                  if (installedIds.has(id) && registry.list().some(plugin => plugin.id === id)) registry.retire(id)
-                  await commit()
-                }
-              }),
+                },
+                input,
+              ),
               200,
               id,
-            ),
-          )
+            )
+          })
           await options.held?.release(id).catch(() => undefined)
           return true
         }

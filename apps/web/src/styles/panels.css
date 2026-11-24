@@ -212,3 +212,186 @@
   color: var(--ink-2);
   font-weight: 500;
 }
+
+.session-context {
+  display: grid;
+  align-content: start;
+  gap: var(--sp-20);
+  padding: var(--sp-16);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.session-context > section {
+  min-width: 0;
+}
+.session-context > section + section {
+  padding-top: var(--sp-16);
+  border-top: 1px solid var(--line);
+}
+.session-context h3 {
+  margin: 0 0 var(--sp-8);
+  color: var(--ink);
+  font-size: var(--fs-heading);
+  font-weight: 600;
+  line-height: var(--lh-heading);
+}
+.session-context p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.session-context dl,
+.session-context dd {
+  margin: 0;
+}
+.context-counts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-12);
+  padding-block: var(--sp-6);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.context-counts dt {
+  color: var(--ink-2);
+}
+.session-context .session-context-at {
+  margin-top: var(--sp-8);
+}
+.session-context-input,
+.context-history-figure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-8);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+.session-context-input > strong {
+  color: var(--ink);
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+.context-section-heading,
+.context-step-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--sp-4) var(--sp-12);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  color: var(--muted);
+}
+.context-section-heading {
+  margin-bottom: var(--sp-12);
+}
+.context-section-heading h3 {
+  margin: 0;
+}
+.context-history-figure > strong {
+  color: var(--ink);
+  font-size: var(--fs-hero);
+  line-height: var(--lh-hero);
+  font-weight: 600;
+}
+/* A tap pins the step's figures below. A persistent hover tip would cover the neighbouring columns on touch. */
+@media (hover: none) {
+  .context-history .ui-chart-tip {
+    display: none;
+  }
+}
+.context-step-nav {
+  margin-top: var(--sp-6);
+}
+.context-step-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  color: var(--ink-2);
+}
+.context-composition .ui-share-parts {
+  gap: var(--sp-6);
+}
+.context-composition .ui-share-percent {
+  color: var(--ink-2);
+}
+.context-composition .context-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-8);
+  margin-top: var(--sp-16);
+}
+.context-metrics dt {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.context-metrics dd {
+  margin-top: var(--sp-4);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.session-context .context-request-status,
+.session-context .context-partial {
+  margin-top: var(--sp-8);
+}
+.context-request-details,
+.context-window-history details,
+.context-window-breakdown details,
+.context-tool-activity details {
+  margin-top: var(--sp-8);
+}
+.context-request-actions {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-4) var(--sp-12);
+  flex-wrap: wrap;
+}
+.context-request-actions > details[open] {
+  flex-basis: 100%;
+}
+.context-request-details summary,
+.context-window-history summary,
+.context-window-breakdown summary,
+.context-tool-activity summary {
+  display: list-item;
+  width: fit-content;
+  padding-block: var(--sp-6);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  cursor: pointer;
+}
+.session-context summary:hover {
+  color: var(--ink);
+}
+.context-request-details table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: var(--sp-4) 0 var(--sp-8);
+  font-size: var(--fs-caption);
+}
+.context-request-details :is(td, th) {
+  padding: var(--sp-4) var(--sp-6);
+  text-align: end;
+  font-weight: 400;
+  border-bottom: 1px solid var(--line);
+}
+.context-request-details :is(td, th):first-child {
+  padding-inline-start: 0;
+  text-align: start;
+}
+.context-request-details :is(td, th):last-child {
+  padding-inline-end: 0;
+}
+.context-request-details thead {
+  color: var(--muted);
+}

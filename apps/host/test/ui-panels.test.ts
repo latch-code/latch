@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AppSnapshot, UiPanelDocument } from '@latch/protocol'
+import type { AppSnapshot, CustomAgentList, TaskDetail, UiPanelDocument } from '@latch/protocol'
 import type { UiPanelDefinition } from '@latch/sdk'
 import { startTestHost } from './helpers/host.ts'
 
@@ -129,6 +129,47 @@ describe('session UI panel API', () => {
     const body = await response.text()
     expect(body).toContain('device-revoked')
     expect(body).not.toContain('Private session data')
+  })
+
+  it('protects a panel when its session becomes private and blocks future reads before rendering', async () => {
+    let entered!: () => void
+    let finish!: () => void
+    const started = new Promise<void>(done => {
+      entered = done
+    })
+    const waiting = new Promise<void>(done => {
+      finish = done
+    })
+    const render = vi.fn<UiPanelDefinition['render']>(async () => {
+      entered()
+      await waiting
+      return { blocks: [{ type: 'text', text: 'Session panel data' }] }
+    })
+    const { t, admin, sessionId, path } = await fixture({ id: 'summary', title: 'Summary', render })
+    const reader = await t.enroll({ scopes: ['view'], dataScope: 'work' })
+    await expect.poll(async () => (await admin.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+    const agents = await admin.json<CustomAgentList>('custom-agents')
+    await admin.json('custom-agents/general', {
+      method: 'PATCH',
+      body: { requestId: randomUUID(), baseRevision: agents.general.revision, instructions: 'Private test instructions' },
+    })
+    const pending = reader.request(path)
+    try {
+      await started
+      await admin.json(`tasks/${sessionId}/prompt`, {
+        method: 'POST',
+        body: { prompt: 'Continue this conversation', requestId: randomUUID() },
+      })
+      expect((await admin.json<TaskDetail>(`tasks/${sessionId}`)).summary.agentPrivate).toBe(true)
+    } finally {
+      finish()
+    }
+    for (const response of [await pending, await reader.request(path)]) {
+      expect(response.status).toBe(403)
+      expect(await response.json()).toMatchObject({ error: 'agent-scope-required' })
+    }
+    expect(render).toHaveBeenCalledOnce()
+    expect(await admin.json(path)).toEqual({ panel: { blocks: [{ type: 'text', text: 'Session panel data' }] } })
   })
 
   it('rejects unsupported content without echoing private plugin errors', async () => {

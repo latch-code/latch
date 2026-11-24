@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { AppSnapshot, PluginBuild, PluginPackageBundle, PluginPackageDetail, PluginPackageSummary } from '@latch/protocol'
+import { createPluginPackageTemplate } from '@latch/protocol'
+import { setKnownSecrets } from '@latch/core/node-kit'
 import type { TestDevice } from '@latch/testkit'
 import { buildPages, hostBuildTools, parseTscOutput, sandboxProfile } from '../src/app-build.ts'
 import { APP_IMPORT_LIMITS, readSessionDraft } from '../src/app-import.ts'
@@ -495,6 +497,68 @@ const build = async (owner: TestDevice, id: string, revision: string) =>
   (await owner.json<{ build: PluginBuild }>(`plugin-packages/${id}/build`, { body: { requestId: randomUUID(), revision } })).build
 
 describe('the build pipeline on the Host', () => {
+  it('only imports executable sources from a Creator session, keeps them inert until confirmed and binds later edits to a new review', async () => {
+    const { host, owner } = await fixture({ sessionFolders: true })
+    const plain = await session(owner)
+    const creator = await session(owner, { pluginCreation: true })
+    await Promise.all([idle(host, plain), idle(host, creator)])
+    const draft = createPluginPackageTemplate('tool', 'creator-check')
+    const skill = createPluginPackageTemplate('skill', 'creator-guide')
+    draft.manifest.skills = skill.manifest.skills
+    draft.files.push(...skill.files)
+    const dir = join((await host.host.bridge.detail(creator)).summary.cwd!, 'latch-plugin')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'latch-plugin.json'), JSON.stringify(draft.manifest))
+    for (const file of draft.files) await writeFile(join(dir, file.path), file.content)
+    const hiddenText = join(dir, 'hidden.md')
+    await writeFile(hiddenText, 'invalid\0text')
+    expect(await draftCode(readSessionDraft(join(dir, '..'), 'plugin'))).toBe('app-import-text')
+    await writeFile(hiddenText, 'invalid\0text sk-ant-api03-' + 'a'.repeat(40))
+    expect(await draftCode(readSessionDraft(join(dir, '..'), 'plugin'))).toBe('app-import-secret')
+    const knownSecret = 'test-configured-private-value'
+    setKnownSecrets('creator-draft-test', [knownSecret])
+    try {
+      await writeFile(hiddenText, knownSecret)
+      expect(await draftCode(readSessionDraft(join(dir, '..'), 'plugin'))).toBe('app-import-secret')
+      await rm(hiddenText)
+      const declaration = join(dir, 'latch-plugin.json')
+      const withSecret = JSON.stringify({ ...draft.manifest, description: knownSecret }).replace(
+        knownSecret,
+        '\\u0074' + knownSecret.slice(1),
+      )
+      await writeFile(declaration, withSecret)
+      expect(await draftCode(readSessionDraft(join(dir, '..'), 'plugin'))).toBe('app-import-secret')
+      await writeFile(declaration, JSON.stringify(draft.manifest))
+    } finally {
+      setKnownSecrets('creator-draft-test', [])
+    }
+    const probe = (id: string) => owner.json('plugin-packages/session-draft?sessionId=' + id)
+    const request = (id: string) => ({ body: { sessionId: id, requestId: randomUUID(), kind: 'plugin' } })
+    expect(await probe(creator)).toMatchObject({ present: true, kinds: ['plugin'] })
+    expect((await owner.request('plugin-packages/import', request(plain))).status).toBe(403)
+    const phone = await host.enroll({ scopes: ['view', 'run', 'admin'] })
+    expect((await phone.request('plugin-packages/import', request(creator))).status).toBe(403)
+    const importBody = request(creator)
+    const imported = (await owner.json<{ package: PluginPackageDetail }>('plugin-packages/import', importBody)).package
+    expect(imported).toMatchObject({ enabled: false, trusted: false, source: { kind: 'plugin', sessionId: creator, dev: false } })
+    expect(imported.executionHash).toMatch(/^[a-f0-9]{64}$/u)
+    expect((await owner.json<{ package: PluginPackageDetail }>('plugin-packages/import', importBody)).package.revision).toBe(
+      imported.revision,
+    )
+    expect(host.host.registry.skills().some(item => item.pluginId === draft.manifest.id)).toBe(false)
+    expect((await owner.request('plugin-packages/creator-check/dev', { body: { requestId: randomUUID(), dev: true } })).status).toBe(409)
+    const apply = { body: { revision: imported.revision, requestId: randomUUID() } }
+    expect((await owner.confirmed('plugin-packages/creator-check/apply', apply)).status).toBe(200)
+    expect(host.presence.requests.some(item => item.preview.action === 'plugin.package.apply')).toBe(true)
+    expect(host.host.registry.skills().some(item => item.pluginId === 'creator-check')).toBe(true)
+    await writeFile(join(dir, 'host.mjs'), draft.files[0].content + '\n// revised')
+    const update = (await owner.json<{ package: PluginPackageDetail }>('plugin-packages/import', request(creator))).package
+    expect(update.executionHash).not.toBe(imported.executionHash)
+    expect(update).toMatchObject({ trusted: false, appliedRevision: imported.revision })
+    await symlink(join(dir, 'host.mjs'), join(dir, 'linked.mjs'))
+    expect(await draftCode(readSessionDraft(join(dir, '..'), 'plugin'))).toBe('app-import-link')
+  })
+
   it('imports a session draft, builds it, applies only a built revision and serves that bundle', async () => {
     const { host, owner } = await fixture()
     const sessionId = await session(owner)

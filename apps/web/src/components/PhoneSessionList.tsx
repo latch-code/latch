@@ -2,7 +2,7 @@ import { sessionsAwaitingReturn } from '../handoffs/model.ts'
 import { originTitle } from '../plugin-pages/model.ts'
 import { ProjectGroupHeading, type ProjectNavigationActions } from './ProjectNavigation.tsx'
 import { memo, useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react'
-import { FolderGit2 } from 'lucide-react'
+import { FolderGit2, Store } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type TaskSummary } from '@latch/protocol'
 import { deviceAccess } from '../core/permissions.ts'
 import { useLocale } from '../core/i18n.ts'
@@ -34,6 +34,7 @@ import { ActionSheet, type MenuSection } from './overlays.tsx'
 import { SessionStatus, statusLabel, useLastConfirmed } from './SessionStatus.tsx'
 import { taskHarness, type TaskHarness } from './Sidebar.tsx'
 import { SESSION_LIST_COPY as COPY } from './sessionList.copy.ts'
+import { SHELL_COPY } from '../shell/copy.ts'
 import {
   Button,
   ICON_STROKE,
@@ -404,6 +405,7 @@ export function PhoneSessionList({
   onFilter,
   onSelect,
   onNew,
+  onMarketplace,
   onNewIn,
   onEditProject,
   onProjectsChanged,
@@ -435,6 +437,7 @@ export function PhoneSessionList({
   onFilter: (filter: SessionFilter) => void
   onSelect: (id: string) => void
   onNew: () => void
+  onMarketplace?: (() => void) | undefined
   onNewIn?: (workspaceId: string) => void
   /** No longer drawn here: the connection's own notices offer 重试. Kept until the shell stops passing it. */
   onRefresh?: () => Promise<void>
@@ -487,6 +490,9 @@ export function PhoneSessionList({
         ))}
       <header className="phone-list-head">
         <h1>{COPY.sessions}</h1>
+        {onMarketplace && (
+          <IconButton size="lg" label={SHELL_COPY.marketplace} icon={Store} data-marketplace-nav="" onClick={onMarketplace} />
+        )}
         <IconButton size="lg" label={COPY.create} icon={NewSessionGlyph} onClick={onNew} />
       </header>
       <div className="phone-search" data-searching={searching ? '' : undefined}>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Smartphone } from 'lucide-react'
+import { Layers, Smartphone } from 'lucide-react'
 import { CommitGlyph, DiffGlyph, FolderGlyph, GlobeGlyph, OverviewGlyph, PluginsGlyph, TerminalGlyph, type IconComponent } from '@latch/ui'
+import type { UiPanelInfo } from '@latch/protocol'
 import { defineCopy } from '../core/i18n.ts'
 import { storageGet, storageSet } from '../preferences.ts'
 
@@ -9,7 +10,15 @@ import { storageGet, storageSet } from '../preferences.ts'
  * terminal are one tab each whose own strip holds several pages or terminals. Opened files are tabs of their own
  * (`useFileTabs`), after these.
  */
-export type PanelKey = 'overview' | 'changes' | 'files' | 'browser' | 'device' | 'terminal' | 'delivery' | `plugin:${string}`
+export type PanelKey = 'overview' | 'context' | 'changes' | 'files' | 'browser' | 'device' | 'terminal' | 'delivery' | `plugin:${string}`
+
+declare const __LATCH_CONTEXT_PANEL_HASH__: string
+const bundledContextHash = typeof __LATCH_CONTEXT_PANEL_HASH__ === 'string' ? __LATCH_CONTEXT_PANEL_HASH__ : ''
+
+/** Only the build's own Context module can use the existing Context tab and its remembered position. */
+export function isBundledContextPanel(panel: UiPanelInfo, hash = bundledContextHash): boolean {
+  return !!hash && panel.id === 'context-insights:insights' && panel.context === true && panel.moduleHash === hash
+}
 
 /** The open tabs in order and the one selected; absent from storage until the person first opens or closes one. */
 export interface PanelMemory {
@@ -17,7 +26,7 @@ export interface PanelMemory {
   active?: PanelKey
 }
 
-const FIXED: ReadonlySet<string> = new Set(['overview', 'changes', 'files', 'browser', 'device', 'terminal', 'delivery'])
+const FIXED: ReadonlySet<string> = new Set(['overview', 'context', 'changes', 'files', 'browser', 'device', 'terminal', 'delivery'])
 const MAX_TABS = 24
 const MAX_CONTEXTS = 40
 
@@ -117,7 +126,16 @@ export interface PanelChoice {
 }
 
 const LABELS = defineCopy(
-  { browser: '浏览器', device: '设备', terminal: '终端', files: '文件', changes: '改动', delivery: '交付', overview: '概要' },
+  {
+    browser: '浏览器',
+    device: '设备',
+    terminal: '终端',
+    files: '文件',
+    changes: '改动',
+    delivery: '交付',
+    overview: '概要',
+    context: '上下文',
+  },
   {
     browser: 'Browser',
     device: 'Devices',
@@ -126,6 +144,7 @@ const LABELS = defineCopy(
     changes: 'Changes',
     delivery: 'Delivery',
     overview: 'Overview',
+    context: 'Context',
   },
 )
 
@@ -137,6 +156,7 @@ const FACES: Record<Exclude<PanelKey, `plugin:${string}`>, Pick<PanelChoice, 'ic
   changes: { icon: DiffGlyph, letter: 'D' },
   delivery: { icon: CommitGlyph, letter: 'P' },
   overview: { icon: OverviewGlyph, letter: 'O' },
+  context: { icon: Layers, letter: 'C' },
 }
 
 /** A tab's name and glyph; a plugin panel's name is its own title. */
@@ -155,9 +175,10 @@ export function panelChoices(input: {
   changes?: boolean
   delivery?: boolean
   overview?: boolean
+  context?: boolean
   plugins?: ReadonlyArray<{ id: string; title: string }>
 }): PanelChoice[] {
-  const order = ['browser', 'device', 'terminal', 'files', 'changes', 'delivery', 'overview'] as const
+  const order = ['browser', 'device', 'terminal', 'files', 'changes', 'delivery', 'overview', 'context'] as const
   return [
     ...order.filter(key => input[key]).map(key => ({ key, ...panelFace(key) })),
     ...(input.plugins ?? []).map(plugin => ({ key: `plugin:${plugin.id}` as const, ...panelFace(`plugin:${plugin.id}`, plugin.title) })),

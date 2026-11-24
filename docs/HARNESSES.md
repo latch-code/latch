@@ -9,6 +9,8 @@ sources:
 ---
 # 接入外部 Harness（ACP）
 
+支持 `pluginCreation` 的 Driver 在专用创造会话把作者引导交给执行端。内置 Harness 用模型系统段落，ACP 在普通提示中另加文本块；厂商原生命令仍按原格式传递。使用者的消息保留原文，创建与审批权限由 Host 负责。见[创造模式](PLUGIN-DEVELOPMENT.md#创造模式与插件市场)。
+
 Latch 只调用用户本机已经装好的 Agent：启动它的命令，可以交给它一个模型服务，并把它的协议对齐成 Latch 的会话。多数 Agent 经 [Agent Client Protocol](https://agentclientprotocol.com)（ACP v1）驱动；Agent 有自己的官方机器协议时直连（见「直连优先」）。每个启用的 Agent 定义是一个 HarnessDriver，与内置 `standard` 并列。
 
 | 位置 | 内容 |
@@ -442,6 +444,7 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 - **会话。** 新会话 `thread/start`，恢复 `thread/resume`（`excludeTurns`）。只有 Codex 自己说没有这个 thread 时才是「该 Harness 已找不到这个会话」；其他拒绝脱敏后照原样显示，接入已有会话据此认出「正在别处使用」。
 - **一轮。** `turn/start` 带输入（文字；图片作 data URL；显式技能用官方目录里的 name 与 path）、模型、思考与当前模式的设置，等到 `turn/completed` 才结束：`completed` 正常，`interrupted` 算取消，`failed` 带 Codex 的原因失败。运行中追加用 `turn/steer`（带当前一轮的 ID）。
 - **事件。** 回答与推理增量流式显示；`commandExecution`、`fileChange`、`mcpToolCall`、`webSearch` 是工具调用；`turn/plan/updated` 是计划，`thread/tokenUsage/updated` 是用量；`willRetry` 的 `error` 是一条重试提示。推理摘要分段到达而段间没有分隔，Latch 在换段时补一个空行。
+- **窗口归属。** `thread/tokenUsage/updated` 的原生 `turnId` 与这轮 Codex 输入匹配时，窗口样本才归入这轮。上一轮迟到的累计用量可补上新一轮的计量起点。旧版省略 `turnId` 时按会话报告处理。
 - **系统错误。** Codex 遇到错误就把 thread 标为 `systemError`（`thread/status/changed`）；会结束一轮的错误另发一条不带 `willRetry` 的 `error`，之后 Codex 可能不再报告这一轮结束。两者都到了、3 秒内这一轮既没有结束也没有新的条目时，Latch 发 `turn/interrupt`（最多等 2 秒），然后以 Codex 最后一条 `error` 的原话（没有时写「Codex 报告这个会话出了内部错误，这一轮没有结束」）结束为失败，不是取消；thread 照常可以继续。只有状态、没有 `error` 的（回滚失败、拒绝追加之类，Codex 不为它结束一轮）不动这一轮。
 - **生成的图片（`imageGeneration`）。** 开始时是一行「生成图片」，`_meta` 带 `latch/imageGeneration`（`IMAGE_GENERATION_META`，运行时只认 Latch 自己的 Codex 线路），行上记 `ToolDetail.imageGeneration`：这一行就是图片的位置。结束时 `failure` 或 `failed` 写「图片生成失败」（用量上限另写），不交图片。字节先取条目的 `result`（base64）；为空时（迁移期只带 `fileId`）按 `savedPath` 发 Codex 自己的 `fs/readFile {path}`，回答 `{dataBase64}`（Codex 0.170 `generate-json-schema`）。由 Codex 自己读，所以 `CODEX_HOME` 改过也读得到；只接受绝对路径、扩展名 png/jpg/jpeg/gif/webp。字节须是规范 base64、开头是 PNG、JPEG、GIF（Codex 0.170 会生成 GIF）或 WebP，解码后不超过 5 MiB（Host 的图片附件上限），每轮最多 8 张；不合格的不交，在行上写原因。合格的放进这一行结算的 `tool_call_update`（内容里的 `image` 块）。运行时把图片块从行的内容里取出（字节不留在行上），经 `saveAttachment` 存为会话附件，作为这一行自己的 `attachments`，和 Agent 的其他图片共用每轮 8 张；存好之前行保持运行，存好后才带着图片结算，所以客户端不会看到结束了却没有图片的行，同一轮多张图各在各的行上，重读、换进程续接后图片仍在原处。存不下时行上写「图片未保存」。这一轮在图片到之前停下：行以「图片未生成」安静结束（`cancelled`，不是结果未知）；Host 重启时的恢复同样处理。读取期间这一轮不结算，30 秒超时；子 Agent 的与读回历史（`thread/read`）里的不交。回复里指向 `savedPath` 的链接按会话文件夹外的已提到文件打开（见 [ARCHITECTURE](ARCHITECTURE.md#会话文件)）；这一轮已经画出生成的图片时，指向图片的链接只留路径标记，不画第二遍。
 - **命令的解析（`commandActions`）。** 全部动作都是读取、列出或搜索时，作为工具条目的可选字段 `actions` 带给客户端；有一项 `unknown` 或不认得的形状就不带，命令原文照旧保存。这个字段只从 Codex 线接受（[STREAMING.md](STREAMING.md#工作过程的行)）。
@@ -511,7 +514,7 @@ Codex 自己中断、Latch 没有要求停止的一轮同样先等它的命令�
 - **一轮。** `prompt` 发出，等到 `agent_settled` 才结束，再读 `get_session_stats`（令牌、上下文占用与花费）。回复以 `error` 结束时这一轮失败；以 `length` 结束按达到长度上限处理；扩展把输入当自己的命令处理（`handled`）时立即结束。
 - **停止。** 先 `clear_queue` 再 `abort`：不清空队列，`abort` 会接着处理排队的追加。清掉的追加内容在会话里写一行。
 - **运行中追加。** pi 在跑这一轮（`agent_start` 到 `agent_end`）时用 `steer`；其他时候交回 Host 排队。
-- **工具与其他事件。** `tool_execution_*` 成为工具行（`bash` 命令，`read` 读取，`edit`、`write` 改文件，`grep`、`find`、`ls` 搜索）。压缩成为压缩行；自动重试、扩展的通知与扩展出错成为通知。pi 转来的失败回复、重试原因、压缩失败原因与扩展出错都先遮住像密钥的部分。
+- **工具与其他事件。** `tool_execution_*` 成为工具行（`bash` 命令，`read` 读取，`edit`、`write` 改文件，`grep`、`find`、`ls` 搜索）。每次压缩分配独立标识，开始和结束共用，只有结束事件时也记一条。恢复原会话后再次压缩会另记一条。自动重试、扩展的通知与扩展出错成为通知。pi 转来的失败回复、重试原因、压缩失败原因与扩展出错都先遮住像密钥的部分。
 - **经 Latch 的会话不让 pi 自己重试。** pi 报告 `auto_retry_start` 时线发 `abort_retry`（RPC 文档的命令，不写设置），通知只写错误，不写「第几次重试」；原因里带 `gateway-busy`（Host 的队列满）的除外。网关已经重试过几秒内会好的失败，pi 的重试按错误文字判断、不读 `x-should-retry`，而 `retry.maxRetries` 只在 pi 的设置文件里，`set_auto_retry` 会写用户的全局设置；重试只由网关一层负责。
 - **扩展的提问。** `confirm` 像审批一样交给人；`select`、`input`、`editor` 是一道题，进同一张提问卡（下文「Agent 的提问」）：`select` 的回答只能是它列出的选项之一（自己写的话答「已取消」，会话里写一行），`input` 与 `editor` 收自己写的话。没人回答时答「已取消」。
 
@@ -597,6 +600,7 @@ Cursor 预设的定义在这台 Mac 上带了 `CURSOR_API_KEY`，且 Host 找得
 
 - **通知（`notice`）。** Agent 不属于对话历史的提示。每条在时间线上一行系统消息，按 `severity` 写「报告错误」或「提示」。它不改变本轮状态。
 - **压缩（`compaction_update`、`compaction_summary_chunk`）。** 一次压缩一行，按 `compactionId` 就地更新（正在、已压缩、失败、已取消），Agent 给的摘要接在后面。行的位置是第一次报告到达时，之前的回复先结束。压缩失败不让本轮失败。Codex 压缩后留下的上下文仍超过它的自动压缩上限时会在每一轮开始再压缩一次，每次一个新 ID；相邻几轮里同样的「已压缩上下文」只留最后一行并写上次数，带摘要、失败或由 /compact 发起的行照旧（`collapseCompactions`）。
+- **上下文记录。** 一次明确报告的压缩保留一条记录，开始、完成、失败和取消沿用同一个标识，未知状态或重启时未结算的状态显示为未知。可归属时关联发起当前轮的用户消息。会话详情保留最近 32 条；历史摘要和 Agent 给的任意文本不进入这份记录。明确完成的压缩和清空上下文会更新窗口分段标记。已经保存的窗口和压缩记录仍留在历史里，旧会话缺少的记录保持未知。
 - **重试（`readRetry`）。** 把 Agent 标明的重试读成一行系统消息，不进思考；回复中途断开重新生成时，已收到的文字丢掉，新文字接在同一条消息里（消息 ID 不变），已收到的思考保留。原因先脱敏，最多 300 字。目前没有预设声明它。
 - **各家说法不同的地方（`normalizeUpdate`）。** 只换不添：Qwen Code 只在 `_meta.toolName` 给工具名，填进 `name`；OpenCode 把回复的思考放在推理片段的 ID 下，去掉这个 ID 后思考归入它所属的回复。调用的 `kind` 只是 `other` 时用标题命名。
 - **用量。** `session/prompt` 的 `usage`（含 `cachedReadTokens`、`cachedWriteTokens`、`thoughtTokens`）按 profile 的 `usageScope` 读：`turn` 是这一轮的，会话总数是轮前总数加它；默认 `session` 是整个会话的，这一轮是差。输入不含缓存的（`inputExcludesCache`）把缓存加回输入。这一轮的写在用户消息的 `TurnStats.usage` 上，不走模型路由时同一值也进自己登录轮次的记录。各家实测（2026-11-16）：
@@ -654,7 +658,9 @@ Claude Agent 与 OpenCode 的预设原先保存的是适配器路线（`claude-a
 - **自己的 MCP 服务器。** 第一轮开始时报告 `mcpServerStatus()`（不含 Latch 给会话的服务器）作 `_latch_mcp_status`；没有会话时为「读取」开一个不留记录的会话（`persistSession: false`）读完即关。
 - **不经一轮的额度。** 问 Claude 的实验接口 `get_usage`（SDK 类型里没有的 `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET`，带 `skipBehaviors`，否则它会扫近 7 天的转录），只读认得的形状（`rate_limits` 各窗口的 `utilization` 0–100 与 `resets_at`、套餐）。会话打开时在会话自己的进程上问；有人看「额度」时照「有人看时」的规则在私有空目录起一个 `claude`，开一个只为这次读取的会话：`persistSession: false` 不留转录，`strictMcpConfig` 不启动人配置的 MCP 服务器，flag 设置 `disableAllHooks` 不运行人的 hooks（管理员的托管 hooks 仍运行），问完关掉。Claude 答 `rate_limits_available: false`（API 密钥、Bedrock、Vertex）或没有这个接口时不是失败：「额度」写「只在对话中报告」，30 分钟内有人看也不再问（「重试」除外）。经网关或形状不对时什么也不说，之前显示的照旧。
 - **经 Latch 使用模型服务的预检。** 第一轮开始时以 `notice` 警告：组织托管设置里的 `apiKeyHelper`、托管的 `availableModels` 不含这个模型；不经网关时设置 `env` 里自己的 `ANTHROPIC_BASE_URL`；设置 `env` 里写了 `CLAUDE_CONFIG_DIR`（这时 Latch 读到的存储可能不是 Claude 在用的那份）。
-- **用量与额度。** 结果的 `usage`：`input_tokens` 是不含缓存的输入，缓存读写另记。之后 2 秒内读 `getContextUsage()` 的 `totalTokens` 与 `maxTokens` 作上下文占用；`total_cost_usd` 作花费（经网关时不报）。`rate_limit_event` 照适配器放进 `usage_update._meta["_claude/rateLimit"]`；一轮因回复错误失败时错误 `data` 带 `errorKind`（适配器同样），`rate_limit` 时另带最近一次的 `rateLimit`，额度照常读。
+- **用量与额度。** 结果的 `usage`：`input_tokens` 是不含缓存的输入，缓存读写另记。之后在 2 秒内读一次现有的 `getContextUsage()` 完整报告。`totalTokens` 是 Claude 对当前占用的估计，`maxTokens` 是它报告的窗口。详情同时保留这一次报告的分类计数，区分已用、剩余、压缩预留和延迟加载的定义；未知分类按这四种口径汇总。消息明细是消息类内部的分项，服务商上一次回复的 `apiUsage` 单独保存，两者都不加进窗口总量。文件名、MCP 服务器名和工具明细名称留在 Claude 线。`total_cost_usd` 作花费（经网关时不报）。`rate_limit_event` 照适配器放进 `usage_update._meta["_claude/rateLimit"]`；一轮因回复错误失败时错误 `data` 带 `errorKind`（适配器同样），`rate_limit` 时另带最近一次的 `rateLimit`，额度照常读。
+- **窗口历史。** 最近 32 轮保留各自那次窗口报告自带的分类与时间；后续报告缺少分类时，该次分类显示为未知。更早的轮次保留已用量和已报告的容量。
+- **压缩。** `compact_boundary` 是 Claude 确认压缩完成的事件。会话只记录手动或自动、压缩前后 token 数和耗时中 Claude 确实报告的值，省略压缩摘要和被保留的消息清单。上下文占用下降时不推断压缩。
 - **登录。** 开会话时把 `initializationResult().account` 照适配器的 `fromAccountInfo` 推送为 `_auth/status_update`（`account` 套餐、`api_key`、`external`、经网关时 `gateway`），不带邮箱与组织；变了才推送。
 - **斜杠命令。** 第一轮开始时把 `initializationResult()` 列出的命令报告给运行时。
 
@@ -823,7 +829,7 @@ Latch 内置的档位由 Latch 自己执行：它不改调用的风险等级，�
 | `current_mode_update` / `config_option_update` | 更新记录的模式；被放宽时见「权限模式」 |
 | `session_info_update.title` | 会话标题（用户重命名优先） |
 | `PromptResponse.usage` | 会话与这一轮的用量，按 profile 的 `usageScope`（见「通知与压缩」的用量） |
-| `usage_update` | `TaskDetail.usageReport`：上下文已用、窗口大小与费用，整体替换；不算可见输出，不计入 tokens。经网关的会话没报窗口大小时，用服务为当前模型声明的上下文长度 |
+| `usage_update` | `TaskDetail.usageReport`：上下文已用、窗口大小与费用，整体替换；不算可见输出，不计入 tokens。经网关的会话没报窗口大小时，用服务为当前模型声明的上下文长度。能归属某轮的已用量、来源与窗口分段标记另记入该轮的 `turn.contextWindow`，供逐轮窗口趋势使用 |
 
 - 未知的更新类型被忽略。
 - 上限：单条工具文本 64 KiB；每个工具最多 32 个 diff，原内容与新内容各截到 128 KiB；单行协议消息超过 64 MiB 终止进程。

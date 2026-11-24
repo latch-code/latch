@@ -413,6 +413,8 @@ export function Sidebar({
   agents,
   overview,
   onSchedules,
+  onMarketplace,
+  marketplaceActive,
   quota,
   update,
   computerAtFoot = false,
@@ -428,6 +430,8 @@ export function Sidebar({
   agents?: { primary: import('react').ReactNode; list: import('react').ReactNode } | undefined
   overview?: { active: boolean; open: () => void }
   onSchedules?: () => void
+  onMarketplace?: (() => void) | undefined
+  marketplaceActive?: boolean | undefined
   /** 额度与用量 in the foot's row, where this window shows it there. */
   quota?: import('react').ReactNode
   /** 检查更新 at the right end of the foot's row. */
@@ -479,6 +483,8 @@ export function Sidebar({
         computer={computerChip}
         overview={overview}
         onSchedules={onSchedules}
+        onMarketplace={onMarketplace}
+        marketplaceActive={marketplaceActive}
         computerAtFoot={computerAtFoot}
       />
       {inAgents ? (

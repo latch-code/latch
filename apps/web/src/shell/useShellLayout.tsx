@@ -36,6 +36,7 @@ import { openItemPage, type WorkItemSessionTarget } from '../board/itemPage.ts'
 import { useProposalWrites } from '../board/proposals.ts'
 import { shortcutMatches, shortcutWorksOnPage, workbenchShortcut, type TerminalPaneAction } from '../workbenchShortcuts.ts'
 import { frameShortcutAllowed } from '../plugin-pages/model.ts'
+import { isMarketplaceLink, marketplaceAvailable, marketplaceUrl } from '../plugin-marketplace/route.ts'
 import { conversationShown } from '../composer/useArmed.ts'
 import {
   RIGHT_PANEL_DEFAULT,
@@ -72,6 +73,7 @@ import type { PaletteLevel } from '../palette/model.ts'
 import { projectOf, listedSessions, readFolded, shelvesKey, spaceOf, steppedSession, type SessionFilter } from '../sessions.ts'
 import { connectionWords, hostNoticeCopy } from '../core/hostState.ts'
 import { computerLabel } from '../core/securityCopy.ts'
+import { deviceAccess } from '../core/permissions.ts'
 import { hostIsOlder, oldHostWords } from '../core/build.ts'
 import { hostLine, useShellLifecycle } from '../core/shellLifecycle.ts'
 import { currentShell, shellBrowser, shellFolders } from '../core/shell.ts'
@@ -90,6 +92,7 @@ import { offersPluginPanel, surfaceKey, type PanelSurface } from '../components/
 import {
   closePanelTab,
   freshPanelMemory,
+  isBundledContextPanel,
   openPanelTab,
   panelChoices,
   shownPanelTabs,
@@ -107,6 +110,7 @@ import { toggleUsage } from '../usage/surface.ts'
 import { defineCopy } from '../core/i18n.ts'
 import { SHELL_COPY } from './copy.ts'
 import { describeFailure } from '../core/securityCopy.ts'
+import { canEditPluginPackages } from '../settings/pluginAssets.ts'
 
 const COPY = defineCopy(
   {
@@ -179,6 +183,35 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       : undefined
   const viewport = useViewport()
   const phone = viewport === 'phone'
+  const canBrowseMarketplace = marketplaceAvailable(snapshot, navigator)
+  const marketAccess = deviceAccess(snapshot, currentShell())
+  const canAddPlugins =
+    marketAccess.scopes.has('view')
+    && canEditPluginPackages(snapshot, marketAccess)
+    && (snapshot.catalog?.features?.pluginExternalSources === true || snapshot.catalog?.features?.pluginNpmRegistry === true)
+  const [marketplaceSource, setMarketplaceSource] = useState<'bundled' | 'add'>('bundled')
+  const [marketOrigin, setMarketOrigin] = useState<'settings' | 'settings-without-market' | null>(null)
+  const [marketplaceVisit, setMarketplaceVisit] = useState<'open' | 'closed' | null>(() =>
+    isMarketplaceLink(location.href) && canBrowseMarketplace ? 'open' : null,
+  )
+  const marketAvailable = canBrowseMarketplace || (marketOrigin === 'settings-without-market' && canAddPlugins)
+  const marketplace = marketplaceVisit === 'open' && marketAvailable
+  const marketReturnFocus = useRef<HTMLElement | null>(null)
+  const marketFocus = useRef<HTMLDivElement>(null)
+  const closeMarketplace = useCallback(() => {
+    setMarketOrigin(null)
+    setMarketplaceVisit(previous => (previous === null ? previous : 'closed'))
+  }, [])
+  // A direct link has its own Back entry as well. Keep the entry underneath usable on every device.
+  useLayoutEffect(() => {
+    if (isMarketplaceLink(location.href)) history.replaceState(history.state, '', marketplaceUrl(location.href, false))
+  }, [])
+  useLayoutEffect(() => {
+    if (!marketAvailable) {
+      setMarketplaceVisit(null)
+      if (isMarketplaceLink(location.href)) history.replaceState(history.state, '', marketplaceUrl(location.href, false))
+    }
+  }, [marketAvailable])
   const [storedRoute, updateRoute] = useState<ShellRoute>(() =>
     initialRoute(
       snapshot.device.id,
@@ -189,25 +222,28 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     ),
   )
   // Code without an open session is its start screen: 新会话 is its input, not a page of its own. A phone keeps its list.
-  const route = useMemo<ShellRoute>(
+  const pageUnderMarket = useMemo<ShellRoute>(
     () =>
       !phone && storedRoute.entry === 'sessions' && !storedRoute.start && selectedId === null
         ? { ...storedRoute, start: true }
         : storedRoute,
     [phone, storedRoute, selectedId],
   )
+  const route: ShellRoute = marketplace ? { entry: 'marketplace' } : pageUnderMarket
+  const hasStart = pageUnderMarket.start === true
   const routeRef = useRef(route)
-  const [settings, setSettings] = useState<Pick<ShellRoute, 'section' | 'projectId' | 'agent'> | null>(null)
+  const [settings, setSettings] = useState<Pick<ShellRoute, 'section' | 'projectId' | 'pluginId' | 'agent'> | null>(null)
   const closeSettings = useCallback(() => setSettings(null), [])
   routeRef.current = route
   // Where Code was left: its start screen or the open session. A page over it (设置, 应用) returns there, and a reload of
   // this tab finds the start screen again when that was what showed.
   const codePlace = useRef<Pick<ShellRoute, 'start'>>({})
-  if (route.entry === 'sessions') codePlace.current = route.start ? { start: true } : {}
-  const homeShown = route.entry === 'sessions' ? route.start === true : codePlace.current.start === true
+  if (pageUnderMarket.entry === 'sessions') codePlace.current = hasStart ? { start: true } : {}
+  const homeShown = codePlace.current.start === true
   const preferences = usePreferences()
   /** 看板 covers 对话, which stays mounted under it; a page, a session or 设置 opened from anywhere comes back to 对话. */
-  const board = preferences.workView === 'board'
+  const keepBoard = preferences.workView === 'board'
+  const board = keepBoard && !marketplace
   const leaveBoard = () => {
     if (readPreferences().workView === 'board') setPreference('workView', 'chat')
   }
@@ -224,18 +260,24 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     writeHomeShown(snapshot.device.id, homeShown)
   }, [snapshot.device.id, homeShown])
   const parkInput = useRef<() => boolean>(() => true)
-  const setRoute: Dispatch<SetStateAction<ShellRoute>> = useCallback(next => {
-    const target = typeof next === 'function' ? next(routeRef.current) : next
-    if (!!target.start !== !!routeRef.current.start && !parkInput.current()) return
-    // 我的 Agent and 应用 are pages of 对话.
-    if (target.entry !== 'sessions') leaveBoard()
-    routeRef.current = target
-    updateRoute(target)
-  }, [])
+  const setRoute: Dispatch<SetStateAction<ShellRoute>> = useCallback(
+    next => {
+      const target = typeof next === 'function' ? next(routeRef.current) : next
+      if (target.entry === 'marketplace') return
+      if (!!target.start !== hasStart && !parkInput.current()) return
+      closeMarketplace()
+      // 我的 Agent and 应用 are pages of 对话.
+      if (target.entry !== 'sessions') leaveBoard()
+      routeRef.current = target
+      updateRoute(target)
+    },
+    [hasStart, closeMarketplace],
+  )
   const session = useSessionController({
+    board: keepBoard,
     harness,
     snapshot,
-    inputTarget: route.start ? 'new' : 'session',
+    inputTarget: hasStart ? 'new' : 'session',
     atStart: () => {
       const place = routeRef.current
       return place.entry === 'sessions' && place.start === true
@@ -249,7 +291,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       drawer.setOpen(false)
       setInfoPage(false)
       setFileExpanded(false)
-      if (id !== null) updateRoute({ entry: 'sessions' })
+      if (id !== null) {
+        closeMarketplace()
+        routeRef.current = { entry: 'sessions' }
+        updateRoute(routeRef.current)
+      }
     },
     onForegroundSent: () => {
       // A late receipt may settle the input, but must not undo an explicit navigation away from it.
@@ -323,6 +369,15 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   /** The current entry, its section, and where a page puts its title. */
   // A wide window opens where this device was last; a session the page restores keeps its own place.
   const [titleSlot, setTitleSlot] = useState<HTMLElement | null>(null)
+  const [creatorDraftTarget, setCreatorDraftTarget] = useState<HTMLElement | null>(null)
+  const canReviewDrafts =
+    catalog?.features?.appPages === 1
+    && catalog.features.pluginPackages === true
+    && access.local
+    && access.admin
+    && snapshot.device.dataScope === 'all'
+    && access.scopes.has('view')
+  const showCreatorDraft = !marketplace && !!summary?.pluginCreation && summary.status === 'idle' && canReviewDrafts
   /** Shut by the person (its button, a drag past the snap point, the keyboard), as opposed to shut for the column. */
   const sidebarShut = sidebarColumn && (sidebarDrag !== null ? sidebarDrag.collapsed : preferences.sidebar.collapsed)
   /**
@@ -352,8 +407,16 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const setupTrigger = useRef<HTMLButtonElement>(null)
   /** The home's input, which starts a session; the open session's own input stays mounted under the home. */
   const homeComposerRef = useRef<PromptInput>(null)
+  const focusCreator = useRef(false)
+  useEffect(() => {
+    if (!focusCreator.current || settings || marketplace || board) return
+    focusCreator.current = false
+    // Settings returns focus to its opener on close. Take that focus as the starting point for this navigation.
+    if (route.entry === 'sessions' && route.start && session.creator) focusNextFrame(homeComposerRef)
+  }, [settings, marketplace, board, route.entry, route.start, session.creator])
   /** The home with its input focused, for what has already let go of the open session (a fork, a pending start). */
   const showHome = useStableCallback(() => {
+    closeMarketplace()
     drawer.setOpen(false)
     if (!routeRef.current.start || routeRef.current.entry !== 'sessions') {
       routeRef.current = { entry: 'sessions', start: true }
@@ -369,8 +432,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     if (phone && session.inputId === null && !routeRef.current.start) showHome()
   }, [phone, session.inputId, session.projectAsk.request])
   useEffect(() => {
-    if (route.start) focusNextFrame(homeComposerRef)
-  }, [route.start])
+    if (hasStart && routeRef.current.entry === 'sessions') focusNextFrame(homeComposerRef)
+  }, [hasStart])
   const searchRef = useRef<HTMLInputElement>(null)
   const [commandMode, setCommandMode] = useState<PaletteLevel>('root')
   const [commandOpen, setCommandOpen] = useState(false)
@@ -426,7 +489,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const entriesKey = entries.join()
   // An entry this device can no longer use closes at once.
   useLayoutEffect(() => {
-    if (!entries.includes(route.entry)) setRoute({ entry: 'sessions' })
+    if (route.entry !== 'marketplace' && !entries.includes(route.entry)) setRoute({ entry: 'sessions' })
     if (!entries.includes('settings')) closeSettings()
   }, [closeSettings, entriesKey, route.entry])
   const panelToggle = useRef<HTMLButtonElement>(null)
@@ -453,7 +516,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const draftFileKey = draftFileContext ? fileContextKey(draftFileContext) : ''
   useEffect(() => {
     setDraftFilesOpen(false)
-  }, [draftFileKey, fileAuthority, route.start])
+  }, [draftFileKey, fileAuthority, hasStart])
   const previewAllowed =
     catalog?.features?.filePreview
     && access.scopes.has('view')
@@ -487,7 +550,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const terminalWorkspace = catalog?.workspaces.find(item => item.id === workspaceId)
   const terminalTarget: TerminalTarget | undefined = !hasTerminal
     ? undefined
-    : route.start || selectedId === null
+    : hasStart || selectedId === null
       ? { workspaceId }
       : sessionTerminal && summary.id === selectedId
         ? { sessionId: summary.id }
@@ -498,8 +561,9 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       ? undefined
       : (terminalWorkspace?.unavailable ?? (terminalWorkspace ? undefined : COPY.missingFolder))
   const terminalLocation = terminalTarget?.workspaceId !== undefined ? terminalWorkspace?.name : summary?.cwd && basename(summary.cwd)
-  const canTerminal = terminalTarget !== undefined && !phone && route.entry === 'sessions'
-  const dockWanted = canTerminal && preferences.dockOpen
+  const terminalAvailable = terminalTarget !== undefined && !phone && pageUnderMarket.entry === 'sessions'
+  const canTerminal = terminalAvailable && !marketplace
+  const dockWanted = terminalAvailable && preferences.dockOpen
   const [terminalIntent, setTerminalIntent] = useState<string>()
   useLayoutEffect(() => {
     setTerminalIntent(undefined)
@@ -522,24 +586,28 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   // This Mac's simulators: the Host offers them only on host.sock to a device allowed what the terminal is; not on a phone.
   const canDevice = catalog?.features?.simulators === true && !phone && !!summary && !summary.archived
   /** The session's terminals may stand in the right panel instead of the dock (not on a phone, which has neither). */
-  const panelTerminal = canTerminal && !!summary && terminalTarget?.sessionId === summary.id
-  const offeredPanels = summary ? (catalog?.uiPanels ?? []).filter(panel => offersPluginPanel(panel, summary)) : []
+  const panelTerminal = terminalAvailable && !!summary && terminalTarget?.sessionId === summary.id
+  const sessionPanels =
+    summary && access.scopes.has('view') ? (catalog?.uiPanels ?? []).filter(panel => offersPluginPanel(panel, summary)) : []
+  const offeredPanels = sessionPanels.filter(panel => !isBundledContextPanel(panel))
   const panelAvailable = (key: PanelKey): boolean =>
-    key === 'overview'
-      ? !!summary && spaceOf(summary) === 'code'
-      : key === 'changes'
-        ? canViewChanges
-        : key === 'delivery'
-          ? canDeliver
-          : key === 'browser'
-            ? canBrowser
-            : key === 'device'
-              ? canDevice
-              : key === 'terminal'
-                ? panelTerminal
-                : key === 'files'
-                  ? canBrowseFiles
-                  : offeredPanels.some(panel => `plugin:${panel.id}` === key)
+    key === 'context'
+      ? !!summary && access.scopes.has('view')
+      : key === 'overview'
+        ? !!summary && spaceOf(summary) === 'code'
+        : key === 'changes'
+          ? canViewChanges
+          : key === 'delivery'
+            ? canDeliver
+            : key === 'browser'
+              ? canBrowser
+              : key === 'device'
+                ? canDevice
+                : key === 'terminal'
+                  ? panelTerminal
+                  : key === 'files'
+                    ? canBrowseFiles
+                    : offeredPanels.some(panel => `plugin:${panel.id}` === key)
   const panelChoiceList = panelChoices({
     browser: canBrowser,
     device: canDevice,
@@ -548,6 +616,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     changes: canViewChanges,
     delivery: canDeliver,
     overview: panelAvailable('overview'),
+    context: panelAvailable('context'),
     plugins: offeredPanels.map(panel => ({ id: panel.id, title: panel.title })),
   })
   // The right panel's tabs and the selected one, remembered per session (or project files) on this device.
@@ -570,7 +639,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const browserOpen = selectedShown('browser')
   const filesOpen = selectedShown('files')
   const terminalPanelOpen = selectedShown('terminal')
-  const pluginPanel = panelSelected?.startsWith('plugin:') && surfaceShown ? panelSelected.slice(7) : undefined
   const filesVisible = !!fileTabs.active || filesOpen
   const terminalOpen = dockWanted && !terminalInPanel
   useLayoutEffect(() => {
@@ -618,7 +686,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const sidebarCollapsed = sidebarShut
   // What stands left of the conversation: the open sidebar, or a tablet's rail.
   const panelLeft = sidebarColumn && !sidebarCollapsed ? sidebarWidth : viewport === 'tablet' ? TABLET_RAIL : 0
-  const homeInspector = route.start === true && !phone && canBrowseDraftFiles
+  const homeInspector = hasStart && !phone && canBrowseDraftFiles
   const homeInspectorOpen = homeInspector && draftFilesOpen
   const showingChanges = panelSelected === 'changes'
   const panelWidth =
@@ -653,12 +721,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       || canViewChanges
       || canDeliver
       || canBrowser
-      || catalog?.uiPanels?.some(panel => offersPluginPanel(panel, summary)) === true)
+      || offeredPanels.length > 0)
   const columnOpen =
     placement !== null
     && placement.kind !== 'page'
     && !(findOpen && placement.kind === 'sheet')
-    && (route.start === true
+    && (hasStart
       ? homeInspectorOpen
       : profileColumn
         || filesVisible
@@ -685,7 +753,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     inertWhenOpen: [
       { ref: main, base: route.entry !== 'sessions' || route.start === true || board },
       { ref: titlebar, base: false },
-      { ref: terminalDock, base: !terminalOpen || board },
+      { ref: terminalDock, base: !terminalOpen || board || marketplace },
+      { ref: marketFocus, base: !marketplace },
     ],
     shut: sidebarCollapsed || board,
   })
@@ -779,7 +848,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
    * position; an explicit action (a fork, a continuation) lets go of it and may replace the home's draft atomically.
    */
   const startNewDraft = (intent?: SessionSelectionIntent, afterSelect?: () => void) => {
-    const project = session.inputId === null ? undefined : projectFor(catalog, summary)
+    // A creator's private folder is only for authoring; the ordinary draft keeps the project the person picked.
+    const project = session.inputId === null || summary?.pluginCreation ? undefined : projectFor(catalog, summary)
     const arrived = () => {
       submission.setFork(null)
       if (project) submission.updateChoice({ workspaceId: project })
@@ -851,11 +921,15 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     [choose, closeSettings],
   )
   const openSettings = (section?: SettingsSection) => {
-    leaveBoard()
+    if (!marketplace) leaveBoard()
     setSettings(section ? { section } : {})
   }
   /** 会话 returns to the last open session. 设置 covers the current route without changing it. */
   const goEntry = (entry: ShellEntry) => {
+    if (entry === 'marketplace') {
+      openMarketplace()
+      return
+    }
     if (entry === 'settings') {
       openSettings()
       return
@@ -1072,6 +1146,74 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const openProjectSettings = (projectId: string) => {
     setSettings({ section: 'workspaces', projectId })
   }
+  const openCreator = (seed = '') => {
+    if (!session.creatorAvailable || session.creatorBlockedReason) return
+    leaveBoard()
+    drawer.setOpen(false)
+    setRoute({ entry: 'sessions', start: true })
+    if (!routeRef.current.start || !session.chooseCreator(true, seed)) return
+    if (settings || marketplace || board || !route.start) focusCreator.current = true
+    else focusNextFrame(homeComposerRef)
+    closeSettings()
+    closeMarketplace()
+  }
+  const openMarketplace = () => {
+    if (!canBrowseMarketplace) return
+    if (!marketplace) {
+      setMarketOrigin(null)
+      marketReturnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      setMarketplaceVisit('open')
+    }
+    drawer.setOpen(false)
+    closeSettings()
+  }
+  const openAddPlugin = () => {
+    if (!canAddPlugins) return
+    if (!marketplace) setMarketOrigin(canBrowseMarketplace ? 'settings' : 'settings-without-market')
+    setMarketplaceSource('add')
+    setMarketplaceVisit('open')
+    drawer.setOpen(false)
+    closeSettings()
+  }
+  const dismissMarketplace = useStableCallback(() => {
+    closeMarketplace()
+    if (marketOrigin) {
+      setSettings({ section: 'plugins' })
+      return
+    }
+    const returnFocus = marketReturnFocus.current
+    marketReturnFocus.current = null
+    requestAnimationFrame(() => {
+      if (document.querySelector('dialog[open]')) return
+      const frame = appShell.current
+      const targets = [
+        returnFocus,
+        ...(frame?.querySelectorAll<HTMLElement>('[data-marketplace-nav], .board-surface, .workbench-home, main.workspace') ?? []),
+      ]
+      const target = targets.find(
+        element => element?.isConnected && element.checkVisibility({ visibilityProperty: true }) && !element.closest('[inert]'),
+      )
+      if (!target) return
+      if (target.tabIndex < 0 && !target.hasAttribute('tabindex')) target.tabIndex = -1
+      target.focus({ preventScroll: true })
+    })
+  })
+  useEffect(() => {
+    if (!marketplace || settingsOpen) return undefined
+    const pending = requestAnimationFrame(() => {
+      const page = marketFocus.current
+      if (!page?.contains(document.activeElement)) page?.focus({ preventScroll: true })
+    })
+    return () => cancelAnimationFrame(pending)
+  }, [marketplace, settingsOpen])
+  const manageMarketPlugin = (pluginId: string) => {
+    if (!marketplace || connection !== 'connected' || !canEditPluginPackages(snapshot, access)) return
+    setSettings({ section: 'plugins', pluginId })
+  }
+  const openPluginSettings = (pluginId: string) => {
+    leaveBoard()
+    setSettings({ section: 'plugins', pluginId })
+  }
   const openAgentPage = (target: AgentPageTarget) => {
     setSettings({ section: 'engines', agent: target })
   }
@@ -1232,7 +1374,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     || attachmentDraft.preparing
     || (route.start ? session.homeComposerState.gate : gate).kind !== 'open'
   // The open column stands beside the conversation, which keeps its minimum width between the two.
-  const inspectorBeside = columnOpen && placement?.kind === 'column' ? inspectorWidth : 0
+  const inspectorBeside = columnOpen && placement?.kind === 'column' && !marketplace ? inspectorWidth : 0
   const sidebarLimit = sidebarMax(windowWidth, inspectorBeside)
   const setSidebarShut = (shut: boolean) => {
     saveSidebar({ collapsed: shut })
@@ -1241,7 +1383,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const toggleSidebar = () => {
     if (board) return
     if (!drawerMode) setSidebarShut(!sidebarCollapsed)
-    else if (route.entry === 'sessions') drawer.setOpen(!drawer.open)
+    else if (route.entry === 'sessions' || marketplace) drawer.setOpen(!drawer.open)
   }
   const resizeSidebar = (raw: number, step: ResizePhase) => {
     const next = sidebarAfterDrag(raw, windowWidth, inspectorBeside)
@@ -1641,19 +1783,57 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     const { width: _width, ...rest } = preferences.rightPanel
     setPreference('rightPanel', rest)
   }
-  /**
-   * Shows a row of the conversation: a row inside a closed disclosure (the folded process of a turn) is opened first,
-   * as the browser's find would open it, and the reading position keeps the row in place while it opens.
-   */
-  const revealRow = (messageId: string, offset?: number, hold?: boolean) => {
-    const row = document.querySelector(`.transcript [data-message-id="${CSS.escape(messageId)}"]`)
+  type ContextRow = { sessionId: string; kind: 'turn' | 'tool'; messageId: string; resultId: string | undefined }
+  const [contextRow, setContextRow] = useState<ContextRow | null>(null)
+  const canViewContext = access.scopes.has('view')
+  if (contextRow && (!canViewContext || contextRow.sessionId !== selectedId)) setContextRow(null)
+  const readContextRow = useStableCallback((sessionId: string, kind: ContextRow['kind'], messageId: string) => {
+    if (!canViewContext || current?.summary.id !== sessionId) return undefined
+    const index = current.messages.findIndex(message => message.id === messageId)
+    if (index < 0 || index !== current.messages.findLastIndex(message => message.id === messageId)) return undefined
+    const message = current.messages[index]
+    if (!message) return undefined
+    if (kind === 'turn' ? message.role === 'user' && !message.steered : message.role === 'tool' && message.contextToolId !== undefined)
+      return message
+    return undefined
+  })
+  const canRevealContextRow = useStableCallback(({ sessionId, kind, messageId, resultId }: ContextRow) => {
+    const message = readContextRow(sessionId, kind, messageId)
+    return message && message.contextToolId === resultId
+  })
+  const revealContextRow = (sessionId: string, kind: ContextRow['kind'], messageId: string) => {
+    const message = readContextRow(sessionId, kind, messageId)
+    if (!message) return false
+    setContextRow({ sessionId, kind, messageId, resultId: message.contextToolId })
+    return true
+  }
+  const activeContextRow = canViewContext && current?.summary.id === contextRow?.sessionId ? contextRow : null
+  const shownContextRow = useRef<ContextRow | null>(null)
+  /** Open each enclosing process disclosure before giving the exact row to the reading position. */
+  const revealRow = useStableCallback((messageId: string, offset?: number, hold?: boolean, scoped?: ContextRow) => {
+    if (scoped && !canRevealContextRow(scoped)) return
+    const selector = `[data-message-id="${CSS.escape(messageId)}"]`
+    const rows = reading.contentRef.current?.querySelectorAll(selector)
+    if (scoped && rows?.length !== 1) return
+    const row = rows?.[0]
     for (let hidden = row?.closest('[hidden="until-found"]'); hidden; hidden = hidden.parentElement?.closest('[hidden="until-found"]')) {
       hidden.dispatchEvent(new Event('beforematch'))
     }
     requestAnimationFrame(() => {
+      if (scoped && (!canRevealContextRow(scoped) || reading.contentRef.current?.querySelectorAll(selector).length !== 1)) return
       reveal(messageId, offset, hold)
     })
-  }
+  })
+  useEffect(() => {
+    if (!activeContextRow || !conversationVisible || (pageMode && infoPage) || shownContextRow.current === activeContextRow)
+      return undefined
+    const frame = requestAnimationFrame(() => {
+      if (!canRevealContextRow(activeContextRow)) return
+      shownContextRow.current = activeContextRow
+      revealRow(activeContextRow.messageId, undefined, true, activeContextRow)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [activeContextRow, canRevealContextRow, conversationVisible, pageMode, infoPage, revealRow])
   const returnToWorkItem = useStableCallback(() => {
     if (!itemReturn) return
     const restore = () => {
@@ -1996,9 +2176,13 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     panelToggle.current?.focus({ preventScroll: true })
   }
   // A pushed page holds a place in the browser's history, so the platform's back returns to the page under it.
-  useBackLayer(phone && conversationVisible && selectedId !== null && !popping, instant => {
-    back(instant)
-  })
+  const underMarket = marketplace ? pageUnderMarket : route
+  useBackLayer(
+    phone && underMarket.entry === 'sessions' && !underMarket.start && !keepBoard && selectedId !== null && !popping,
+    instant => {
+      back(instant)
+    },
+  )
   useBackLayer(pageMode && infoPage, closeInfoPage)
   // Phones: the list a session is pushed over can no longer hold focus (nor the sheet a new one started from, sliding
   // away), so the page takes it at its way back, as a settings page does; focus already on the page, or in a dialog
@@ -2016,6 +2200,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     route,
     setRoute,
     board,
+    keepBoard,
     showChat: leaveBoard,
     askBoardGroup,
     askBoardNew,
@@ -2200,6 +2385,26 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     delegation,
     agentRemovals,
     openProjectSettings,
+    openPluginSettings,
+    creatorDraftTarget,
+    setCreatorDraftTarget,
+    canReviewDrafts,
+    showCreatorDraft,
+    canBrowseMarketplace,
+    marketplaceVisited: marketAvailable && marketplaceVisit !== null,
+    marketplaceSource,
+    setMarketplaceSource,
+    marketplaceBackInPage: !sidebarColumn || marketOrigin !== null,
+    canAddPlugins,
+    marketplace,
+    marketFocus,
+    marketplacePath: marketplace && canBrowseMarketplace ? marketplaceUrl(location.href, true) : undefined,
+    marketplaceOverHome: marketplace && underMarket.entry === 'sessions' && underMarket.start === true && !keepBoard,
+    openMarketplace,
+    openAddPlugin,
+    dismissMarketplace,
+    manageMarketPlugin,
+    openCreator,
     openSearch,
     searchShortcut,
     manageProviders,
@@ -2221,7 +2426,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     conversationWidth: windowWidth - panelLeft - (columnOpen && placement?.kind === 'column' ? inspectorWidth : 0),
     workbenchKeys,
     resizeInspector,
-    revealRow,
+    revealContextRow,
+    contextToolMessageId: activeContextRow?.kind === 'tool' ? activeContextRow.messageId : undefined,
     itemReturn,
     returnToWorkItem,
     openWorkItem,

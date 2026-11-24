@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, expect, test, vi } from 'vitest'
 import { createRuntime, PluginRegistry } from '@latch/core'
 import type { ModelMessage } from '@latch/sdk'
-import type { AgentExecutionContext } from '@latch/protocol'
+import { PLUGIN_CREATION_GUIDE, type AgentExecutionContext } from '@latch/protocol'
 
 const cleanup: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -59,6 +59,7 @@ async function fixture() {
         model: 'fixture',
         async *stream({ messages, tools }) {
           seen.push({ messages: structuredClone(messages), tools: tools.map(tool => tool.name) })
+          yield { type: 'usage', inputTokens: messages.length * 11, outputTokens: 1 }
           yield { type: 'text', text: 'Done' }
           yield { type: 'finish', reason: 'stop' }
         },
@@ -192,6 +193,50 @@ test('starts every built-in session from the base prompt, with the agent context
   await vi.waitFor(async () => expect((await runtime.detail(sessionId)).summary.status).toBe('idle'))
   expect(seen[0]?.messages[0]).toMatchObject({ role: 'system', content: expect.stringContaining('Latch 的内置 Agent') })
   expect(seen[0]?.tools).toEqual(expect.arrayContaining(['selected_tool', 'other_tool']))
+})
+
+test('adds the authoring guide only to creation sessions, across restart, without changing the user message or tools', async () => {
+  const { runtime, seen, dir, registry } = await fixture()
+  const input = { prompt: '帮我做一个清单', requestId: 'studio' }
+  const { sessionId } = await runtime.createTask({ ...input, pluginCreation: true })
+  await vi.waitFor(async () => expect((await runtime.detail(sessionId)).summary.status).toBe('idle'))
+  const snapshot = (await runtime.detail(sessionId)).requestContext
+  expect(snapshot).toEqual({
+    at: expect.any(String),
+    userMessages: 1,
+    assistantMessages: 0,
+    toolResults: 0,
+    images: 0,
+    tools: seen[0].tools.length,
+    skills: 2,
+    inputTokens: seen[0].messages.length * 11,
+    creator: true,
+  })
+  expect(seen[0]?.messages).toContainEqual({ role: 'system', content: PLUGIN_CREATION_GUIDE })
+  const firstStep = (await runtime.detail(sessionId)).contextSteps![0]!
+  const systems = seen[0]!.messages.filter(message => message.role === 'system')
+  const skill = systems.find(message => message.content.includes('selected skill'))!
+  expect(firstStep.bytes).toMatchObject({
+    instructions: systems.filter(message => message !== skill).reduce((size, message) => size + Buffer.byteLength(message.content), 0),
+    skills: Buffer.byteLength(skill.content),
+    user: Buffer.byteLength(input.prompt),
+  })
+  expect(JSON.stringify(firstStep)).not.toContain(skill.content)
+  expect(firstStep.outputTokens).toBe(1)
+  expect((await runtime.detail(sessionId)).messages[0]?.text).toBe(input.prompt)
+  await expect(runtime.createTask(input)).rejects.toMatchObject({ code: 'request-conflict' })
+  await runtime.close()
+  const restored = createRuntime({ dataDir: dir, workspaceRoot: dir, registry, providerId: 'fixture' })
+  cleanup.push(() => restored.close())
+  expect((await restored.detail(sessionId)).requestContext).toEqual(snapshot)
+  expect((await restored.detail(sessionId)).contextSteps).toEqual([firstStep])
+  await restored.prompt(sessionId, '再改一下', 'studio-update', { freshContext: true })
+  await vi.waitFor(async () => expect((await restored.detail(sessionId)).summary.status).toBe('idle'))
+  expect(seen[1]?.messages).toContainEqual({ role: 'system', content: PLUGIN_CREATION_GUIDE })
+  const normal = await restored.createTask({ ...input, requestId: 'normal' })
+  await vi.waitFor(async () => expect((await restored.detail(normal.sessionId)).summary.status).toBe('idle'))
+  expect(seen[2]?.messages).not.toContainEqual({ role: 'system', content: PLUGIN_CREATION_GUIDE })
+  expect(seen[2]?.tools).toEqual(seen[0]?.tools)
 })
 
 test('an agent owns its session, leases exactly its skills and limits tools to its plugins', async () => {

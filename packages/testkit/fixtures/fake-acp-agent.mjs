@@ -2264,6 +2264,13 @@ const scenarios = {
     say('called')
     return END
   },
+  // `window-report <used> <size>`: one measurement without token usage or a title change.
+  'window-report': ({ sessionId, input, say }) => {
+    const [, used, size] = input.trim().split(/\s+/u)
+    update(sessionId, { sessionUpdate: 'usage_update', used: Number(used), size: Number(size) })
+    say('Recorded the window measurement.')
+    return END
+  },
   plan: ({ sessionId, say }) => {
     update(sessionId, {
       sessionUpdate: 'plan',

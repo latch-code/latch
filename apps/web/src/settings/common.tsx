@@ -209,8 +209,9 @@ export function NavRow({
   className,
   value,
   label,
+  disabled,
   onClick,
-}: RowContent & { value?: ReactNode; label?: string; onClick: () => void }) {
+}: RowContent & { value?: ReactNode; label?: string; disabled?: boolean; onClick: () => void }) {
   const id = useId()
   return (
     <button
@@ -221,6 +222,7 @@ export function NavRow({
       data-dim={dim ? '' : undefined}
       aria-label={label}
       aria-describedby={label === undefined && description ? `${id}-description` : undefined}
+      disabled={disabled}
       onClick={onClick}>
       {leading && <span className="settings-row-lead">{leading}</span>}
       <RowText title={title} description={description} record={record} ids={id} />

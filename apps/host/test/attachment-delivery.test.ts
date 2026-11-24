@@ -236,6 +236,11 @@ describe('attachments reach every agent', () => {
       })
       await idle(desktop, created.sessionId)
       const user = seen.at(-1)!.find(message => message.role === 'user')!
+      const { contextSteps } = await desktop.json<TaskDetail>(`tasks/${created.sessionId}`)
+      expect(contextSteps).toMatchObject([
+        { images: providerId === 'seeing' ? 1 : 0, bytes: { user: Buffer.byteLength(user.content) + Buffer.byteLength('# notes\n') } },
+      ])
+      expect(JSON.stringify(contextSteps)).not.toContain('r.pdf')
       expect(user.attachments?.map(item => item.type)).toEqual(providerId === 'seeing' ? ['image', 'text'] : ['text'])
       expect(user.content).toContain('- r.pdf（application/pdf，39 B）：')
       expect(user.content.includes('- look.png（image/png')).toBe(providerId === 'blind')

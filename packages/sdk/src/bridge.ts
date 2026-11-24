@@ -66,6 +66,8 @@ export interface ModelRouteFallback {
 }
 
 export interface CreateTaskInput {
+  /** The Host made an authoring workspace. Give its guide to the engine while keeping the person's prompt as written. */
+  pluginCreation?: true
   /** Authoritative Host-only agent context, transient for this run. */
   agentContext?: AgentExecutionContext
   /** Host-only: the ordinary report source may be checked once this session's Host metadata has settled. */

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { Store } from 'lucide-react'
 
 import { GENERAL_AGENT_ID, type AgentWorkComputer } from '@latch/protocol'
 import { Button, ICON_STROKE, IconButton, InlineNotice, ChevronLeftGlyph, HistoryGlyph, PlusGlyph, OfflineGlyph } from '@latch/ui'
@@ -21,6 +22,7 @@ import { LockedAgents } from './parts.tsx'
 import { AGENT_SPACE_COPY as COPY } from './spaceCopy.ts'
 import { useAgentWrites } from './useAgentWrites.ts'
 import { CONNECTION_COPY } from '../core/hostState.ts'
+import { SHELL_COPY } from '../shell/copy.ts'
 
 /**
  * The left of 我的 Agent on wide windows: the sidebar's own top (the switch, 总览, 新建 Agent, 搜索, 定时任务), the roster
@@ -38,6 +40,7 @@ function AgentsNav({ shell }: { shell: ShellState }) {
         {...(shell.catalog?.features?.automations
           ? { onSchedules: () => shell.openMyAgent({ id: GENERAL_AGENT_ID, tab: 'schedules' }) }
           : {})}
+        onMarketplace={shell.canBrowseMarketplace ? shell.openMarketplace : undefined}
         drawer={false}
         computerAtFoot
       />
@@ -137,7 +140,17 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
           {phone ? (
             <>
               <header className="settings-bar">
-                <span />
+                {shell.canBrowseMarketplace ? (
+                  <IconButton
+                    size="lg"
+                    label={SHELL_COPY.marketplace}
+                    icon={Store}
+                    data-marketplace-nav=""
+                    onClick={shell.openMarketplace}
+                  />
+                ) : (
+                  <span />
+                )}
                 <h2>{COPY.myAgents}</h2>
                 {offline ? (
                   <span className="agents-offline">

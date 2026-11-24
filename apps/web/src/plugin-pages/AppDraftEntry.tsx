@@ -1,75 +1,165 @@
 import { useEffect, useRef, useState } from 'react'
-
-import { Button, Icon, PluginsGlyph } from '@latch/ui'
-import { api, inlineError, isUncertain, newRequestId } from '../core/api.ts'
+import { createPortal } from 'react-dom'
+import { Button, Icon, InlineNotice, PluginsGlyph } from '@latch/ui'
+import { api, ApiError, inlineError, isUncertain, newRequestId } from '../core/api.ts'
 import { defineCopy } from '../core/i18n.ts'
+import { useMounted } from '../hooks/useMounted.ts'
 
+export type DraftKind = 'app' | 'plugin'
+interface DraftProbe {
+  present: boolean
+  kind?: DraftKind
+  kinds?: DraftKind[]
+  pluginId?: string
+  pluginIds?: Partial<Record<DraftKind, string>>
+}
 const COPY = defineCopy(
   {
-    update: '更新应用草稿',
-    create: '作为应用草稿',
+    updateApp: '更新应用草稿',
+    createApp: '作为应用草稿',
+    reviewApp: '查看页面草稿',
+    updatePlugin: '更新插件草稿',
+    createPlugin: '审阅插件草稿',
+    retry: '重新检查',
+    retryImport: '重试同一导入',
+    repair: '交回 Agent 修改',
+    repairPrompt: (message: string) => `Latch 检查创作草稿时遇到问题。请根据这条诊断修改草稿：\n\n${message}`,
   },
   {
-    update: 'Update app draft',
-    create: 'Create app draft',
+    updateApp: 'Update app draft',
+    createApp: 'Create app draft',
+    reviewApp: 'Review page draft',
+    updatePlugin: 'Update plugin draft',
+    createPlugin: 'Review plugin draft',
+    retry: 'Check again',
+    retryImport: 'Retry same import',
+    repair: 'Hand back to Agent',
+    repairPrompt: (message: string) => `Latch found a problem with the draft. Please fix it using this diagnostic:\n\n${message}`,
   },
 )
 
-/**
- * 改动's 「作为应用草稿」: a session whose folder holds `latch-app/latch-app.json` can hand that draft to 设置 › 插件,
- * where it is built, previewed and applied. Only this Mac's admin device with all data sees it; the Host checks again.
- */
+/** Earlier Hosts only probed the app directory and reported a single package ID. */
+export function creatorDrafts(probe: DraftProbe): Array<{ kind: DraftKind; imported: boolean }> {
+  if (!probe.present) return []
+  const kinds = probe.kinds ?? [probe.kind ?? 'app']
+  return kinds.map(kind => ({ kind, imported: Boolean(probe.pluginIds?.[kind] ?? (kind === (probe.kind ?? 'app') && probe.pluginId)) }))
+}
+
 export function AppDraftEntry({
   sessionId,
   revision,
   onImported,
-  onError,
+  onRepair,
+  target,
 }: {
   sessionId: string
-  /** Changes when the session's files may have: the presence of the draft is read again. */
   revision: string
-  onImported: () => void
-  onError: (text: string) => void
+  onImported: (pluginId: string, kind: DraftKind) => void
+  onRepair?: (prompt: string) => void
+  /** A creator's entry follows the conversation or its Changes panel without losing an outstanding import receipt. */
+  target?: HTMLElement | null
 }) {
-  const [state, setState] = useState<{ present: boolean; pluginId?: string } | null>(null)
+  const [probe, setProbe] = useState<DraftProbe | null>(null)
+  const [error, setError] = useState('')
+  const [readError, setReadError] = useState('')
+  const [refresh, setRefresh] = useState(0)
   const [busy, setBusy] = useState(false)
-  const request = useRef<string | null>(null)
+  const request = useRef<{ kind: DraftKind; requestId: string } | null>(null)
+  const mounted = useMounted()
   useEffect(() => {
     let live = true
-    void api<{ present: boolean; pluginId?: string }>(`plugin-packages/session-draft?sessionId=${encodeURIComponent(sessionId)}`).then(
+    void api<DraftProbe>(`plugin-packages/session-draft?sessionId=${encodeURIComponent(sessionId)}`).then(
       value => {
-        if (live) setState(value)
+        if (live) {
+          setProbe(value)
+          setReadError('')
+        }
       },
-      () => {
-        if (live) setState(null)
+      cause => {
+        if (live) {
+          setProbe(null)
+          setReadError(cause instanceof ApiError && cause.status === 404 ? '' : inlineError(cause))
+        }
       },
     )
     return () => {
       live = false
     }
-  }, [sessionId, revision])
-  if (!state?.present) return null
-  const send = async () => {
+  }, [sessionId, revision, refresh])
+
+  const send = async (kind: DraftKind) => {
+    if (busy || (request.current && request.current.kind !== kind)) return
     setBusy(true)
-    request.current ??= newRequestId()
+    setError('')
+    request.current ??= { kind, requestId: newRequestId() }
     try {
-      await api('plugin-packages/import', { method: 'POST', body: { requestId: request.current, sessionId } })
+      const result = await api<{ package: { id: string } }>('plugin-packages/import', {
+        method: 'POST',
+        body: { requestId: request.current.requestId, sessionId, ...(kind === 'plugin' ? { kind } : {}) },
+      })
       request.current = null
-      onImported()
+      if (mounted.current) onImported(result.package.id, kind)
     } catch (cause) {
       if (!isUncertain(cause)) request.current = null
-      onError(inlineError(cause))
+      if (mounted.current) setError(inlineError(cause))
     } finally {
-      setBusy(false)
+      if (mounted.current) setBusy(false)
     }
   }
-  return (
-    <div className="changes-app-draft">
-      <Icon icon={PluginsGlyph} size={14} />
-      <span>latch-app</span>
-      <Button size="sm" loading={busy} onClick={() => void send()}>
-        {state.pluginId ? COPY.update : COPY.create}
-      </Button>
-    </div>
+  const entries = probe ? creatorDrafts(probe) : []
+  const inChat = target?.dataset.draftPlace === 'conversation'
+  if (target === null || (!entries.length && (!readError || inChat) && !error && !request.current)) return null
+  const entry = (
+    <>
+      {entries.map(({ kind, imported }) => (
+        <div key={kind} className={inChat ? undefined : 'changes-app-draft'}>
+          {!inChat && (
+            <>
+              <Icon icon={PluginsGlyph} size={14} />
+              <span>{kind === 'app' ? 'latch-app' : 'latch-plugin'}</span>
+            </>
+          )}
+          <Button
+            size="sm"
+            {...(inChat ? { icon: PluginsGlyph } : {})}
+            loading={busy && request.current?.kind === kind}
+            disabled={busy || request.current !== null}
+            onClick={() => void send(kind)}>
+            {kind === 'app'
+              ? inChat
+                ? COPY.reviewApp
+                : imported
+                  ? COPY.updateApp
+                  : COPY.createApp
+              : inChat || !imported
+                ? COPY.createPlugin
+                : COPY.updatePlugin}
+          </Button>
+        </div>
+      ))}
+      {(error || readError) && (
+        <InlineNotice
+          tone="error"
+          action={
+            request.current ? (
+              <Button
+                disabled={busy}
+                onClick={() => {
+                  if (request.current) void send(request.current.kind)
+                }}>
+                {COPY.retryImport}
+              </Button>
+            ) : (
+              <>
+                {readError && <Button onClick={() => setRefresh(n => n + 1)}>{COPY.retry}</Button>}
+                {onRepair && <Button onClick={() => onRepair(COPY.repairPrompt(error || readError))}>{COPY.repair}</Button>}
+              </>
+            )
+          }>
+          {error || readError}
+        </InlineNotice>
+      )}
+    </>
   )
+  return target ? createPortal(entry, target) : entry
 }

@@ -216,6 +216,10 @@ const sessionEntrySchema = z.object({
   proposals: z.literal(true).optional(),
   /** Started with the board's proposal tools (`CreateTaskInput.workProposals`). */
   workProposals: z.literal(true).optional(),
+  pluginCreation: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .optional(),
   /** Started from a 待办 whose 要求 came from outside content: what it proposes is external. */
   outsideStart: z.literal(true).optional(),
   origin: z
@@ -317,6 +321,8 @@ export interface StoredMeta {
   proposals?: true
   /** Started with the board's proposal tools: only such a session's driver may hand the Host board proposals. */
   workProposals?: true
+  /** Hash of the device-bound request whose private authoring directory the allocator registered. */
+  pluginCreation?: string
   /** Started from a 待办 marked as from outside content (`WorkItemOrigin.external`). */
   outsideStart?: true
   /** The plugin page that started the session, with the page's own request ID. */

@@ -14,6 +14,10 @@ const MAX_CHARACTERS = 256_000
 const WRITE_DELAY_MS = 300
 const KEY_PREFIX = 'latch.drafts.'
 /** A draft not edited for this long is dropped at the next load. */
+// The ordinary new draft keeps its legacy empty-string key. A non-string key cannot collide with a Harness session ID.
+export const PLUGIN_CREATION_DRAFT = null
+type DraftId = string | null
+
 export const DRAFT_EXPIRY_MS = 14 * 24 * 60 * 60_000
 /** Set on sign-out; a window that saw another value stops writing, so its next `pagehide` cannot bring drafts back. */
 const forgottenKey = (origin: string): string => `latch.drafts-forgotten.${origin}`
@@ -104,8 +108,8 @@ export function forgetStoredDrafts(origin: string, keep?: string): void {
   }
 }
 
-function parse(value: string | null): Map<string, Draft> {
-  const drafts = new Map<string, Draft>()
+function parse(value: string | null): Map<DraftId, Draft> {
+  const drafts = new Map<DraftId, Draft>()
   if (value === null) return drafts
   try {
     const stored: unknown = JSON.parse(value)
@@ -113,7 +117,12 @@ function parse(value: string | null): Map<string, Draft> {
     const entries = (stored as { drafts?: unknown }).drafts
     if (!Array.isArray(entries)) return drafts
     for (const entry of entries.slice(0, MAX_DRAFTS)) {
-      if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string' || entry[0].length > 256) continue
+      if (
+        !Array.isArray(entry)
+        || entry.length !== 2
+        || (entry[0] !== PLUGIN_CREATION_DRAFT && (typeof entry[0] !== 'string' || entry[0].length > 256))
+      )
+        continue
       const draft = entry[1] as Record<string, unknown> | null
       if (
         typeof draft !== 'object'
@@ -126,7 +135,7 @@ function parse(value: string | null): Map<string, Draft> {
         || draft.at < Date.now() - DRAFT_EXPIRY_MS
       )
         continue
-      drafts.set(entry[0], { text: draft.text, private: draft.private, at: draft.at })
+      drafts.set(entry[0], { text: draft.text, private: entry[0] === PLUGIN_CREATION_DRAFT || draft.private, at: draft.at })
     }
   } catch {
     /* Unreadable: nothing was kept. */
@@ -135,7 +144,7 @@ function parse(value: string | null): Map<string, Draft> {
 }
 
 /** Oldest first, within the limits; what does not fit is dropped from the oldest. */
-function bounded(drafts: Map<string, Draft>): Array<[string, Draft]> {
+function bounded(drafts: Map<DraftId, Draft>): Array<[DraftId, Draft]> {
   const sorted = [...drafts].sort((a, b) => a[1].at - b[1].at)
   let characters = sorted.reduce((sum, [, draft]) => sum + draft.text.length, 0)
   while (sorted.length > MAX_DRAFTS || characters > MAX_CHARACTERS) characters -= sorted.shift()![1].text.length
@@ -149,12 +158,12 @@ function bounded(drafts: Map<string, Draft>): Array<[string, Draft]> {
  * changed, so one window does not undo another's.
  */
 export class SessionDrafts {
-  private readonly drafts = new Map<string, Draft>()
+  private readonly drafts = new Map<DraftId, Draft>()
   private characters = 0
   /** The open composer's text, kept for the next page load but not offered by `read`: the composer holds it. */
-  private live: { id: string; draft: Draft | null } | null = null
+  private live: { id: DraftId; draft: Draft | null } | null = null
   /** Changes since the last write: a draft, or null for one removed. */
-  private readonly changed = new Map<string, Draft | null>()
+  private readonly changed = new Map<DraftId, Draft | null>()
   private timer: ReturnType<typeof setTimeout> | undefined
   private storage: DraftStorage | undefined
   private epoch = forgotten
@@ -177,7 +186,7 @@ export class SessionDrafts {
     this.storage = storage
     this.epoch = forgotten
     if (!storage) return
-    let stored: Map<string, Draft>
+    let stored: Map<DraftId, Draft>
     try {
       this.seenMarker = storage.marker?.() ?? null
       stored = parse(storage.read())
@@ -191,9 +200,9 @@ export class SessionDrafts {
     }
   }
 
-  save(id: string, text: string, isPrivate: boolean): boolean {
+  save(id: DraftId, text: string, isPrivate: boolean): boolean {
     if (text.length > MAX_CHARACTERS) return false
-    isPrivate ||= holdsExcerpt(text)
+    isPrivate ||= id === PLUGIN_CREATION_DRAFT || holdsExcerpt(text)
     this.drop(id)
     if (this.live?.id === id) this.live = null
     if (!text) {
@@ -213,7 +222,7 @@ export class SessionDrafts {
     return true
   }
 
-  read(id: string, allowPrivate: boolean): string {
+  read(id: DraftId, allowPrivate: boolean): string {
     const draft = this.drafts.get(id)
     if (!draft) return ''
     if (draft.private && !allowPrivate) {
@@ -229,15 +238,15 @@ export class SessionDrafts {
    * The open composer's text for `id`, written to storage a moment later. `read` does not offer it: until the composer
    * switches away, it is the composer's.
    */
-  keep(id: string, text: string, isPrivate: boolean): void {
+  keep(id: DraftId, text: string, isPrivate: boolean): void {
     if (text.length > MAX_CHARACTERS) return
-    const draft = text ? { text, private: isPrivate || holdsExcerpt(text), at: Date.now() } : null
+    const draft = text ? { text, private: id === PLUGIN_CREATION_DRAFT || isPrivate || holdsExcerpt(text), at: Date.now() } : null
     if (this.live?.id !== undefined && this.live.id !== id && !this.drafts.has(this.live.id)) this.note(this.live.id, null, false)
     this.live = { id, draft }
     this.note(id, draft, false)
   }
 
-  remove(id: string): void {
+  remove(id: DraftId): void {
     this.drop(id)
     if (this.live?.id === id) this.live = null
     this.note(id, null)
@@ -245,8 +254,8 @@ export class SessionDrafts {
 
   /** Removes every draft not for one of `ids` (or the new-session draft): sessions that are gone. */
   retain(ids: ReadonlySet<string>): void {
-    for (const id of [...this.drafts.keys()]) if (id !== '' && !ids.has(id)) this.remove(id)
-    if (this.live && this.live.id !== '' && !ids.has(this.live.id)) this.remove(this.live.id)
+    for (const id of [...this.drafts.keys()]) if (id !== '' && id !== PLUGIN_CREATION_DRAFT && !ids.has(id)) this.remove(id)
+    if (this.live && this.live.id !== '' && this.live.id !== PLUGIN_CREATION_DRAFT && !ids.has(this.live.id)) this.remove(this.live.id)
   }
 
   clearPrivate(): void {
@@ -293,13 +302,13 @@ export class SessionDrafts {
     })
   }
 
-  private drop(id: string): void {
+  private drop(id: DraftId): void {
     const previous = this.drafts.get(id)
     if (previous) this.characters -= previous.text.length
     this.drafts.delete(id)
   }
 
-  private note(id: string, draft: Draft | null, now = true): void {
+  private note(id: DraftId, draft: Draft | null, now = true): void {
     if (!this.storage) return
     // Text holding a credential stays in memory only, as does private text (an excerpt) below the data scope `all`:
     // storage gets its removal instead.

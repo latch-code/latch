@@ -40,6 +40,9 @@
   overflow: auto;
   background: var(--canvas);
 }
+.workbench-home[hidden] {
+  display: none;
+}
 .app-shell[data-start] .workspace,
 .app-shell[data-start]:not([data-home-inspector]) :is(.inspector-column, .inspector-resize) {
   visibility: hidden;

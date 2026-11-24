@@ -44,6 +44,7 @@ class ScriptedQuery implements ClaudeQuery {
   private done = false
   readonly calls: Array<[string, ...unknown[]]> = []
   readonly prompts: Array<Record<string, unknown>> = []
+  context: unknown = { totalTokens: 10, maxTokens: 1000, model: 'claude-x' }
   constructor(
     readonly options: Record<string, unknown>,
     prompt: AsyncIterable<unknown>,
@@ -103,7 +104,7 @@ class ScriptedQuery implements ClaudeQuery {
     return []
   }
   async getContextUsage() {
-    return { totalTokens: 10, maxTokens: 1000, model: 'claude-x' }
+    return this.context
   }
   async stopTask() {}
   close() {
@@ -204,6 +205,118 @@ const said = (detail: DriverTaskDetail) =>
     .join('\n')
 
 describe('the Claude Agent SDK wire under the runtime', () => {
+  it('retains only structured window measurements and explicit compaction boundaries across restart and clear', async () => {
+    const hidden = '/private/report.md sk-proj-DO-NOT-FORWARD private transcript'
+    let turn = 0
+    const t = await computer(async (query, input) => {
+      turn++
+      if (turn === 1) {
+        query.context = {
+          totalTokens: 90,
+          maxTokens: 1000,
+          model: 'claude-x',
+          categories: [
+            { id: 'messages', name: hidden, tokens: 60, kind: 'used' },
+            { id: 'messages', tokens: 60, kind: 'used' },
+            { id: 'memory_files', tokens: 20, kind: 'used' },
+            { id: 'autocompact_buffer', tokens: 100, kind: 'buffer' },
+            { id: 'free_space', tokens: 810, kind: 'free' },
+            { id: 'mcp_tools_deferred', tokens: 250, kind: 'deferred' },
+            { id: hidden, tokens: 4, kind: 'used' },
+            { tokens: 6, kind: 'used' },
+            { id: 'not-yet-classified', tokens: 1000, kind: 'future' },
+          ],
+          memoryFiles: [{ path: hidden, type: hidden, tokens: 20 }],
+          messageBreakdown: {
+            toolCallTokens: 5,
+            toolResultTokens: 25,
+            assistantMessageTokens: 15,
+            userMessageTokens: 15,
+            attachmentTokens: -1,
+            toolCallsByType: [{ name: hidden, callTokens: 5, resultTokens: 25 }],
+          },
+          apiUsage: { input_tokens: 120, output_tokens: 15, cache_read_input_tokens: 5, cache_creation_input_tokens: 10 },
+        }
+      } else if (turn === 2) {
+        const boundary = {
+          type: 'system',
+          subtype: 'compact_boundary',
+          uuid: uuidOf(9),
+          compact_metadata: { trigger: 'auto', pre_tokens: 90, post_tokens: 10, duration_ms: 8, preserved_messages: [hidden] },
+          summary: hidden,
+        }
+        query.send(boundary)
+        query.send(boundary)
+        query.context = { totalTokens: 10, maxTokens: 1000, model: 'claude-x' }
+      }
+      query.reply(input, 'ok')
+    })
+    const bridge = await t.open()
+    const { launchHash } = await bridge.launchPreview!({ cwd: t.main })
+    const { sessionId } = await bridge.createTask({ prompt: 'one', requestId: rid(), cwd: t.main, expectedLaunchHash: launchHash })
+    const first = await settled(bridge, sessionId)
+    expect(first.usageReport).toMatchObject({ contextUsed: 90, contextSize: 1000, contextSource: 'claude-sdk', contextEpoch: 0 })
+    expect(first.usageReport?.breakdown).toEqual({
+      measurement: 'full',
+      categories: [
+        { id: 'messages', tokens: 60, kind: 'used' },
+        { id: 'memory_files', tokens: 20, kind: 'used' },
+        { id: 'autocompact_buffer', tokens: 100, kind: 'buffer' },
+        { id: 'free_space', tokens: 810, kind: 'free' },
+        { id: 'mcp_tools_deferred', tokens: 250, kind: 'deferred' },
+        { tokens: 10, kind: 'used' },
+      ],
+      messageBreakdown: { toolCalls: 5, toolResults: 25, assistantMessages: 15, userMessages: 15 },
+      providerUsage: { inputTokens: 135, outputTokens: 15, cacheReadTokens: 5, cacheWriteTokens: 10 },
+    })
+    expect(JSON.stringify(first.usageReport)).not.toContain(hidden)
+    expect(first.contextEvents).toBeUndefined()
+    expect(first.messages[0]?.turn?.contextWindow).toMatchObject({ used: 90, source: 'claude-sdk', epoch: 0 })
+    expect(first.messages[0]?.turn?.contextWindow?.breakdown).toEqual(first.usageReport?.breakdown)
+
+    await bridge.prompt(sessionId, 'two', rid())
+    const second = await settled(bridge, sessionId)
+    const user = second.messages.findLast(message => message.role === 'user')
+    expect(user?.turn?.contextWindow).toMatchObject({ used: 10, source: 'claude-sdk', epoch: 1 })
+    expect(second.usageReport?.breakdown).toBeUndefined()
+    expect(user?.turn?.contextWindow?.breakdown).toBeUndefined()
+    expect(second.contextEvents).toEqual([
+      {
+        id: expect.stringMatching(/^[a-f\d]{64}$/u),
+        at: expect.any(String),
+        turnId: user?.id,
+        source: 'claude-sdk',
+        status: 'completed',
+        trigger: 'auto',
+        beforeTokens: 90,
+        afterTokens: 10,
+        durationMs: 8,
+      },
+    ])
+    expect(JSON.stringify(second)).not.toContain(hidden)
+    await bridge.close()
+
+    const reopened = await t.open()
+    const restored = await reopened.detail(sessionId)
+    expect(restored.contextEvents).toEqual(second.contextEvents)
+    expect(restored.messages[0]?.turn?.contextWindow?.breakdown).toEqual(first.usageReport?.breakdown)
+    expect(restored.messages.find(message => message.id === user?.id)?.turn?.contextWindow).toEqual(user?.turn?.contextWindow)
+    await reopened.prompt(sessionId, 'three', rid(), { freshContext: true })
+    const cleared = await settled(reopened, sessionId)
+    expect(cleared.contextEvents).toEqual(second.contextEvents)
+    expect(cleared.messages.findLast(message => message.role === 'user')).toMatchObject({
+      freshContext: true,
+      turn: { contextWindow: { used: 10, source: 'claude-sdk', epoch: 2 } },
+    })
+    for (let i = 3; i <= 32; i++) {
+      await reopened.prompt(sessionId, 'next', rid())
+      await settled(reopened, sessionId)
+    }
+    const expired = (await reopened.detail(sessionId)).messages[0]?.turn?.contextWindow
+    expect(expired).toMatchObject({ used: 90, source: 'claude-sdk', epoch: 0 })
+    expect(expired?.breakdown).toBeUndefined()
+  })
+
   it('puts a resumed session back in the mode Latch recorded for it before its next prompt', async () => {
     const t = await computer(async (query, prompt) => query.reply(prompt, 'ok'))
     let bridge = await t.open()

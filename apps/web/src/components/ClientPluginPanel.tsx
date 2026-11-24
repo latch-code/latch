@@ -1,9 +1,25 @@
 import * as React from 'react'
-import { Component, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react'
-import { Button, Checkbox, InlineNotice, Loading, StatusPill, TextAreaField, TextField, type PluginPanelProps } from '@latch/ui'
-import type { TaskSummary, UiPanelInfo } from '@latch/protocol'
+import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  BarChart,
+  Button,
+  Checkbox,
+  IconButton,
+  InlineNotice,
+  LineChart,
+  Loading,
+  Meter,
+  ShareBar,
+  StatusPill,
+  TextAreaField,
+  TextField,
+  type ContextPluginPanelProps,
+  type PluginPanelProps,
+} from '@latch/ui'
+import type { SessionContext, TaskDetail, TaskSummary, UiPanelInfo } from '@latch/protocol'
 import { api, MessageError } from '../core/api.ts'
-import { defineCopy } from '../core/i18n.ts'
+import { defineCopy, useLocale } from '../core/i18n.ts'
+import { useSessionContext } from '../panel/sessionContext.ts'
 
 const COPY = defineCopy(
   {
@@ -12,6 +28,7 @@ const COPY = defineCopy(
     retry: '重试',
     loadFailed: '无法加载这个插件的界面，请同步后重试。',
     loading: '正在加载插件界面…',
+    loadingContext: '正在读取会话上下文…',
   },
   {
     reload: 'Reload',
@@ -19,11 +36,14 @@ const COPY = defineCopy(
     retry: 'Retry',
     loadFailed: 'Could not load this plugin’s view. Sync and try again.',
     loading: 'Loading plugin view…',
+    loadingContext: 'Loading session context…',
   },
 )
 
 const ui = { Button, Checkbox, TextField, TextAreaField, InlineNotice, StatusPill, Loading }
-type Panel = ComponentType<PluginPanelProps<TaskSummary>>
+const contextUi = { ...ui, IconButton, BarChart, LineChart, ShareBar, Meter }
+type ContextProps = ContextPluginPanelProps<SessionContext>
+type Panel = (props: PluginPanelProps<TaskSummary> | ContextProps) => ReactNode
 // Browsers retain failed ESM entries too. Keep the retry generation across component unmounts.
 const failedModules = new Map<string, number>()
 
@@ -49,17 +69,39 @@ class PanelBoundary extends Component<{ children: ReactNode; retry: () => void }
   }
 }
 
+function ContextPluginView({
+  View,
+  detail,
+  onRevealTurn,
+  onRevealTool,
+}: {
+  View: (props: ContextProps) => ReactNode
+  detail: TaskDetail
+  onRevealTurn: ((messageId: string) => void) | undefined
+  onRevealTool: ((messageId: string) => void) | undefined
+}) {
+  const locale = useLocale()
+  const bridge = useSessionContext(detail, onRevealTurn, onRevealTool)
+  return <View {...bridge} react={React} ui={contextUi} locale={locale} />
+}
+
 /** Trusted ESM modules use the page's React instance and the existing conversation controls. */
 export function ClientPluginPanel({
   panel,
   summary,
   canCompose,
   onCompose,
+  detail,
+  onRevealTurn,
+  onRevealTool,
 }: {
   panel: UiPanelInfo
   summary: TaskSummary
   canCompose: boolean
   onCompose: (text: string) => void
+  detail?: TaskDetail | undefined
+  onRevealTurn?: ((messageId: string) => void) | undefined
+  onRevealTool?: ((messageId: string) => void) | undefined
 }) {
   const [retry, setRetry] = useState(0)
   const key = JSON.stringify([panel.id, panel.moduleHash, retry])
@@ -108,6 +150,16 @@ export function ClientPluginPanel({
     )
   const View = current?.component
   if (!View) return <Loading label={COPY.loading} />
+  if (panel.context)
+    return (
+      <PanelBoundary key={retry} retry={reload}>
+        {detail?.summary.id === summary.id ? (
+          <ContextPluginView View={View} detail={detail} onRevealTurn={onRevealTurn} onRevealTool={onRevealTool} />
+        ) : (
+          <Loading label={COPY.loadingContext} />
+        )}
+      </PanelBoundary>
+    )
   return (
     <PanelBoundary key={retry} retry={reload}>
       <View

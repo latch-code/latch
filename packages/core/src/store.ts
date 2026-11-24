@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import {
   COST_CURRENCIES,
+  CONTEXT_STEP_LIMIT,
+  CONTEXT_TOOL_CONTRIBUTION_LIMIT,
   isFileMention,
   isFileChange,
   type FileChange,
@@ -13,6 +15,8 @@ import {
   type Approval,
   type Message,
   type DriverTaskSummary,
+  type RequestContext,
+  type RequestContextStep,
 } from '@latch/protocol'
 import { AppError, type ModelMessage, type ToolCall } from '@latch/sdk'
 import { writeFileAtomic } from './node-kit/atomic.ts'
@@ -20,11 +24,19 @@ import { ERROR_CODE, runEndSchema } from './run-end.ts'
 
 export interface StoredHistory extends Omit<ModelMessage, 'attachments'> {
   attachmentRefs?: AttachmentRef[]
+  /** Internal only. The result was appended after this observation, before its first inclusion. */
+  contextToolSource?: { resultId: string; turnId: string; afterSequence: number }
 }
 export interface StoredTask {
   summary: DriverTaskSummary
   messages: Message[]
   history: StoredHistory[]
+  requestContext?: RequestContext
+  contextSteps?: RequestContextStep[]
+  /** Crash marker. It becomes a public observation only after dispatch, or when recovery finds the outcome unknown. */
+  pendingContextStep?: RequestContextStep
+  /** Cleared when the first observation after this reset is recorded, even if preparing the request needs a retry. */
+  contextResetPending?: true
   /** Model-visible instructions snapshotted at the start of the current/latest run. */
   skillContext?: string
   revision: number
@@ -41,6 +53,7 @@ export interface StoredTask {
   proposals?: number
   /** Created with `workProposals`: its runs offer the board's proposal tools. */
   workProposals?: true
+  pluginCreation?: true
 }
 
 export interface RequestReceipt {
@@ -84,6 +97,40 @@ const spendSchema = z.object({
   budget: z.enum(['near', 'over']).optional(),
 })
 const count = z.number().int().nonnegative()
+const requestContext = z.strictObject({
+  at: z.iso.datetime(),
+  userMessages: count,
+  assistantMessages: count,
+  toolResults: count,
+  tools: count,
+  skills: count,
+  images: count,
+  inputTokens: count.optional(),
+  creator: z.literal(true).optional(),
+})
+const contextToolSource = z.strictObject({ resultId: z.uuid(), turnId: z.uuid() })
+const contextToolContribution = z.strictObject({
+  bytes: count,
+  inclusion: z.enum(['new', 'replayed', 'unknown']),
+  source: contextToolSource.optional(),
+})
+const contextStep = requestContext.extend({
+  sequence: z.number().int().positive(),
+  turnId: z.string().min(1).max(256),
+  bytes: z.strictObject({ instructions: count, skills: count, toolSchemas: count, user: count, assistant: count, toolResults: count }),
+  toolContributions: z
+    .strictObject({
+      largest: z.array(contextToolContribution).max(CONTEXT_TOOL_CONTRIBUTION_LIMIT),
+      added: z.array(contextToolContribution).max(CONTEXT_TOOL_CONTRIBUTION_LIMIT),
+    })
+    .optional(),
+  unmeasuredTools: count.optional(),
+  toolCalls: count,
+  status: z.enum(['running', 'completed', 'failed', 'cancelled', 'interrupted']),
+  outputTokens: count.optional(),
+  durationMs: count.optional(),
+  freshContext: z.literal(true).optional(),
+})
 const turnSchema = z.object({
   endedAt: z.string().optional(),
   activeMs: z.number().nonnegative().optional(),
@@ -163,6 +210,7 @@ const messageSchema = z.object({
   queuedAt: z.string().optional(),
   freshContext: z.literal(true).optional(),
   toolName: z.string().optional(),
+  contextToolId: z.uuid().optional(),
   state: z.enum(['queued', 'awaiting-approval', 'running', 'completed', 'failed', 'cancelled']).optional(),
   interrupted: z.literal(true).optional(),
   errorCode: z.string().regex(ERROR_CODE).optional(),
@@ -181,6 +229,7 @@ const messageSchema = z.object({
 })
 const historySchema = z.object({
   attachmentRefs: z.array(z.custom<AttachmentRef>(isAttachmentRef)).max(8).optional(),
+  contextToolSource: contextToolSource.extend({ afterSequence: count }).optional(),
   role: z.enum(['system', 'user', 'assistant', 'tool']),
   content: z.string(),
   toolCalls: z.array(callSchema).optional(),
@@ -222,6 +271,10 @@ const stateSchema = z.object({
       messages: z.array(messageSchema),
       history: z.array(historySchema),
       skillContext: z.string().optional(),
+      requestContext: requestContext.optional(),
+      contextSteps: z.array(contextStep).max(CONTEXT_STEP_LIMIT).optional(),
+      pendingContextStep: contextStep.optional(),
+      contextResetPending: z.literal(true).optional(),
       revision: z.number().int().nonnegative(),
       approval: z
         .object({
@@ -252,6 +305,7 @@ const stateSchema = z.object({
       outsideRead: z.literal(true).optional(),
       proposals: z.number().int().min(0).max(1000).optional(),
       workProposals: z.literal(true).optional(),
+      pluginCreation: z.literal(true).optional(),
     }),
   ),
   receipts: z.record(z.string(), z.object({ taskId: z.string(), payloadHash: z.string() })),

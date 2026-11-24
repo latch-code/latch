@@ -3,6 +3,7 @@ import { mkdir, open, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import {
+  CONTEXT_EVENT_LIMIT,
   COST_CURRENCIES,
   GATEWAY_LOSSES,
   MAX_MODEL_FALLBACKS,
@@ -20,6 +21,7 @@ import type { ModelRoute } from '@latch/sdk'
 import type {
   AgentBrief,
   AgentNote,
+  ContextCompactionEvent,
   Message,
   SessionCommand,
   PlanEntry,
@@ -35,6 +37,7 @@ import { ERROR_CODE, runEndSchema } from '@latch/core/run-end'
 import type { ConfigSource } from './mapping.ts'
 import { MAX_STEPS } from './subagents.ts'
 import { harnessQuota } from './quota.ts'
+import { contextBreakdown, contextCompaction, contextEpoch, contextSource } from './context-telemetry.ts'
 
 export interface AcpRecord {
   /** Absent until session/new succeeds. */
@@ -45,6 +48,8 @@ export interface AcpRecord {
   agentVersion?: string
   /** Number of prompts sent in this task; scopes tool message IDs. */
   turnSeq: number
+  /** Advances on an explicit successful compaction or when Latch starts a fresh context. */
+  contextEpoch?: number
   /** The agent's first-turn block until a turn has actually carried it to the engine. */
   brief?: AgentBrief
   /** The latest digest note the Host gave (`AgentExecutionContext.note`), until a turn carries it. */
@@ -91,6 +96,7 @@ export interface AcpRecord {
   proposals?: true
   /** Its agent may propose for the board through the same server and file (`CreateTaskInput.workProposals`). */
   workProposals?: true
+  pluginCreation?: true
   /** How many lines of that file the Host has been handed. */
   proposalsRead?: number
   /** Byte offset in that file just past the last line handed over. */
@@ -166,6 +172,7 @@ export interface AcpTask {
   config?: SessionConfigOption[]
   /** The agent's latest report of its context window and cost. */
   usageReport?: UsageReport
+  contextEvents?: ContextCompactionEvent[]
   revision: number
   acp: AcpRecord
 }
@@ -363,6 +370,16 @@ const message = z.object({
       endedAt: z.string().optional(),
       activeMs: z.number().nonnegative().optional(),
       waitMs: z.number().nonnegative().optional(),
+      contextWindow: z
+        .object({
+          at: z.string(),
+          used: z.number().nonnegative(),
+          size: z.number().positive().optional(),
+          source: contextSource.optional(),
+          epoch: contextEpoch.optional(),
+          breakdown: contextBreakdown.optional(),
+        })
+        .optional(),
       routed: routedTurn.optional(),
       usage: usage.optional(),
       stream: z.object({ outputTokens: z.number().positive(), ms: z.number().positive() }).optional(),
@@ -508,10 +525,15 @@ const stateSchema = z.object({
         .object({
           contextUsed: z.number().nonnegative().optional(),
           contextSize: z.number().nonnegative().optional(),
+          contextSource: contextSource.optional(),
+          contextEpoch: contextEpoch.optional(),
+          breakdown: contextBreakdown.optional(),
+          configuredContextSize: z.literal(true).optional(),
           cost: z.object({ amount: z.number().nonnegative().finite(), currency: z.string().regex(/^[A-Z]{3}$/u) }).optional(),
           at: z.string(),
         })
         .optional(),
+      contextEvents: z.array(contextCompaction).max(CONTEXT_EVENT_LIMIT).optional(),
       revision: z.number().int().nonnegative(),
       acp: z.object({
         acpSessionId: z.string().optional(),
@@ -519,6 +541,7 @@ const stateSchema = z.object({
         commandContext: z.strictObject({ workspaceId: z.string().min(1).max(256).optional() }).optional(),
         agentVersion: z.string().optional(),
         turnSeq: z.number().int().nonnegative(),
+        contextEpoch: contextEpoch.optional(),
         brief: agentBrief.optional(),
         note: z.object({ key: z.string().regex(/^[0-9a-f]{64}$/u), segments: agentBrief.shape.segments }).optional(),
         noteSent: z
@@ -548,6 +571,7 @@ const stateSchema = z.object({
         /** Its agent may propose memories through the skills server; the Host has read this many of its lines. */
         proposals: z.literal(true).optional(),
         workProposals: z.literal(true).optional(),
+        pluginCreation: z.literal(true).optional(),
         proposalsRead: z.number().int().min(0).max(1000).optional(),
         proposalsOffset: z.number().int().min(0).max(1_048_576).optional(),
         proposalsCleared: z.number().int().min(0).max(1000).optional(),

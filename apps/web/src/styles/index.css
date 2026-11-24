@@ -12,6 +12,7 @@
 @import './sidebar.css' layer(app);
 @import './messages.css' layer(app);
 @import './panels.css' layer(app);
+@import './context-tools.css' layer(app);
 @import './markdown.css' layer(app);
 @import './file-chip.css' layer(app);
 @import './tool-card.css' layer(app);
@@ -29,6 +30,7 @@
 @import './phone-review.css' layer(app);
 @import './overlays.css' layer(app);
 @import './settings.css' layer(app);
+@import './plugin-marketplace.css' layer(app);
 @import './customization.css' layer(app);
 @import './agents.css' layer(app);
 @import './agent-avatar.css' layer(app);

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { Cpu, Upload } from 'lucide-react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Cpu } from 'lucide-react'
 import { createPluginPackageTemplate, type PluginPackageBundle, type PluginPackageDetail, type PluginPackageSummary } from '@latch/protocol'
 import {
   Button,
@@ -24,8 +24,20 @@ import { api, inlineError, isUncertain, newRequestId, type ApiOptions, MessageEr
 import { withConfirmation } from '../core/confirmations.ts'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { PLUGIN_REACH_COPY } from '../core/securityCopy.ts'
+import { languageForPath } from '../preview/highlight-protocol.ts'
 import { IconTile, NoteLine, SettingsGroup, SettingsRow } from './common.tsx'
-import { addPluginSource, editPluginSource, manifestReach, readPluginBundle, typedManifest, type PluginReach } from './pluginAssets.ts'
+import { PluginSourceField } from './PluginSourceField.tsx'
+import { PluginMutationDialog, reviewedPluginMutation, type PluginMutationTarget } from './PluginMutationReview.tsx'
+import {
+  addPluginSource,
+  downloadPluginBundle,
+  editPluginSource,
+  manifestReach,
+  needsPageBuild,
+  readPluginBundle,
+  typedManifest,
+  type PluginReach,
+} from './pluginAssets.ts'
 import { defineCopy } from '../core/i18n.ts'
 
 const COPY = defineCopy(
@@ -39,14 +51,13 @@ const COPY = defineCopy(
     invalidPluginManifest: '插件声明格式无效。',
     fileTooLarge: '插件文件不能超过 8 MiB。',
     couldNotRead: '无法读取插件文件。',
-    add: '添加插件',
-    import: '导入文件…',
-    newTool: '新建工具',
     newPlugin: '新建插件',
+    buildPreview: '构建并预览',
+    appScope: '独立页面在隔离框里运行。首次应用或扩大页面能力时，在这台 Mac 上确认。',
     codePreview: '应用前不会运行编辑中的代码',
     delete: '删除',
     saveDraft: '保存草稿',
-    apply: '保存并应用',
+    apply: '保存并审阅',
     unsavedChanges: '未保存修改',
     notSaved: '未保存',
     turnOn: '启用插件',
@@ -88,14 +99,13 @@ const COPY = defineCopy(
     invalidPluginManifest: 'The plugin manifest isn’t valid.',
     fileTooLarge: 'The plugin file must be 8 MiB or less.',
     couldNotRead: 'Couldn’t read the plugin file.',
-    add: 'Add plugin',
-    import: 'Import file…',
-    newTool: 'New tool',
     newPlugin: 'New plugin',
+    buildPreview: 'Build and preview',
+    appScope: 'Pages run in an isolated frame. Confirm on this Mac the first time you apply a page or expand its capabilities.',
     codePreview: 'Edited code runs only after you apply it',
     delete: 'Delete',
     saveDraft: 'Save draft',
-    apply: 'Save and apply',
+    apply: 'Save and review',
     unsavedChanges: 'Unsaved changes',
     notSaved: 'Not saved',
     turnOn: 'Turn on plugin',
@@ -132,7 +142,9 @@ const COPY = defineCopy(
 interface PendingChange {
   path: string
   options: ApiOptions
-  thenApply?: { requestId: string }
+  afterSave?: { operation: 'review' } | { operation: 'build'; requestId: string }
+  previewId?: string
+  reviewId?: string
 }
 interface Editor {
   bundle: PluginPackageBundle
@@ -184,25 +196,37 @@ export function PluginReachGroup({ reach, onRetryRead }: { reach: PluginReach[];
   )
 }
 
-/**
- * The custom plugins this device may edit, and the sheets that do it: 添加插件… (a new tool, or a file to import) and the
- * editor. Edits
- * are inert until the exact saved revision is applied.
- */
-export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onChanged: () => void }) {
+/** Manages local plugin packages. Edits take effect when the exact saved revision is applied. */
+export function usePluginAssets({
+  canEdit,
+  onChanged,
+  onPreview,
+  initialBundle,
+}: {
+  canEdit: boolean
+  onChanged: () => void
+  onPreview: (id: string) => void
+  initialBundle?: PluginPackageBundle | undefined
+}) {
+  const bundleToReview = canEdit ? initialBundle : undefined
   const [records, setRecords] = useState<PluginPackageSummary[] | null>(null)
-  const [editor, setEditor] = useState<Editor | null>(null)
-  const [adding, setAdding] = useState(false)
+  const [editor, setEditor] = useState<Editor | null>(() => (bundleToReview ? { bundle: bundleToReview } : null))
   const [busy, setBusy] = useState(false)
+  const [readingFile, setReadingFile] = useState(false)
   const [pending, setPending] = useState<PendingChange | null>(null)
   const [error, setError] = useState('')
+  const [reviewErrorId, setReviewErrorId] = useState<string | undefined>()
+  const [reviewTarget, setReviewTarget] = useState<PluginMutationTarget | null>(null)
   const [deleting, setDeleting] = useState(false)
-  const [tab, setTab] = useState<'content' | 'files' | 'manifest'>('content')
-  const [file, setFile] = useState('')
+  const [tab, setTab] = useState<'content' | 'files' | 'manifest'>(() =>
+    bundleToReview && !bundleToReview.manifest.skills?.length ? 'files' : 'content',
+  )
+  const [file, setFile] = useState(() => bundleToReview?.files[0]?.path ?? '')
   const [newFile, setNewFile] = useState('')
   const [dirty, setDirty] = useState(false)
-  const [manifestText, setManifestText] = useState('')
+  const [manifestText, setManifestText] = useState(() => (bundleToReview ? JSON.stringify(bundleToReview.manifest, null, 2) : ''))
   const input = useRef<HTMLInputElement>(null)
+  const fileReadToken = useRef<symbol | null>(null)
   const alive = useRef(true)
   const reloading = useRef(false)
   const changed = useRef(onChanged)
@@ -211,13 +235,19 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
     const value = await api<{ packages: PluginPackageSummary[] }>('plugin-packages')
     if (alive.current) setRecords(value.packages)
   }
+  useLayoutEffect(() => {
+    if (!canEdit) setReadingFile(false)
+    return () => {
+      fileReadToken.current = null
+    }
+  }, [canEdit])
   useEffect(() => {
     alive.current = canEdit
     if (!canEdit) {
       setRecords(null)
       setEditor(null)
-      setAdding(false)
       setPending(null)
+      setReviewTarget(null)
       setError('')
       setDeleting(false)
     } else
@@ -247,9 +277,10 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
   }
   // Preserve the full immutable body and requestId when the result is unknown.
   const perform = async (change: PendingChange) => {
-    if (busy) return
+    if (busy || (pending && pending !== change)) return
     setBusy(true)
     setError('')
+    setReviewErrorId(change.reviewId)
     let current = change
     setPending(current)
     try {
@@ -268,15 +299,18 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
         setDirty(false)
         setManifestText(JSON.stringify(shown.bundle.manifest, null, 2))
       }
-      if (current.thenApply && result.package) {
+      if (current.afterSave?.operation === 'build' && shown) {
         current = {
-          path: route(result.package.id) + '/apply',
-          options: { method: 'POST', body: { requestId: current.thenApply.requestId, revision: result.package.revision } },
+          path: `${route(shown.id)}/build`,
+          options: {
+            method: 'POST',
+            timeoutMs: 90_000,
+            body: { requestId: current.afterSave.requestId, revision: shown.revision },
+          },
+          previewId: shown.id,
         }
         if (alive.current) setPending(current)
         result = await send(current)
-        const applied = result.package
-        if (applied && alive.current) setEditor(editing => (editing ? { bundle: applied.bundle, record: applied } : null))
       }
       if (alive.current) {
         setPending(null)
@@ -285,6 +319,14 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
           setDeleting(false)
         }
         await refresh()
+        if (alive.current && current.afterSave?.operation === 'review' && shown) {
+          setReviewTarget({ operation: 'apply', id: shown.id, name: shown.name, revision: shown.revision })
+        }
+        if (alive.current && current.previewId) {
+          setEditor(null)
+          onPreview(current.previewId)
+        }
+        return result.package
       }
     } catch (cause) {
       if (alive.current) {
@@ -314,22 +356,15 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
         method: record ? 'PUT' : 'POST',
         body: { requestId: newRequestId(), bundle: structuredClone(bundle), ...(record ? { baseRevision: record.revision } : {}) },
       },
-      ...(apply ? { thenApply: { requestId: newRequestId() } } : {}),
+      ...(apply
+        ? { afterSave: needsPageBuild(bundle.manifest) ? { operation: 'build', requestId: newRequestId() } : { operation: 'review' } }
+        : {}),
     })
   }
-  const exportBundle = async () => {
-    if (!editor?.record) return
-    try {
-      const result = await api<{ bundle: PluginPackageBundle }>(route(editor.record.id) + '/export')
-      const url = URL.createObjectURL(new Blob([JSON.stringify(result.bundle, null, 2)], { type: 'application/json' }))
-      const link = document.createElement('a')
-      link.href = url
-      link.download = editor.record.id + '.latch-plugin.json'
-      link.click()
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
-    } catch (cause) {
-      setError(inlineError(cause))
-    }
+  const exportBundle = async (id: string) => {
+    const result = await api<{ bundle: PluginPackageBundle }>(route(id) + '/export')
+    if (!alive.current) return
+    downloadPluginBundle(id, result.bundle)
   }
   const selectRecord = async (record: PluginPackageSummary) => {
     if (busy || pending) return
@@ -344,11 +379,26 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
       if (alive.current) setBusy(false)
     }
   }
-  const locked = busy || pending !== null
+  const locked = busy || readingFile || pending !== null || reviewTarget !== null
+  const review = (record: PluginPackageSummary, operation: PluginMutationTarget['operation'], revision: string) => {
+    if (!canEdit || locked) return
+    setReviewTarget({ id: record.id, name: record.name, operation, revision })
+  }
+  const setEnabled = (record: PluginPackageSummary, enabled: boolean) => {
+    if (locked || !canEdit) return
+    if (enabled && record.appliedRevision) {
+      review(record, 'enable', record.appliedRevision)
+    } else if (!enabled) {
+      void perform({ path: route(record.id) + '/enabled', options: { method: 'POST', body: { requestId: newRequestId(), enabled } } })
+    }
+  }
   const skillFiles = new Set(editor?.bundle.manifest.skills?.map(skill => skill.file) ?? [])
   const shownFiles = editor?.bundle.files.filter(item => (tab === 'content' ? skillFiles.has(item.path) : true)) ?? []
   const selectedFile = shownFiles.find(item => item.path === file) ?? shownFiles[0]
   const record = editor?.record
+  const formManifest = editor && (tab === 'manifest' ? typedManifest(manifestText, editor.bundle.manifest) : editor.bundle.manifest)
+  const reach = formManifest ? manifestReach(formManifest) : []
+  const executable = reach.some(item => item.id === 'host' || item.id === 'page')
   const dialogs = (
     <>
       <input
@@ -359,52 +409,35 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
         onChange={event => {
           const selected = event.target.files?.[0]
           event.target.value = ''
-          if (!selected || locked) return
+          if (!selected || !canEdit || locked || fileReadToken.current !== null) return
           if (selected.size > 8 * 1024 * 1024) {
             setError(COPY.fileTooLarge)
             return
           }
+          const token = Symbol()
+          fileReadToken.current = token
+          setReadingFile(true)
           void selected
             .text()
             .then(text => {
-              const bundle = readPluginBundle(text)
-              if (alive.current) {
-                setAdding(false)
-                open({ bundle })
-              }
+              if (fileReadToken.current === token) open({ bundle: readPluginBundle(text) })
             })
             .catch((cause: unknown) => {
-              if (alive.current) setError(cause instanceof Error ? cause.message : COPY.couldNotRead)
+              if (fileReadToken.current === token) setError(cause instanceof Error ? cause.message : COPY.couldNotRead)
+            })
+            .finally(() => {
+              if (fileReadToken.current === token) {
+                fileReadToken.current = null
+                setReadingFile(false)
+              }
             })
         }}
       />
       <Dialog
-        open={adding}
-        title={COPY.add}
-        size="lg"
-        onClose={() => setAdding(false)}
-        footer={
-          <>
-            <Button icon={Upload} disabled={locked} onClick={() => input.current?.click()}>
-              {COPY.import}
-            </Button>
-            <Button
-              variant="primary"
-              onClick={() => {
-                open({ bundle: createPluginPackageTemplate('tool', 'my-plugin-' + newRequestId().slice(0, 8)) })
-                setAdding(false)
-              }}>
-              {COPY.newTool}
-            </Button>
-          </>
-        }>
-        <NoteLine icon={ShieldGlyph} brief={{ label: PLUGIN_REACH_COPY.host.label, detail: PLUGIN_REACH_COPY.host.body }} />
-      </Dialog>
-      <Dialog
         open={editor !== null}
         title={record ? record.name : COPY.newPlugin}
         size="xl"
-        subtitle={COPY.codePreview}
+        {...(executable ? { subtitle: COPY.codePreview } : {})}
         onClose={() => {
           if (!locked) {
             setEditor(null)
@@ -422,12 +455,8 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
             <Button disabled={locked} onClick={() => save(false)}>
               {COPY.saveDraft}
             </Button>
-            <Button
-              variant="primary"
-              loading={busy}
-              disabled={pending !== null || !editor?.bundle.manifest.name.trim()}
-              onClick={() => save(true)}>
-              {COPY.apply}
+            <Button variant="primary" loading={busy} disabled={locked || !editor?.bundle.manifest.name.trim()} onClick={() => save(true)}>
+              {formManifest && needsPageBuild(formManifest) ? COPY.buildPreview : COPY.apply}
             </Button>
           </>
         }>
@@ -441,12 +470,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                   label={COPY.turnOn}
                   checked={record.enabled}
                   disabled={locked || dirty}
-                  onCheckedChange={enabled => {
-                    void perform({
-                      path: route(record.id) + '/enabled',
-                      options: { method: 'POST', body: { requestId: newRequestId(), enabled } },
-                    })
-                  }}
+                  onCheckedChange={enabled => setEnabled(record, enabled)}
                 />
               )}
               {record && (
@@ -454,16 +478,15 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                   icon={DownloadGlyph}
                   disabled={locked || dirty}
                   onClick={() => {
-                    void exportBundle()
+                    void exportBundle(record.id).catch(cause => setError(inlineError(cause)))
                   }}>
                   {COPY.export}
                 </Button>
               )}
             </div>
             {record?.unavailableReason && <InlineNotice tone="error">{record.unavailableReason}</InlineNotice>}
-            <PluginReachGroup
-              reach={manifestReach(tab === 'manifest' ? typedManifest(manifestText, editor.bundle.manifest) : editor.bundle.manifest)}
-            />
+            <PluginReachGroup reach={reach} />
+            {!!formManifest?.apps?.length && <NoteLine icon={LockGlyph} brief={{ label: COPY.appScope }} />}
             <fieldset disabled={locked} className="plugin-asset-fields">
               <div className="form-grid">
                 <TextField
@@ -491,6 +514,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                 }
               />
               <Tabs
+                className="plugin-editor-tabs"
                 label={COPY.editor}
                 value={tab}
                 options={[
@@ -514,14 +538,13 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                 }}
               />
               {tab === 'manifest' ? (
-                <TextAreaField
+                <PluginSourceField
                   label={COPY.pluginManifest}
                   value={manifestText}
+                  language="json"
                   rows={16}
-                  spellCheck={false}
-                  className="plugin-source"
-                  onChange={event => {
-                    setManifestText(event.target.value)
+                  onValueChange={value => {
+                    setManifestText(value)
                     setDirty(true)
                   }}
                   hint={COPY.manifestDetails}
@@ -539,17 +562,25 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                       </Button>
                     ))}
                   </div>
-                  {selectedFile ? (
-                    <TextAreaField
-                      label={tab === 'content' ? COPY.instructions : selectedFile.path}
+                  {!selectedFile ? (
+                    <p className="settings-empty">{COPY.noTextFiles}</p>
+                  ) : tab === 'files' ? (
+                    <PluginSourceField
+                      key={selectedFile.path}
+                      label={selectedFile.path}
+                      language={languageForPath(selectedFile.path)}
                       rows={14}
-                      className={tab === 'files' ? 'plugin-source' : undefined}
-                      spellCheck={tab === 'content'}
+                      value={selectedFile.content}
+                      onValueChange={value => editBundle(editPluginSource(editor.bundle, selectedFile.path, value))}
+                    />
+                  ) : (
+                    <TextAreaField
+                      label={COPY.instructions}
+                      rows={14}
+                      spellCheck
                       value={selectedFile.content}
                       onChange={event => editBundle(editPluginSource(editor.bundle, selectedFile.path, event.target.value))}
                     />
-                  ) : (
-                    <p className="settings-empty">{COPY.noTextFiles}</p>
                   )}
                 </div>
               )}
@@ -588,7 +619,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                   maxLength={64}
                   onChange={event => editBundle({ ...editor.bundle, manifest: { ...editor.bundle.manifest, id: event.target.value } })}
                 />
-                <NoteLine icon={LockGlyph} brief={{ label: COPY.codeConfirmation }} />
+                {executable && <NoteLine icon={LockGlyph} brief={{ label: COPY.codeConfirmation }} />}
               </details>
             </fieldset>
             {error && <InlineNotice tone="error">{error}</InlineNotice>}
@@ -607,6 +638,17 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
           </div>
         )}
       </Dialog>
+      {canEdit && reviewTarget && (
+        <PluginMutationDialog
+          target={reviewTarget}
+          onClose={() => setReviewTarget(null)}
+          onConfirm={result => {
+            const request = reviewedPluginMutation(reviewTarget, result)
+            setReviewTarget(null)
+            void perform({ ...request, reviewId: reviewTarget.id })
+          }}
+        />
+      )}
       {deleting && (
         <ConfirmDialog
           title={COPY.deleteTitle}
@@ -630,19 +672,23 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
   return {
     records,
     error,
+    reviewErrorId,
+    exportBundle,
     locked,
     dialogs,
-    add: () => {
-      setAdding(true)
+    importFile: () => {
+      if (!canEdit || locked) return
       setError('')
+      input.current?.click()
+    },
+    newTool: () => {
+      if (canEdit && !locked) open({ bundle: createPluginPackageTemplate('tool', 'my-plugin-' + newRequestId().slice(0, 8)) })
     },
     open: (record: PluginPackageSummary) => {
       void selectRecord(record)
     },
     /** Turns an applied package on or off from its page. */
-    setEnabled: (record: PluginPackageSummary, enabled: boolean) => {
-      void perform({ path: route(record.id) + '/enabled', options: { method: 'POST', body: { requestId: newRequestId(), enabled } } })
-    },
+    setEnabled,
     /** A change from the page, with no editor open to show its confirmation or an unknown result. */
     pageStatus:
       editor === null && (busy || pending) ? (
@@ -663,6 +709,13 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
       ) : null,
     /** A package's whole content, for what its page says about it. */
     read: async (record: PluginPackageSummary) => (await api<{ package: PluginPackageDetail }>(route(record.id))).package,
+    applyDraft: (record: PluginPackageSummary) => review(record, 'apply', record.revision),
+    updateCreatorDraft: (id: string, sessionId: string) =>
+      perform({
+        reviewId: id,
+        path: 'plugin-packages/import',
+        options: { method: 'POST', body: { requestId: newRequestId(), sessionId, kind: 'plugin' } },
+      }),
     retry: () => {
       setError('')
       void load().catch((cause: unknown) => {
@@ -680,8 +733,6 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
         })
     },
     /** Applies an earlier applied revision again (回退), with its confirmation when its pages ask for more. */
-    rollback: (record: PluginPackageSummary, revision: string) => {
-      void perform({ path: route(record.id) + '/rollback', options: { method: 'POST', body: { requestId: newRequestId(), revision } } })
-    },
+    rollback: (record: PluginPackageSummary, revision: string) => review(record, 'rollback', revision),
   }
 }

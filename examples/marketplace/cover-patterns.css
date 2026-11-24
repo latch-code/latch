@@ -1,0 +1,35 @@
+[data-plugin-pattern='orbits'] {
+  background-image: repeating-radial-gradient(
+    ellipse at 76% 110%,
+    transparent 0 21px,
+    var(--plugin-art-stroke) 22px 23px,
+    transparent 24px 39px
+  );
+}
+
+[data-plugin-pattern='lattice'] {
+  background-image:
+    linear-gradient(60deg, transparent 48%, var(--plugin-art-stroke) 49% 51%, transparent 52%),
+    linear-gradient(120deg, transparent 48%, var(--plugin-art-stroke) 49% 51%, transparent 52%);
+  background-position: center;
+  background-size: 46px 80px;
+}
+
+[data-plugin-pattern='diagonals'] {
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 8px,
+    var(--plugin-art-stroke) 9px 10px,
+    transparent 11px 18px,
+    var(--plugin-art-stroke) 19px 20px,
+    transparent 21px 34px
+  );
+}
+
+[data-plugin-pattern='dots'] {
+  background-image:
+    radial-gradient(circle at 25% 25%, var(--plugin-art-stroke) 1.5px, transparent 2.5px),
+    radial-gradient(circle at 75% 75%, var(--plugin-art-stroke) 1.5px, transparent 2.5px);
+  background-position: center;
+  background-size: 28px 28px;
+}

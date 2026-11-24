@@ -126,6 +126,7 @@ const redirect = `(function(){try{var s=localStorage.getItem('latch-lang');if(!s
       <nav class="foot__cols" aria-label={t.foot.label}>
         <div>
           <p class="foot__h">{t.foot.get}</p>
+          <a href={href(lang, '/plugins/')}>{t.marketplace.title}</a>
           <a href={`${href(lang, '/download/')}#mac`}>{t.foot.mac}</a>
           <a href={`${href(lang, '/download/')}#ios`}>{t.foot.ios}</a>
           <a href={`${href(lang, '/download/')}#later`}>{t.foot.later}</a>

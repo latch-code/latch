@@ -4,9 +4,14 @@ sources:
   - packages/sdk/src
   - packages/core/src/registry.ts
   - packages/protocol/src/plugin-packages.ts
+  - packages/protocol/src/ui.ts
+  - packages/ui/src/plugins.ts
+  - apps/web/src/panel/sessionContext.ts
   - apps/host/src/plugin-assets.ts
   - apps/host/src/plugin-package-bundle.ts
   - apps/host/src/plugin-package-routes.ts
+  - apps/host/src/plugin-npm.ts
+  - apps/host/src/npm-source.ts
   - apps/host/src/plugin-packages.ts
   - apps/host/scripts/cleanup-plugin-generations.ts
   - apps/host/src/plugins
@@ -36,6 +41,77 @@ sources:
 签名以这些文件为准，本文只写签名说不出的规则。两个包只在本仓库的 workspace 中使用，带版本承诺的独立 SDK 包尚未发布；本地插件编译为 ESM `.mjs`。内置模型协议的 HTTP 辅助（[providers/http.ts](../apps/host/src/plugins/providers/http.ts)）不属于 SDK。
 
 「设置 › 扩展」把只有技能与数据面板的插件列为「Latch 提供」的数据；含 Host 模块、工具、面板模块、Provider、Harness 或连接载体的插件只列在折叠的「这台 Mac 上的开发者」里，标「可信的本地代码」，不隔离（[HARNESSES.md](HARNESSES.md#扩展)）。
+
+## 创造模式与插件市场
+
+在「设置 › 插件」点「创建插件…」直接打开创造模式的输入框，再次进入会恢复未发送的插件草稿。也可以在新会话输入区切换到「创造模式」。在同一个输入框里选 Harness、模型，以及该模型支持的思考深度，写下想改变的工作方法、操作或界面。点发送后才开始制作。创造模式要求本机桌面端、完整数据范围、管理与运行权限，以及明确支持此模式的 Harness。Host 给新会话分配独立工作目录。工作目录是文件的归属，不是操作系统隔离。
+
+作者 Agent 可以读 `latch-authoring/SKILL.md`、三种示例及离线页面 SDK。指南随引擎请求送达，用户的消息原文保留。按需求决定产物，把文件写到会话工作区：
+
+| 用户需要 | 草稿 | 应用后在哪里使用 |
+| --- | --- | --- |
+| 给 Agent 一套反复使用的工作方法 | `latch-plugin/latch-plugin.json`（格式 1）与清单指向的技能 Markdown | 内置 Harness 能使用启用的技能；「我的 Agent」按所选技能和 Harness 的交付能力决定上下文。 |
+| 增加可执行的工具，或组合技能、工具和会话面板 | 同一格式 1 清单与包内自包含的 ESM 源码、Markdown 或静态数据面板 | 内置 Agent 能调用注册的工具。适用面板从会话右栏「＋」打开。Host 模块和工作台 React 面板均为可信代码。 |
+| 增加能操作的应用界面 | `latch-app/latch-app.json`（格式 2）和页面源码 | 先用样例数据构建和预览，确认页面能力后从「应用」打开。原生 iOS 只列入口，完整页面可在手机浏览器使用。 |
+
+创作会话完成后，输入区会在探测到产物时提供审阅入口；会话「改动」也能打开同一个草稿详情。导入只保存文件；用户可以先检查技能正文、逐个审阅源码和声明，再点应用。可信代码沿用执行摘要和本机确认。再改一轮可从来源会话更新同一插件；新的源码修订独立于正在使用的版本。页面构建失败可把诊断放回原创作会话的输入框。见[页面草稿](APP-PAGES.md#草稿构建与预览)。
+
+插件市场可以按任务、名称或贡献搜索。每个条目给出使用位置、适用的 Agent、来源和执行权限。在本机审阅后可把精选包暂存为草稿。Host 只从随自身构建附带的目录取文件。采用这个来源的记录可检查新版本，Host 核对安装身份、当前草稿与发行修订，并要求更新版的 SemVer 严格高于已下载和已应用的版本。下载或更新只写草稿；已应用版本继续运行。旧版中无来源记录的插件、从其他来源取得的同名包和改过的本机草稿都保留，可打开已有资产管理。对工作台随版本附带的公开目录，浏览不需要 Host 管理操作。桌面和官网市场都从 `examples/latch.catelog.json` 选择包内文件，源码按文本读取。官网的 `/plugins/` 和 `/zh/plugins/` 提供下载，`/plugins/catalog.json` 保留原有下载索引。同一批包生成 `/plugins/latch.catelog.json` 作为安装清单，使用相对包路径与 SHA-256。这个摘要核对下载字节，Host 应用时另行校验规范化包、修订和能力。
+
+**分享与收录。** 从保存后的插件详情导出 `.latch-plugin.json`，接收者在 Mac 的「设置 › 插件 › 导入文件…」审阅并应用。导出包含保存的声明和文件，不包含运行数据或本机批准。加入随发行版提供的精选目录时，将可运行的示例包、准确的中英说明和许可提交给仓库维护者审阅，同时在市场文件列表中列出允许分发的普通文件。构建发布时拒绝符号链接和硬链接。新版本须更新版本号，并验证从市场导入到首次使用。第三方插件通过下文的外部来源由管理员手动添加和更新。
+
+### 桌面市场的工作区页面
+
+市场由随 Latch 提供的 `latch-workspace:marketplace` 插件注册。Host 启用插件后，在目录的 `workspacePages` 中发布插件标识、页面标识和接口版本。停用插件时撤回该声明。工作台只挂载随当前客户端发行、与声明匹配的页面。桌面侧栏可在浏览市场期间继续导航。iPhone 和 iPad 工作台不挂载市场。
+
+市场使用既有的插件管理 API。Host 对每次查询来源、下载、审阅和应用按各自的权限要求核对调用方。这项桌面贡献未扩展第三方声明可申请的权限；格式 2 的插件应用页继续通过已批准的能力和 `via` 桥工作。详见[插件页面](APP-PAGES.md)。
+
+### 从 npm 仓库下载
+
+在这台 Mac 的桌面端从侧栏打开「插件市场」，选择「添加插件」。管理员可在本机确认一个 HTTPS 地址，可包含仓库路径前缀。允许匿名读取的 npm 公共仓库和镜像可以作为来源。Host 不读取 `.npmrc`，不接受带登录信息、查询参数或片段的地址。私网地址还需要现有的出站白名单；元数据地址始终拒绝。npm 源未配置时不发请求。
+
+输入 npm 包名（也可用 `@scope/name`），可在包名后加确切版本，例如 `@scope/name@1.2.3`。先预览，再下载指定版本的草稿。不填版本时读取仓库的 `latest` 标签，若该标签指向预发布版，Host 会提示输入准确版本。每次更新按 SemVer 比较，须高于已下载和已应用的版本，只能从这项资产记录的原仓库与原 npm 包名下载。换源后要先选回原仓库；新版本必须保留原插件 ID。下载、预览和读回回执都不启动插件，不安装 npm 依赖，不运行 npm 的包脚本。
+
+下载仅更新草稿。已应用版本继续运行。若当前草稿有本机改动，普通下载会保留它；可先导出，再明确选择替换这份草稿。下载后按插件详情检查文件和能力，必要时构建页面，再按现有流程确认、应用。请求超时复用同一个请求号。已写入或待结算的请求可凭原请求拿回结果，即使仓库后来停用也不会重新下载。
+
+Host 只访问已确认地址下的包版本元数据和 `.tgz`，拒绝重定向。`https://registry.npmmirror.com/` 有一条固定分发路径例外：仓库返回的该包版本压缩包可以跳转一次至 `https://cdn.npmmirror.com` 上同一包名、版本和文件名；本机确认会列出这两个地址。下载前后校验来源、版本、压缩包 SHA-512 SRI、包内身份和资产修订。SHA-512 用来核对下载内容，代码与能力仍经原有的本机审阅。压缩和解压各限 9 MiB，最多 256 个普通文件或目录条目；链接和扩展 tar 条目被拒绝，Host 只在内存里读取指定文件。预览与暂存都拒绝疑似凭据文件、常见密钥格式及 Host 已登记的秘密值。
+
+**打包。** 将桌面端导出的 `.latch-plugin.json` 原样保存为 `latch-plugin.json`。其根对象是 `{ manifest, files }`。同目录加一个 `package.json`，`name` 写 npm 包名，`version` 必须等于 `manifest.version`。插件 ID 继续写在资产声明里，并在每一版保留。
+
+```json
+{
+  "name": "@your-scope/latch-notes",
+  "version": "1.0.0",
+  "files": ["latch-plugin.json"]
+}
+```
+
+用 `npm pack --ignore-scripts` 本地核对 tarball 里包含 `package/package.json` 与 `package/latch-plugin.json`。发布由作者使用自己有权限的 npm 客户端和仓库完成，例如 `npm publish --ignore-scripts --registry=https://registry.example.com/npm/`，预发布时另加 `--tag next`。接收方选同一仓库和 npm 包名，下载前先审阅指定版本。registry 必须提供匿名读取且有 `dist.integrity` 的 SHA-512 摘要。
+
+### 从 GitHub 或本机添加插件
+
+从本机桌面端的插件市场或插件设置打开「添加插件」，可以输入 GitHub 仓库的 HTTPS 地址、这台 Mac 的绝对路径或以 `~/` 开头的路径。GitHub 默认取仓库的默认分支，也接受带 `/tree/<分支或标签>` 的仓库地址。Host 匿名读取固定提交的文件及其 Git 对象摘要，经出站策略访问 `api.github.com` 与 `raw.githubusercontent.com`，拒绝重定向。私有仓库可从人在本机已经检出的目录添加。
+
+目录根有 `latch.catelog.json` 时，可以在列表逐个选择并审阅插件。清单用 `formatVersion: 1` 和至多 64 条 `plugins`，每项的 `id` 必须和插件声明一致。同一清单可混用源码目录和导出件：
+
+```json
+{
+  "formatVersion": 1,
+  "plugins": [
+    { "id": "weekly-notes", "folder": "plugins/weekly-notes", "manifest": "latch-plugin.json", "files": ["SKILL.md"] },
+    {
+      "id": "release-notes",
+      "version": "1.2.0",
+      "bundle": "releases/release-notes-1.2.0.latch-plugin.json",
+      "sha256": "<导出文件原始字节的 64 位小写十六进制摘要>"
+    }
+  ]
+}
+```
+
+源码条目的 `manifest` 可以是 `latch-plugin.json` 或用于隔离页面的 `latch-app.json`。相对路径在所属包内解析，`files` 明确列出一起交付的文件。没有目录清单时，支持根目录的单包 `latch-plugin.json` 或 `latch-app.json`，也可直接选择本机导出的 `.latch-plugin.json`。读取受大小、数量、文件类型、路径和秘密检查约束，拒绝受保护目录、符号链接和硬链接。
+
+外部来源在审阅里显示 GitHub 仓库、提交和包路径，或本机来源。暂存只保存审阅过的草稿，应用仍经现有的权限审阅与本机确认。检查更新时，Host 使用原 GitHub 仓库和 ref、本机目录或原导出文件，并核对插件 ID、安装身份和草稿基版。目录可以在新版本重命名文件，插件 ID 必须保留。新版 SemVer 须高于已下载和已应用的版本，已有本机改动的草稿会保留。
 
 ## 加载插件
 
@@ -88,14 +164,24 @@ Host 声明可选能力 `catalog.features.pluginPackages`。资产是 `{ manifes
 | --- | --- |
 | `GET /plugin-packages` | 摘要列表，不含源码 |
 | `POST /plugin-packages` | `{ requestId, bundle }` 创建草稿；标识不能与内置或启动参数的插件相同（409 `plugin-package-id-in-use`） |
-| `GET /plugin-packages/:id` | 摘要与当前草稿 |
+| `GET /plugin-packages/:id` | 摘要、当前草稿和 Host 生成的审阅 |
+| `POST /plugin-packages/review` | 凭 `{ bundle }` 审阅本地文件，返回 `{ review }`，不保存或运行 |
+| `GET /plugin-packages/:id/review?operation=apply\|rollback\|enable&revision=…` | 审阅这个操作指向的确切草稿、历史版本或已应用快照，附安装身份 `installId` |
 | `PUT /plugin-packages/:id` | `{ requestId, baseRevision, bundle }` 保存草稿，标识不变；版本过期 409 `plugin-package-changed` |
 | `GET /plugin-packages/:id/export` | 可再次导入的 `{ bundle }`，不含运行数据 |
-| `POST /plugin-packages/:id/apply` | `{ requestId, revision }` 应用这个精确草稿；有 `.ts`/`.tsx` 页面入口时要求该修订构建成功 |
-| `POST /plugin-packages/:id/enabled` | `{ requestId, enabled }` 启停已应用快照，不应用草稿 |
-| `POST /plugin-packages/:id/rollback` | `{ requestId, revision }` 重新应用最近 5 个应用过的快照之一，草稿不变 |
+| `POST /plugin-packages/:id/apply` | `{ requestId, revision }` 应用这个精确草稿；桌面确认提交审阅中看到的 `baseAppliedRevision` 和 `reviewedInstallId`，有 `.ts`/`.tsx` 页面入口时要求该修订构建成功 |
+| `POST /plugin-packages/:id/enabled` | `{ requestId, enabled }` 启停已应用快照；桌面恢复前复查 `baseAppliedRevision` 和 `reviewedInstallId` |
+| `POST /plugin-packages/:id/rollback` | `{ requestId, revision }` 重新应用最近 5 个应用过的快照之一；桌面确认绑定 `baseAppliedRevision` 和 `reviewedInstallId` |
 | `DELETE /plugin-packages/:id` | `{ requestId, baseRevision, deleteData? }` 撤下并移除；`deleteData: true` 才删页面数据 |
 | `POST /plugin-packages/import`、`GET …/session-draft`、`POST`/`GET …/:id/build`、`GET …/:id/builds/:bundleHash.js`、`POST …/:id/dev` | 页面草稿的导入、构建、预览产物与开发中，见 [APP-PAGES.md](APP-PAGES.md#草稿构建与预览) |
+| `POST /plugin-packages/catalog/preview` | 凭 `{ pluginId }` 读 Host 随附的包、审阅及现有草稿的版本状态 |
+| `POST /plugin-packages/catalog/stage` | 凭 `{ requestId, pluginId, revision, update? }` 暂存精确发行内容；同源更新还核对 `update: { installId, baseRevision }` |
+| `GET` / `PUT /plugin-packages/npm/registry` | 读取 `{ registry, revision }` 或凭 `{ registry, baseRegistry, baseRevision, requestId }` 更新。`null` 停用，新增或换源经 `policy.change` 确认；每次切换写入新修订，选回旧地址也不接受过期的请求 |
+| `POST /plugin-packages/npm/preview` | `{ name, version?, pluginId? }` 返回精确来源 `release`、`revision`、资产内容、审阅和已有安装信息，省略 `version` 使用 `latest` |
+| `POST /plugin-packages/npm/stage` | `{ requestId, release, revision, update? }` 下载预览内容为草稿。更新须有 `update: { pluginId, installId, baseRevision, replaceLocalDraft? }`，明确替换本机草稿才送 `replaceLocalDraft: true` |
+| `POST /plugin-packages/external/find` | 凭 `{ input }` 查找 GitHub 或本机来源中的插件；凭 `{ pluginId }` 检查已有资产的原来源 |
+| `POST /plugin-packages/external/preview` | 凭查找所得 `{ token, path }` 读取所选包，返回草稿修订、源文件、审阅、版本状态与暂存用的 `token` |
+| `POST /plugin-packages/external/stage` | 凭 `{ requestId, token, revision, update? }` 暂存精确审阅内容。更新须带 `update: { installId, baseRevision }`；重试原请求会等待进行中的暂存或读回保存结果 |
 
 `createPluginPackageTemplate('skill' | 'tool' | 'react-ui', id?, name?)`（`@latch/protocol`）给出可直接应用的起点，不下载代码。
 
@@ -108,8 +194,10 @@ Host 声明可选能力 `catalog.features.pluginPackages`。资产是 `{ manifes
 
 **写入与结果未知。** 写入用 0600 临时文件、文件同步、原子替换与目录同步。请求超时是结果未知，客户端复用原 `requestId`；替换后结果未知时普通读取被拒绝（503 `plugin-package-write-unknown`），只有同设备的原请求能结算。同一 `requestId` 用于不同修改返回 409 `request-conflict`。重试应用必须再次激活候选，不把已回滚的候选报成发布成功。
 
-**信任。**
+**审阅与信任。**
 
+- 审阅根据 Host 校验的清单和源码显示来源、修订、技能、静态面板、可执行入口、隔离页面当前已批准和新申请的能力。更新与回退还显示和已应用版本相比改变的文件、清单、执行摘要及来源。接管同标识旧插件留下的数据需要单独在确认里说明。
+- Host 模块可以读写本机文件、访问进程数据、启动程序或联网。React 面板与当前工作台同权，能读取页面数据或以当前设备身份调用工作台。审阅始终显示这两种代码的执行范围，已有执行摘要批准也一样。文本扫描能指出可能的文件访问、进程启动、联网、密钥和工具注册等线索。动态路径、依赖或运行时行为可能无法从文本判断，未发现线索不能证明插件安全。
 - 没有可执行摘要的包（只有技能与数据面板）首装与编辑都不需要系统确认。页面也没有可执行摘要，它的信任绑定能力集合，另行确认（[APP-PAGES.md](APP-PAGES.md#信任)）。
 - Host 模块、React 面板源码或执行配置改变时，`plugin.package.apply` 经 `PresenceService` 确认一次，绑定完整草稿与执行摘要；已批准的摘要跨重启复用。名称、说明、技能正文与静态数据不产生新的批准。
 - L3 会话运行或等待时不接受这项确认。
@@ -183,7 +271,7 @@ context.registerSkill({ id: 'review', name: '发布检查', description: '逐项
 
 两种面板都挂在会话信息栏的页签。`harnessIds` 省略表示所有 Harness，空列表表示没有适用的会话。
 
-**React 面板。** 包的 `panels` 或 `registerClientPanel({ id, title, description?, harnessIds?, source })`：
+**React 面板。** 包的 `panels` 或 `registerClientPanel({ id, title, description?, harnessIds?, context?, source })`：
 
 - `source` 是预先构建的 ESM（不超过 1 MB），默认导出函数组件。Host 不运行 JSX/TypeScript 编译器，不用 `eval`。
 - 组件收到 `PluginPanelProps<TaskSummary>`：用工作台传入的 `react` 与 `ui` 控件，不带第二份 React。
@@ -191,13 +279,21 @@ context.registerSkill({ id: 'review', name: '发布检查', description: '逐项
 - 订阅、计时器与连接放在 `useEffect` 并返回清理函数；切换会话、离开页签或停用包会卸载组件。不在模块顶层建立资源：模块缓存留到页面关闭。
 - Host 只在认证的 `GET /link/api/ui-modules/:panelId/:sha256.mjs` 返回当前启用的版本（`no-store`）；旧摘要与停用的版本 404。客户端只从 Host 同源加载，不放宽 CSP。
 
+**上下文统计面板。** React 面板可显式声明 `context: true`，随 `.mjs` 入口一起计入执行摘要。已有安装增加此声明时需重新在 Mac 上确认。旧版 Host 会按严格清单校验拒绝不认识的字段。
+
+- 组件收到 `ContextPluginPanelProps<SessionContext>`，包含 `react`、共享控件 `ui`、工作台 `locale`、统计 `context`、`revealTurn(ref)` 和可选的 `revealTool(ref)`。工作台从当前设备获准查看的会话详情生成统计。空会话返回空统计，加载和会话切换由工作台显示读取状态。
+- `context.kind` 区分 Standard 请求记录与外部 Harness。Standard 的请求可带 `toolContributions`，分别列出本次输入里最大的工具结果和本次首次观测纳入的最大结果，每组最多 5 条。条目给出 UTF-8 字节数和纳入类型。能唯一对应原始工具行时，附上固定名称或工具类别和临时 `toolRef`。
+- `window` 与 `windows` 保留报告过的窗口占用、容量与来源。Claude 的完整组成和上一响应的用量各自保留，并归属原来的采样时刻。相邻两轮的来源、容量和上下文区段都可比较时，`windows` 才给出已用 token 的 `delta`。`events` 记录显式清空和观测到的压缩，未知数据留空。
+- `revealTurn(ref)` 定位统计中的用户回合，`revealTool(ref)` 展开必要的折叠并定位统计中的具体工具行。同一面板显示期间，仍在统计中的目标保留引用。面板关闭、会话切换、停用或卸载时引用失效。两种引用各自绑定目标类型。接口只提供有限统计、固定标签、回合序号和临时引用，模块仍以工作台的可信代码运行。
+- 随 Latch 的「上下文」面板使用原来的「上下文」页签与记忆。工作台核对随本版本附带的模块摘要后才使用该插件视图。插件停用或卸载时，同一页签使用内置视图。
+
 **数据面板。** `registerUiPanel({ id, title, description?, harnessIds?, listed?, render })`：
 
 - `render({ session, signal })` 在 Host 上返回 `UiPanelDocument`：`text`、`code`、`list`、`facts`、`table`，最多 32 块、序列化后 65,536 字符；只渲染文本，不收 HTML、事件处理器或样式。
 - `listed: false` 不出现在页签里，只作数据入口；这不是访问限制。
-- 读取 `GET /link/api/tasks/:id/ui-panels/:panelId`：先核对设备与会话，再运行回调，返回前重新核对权限。取消是协作式的，回调真实结算后才释放租约。插件异常只向页面返回通用错误（502 `ui-panel-failed`）。
+- 读取 `GET /link/api/tasks/:id/ui-panels/:panelId`：设备须有 `view`，私有会话还须有 `all` 数据范围。Host 在运行回调之前和返回结果之前各核对一次。取消是协作式的，回调真实结算后才释放租约。插件异常只向页面返回通用错误（502 `ui-panel-failed`）。
 
-**尚未实现：** 在线下载与自动更新、插件市场、按项目选择插件、通用的跨插件服务依赖、时间线渲染扩展。它们需要各自的生命周期与消费方契约。
+**尚未实现：** 桌面远程目录订阅与自动更新、按项目选择插件、通用的跨插件服务依赖、时间线渲染扩展。它们需要各自的生命周期与消费方契约。
 
 ## 连接载体
 

@@ -11,11 +11,11 @@ import { projectScopeCaption } from '../projects.tsx'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { writeClipboard } from '@latch/ui'
 import type { Approval, SessionConfigOption, TaskDetail, TaskSummary } from '@latch/protocol'
-import { api, ApiError, errorMessage, fromInput, inlineError, isUncertain } from '../core/api.ts'
+import { api, ApiError, errorMessage, fromInput, inlineError, isUncertain, readPending } from '../core/api.ts'
 import { choiceKind, DecisionRequests, retryApprovalOption, settledOutcome, type UncertainChoice } from '../core/approvalDecision.ts'
 import { cancelAnswer, CancelRequests } from '../core/cancelRequest.ts'
 import { checkReasonText, ConfigRequests, configUncertain, type ConfigRequest } from '../core/configRequest.ts'
-import { browserDraftStorage, forgetStoredDrafts, listedSessions, SessionDrafts } from '../core/sessionDrafts.ts'
+import { browserDraftStorage, forgetStoredDrafts, listedSessions, SessionDrafts, PLUGIN_CREATION_DRAFT } from '../core/sessionDrafts.ts'
 import { forgetPrivateAgentCreation } from '../core/agentCreation.ts'
 import { joinDraft, takeHandedDraft } from '../core/draftHandoff.ts'
 import type { SessionConfigFeedback } from '../composer/modelReasoning.ts'
@@ -78,6 +78,11 @@ const AGENT_HOME_CODES = new Set(['workspace-changed', 'helper-home-unavailable'
 
 const COPY = defineCopy(
   {
+    creatorUnavailable: '请选择支持创造模式的 Agent。',
+    creatorSending: '正在发送消息，请稍后再创建插件。',
+    creatorPending: '请先回到输入框，处理结果待确认的消息。',
+    creatorFork: '请先发送或退出当前的分叉草稿。',
+    creatorFiles: '请先发送新会话草稿，或移除其中的附件和文件引用。',
     released: '已在 设置 › 设备 里释放，请移除后重新添加',
     attachmentsInSteer: '追加的消息不能带附件或文件引用，本轮结束后再发送。',
     attachmentsInQueue: '排队的消息不能带附件或文件引用，本轮结束后再发送。',
@@ -120,6 +125,11 @@ const COPY = defineCopy(
   },
   {
     released: 'Released in Settings › Devices. Remove it and add it again.',
+    creatorUnavailable: 'Choose an agent that supports creation mode. Chat-only mode cannot write plugins.',
+    creatorSending: 'A message is being sent. Try creating a plugin once it finishes.',
+    creatorPending: 'Return to the composer to resolve the pending message.',
+    creatorFork: 'Send or exit the current fork draft first.',
+    creatorFiles: 'Send your new chat draft or remove its attachments and file references first.',
     attachmentsInSteer: 'A follow-up during a turn can’t include attachments or file references. Send it after the turn ends.',
     attachmentsInQueue: 'A queued message can’t include attachments or file references. Send it after the turn ends.',
     delivered: 'Delivered',
@@ -194,6 +204,7 @@ export function useSessionController({
   harness,
   snapshot,
   inputTarget = 'session',
+  board,
   atStart,
   onBeforeSelect,
   onForegroundSent,
@@ -202,6 +213,7 @@ export function useSessionController({
   snapshot: AppSnapshot
   /** The home edits a new draft while the selected conversation stays mounted and subscribed. */
   inputTarget?: 'session' | 'new'
+  board: boolean
   atStart: () => boolean
   /** Runs as the selection changes, for what the shell keeps per open session. */
   onBeforeSelect: (id: string | null) => void
@@ -211,16 +223,34 @@ export function useSessionController({
   const locale = useLocale()
   const { selectedId, detail, cachedDetail, select, refresh } = harness
   const inputId = inputTarget === 'new' ? null : selectedId
+  const catalog = snapshot.catalog
+  const shell = currentShell()
+  const host = hostView(snapshot)
+  const scopesKey = host
+    ? `${snapshot.device.listener}:${snapshot.device.scopes.join(',')}:${snapshot.device.dataScope}:${snapshot.device.status}`
+    : 'legacy'
+  // Ignore last-seen churn, but invalidate every access boundary used by private editors.
+  const access = useMemo(() => deviceAccess(snapshot, shell), [scopesKey, shell])
   const privateVisible = snapshot.device.dataScope === 'all' && snapshot.device.scopes.includes('view')
+  const creatorAllowed = privateVisible && access.local && access.admin && access.scopes.has('run')
+  const creatorAvailable = creatorAllowed && catalog?.features?.pluginCreation === true
+  const pendingCreator = () => {
+    const pending = readPending(`latch.pending.${location.origin}.${snapshot.device.id}`)
+    return pending?.pluginCreation ? pending : null
+  }
   const [initialDrafts] = useState(() => {
     // Only this device's drafts stay on this origin: another device's could otherwise open here.
     forgetStoredDrafts(location.origin, snapshot.device.id)
     return new SessionDrafts(browserDraftStorage(location.origin, snapshot.device.id))
   })
   const sessionDrafts = useRef(initialDrafts)
-  const draftSessionId = useRef(inputId)
-  const restoringDraft = useRef<string | undefined>(undefined)
+  const [creatorSelected, setCreator] = useState(() => creatorAllowed && pendingCreator() !== null)
   const draftDevice = useRef(snapshot.device.id)
+  const creator = creatorAllowed && creatorSelected && draftDevice.current === snapshot.device.id && !board
+  const newDraftKey = creator ? PLUGIN_CREATION_DRAFT : NEW_SESSION_DRAFT
+  const inputKey = inputId ?? newDraftKey
+  const draftSessionId = useRef(inputKey)
+  const restoringDraft = useRef<string | undefined>(undefined)
   const privateDraftId = useRef<string | null>(null)
   const current = detail?.summary.id === selectedId && (!privateSession(detail.summary) || privateVisible) ? detail : null
   const listed = snapshot.tasks.find(task => task.id === selectedId && (!privateSession(task) || privateVisible))
@@ -259,14 +289,6 @@ export function useSessionController({
   const decisions = useRef(new DecisionRequests())
   const cancels = useRef(new CancelRequests())
 
-  const catalog = snapshot.catalog
-  const shell = currentShell()
-  const host = hostView(snapshot)
-  const scopesKey = host
-    ? `${snapshot.device.listener}:${snapshot.device.scopes.join(',')}:${snapshot.device.dataScope}:${snapshot.device.status}`
-    : 'legacy'
-  // Ignore last-seen churn, but invalidate every access boundary used by private editors.
-  const access = useMemo(() => deviceAccess(snapshot, shell), [scopesKey, shell])
   const owner = access.admin
   const canQueue = catalog?.features?.queue === true
   const queueAttachments = canQueue && catalog?.features?.queueAttachments === true
@@ -336,7 +358,10 @@ export function useSessionController({
       return next
     })
   }
+  const creating = inputId === null && creator
   const submission = useSubmission({
+    creating,
+    creatorAllowed: creatorAvailable,
     snapshot,
     access,
     selectedId: inputId,
@@ -345,7 +370,8 @@ export function useSessionController({
     refresh,
     onSent: (sessionId, sent, { foreground, consumedDraft, memoryRefused }) => {
       if (sent.sessionId !== undefined) clearHomeRefused(sent.sessionId)
-      if (consumedDraft) sessionDrafts.current.remove(sent.sessionId ?? NEW_SESSION_DRAFT)
+      if (consumedDraft) sessionDrafts.current.remove(sent.sessionId ?? (sent.pluginCreation ? PLUGIN_CREATION_DRAFT : NEW_SESSION_DRAFT))
+      if (sent.pluginCreation) setCreator(false)
       // The message went; only its 「记住…」 was not kept, and the Host says why.
       if (memoryRefused) setToast({ text: memoryRefused, tone: 'error' })
       if (!foreground || sent.queue) return
@@ -358,7 +384,7 @@ export function useSessionController({
     onReleased: (sent, restored) => {
       released.current?.(COPY.released)
       if (restored || !sent.prompt) return
-      const home = sent.sessionId ?? NEW_SESSION_DRAFT
+      const home = sent.sessionId ?? (sent.pluginCreation ? PLUGIN_CREATION_DRAFT : NEW_SESSION_DRAFT)
       if (!sessionDrafts.current.read(home, privateVisible))
         sessionDrafts.current.save(
           home,
@@ -402,18 +428,18 @@ export function useSessionController({
   sessionDrafts.current.allowPrivate(privateVisible)
   // What was being written before the page loaded: the composer's own text (an unconfirmed submission's) comes first.
   useLayoutEffect(() => {
-    const text = sessionDrafts.current.read(inputId ?? NEW_SESSION_DRAFT, privateVisible)
+    const text = sessionDrafts.current.read(inputKey, privateVisible)
     if (text) submission.setDraft(previous => (previous.trim() ? previous : text))
   }, [])
   // The open composer's text is kept for the next load, as it changes; a private session's only where it may be seen.
   useEffect(() => {
-    if (draftSessionId.current !== inputId) return
+    if (draftSessionId.current !== inputKey) return
     if (restoringDraft.current !== undefined && submission.draft !== restoringDraft.current) return
     restoringDraft.current = undefined
     const hidden = inputId !== null && (summary === undefined || privateSession(summary) || privateDraftId.current === inputId)
     if (hidden && !privateVisible) return
-    sessionDrafts.current.keep(inputId ?? NEW_SESSION_DRAFT, submission.draft, hidden)
-  }, [submission.draft, inputId])
+    sessionDrafts.current.keep(inputKey, submission.draft, hidden || inputKey === PLUGIN_CREATION_DRAFT)
+  }, [submission.draft, inputKey])
   useEffect(() => {
     const drafts = sessionDrafts.current
     const leave = () => drafts.flush()
@@ -432,20 +458,30 @@ export function useSessionController({
   }, [snapshot.tasks, snapshot.tasksComplete, privateVisible])
   // Changing the input target never changes the reading selection. Each target restores only its own draft.
   useLayoutEffect(() => {
-    if (draftSessionId.current === inputId) return
+    if (draftSessionId.current === inputKey) return
     const previous = draftSessionId.current
     const task = snapshot.tasks.find(item => item.id === previous)
-    if (previous === null || task)
-      sessionDrafts.current.save(previous ?? NEW_SESSION_DRAFT, submission.draft, previous !== null && privateSession(task))
+    if (
+      previous === NEW_SESSION_DRAFT
+      || (previous === PLUGIN_CREATION_DRAFT && creatorAllowed && draftDevice.current === snapshot.device.id)
+      || task
+    )
+      sessionDrafts.current.save(previous, submission.draft, previous === PLUGIN_CREATION_DRAFT || privateSession(task))
     else sessionDrafts.current.remove(previous)
-    draftSessionId.current = inputId
-    const restored = sessionDrafts.current.read(inputId ?? NEW_SESSION_DRAFT, privateVisible)
+    draftSessionId.current = inputKey
+    const restored =
+      (inputKey === PLUGIN_CREATION_DRAFT ? pendingCreator()?.prompt : undefined) ?? sessionDrafts.current.read(inputKey, privateVisible)
     restoringDraft.current = restored
     submission.setDraft(restored)
     submission.setError('')
-  }, [inputId])
+  }, [inputKey])
   useLayoutEffect(() => {
     if (!privateVisible || !access.scopes.has('run')) forgetPrivateAgentCreation(location.origin, snapshot.device.id)
+    if (!creatorAllowed) {
+      setCreator(false)
+      sessionDrafts.current.remove(PLUGIN_CREATION_DRAFT)
+      sessionDrafts.current.flush()
+    }
     if (draftDevice.current !== snapshot.device.id) {
       sessionDrafts.current.clear()
       draftDevice.current = snapshot.device.id
@@ -459,7 +495,10 @@ export function useSessionController({
       sessionDrafts.current.clearPrivate()
       if (privateDraftId.current !== null && privateDraftId.current === inputId) submission.setDraft('')
     }
-  }, [snapshot.device.id, privateVisible, access.scopes.has('view'), access.scopes.has('run')])
+  }, [snapshot.device.id, privateVisible, creatorAllowed, access.scopes.has('view'), access.scopes.has('run')])
+  useLayoutEffect(() => {
+    if (creatorAllowed) setCreator(pendingCreator() !== null)
+  }, [creatorAllowed, snapshot.device.id])
   const choice = submission.choice
   const [sessionMentions, setSessionMentions] = useState<FileMention[]>([])
   const [newMentions, setNewMentions] = useState<FileMention[]>([])
@@ -494,7 +533,7 @@ export function useSessionController({
   const newAttachments = useAttachments({
     connectionReported,
     revision: JSON.stringify([draftHarness?.status, draftHarness?.attachmentsReported ?? null]),
-    enabled: catalog?.features?.attachments === true && access.scopes.has('run'),
+    enabled: !creating && catalog?.features?.attachments === true && access.scopes.has('run'),
     selection: {
       harnessId: choice.harnessId ?? catalog?.defaults.harnessId ?? '',
       workspaceId: choice.workspaceId ?? catalog?.defaults.workspaceId,
@@ -503,6 +542,33 @@ export function useSessionController({
     locked: submission.sending || submission.pending !== null,
   })
   const attachmentDraft = inputId === null ? newAttachments : sessionAttachments
+  const newDraftText =
+    inputId === null || !newMentions.length ? submission.draft : sessionDrafts.current.read(NEW_SESSION_DRAFT, privateVisible)
+  const creatorInputsHeld = !creator && (newAttachments.items.length > 0 || newMentions.some(ref => hasFileMention(newDraftText, ref)))
+  const creatorBlockedReason = submission.sending
+    ? COPY.creatorSending
+    : submission.pending
+      ? COPY.creatorPending
+      : submission.fork
+        ? COPY.creatorFork
+        : creatorInputsHeld
+          ? COPY.creatorFiles
+          : undefined
+  const creatorBlocked = !creatorAvailable || !draftHarness?.modes.includes('agent') || draftHarness.pluginCreation !== true
+  const chooseCreator = (next: boolean, seed?: string): boolean => {
+    if (submission.sending || submission.pending || (next && (!creatorAvailable || creatorBlockedReason))) return false
+    if (inputId === null && !sessionDrafts.current.save(inputKey, submission.draft, creator)) {
+      setToast({ text: COPY.draftLimit, tone: 'error' })
+      return false
+    }
+    if (next && !sessionDrafts.current.read(PLUGIN_CREATION_DRAFT, true)) {
+      const initial = seed ?? (inputId === null ? submission.draft : '')
+      sessionDrafts.current.save(PLUGIN_CREATION_DRAFT, initial, true)
+      if (creating && !submission.draft) submission.setDraft(initial)
+    }
+    setCreator(next)
+    return true
+  }
   released.current = attachmentDraft.markReleased
   const sessionQuotes = useRef(new Map<string, { etag: string; marker: string }>())
   const newQuotes = useRef(new Map<string, { etag: string; marker: string }>())
@@ -539,7 +605,8 @@ export function useSessionController({
   }
   const mentionHarness = inputId === null ? findHarness(catalog, choice.harnessId) : harnessInfo
   const mentionable =
-    catalog?.features?.fileMentions === true
+    !creating
+    && catalog?.features?.fileMentions === true
     && (inputId === null ? choice.mode === 'agent' : summary?.mode !== 'chat')
     && mentionHarness?.capabilities.tools.fileMentions === true
   // A restricted device gets the reason when it asks for files with @.
@@ -554,7 +621,9 @@ export function useSessionController({
     onRefs: setFileMentions,
   }
   const noProjectRefusal =
-    draftHarness?.level === 'L3' && codeRootWorkspace(catalog?.workspaces, { id: 'default' }) ? CODE_ROOT_COPY.chooseProject : undefined
+    !creating && draftHarness?.level === 'L3' && codeRootWorkspace(catalog?.workspaces, { id: 'default' })
+      ? CODE_ROOT_COPY.chooseProject
+      : undefined
   /** The project list also opens when the selected Harness cannot run in the default folder. */
   const [projectRequest, setProjectRequest] = useState(0)
   const [projectNotice, setProjectNotice] = useState<string>()
@@ -567,7 +636,11 @@ export function useSessionController({
     if (inputId !== null) await configFlights.current.get(inputId)
   }
   const sendDraft = async (queueForLater = false) => {
-    if (inputId === null && !submission.fork && (choice.workspaceId ?? 'default') === 'default' && noProjectRefusal) {
+    if (creating && creatorBlocked) {
+      submission.setError(COPY.creatorUnavailable)
+      return
+    }
+    if (!creating && inputId === null && !submission.fork && (choice.workspaceId ?? 'default') === 'default' && noProjectRefusal) {
       askProject()
       return
     }
@@ -586,7 +659,7 @@ export function useSessionController({
           : canQueue
             ? 'queue'
             : undefined
-    if (ids && (await submission.submit(undefined, undefined, followUp, ids, mentionChoice.refs))) {
+    if (ids && (await submission.submit(undefined, undefined, followUp, ids, creating ? [] : mentionChoice.refs, creating))) {
       attachmentDraft.clear()
       setFileMentions([])
     }
@@ -722,7 +795,7 @@ export function useSessionController({
           tone: 'ok',
         })
       if (dropped.restored || !dropped.text) return
-      const home = dropped.sessionId ?? NEW_SESSION_DRAFT
+      const home = dropped.sessionId ?? (pending.pluginCreation ? PLUGIN_CREATION_DRAFT : NEW_SESSION_DRAFT)
       if (!sessionDrafts.current.read(home, privateVisible))
         sessionDrafts.current.save(
           home,
@@ -820,6 +893,7 @@ export function useSessionController({
     }
     // An editor's unsaved text in this session: the guard asks first, and comes back here once it may go.
     if (id !== selectedId && selectedId !== null && requestLeave(selectedId, () => choose(id, afterSelect, intent))) return
+    const targetDraftKey = id ?? (intent ? NEW_SESSION_DRAFT : newDraftKey)
     const outgoing = intent?.consumeDraft ? '' : submission.draft
     const handed = id === null ? undefined : takeHandedDraft(id)
     if (handed && id === inputId) submission.setDraft(previous => joinDraft(previous, handed))
@@ -836,7 +910,7 @@ export function useSessionController({
           })
           return
         }
-      } else if (id !== null && !sessionDrafts.current.save(NEW_SESSION_DRAFT, outgoing, false)) {
+      } else if (id !== null && !sessionDrafts.current.save(newDraftKey, outgoing, creator)) {
         setToast({
           get text() {
             return COPY.draftLimit
@@ -846,13 +920,15 @@ export function useSessionController({
         return
       }
       // 新会话 pressed on 新会话 starts over; coming back from a session finds what was being written.
-      if (inputId === null && id === null) sessionDrafts.current.remove(NEW_SESSION_DRAFT)
+      if (inputId === null && id === null && inputKey === targetDraftKey) sessionDrafts.current.remove(targetDraftKey)
+      else if (inputId === null && id === null) sessionDrafts.current.save(inputKey, outgoing, creator)
       const restored =
         intent?.draft
-        ?? joinDraft(joinDraft(sessionDrafts.current.read(id ?? NEW_SESSION_DRAFT, privateVisible), handed), intent?.appendDraft)
+        ?? (targetDraftKey === PLUGIN_CREATION_DRAFT ? pendingCreator()?.prompt : undefined)
+        ?? joinDraft(joinDraft(sessionDrafts.current.read(targetDraftKey, privateVisible), handed), intent?.appendDraft)
       restoringDraft.current = restored
       submission.setDraft(restored)
-      draftSessionId.current = id
+      draftSessionId.current = targetDraftKey
     } else if (intent?.consumeDraft || intent?.draft !== undefined) {
       const restored = intent.draft ?? ''
       restoringDraft.current = restored
@@ -860,6 +936,7 @@ export function useSessionController({
     } else if (intent?.appendDraft) {
       submission.setDraft(previous => joinDraft(previous, intent.appendDraft))
     }
+    if (intent && id === null) setCreator(false)
     if (intent?.consumeDraft) setFileMentions([])
     setQueuedRetry(null)
     onBeforeSelect(id)
@@ -1458,10 +1535,12 @@ export function useSessionController({
     ],
   )
 
-  const block = selectedId === null ? startBlock(snapshot, choice) : null
+  // Creator sessions use a dedicated Host folder and do not depend on the ordinary default folder.
+  const launchChoice = creating ? { ...choice, workspaceId: undefined } : choice
+  const block = selectedId === null ? startBlock(snapshot, launchChoice) : null
   const chosenHarness = selectedId === null ? catalog?.harnesses.find(item => item.id === choice.harnessId) : undefined
   const chosenScopeCaption =
-    choice.mode === 'chat'
+    creating || choice.mode === 'chat'
       ? undefined
       : projectScopeCaption(
           catalog?.workspaces.find(project => project.id === choice.workspaceId),
@@ -1710,7 +1789,7 @@ export function useSessionController({
         sessionDrafts.current.remove(inputId!)
         return true
       }
-      if (sessionDrafts.current.save(inputId ?? NEW_SESSION_DRAFT, submission.draft, hidden)) return true
+      if (sessionDrafts.current.save(inputKey, submission.draft, hidden || inputKey === PLUGIN_CREATION_DRAFT)) return true
       setToast({
         get text() {
           return COPY.draftLimit
@@ -1721,6 +1800,11 @@ export function useSessionController({
     },
     inputId,
     inputTarget,
+    creator,
+    creatorAvailable,
+    creatorBlocked,
+    creatorBlockedReason,
+    chooseCreator,
     sessionInput: {
       draft: inputTarget === 'new' ? sessionDrafts.current.read(selectedId ?? NEW_SESSION_DRAFT, privateVisible) : submission.draft,
       attachments: sessionAttachments,
@@ -1739,17 +1823,17 @@ export function useSessionController({
       currentModel: undefined,
       effectiveModel: undefined,
       approvals: [],
-      block: startBlock(snapshot, choice),
+      block: startBlock(snapshot, launchChoice),
       chosenHarness: draftHarness,
       chosenScopeCaption:
-        choice.mode === 'chat'
+        creating || choice.mode === 'chat'
           ? undefined
           : projectScopeCaption(
               catalog?.workspaces.find(item => item.id === choice.workspaceId),
               draftHarness,
             ),
       codeRootChoice:
-        (!access.legacy && draftHarness?.level === 'L3') || choice.mode === 'chat'
+        creating || (!access.legacy && draftHarness?.level === 'L3') || choice.mode === 'chat'
           ? undefined
           : codeRootWorkspace(catalog?.workspaces, { id: choice.workspaceId }),
       gate:

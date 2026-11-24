@@ -1216,6 +1216,18 @@ function Choices() {
             ]}
           />
         </Cell>
+        <Cell caption="禁用">
+          <Tabs
+            label="工具详情"
+            value="args"
+            disabled
+            onValueChange={() => {}}
+            options={[
+              { value: 'args', label: '参数' },
+              { value: 'output', label: '输出' },
+            ]}
+          />
+        </Cell>
       </Row>
       <Row label="复选与单选">
         <Checkbox label="管理此 Host" description="模型服务、插件、项目和设备" defaultChecked />

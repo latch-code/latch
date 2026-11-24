@@ -55,6 +55,8 @@ export class ConfirmationError extends ClientError {
 export interface ConfirmationOptions {
   /** Where the states are shown; the active inline card unless the caller provides its own presenter. */
   presenter?: ConfirmationPresenter
+  /** The authority that opened the confirmation. Its loss stops polling and any approved resend. */
+  signal?: AbortSignal
   api?: <T>(path: string, options?: ApiOptions) => Promise<T>
   pollMs?: number
   sleep?: (ms: number, wake: AbortSignal) => Promise<void>
@@ -95,6 +97,8 @@ function pausedReason(error: ApiError): PausedReason | undefined {
  * (cooldown, another one open, a full-access session running) is explained the same way.
  */
 export async function withConfirmation<T>(send: (confirmation?: string) => Promise<T>, options: ConfirmationOptions = {}): Promise<T> {
+  const scope = options.signal
+  scope?.throwIfAborted()
   const presenter = options.presenter ?? confirmationStore.begin()
   const request = options.api ?? defaultApi
   const pollMs = Math.max(500, options.pollMs ?? 500)
@@ -131,7 +135,10 @@ export async function withConfirmation<T>(send: (confirmation?: string) => Promi
     ticket = error.details.confirmation
   }
 
+  scope?.throwIfAborted()
   const cancelled = new AbortController()
+  const wake = scope ? AbortSignal.any([scope, cancelled.signal]) : cancelled.signal
+  const readOptions = scope ? { signal: scope } : undefined
   const fail = (reason: FailureReason, message: string): never => {
     presenter.show({ phase: 'failed', ticket, message, reason }, closed)
     throw new ConfirmationError(message, reason, true)
@@ -140,7 +147,8 @@ export async function withConfirmation<T>(send: (confirmation?: string) => Promi
     cancel: () => {
       if (cancelled.signal.aborted) return
       cancelled.abort()
-      void request(`confirmations/${encodeURIComponent(ticket.id)}`, { method: 'DELETE' }).catch(() => {
+      if (scope?.aborted) return
+      void request(`confirmations/${encodeURIComponent(ticket.id)}`, { ...readOptions, method: 'DELETE' }).catch(() => {
         /* The ticket also expires on the Host. */
       })
     },
@@ -152,15 +160,27 @@ export async function withConfirmation<T>(send: (confirmation?: string) => Promi
     presenter.close()
     throw new ConfirmationError(CONFIRMATION_RESULT_TEXT.cancelled, 'cancelled', true)
   }
+  const checkScope = () => {
+    if (scope?.aborted) {
+      presenter.close()
+      scope.throwIfAborted()
+    }
+    if (cancelled.signal.aborted) stop()
+  }
   options.onTicket?.(ticket.id)
   presenter.show({ phase: 'waiting', ticket }, actions)
   while (ticket.status === 'pending') {
-    await sleep(pollMs, cancelled.signal)
-    if (cancelled.signal.aborted) stop()
+    checkScope()
+    await sleep(pollMs, wake)
+    checkScope()
     try {
-      const { confirmation } = await request<{ confirmation: ConfirmationTicket }>(`confirmations/${encodeURIComponent(ticket.id)}`)
+      const path = `confirmations/${encodeURIComponent(ticket.id)}`
+      const { confirmation } = readOptions
+        ? await request<{ confirmation: ConfirmationTicket }>(path, readOptions)
+        : await request<{ confirmation: ConfirmationTicket }>(path)
       if (confirmation.id === ticket.id) ticket = confirmation
     } catch (error) {
+      checkScope()
       if (error instanceof ApiError && error.status !== 429 && error.status < 500)
         fail(
           'error',
@@ -170,9 +190,10 @@ export async function withConfirmation<T>(send: (confirmation?: string) => Promi
       if (Date.now() > Date.parse(ticket.expiresAt) + 10_000) fail('expired', CONFIRMATION_RESULT_TEXT.expired)
       continue
     }
+    checkScope()
     if (ticket.status === 'pending') presenter.show({ phase: 'waiting', ticket }, actions)
   }
-  if (cancelled.signal.aborted) stop()
+  checkScope()
   if (ticket.status === 'denied') fail('denied', CONFIRMATION_RESULT_TEXT.denied)
   if (ticket.status === 'expired') fail('expired', CONFIRMATION_RESULT_TEXT.expired)
   if (ticket.status === 'cancelled') fail('cancelled', CONFIRMATION_RESULT_TEXT.cancelled)
@@ -181,6 +202,7 @@ export async function withConfirmation<T>(send: (confirmation?: string) => Promi
 
   options.onTicket?.(null)
   presenter.show({ phase: 'sending', ticket }, actions)
+  checkScope()
   try {
     const result = await send(ticket.id)
     presenter.close()

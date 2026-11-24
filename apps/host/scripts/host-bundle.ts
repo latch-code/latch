@@ -5,6 +5,7 @@ import { join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { BuildOptions, Plugin } from 'esbuild'
 import { z } from 'zod'
+import { catalogPackages } from '../../../examples/marketplace/build.ts'
 
 const Dependencies = z.record(z.string(), z.string()).optional()
 const Manifest = z.object({
@@ -82,6 +83,8 @@ export async function hostBundleOptions(options: { packaged?: boolean; presenceT
     digest.update(path)
     digest.update(await readFile(join(REPOSITORY_ROOT, path)))
   }
+  const catalog = JSON.stringify(catalogPackages())
+  digest.update(catalog)
   digest.update(process.version)
   return {
     bundle: true,
@@ -97,6 +100,7 @@ export async function hostBundleOptions(options: { packaged?: boolean; presenceT
         }
       : {}),
     define: {
+      LATCH_HOST_CATALOG: catalog,
       __LATCH_EXECUTION_BUILD__: JSON.stringify(digest.digest('hex')),
       __LATCH_PACKAGED__: JSON.stringify(options.packaged === true),
       __LATCH_PRESENCE_TEAM__: JSON.stringify(options.presenceTeam ?? null),

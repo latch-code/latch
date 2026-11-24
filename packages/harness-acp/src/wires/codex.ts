@@ -462,6 +462,7 @@ function commandKey(threadId: string | undefined, itemId: string): string {
 
 interface Turn {
   id?: string
+  messageId?: string
   compact?: boolean
   compactions?: Set<string>
   resolve(result: unknown): void
@@ -559,6 +560,9 @@ export class CodexWire implements AgentWire {
   private tierPicked = false
   private routeEffort?: string
   private turn?: Turn
+  private previousNativeTurnId?: string
+  private lastTokenUsage?: TurnTokens
+  private attributedContext = false
   /** Items whose text arrived in pieces, so their completion does not repeat it. */
   private readonly streamed = new Set<string>()
   /** The summary part a reasoning item last streamed: a new part is a new section of the thought. */
@@ -952,6 +956,11 @@ export class CodexWire implements AgentWire {
         : kind !== undefined && read.data.thread.id !== parsed.data.sessionId
     )
       throw new RpcError(RPC.internal, 'Codex 恢复的线程与所选会话不一致。')
+    if (this.threadId !== read.data.thread.id) {
+      this.previousNativeTurnId = undefined
+      this.lastTokenUsage = undefined
+      this.attributedContext = false
+    }
     this.threadId = read.data.thread.id
     if (this.team?.rootId !== this.threadId) {
       const rootThreadId = this.threadId
@@ -1618,7 +1627,15 @@ export class CodexWire implements AgentWire {
     if (refused) throw new RpcError(RPC.invalidParams, `${refused}，请在「权限」里换一档再发送。`)
     let turn!: Turn
     const done = new Promise<unknown>((resolve, reject) => {
-      turn = { resolve, reject, cancelled: false, commands: new Set(), threads: new Set(), ...(compact ? { compact: true } : {}) }
+      turn = {
+        resolve,
+        reject,
+        messageId: context?.messageId,
+        cancelled: false,
+        commands: new Set(),
+        threads: new Set(),
+        ...(compact ? { compact: true } : {}),
+      }
     })
     this.teamItems.length = 0
     this.teamTurnGeneration++
@@ -1774,6 +1791,7 @@ export class CodexWire implements AgentWire {
     clearTimeout(turn.systemError)
     if (!turn.commands.size && turn.memberInterruptions)
       for (const [child, childTurnId] of turn.memberInterruptions) this.team?.finish(child, childTurnId, 'interrupted')
+    if (turn.id !== undefined) this.previousNativeTurnId = turn.id
     this.turn = undefined
     this.teamItems.length = 0
     this.streamed.clear()
@@ -2208,6 +2226,69 @@ export class CodexWire implements AgentWire {
       : undefined
   }
 
+  /** The cumulative count belongs to the thread. Only a matching native turn owns its last call or its stream timing. */
+  private reportTokenUsage(params: Record<string, unknown>): void {
+    const turn = this.turn
+    const nativeTurnId = typeof params.turnId === 'string' && params.turnId ? params.turnId : undefined
+    const owner = nativeTurnId !== undefined && nativeTurnId === turn?.id ? turn : undefined
+    const previous = nativeTurnId !== undefined && nativeTurnId === this.previousNativeTurnId
+
+    const usage = isRecord(params.tokenUsage) ? params.tokenUsage : {}
+    const last = isRecord(usage.last) ? usage.last : {}
+    const total = isRecord(usage.total) ? usage.total : {}
+    const count = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined)
+    const input = count(total.inputTokens)
+    const output = count(total.outputTokens)
+    if (input !== undefined && output !== undefined) {
+      const before = this.lastTokenUsage
+      const older = before && (input < before.inputTokens || output < before.outputTokens)
+      const beforeTurnId = previous ? turn?.messageId : undefined
+      if (older && (!beforeTurnId || this.route)) return
+      const cached = count(total.cachedInputTokens)
+      const written = this.route ? undefined : count(total.cacheWriteInputTokens)
+      const thought = count(total.reasoningOutputTokens)
+      const report: TurnTokens = {
+        inputTokens: input,
+        outputTokens: output,
+        ...(cached !== undefined ? { cachedReadTokens: cached } : {}),
+        ...(written !== undefined ? { cachedWriteTokens: written } : {}),
+        ...(thought !== undefined ? { thoughtTokens: thought } : {}),
+      }
+      if (!older) this.lastTokenUsage = report
+      if (owner) owner.usage = report
+      // The gateway owns the count on a route; Codex's total there only adds the cache and thinking evidence to its reply.
+      if (!this.route) {
+        if (owner) {
+          const written = count(last.outputTokens)
+          if (owner.call && !owner.call.tool && owner.call.ms > 0 && written)
+            owner.stream = { outputTokens: (owner.stream?.outputTokens ?? 0) + written, ms: (owner.stream?.ms ?? 0) + owner.call.ms }
+          owner.call = undefined
+        }
+        this.update({
+          sessionUpdate: TOKENS_UPDATE,
+          scope: 'session',
+          ...report,
+          ...(owner?.messageId ? { turnId: owner.messageId } : {}),
+          ...(owner?.stream ? { stream: owner.stream } : {}),
+          ...(beforeTurnId ? { beforeTurnId } : {}),
+        })
+      }
+      if (older) return
+    }
+    const used = count(last.totalTokens)
+    const size = count(usage.modelContextWindow)
+    const currentWindow = owner || (previous && !turn) || (nativeTurnId === undefined && !this.attributedContext)
+    if (currentWindow && (used !== undefined || size)) {
+      if (owner || previous) this.attributedContext = true
+      this.update({
+        sessionUpdate: 'usage_update',
+        ...(used !== undefined ? { used } : {}),
+        ...(size ? { size } : {}),
+        _meta: { latchCodexContext: { turnId: owner?.messageId } },
+      })
+    }
+  }
+
   private onNotification(method: string, params: Record<string, unknown>): void {
     if (method === 'skills/changed') {
       void this.readSkills()
@@ -2296,7 +2377,7 @@ export class CodexWire implements AgentWire {
         return
       }
       case 'turn/started':
-        if (turn && isRecord(params.turn) && typeof params.turn.id === 'string') {
+        if (turn && isRecord(params.turn) && typeof params.turn.id === 'string' && params.turn.id !== this.previousNativeTurnId) {
           turn.id ??= params.turn.id
           this.flushTeamItems(turn.id)
           if (turn.cancelled) this.interrupt(turn)
@@ -2304,7 +2385,14 @@ export class CodexWire implements AgentWire {
         return
       case 'turn/completed': {
         const done = isRecord(params.turn) ? params.turn : {}
-        if (turn && (turn.id === undefined || turn.id === done.id)) this.settle(done.status, done.error)
+        if (
+          turn
+          && (turn.id === undefined || turn.id === done.id)
+          && (typeof done.id !== 'string' || done.id !== this.previousNativeTurnId)
+        ) {
+          if (typeof done.id === 'string') turn.id ??= done.id
+          this.settle(done.status, done.error)
+        }
         return
       }
       case 'item/agentMessage/delta':
@@ -2362,51 +2450,9 @@ export class CodexWire implements AgentWire {
         })
         return
       }
-      case 'thread/tokenUsage/updated': {
-        const usage = isRecord(params.tokenUsage) ? params.tokenUsage : {}
-        const last = isRecord(usage.last) ? usage.last : {}
-        const total = isRecord(usage.total) ? usage.total : {}
-        const count = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined)
-        const input = count(total.inputTokens)
-        const output = count(total.outputTokens)
-        // The thread's whole count, cached input included in the input: what the session used so far, said as it grows.
-        if (input !== undefined && output !== undefined && !this.route) {
-          const cached = count(total.cachedInputTokens)
-          const written = count(total.cacheWriteInputTokens)
-          const thought = count(total.reasoningOutputTokens)
-          const usage: TurnTokens = {
-            inputTokens: input,
-            outputTokens: output,
-            ...(cached !== undefined ? { cachedReadTokens: cached } : {}),
-            ...(written !== undefined ? { cachedWriteTokens: written } : {}),
-            ...(thought !== undefined ? { thoughtTokens: thought } : {}),
-          }
-          if (turn) {
-            turn.usage = usage
-            // One model call ended: its output counts toward the speed only when nothing but text and reasoning streamed.
-            const written = count(last.outputTokens)
-            if (turn.call && !turn.call.tool && turn.call.ms > 0 && written)
-              turn.stream = { outputTokens: (turn.stream?.outputTokens ?? 0) + written, ms: (turn.stream?.ms ?? 0) + turn.call.ms }
-            turn.call = undefined
-          }
-          this.update({ sessionUpdate: TOKENS_UPDATE, scope: 'session', ...usage, ...(turn?.stream ? { stream: turn.stream } : {}) })
-        } else if (turn && input !== undefined && output !== undefined) {
-          // On a route the session's count is the gateway's; the turn still says what Codex read from cache and thought.
-          const cached = count(total.cachedInputTokens)
-          const thought = count(total.reasoningOutputTokens)
-          turn.usage = {
-            inputTokens: input,
-            outputTokens: output,
-            ...(cached !== undefined ? { cachedReadTokens: cached } : {}),
-            ...(thought !== undefined ? { thoughtTokens: thought } : {}),
-          }
-        }
-        const used = count(last.totalTokens)
-        const size = count(usage.modelContextWindow)
-        if (used !== undefined || size)
-          this.update({ sessionUpdate: 'usage_update', ...(used !== undefined ? { used } : {}), ...(size ? { size } : {}) })
+      case 'thread/tokenUsage/updated':
+        this.reportTokenUsage(params)
         return
-      }
       case 'mcpServer/startupStatus/updated': {
         const read = startupUpdate.safeParse(params)
         if (!read.success || !this.threadId || this.servers.some(server => server.name === read.data.name)) return

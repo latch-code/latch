@@ -7,6 +7,7 @@ export const standardHarnessDriver: HarnessDriver = {
   id: 'standard',
   agentContext: 'private',
   skills: 'native',
+  pluginCreation: true,
   name: BUILTIN_HARNESS_LABEL,
   version: '0.1.0',
   description: '独立的会话、模型调用、工具审批、取消与持久化运行时。',

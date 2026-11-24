@@ -435,7 +435,7 @@ export function QuestionDrawer({
   )
 }
 
-export function QuestionResultCard({ text }: { text: string }) {
+export function QuestionResultCard({ text, messageId }: { text: string; messageId: string }) {
   let result: QuestionResult
   try {
     const value: unknown = JSON.parse(text)
@@ -462,7 +462,7 @@ export function QuestionResultCard({ text }: { text: string }) {
     return null
   }
   return (
-    <details className="question-result">
+    <details className="question-result" data-message-id={messageId}>
       <summary>
         {COPY.answeredPrefix}
         {result.answers.length}

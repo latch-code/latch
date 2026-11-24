@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
 import {
+  PLUGIN_CREATION_GUIDE,
   BUILTIN_DEFAULT_MODE,
   BUILTIN_HARNESS_LABEL,
   BUILTIN_MODE_TIERS,
@@ -37,6 +38,7 @@ import type {
   ModelRef,
   AgentExecutionContext,
   RiskLevel,
+  RequestContextStep,
   RoutedTurn,
   RunLive,
   DriverTaskDetail,
@@ -86,6 +88,7 @@ import { isoTime, ReasoningTimer, RunClock } from './node-kit/timing.ts'
 import { redactKnownSecrets } from './node-kit/redact.ts'
 import { RECALL_LIMITS, recallText } from './node-kit/recall.ts'
 import { createSnapshotStore, emptyRuntimeState } from './store.ts'
+import { latestRequest, measureInput, withContextStep } from './request-context.ts'
 import {
   JUDGE_ANSWER_LIMIT,
   JUDGE_PROMPT,
@@ -298,6 +301,7 @@ interface PendingApproval {
   signal: AbortSignal
 }
 interface Run {
+  contextStep?: RequestContextStep
   /** Steps of this turn that a 「出错时改用」 service answered, for the turn's record; absent when none did. */
   routed?: RoutedTurn
   /** What the turn's model requests cost, when the Host knows, and a budget of theirs that is nearly or fully used. */
@@ -386,6 +390,13 @@ function digest(value: unknown): string {
 /** The Host's name for a new session, when it gives one (`CreateTaskInput.title`), at most as long as its own record keeps. */
 function hostTitle(input: { title?: unknown }): string | undefined {
   return typeof input.title === 'string' && input.title.trim() ? input.title.slice(0, 120) : undefined
+}
+
+function recordContextStep(task: StoredTask, step: RequestContextStep): void {
+  task.contextSteps = withContextStep(task.contextSteps, structuredClone(step))
+  task.requestContext = latestRequest(step)
+  delete task.pendingContextStep
+  if (step.freshContext) delete task.contextResetPending
 }
 
 /** Snapshot once per run, then persist it with the input before making any model call. */
@@ -539,8 +550,14 @@ function toolFolders(run: Run): SessionFolder[] {
   return run.folders.map((folder, index) => ({ id: folder.id, path: folder.path, primary: index === 0 }))
 }
 
-function toolMessage(task: StoredTask, call: ToolCall): Message | undefined {
-  return task.messages.find(message => message.id === `tool:${call.id}`)
+function toolMessage(task: StoredTask, callId: string): Message | undefined {
+  const id = `tool:${callId}`
+  // A Provider can reuse IDs once it starts receiving a fresh context. Settle only rows from the active turn.
+  for (let index = task.messages.length - 1; index >= 0; index--) {
+    const message = task.messages[index]!
+    if (message.role === 'user') return undefined
+    if (message.role === 'tool' && message.id === id) return message
+  }
 }
 
 function recordResult(
@@ -554,8 +571,17 @@ function recordResult(
   images: AttachmentRef[] = [],
   outputWithoutFiles?: string,
 ): void {
-  task.history.push({ role: 'tool', content: text, toolCallId: call.id, isError, ...(images.length ? { attachmentRefs: images } : {}) })
-  const previous = toolMessage(task, call)
+  const previous = toolMessage(task, call.id)
+  const resultId = previous?.contextToolId
+  const turnId = resultId && task.messages.findLast(message => message.role === 'user')?.id
+  task.history.push({
+    role: 'tool',
+    content: text,
+    toolCallId: call.id,
+    isError,
+    ...(images.length ? { attachmentRefs: images } : {}),
+    ...(resultId && turnId ? { contextToolSource: { resultId, turnId, afterSequence: task.contextSteps?.at(-1)?.sequence ?? 0 } } : {}),
+  })
   const { outputWithoutFiles: _oldOutput, ...shown } = previous?.tool ?? {
     title: call.name,
     input: JSON.stringify(call.arguments, null, 2),
@@ -587,7 +613,7 @@ function closeBatch(task: StoredTask, cancelled: boolean, at: string, interrupte
   for (const call of batch.calls) {
     if (batch.completed.includes(call.id)) continue
     const unknown = batch.started.includes(call.id)
-    if (unknown) unknownResults.push({ messageId: `tool:${call.id}`, name: toolMessage(task, call)?.tool?.toolTitle ?? call.name })
+    if (unknown) unknownResults.push({ messageId: `tool:${call.id}`, name: toolMessage(task, call.id)?.tool?.toolTitle ?? call.name })
     recordResult(
       task,
       call,
@@ -746,11 +772,12 @@ class HarnessRuntime implements Bridge {
         if (task.summary.status !== 'running' && task.summary.status !== 'waiting-approval' && !task.approval && !task.batch) continue
         const at = this.now()
         // An approval left open by the restart was answered by nobody: the run stopped.
-        const asked = task.approval?.toolCallId
-          ? task.messages.find(message => message.id === `tool:${task.approval!.toolCallId}`)
-          : undefined
+        const asked = task.approval?.toolCallId ? toolMessage(task, task.approval.toolCallId) : undefined
         if (asked) asked.tool = { ...asked.tool, decision: { outcome: 'cancelled', at } }
         const unknown = closeBatch(task, false, at, true)
+        if (task.pendingContextStep) recordContextStep(task, { ...task.pendingContextStep, status: 'interrupted' })
+        const activeStep = task.contextSteps?.at(-1)
+        if (activeStep?.status === 'running') activeStep.status = 'interrupted'
         delete task.approval
         task.summary.status = 'interrupted'
         task.summary.runOutcome = 'interrupted'
@@ -915,7 +942,11 @@ class HarnessRuntime implements Bridge {
     const live = this.live.get(sessionId)
     const visibleLive = active && live && !task.messages.some(message => message.id === live.id) ? live : undefined
     const run = active ? this.runs.get(sessionId) : undefined
+    const requestContext = run?.contextStep ? latestRequest(run.contextStep) : task.requestContext
+    const contextSteps = run?.contextStep ? withContextStep(task.contextSteps, run.contextStep) : task.contextSteps
     return structuredClone({
+      ...(requestContext ? { requestContext } : {}),
+      ...(contextSteps ? { contextSteps } : {}),
       summary: this.projected(task),
       messages: task.messages,
       approvals: task.approval ? [task.approval] : [],
@@ -1018,6 +1049,7 @@ class HarnessRuntime implements Bridge {
     // they existed still match.
     const payloadHash = digest({
       prompt: input.prompt,
+      ...(input.pluginCreation ? { pluginCreation: true } : {}),
       ...(agentContext?.agent ? { agent: agentContext.agent } : {}),
       ...(attachments.length ? { attachments } : {}),
       ...(fileRefs.length ? { fileRefs } : {}),
@@ -1108,6 +1140,7 @@ class HarnessRuntime implements Bridge {
           history: [{ role: 'user', content: context, ...(attachments.length ? { attachmentRefs: attachments } : {}) }],
           ...(skillContext(run.lease) ? { skillContext: skillContext(run.lease) } : {}),
           ...(input.workProposals ? { workProposals: true as const } : {}),
+          ...(input.pluginCreation ? { pluginCreation: true as const } : {}),
           ...(startMode !== undefined && startMode !== BUILTIN_DEFAULT_MODE ? { permissionMode: startMode } : {}),
           revision: 1,
         }
@@ -1197,6 +1230,8 @@ class HarnessRuntime implements Bridge {
           throw new AppError(415, 'file-references-unavailable', '只对话模式不能引用项目文件。')
         // The messages stay; only what the model is sent starts over.
         if (fresh) {
+          delete task.requestContext
+          task.contextResetPending = true
           task.history = []
           // What the model read before is gone from its context, so its later proposals are not marked for it.
           delete task.outsideRead
@@ -1607,7 +1642,7 @@ class HarnessRuntime implements Bridge {
     if (usage) run.judgeUsage = addUsage(run.judgeUsage, usage)
     await this.change(run.sessionId, current => {
       if (usage) current.summary.usage = addUsage(current.summary.usage, usage)
-      const message = toolMessage(current, call)
+      const message = toolMessage(current, call.id)
       if (message)
         message.tool = {
           ...message.tool,
@@ -1679,7 +1714,7 @@ class HarnessRuntime implements Bridge {
       await this.change(run.sessionId, task => {
         task.approval = value
         task.summary.status = 'waiting-approval'
-        const message = toolMessage(task, call)
+        const message = toolMessage(task, call.id)
         if (message) {
           message.state = 'awaiting-approval'
           message.tool = { ...message.tool, ...shownPreview(preview) }
@@ -1696,7 +1731,7 @@ class HarnessRuntime implements Bridge {
       await this.change(run.sessionId, task => {
         delete task.approval
         task.summary.status = 'running'
-        const message = toolMessage(task, call)
+        const message = toolMessage(task, call.id)
         if (message) message.tool = { ...message.tool, decision: decisionRecord(outcome ?? { decision: 'cancel', at: this.now() }) }
         if (risk === 'R1' && outcome?.decision === 'allow' && outcome.always && !task.allowedTools?.includes(call.name)) {
           task.allowedTools = [...(task.allowedTools ?? []), call.name]
@@ -1736,7 +1771,7 @@ class HarnessRuntime implements Bridge {
         this.output(run)
         await this.change(run.sessionId, task => {
           recordResult(task, call, this.now(), PLAN_REFUSAL, true)
-          const message = toolMessage(task, call)
+          const message = toolMessage(task, call.id)
           if (message) message.tool = { ...message.tool, blocked: { by: BUILTIN_HARNESS_LABEL, source: 'rule', reason: PLAN_REFUSAL_LINE } }
         })
         return
@@ -1764,7 +1799,7 @@ class HarnessRuntime implements Bridge {
     this.output(run)
     await this.change(run.sessionId, task => {
       task.batch?.started.push(call.id)
-      const message = toolMessage(task, call)
+      const message = toolMessage(task, call.id)
       if (message) {
         message.state = 'running'
         message.startedAt = this.now()
@@ -1820,7 +1855,7 @@ class HarnessRuntime implements Bridge {
       this.output(run)
       await this.change(run.sessionId, task => {
         if (stopped)
-          (run.interrupted ??= []).push({ messageId: `tool:${call.id}`, name: toolMessage(task, call)?.tool?.toolTitle ?? call.name })
+          (run.interrupted ??= []).push({ messageId: `tool:${call.id}`, name: toolMessage(task, call.id)?.tool?.toolTitle ?? call.name })
         recordResult(task, call, this.now(), text, true, signal.aborted && !stopped, stopped)
       })
       await tool.resultCommitted?.({ sessionId: run.sessionId, callId: call.id, state: signal.aborted ? 'cancelled' : 'failed' })
@@ -1976,7 +2011,7 @@ class HarnessRuntime implements Bridge {
         const imageWindow = toolImageWindow(task.history)
         const messages: ModelMessage[] = await Promise.all(
           task.history.map(async (item, index) => {
-            const { attachmentRefs: stored, ...message } = structuredClone(item)
+            const { attachmentRefs: stored, contextToolSource: _source, ...message } = structuredClone(item)
             if (!stored?.length) return message
             // A tool's images stay out for a model that cannot see them; the session goes on with the text.
             if (message.role === 'tool' && !this.sees(run))
@@ -1998,20 +2033,52 @@ class HarnessRuntime implements Bridge {
             }
           }),
         )
-        if (task.skillContext) messages.unshift({ role: 'system', content: task.skillContext })
+        if (task.pluginCreation) messages.unshift({ role: 'system', content: PLUGIN_CREATION_GUIDE })
+        const skillMessage = task.skillContext ? { role: 'system' as const, content: task.skillContext } : undefined
+        if (skillMessage) messages.unshift(skillMessage)
         if (run.instructions) messages.unshift({ role: 'system', content: run.instructions })
         messages.unshift({ role: 'system', content: BASE_PROMPT })
         const seen = new Set(messages.flatMap(message => message.toolCalls?.map(call => call.id) ?? []))
         const calls: ToolCall[] = []
         let finished = false
-        for await (const delta of run.lease.provider.stream({
+        const sequence = (task.contextSteps?.at(-1)?.sequence ?? 0) + 1
+        const historyStart = messages.length - task.history.length
+        const measured = measureInput(
+          messages,
+          availableTools,
+          skillMessage,
+          sequence,
+          index => task.history[index - historyStart]?.contextToolSource,
+        )
+        const context: RequestContextStep = {
+          ...measured,
+          at: this.now(),
+          sequence,
+          turnId: run.userMessageId,
+          skills: run.lease.skills?.length ?? 0,
+          toolCalls: 0,
+          status: 'running',
+          ...(task.pluginCreation ? { creator: true } : {}),
+          ...(task.contextResetPending ? { freshContext: true } : {}),
+        }
+        // A crash leaves an interrupted step. An orderly cancellation before dispatch drops this private marker.
+        await this.change(run.sessionId, task => {
+          task.pendingContextStep = structuredClone(context)
+        })
+        signal.throwIfAborted()
+        const modelStartedAt = this.clock()
+        context.at = isoTime(modelStartedAt)
+        run.contextStep = context
+        this.notify(run.sessionId)
+        const response = run.lease.provider.stream({
           messages,
           tools: [...availableTools],
           signal,
           model: run.model,
           ...(run.effort ? { effort: run.effort } : {}),
           run: { sessionId: run.sessionId, runId: run.id },
-        })) {
+        })
+        for await (const delta of response) {
           run.lastEventAt = this.clock()
           signal.throwIfAborted()
           if (finished) throw new AppError(502, 'provider-protocol', '模型在结束事件之后继续发送内容')
@@ -2039,17 +2106,28 @@ class HarnessRuntime implements Bridge {
             if (seen.has(call.id) || calls.length >= 32) throw new AppError(502, 'provider-protocol', '模型返回重复工具标识或过多工具调用')
             seen.add(call.id)
             calls.push(call)
-          } else if (delta.type === 'usage') live.usage = addUsage(live.usage, delta)
-          else if (delta.type === 'spend') run.spend = addSpend(run.spend, delta.spend)
+            context.toolCalls = calls.length
+            this.notify(run.sessionId)
+          } else if (delta.type === 'usage') {
+            live.usage = addUsage(live.usage, delta)
+            if (Number.isSafeInteger(delta.inputTokens) && delta.inputTokens >= 0 && Number.isSafeInteger(live.usage.inputTokens))
+              context.inputTokens = live.usage.inputTokens
+            if (Number.isSafeInteger(delta.outputTokens) && delta.outputTokens >= 0 && Number.isSafeInteger(live.usage.outputTokens))
+              context.outputTokens = live.usage.outputTokens
+            this.notify(run.sessionId)
+          } else if (delta.type === 'spend') run.spend = addSpend(run.spend, delta.spend)
           else if (delta.type === 'finish') finished = true
         }
         signal.throwIfAborted()
         if (!finished) throw new AppError(502, 'provider-incomplete', '模型连接结束时未收到完成事件，未派发本次工具调用')
         const { id, text, reasoning, usage } = live
+        context.status = 'completed'
+        context.durationMs = Math.max(0, Math.round(this.clock() - modelStartedAt))
         const completedAt = this.now()
         const reasoningMs = live.reasoningTimer.end()
         this.output(run)
         await this.change(run.sessionId, current => {
+          recordContextStep(current, context)
           // Reasoning text is shown, never replayed; a provider's own signed copy rides on the calls.
           current.history.push({ role: 'assistant', content: text, ...(calls.length ? { toolCalls: calls } : {}) })
           if (text || reasoning) {
@@ -2071,6 +2149,7 @@ class HarnessRuntime implements Bridge {
               current.messages.push({
                 id: `tool:${call.id}`,
                 role: 'tool',
+                contextToolId: randomUUID(),
                 toolName: call.name,
                 text: input,
                 state: 'queued',
@@ -2102,7 +2181,14 @@ class HarnessRuntime implements Bridge {
         const reasoningMs = partial?.reasoningTimer.end()
         // The Host's own stop ended this run: nobody cancelled it, so it reads as interrupted, never as stopped or done.
         const stopped = signal.aborted && this.closed
+        const unfinished = run.contextStep?.status === 'running' ? run.contextStep : undefined
+        if (unfinished) {
+          unfinished.status = stopped ? 'interrupted' : signal.aborted ? 'cancelled' : 'failed'
+          unfinished.durationMs = Math.max(0, Math.round(this.clock() - Date.parse(unfinished.at)))
+        }
         await this.change(run.sessionId, task => {
+          if (unfinished) recordContextStep(task, unfinished)
+          else delete task.pendingContextStep
           const unknown = [...(stopped ? (run.interrupted ?? []) : []), ...closeBatch(task, signal.aborted && !stopped, at, stopped)]
           if (unknown.length || stopped) task.summary.runEnd = runEndRecord(this.closed ? 'host-stopped' : 'turn-ended', at, unknown)
           delete task.approval
