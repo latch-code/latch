@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { mentionsConversationReference } from './conversation-references.ts'
 import { modelEffort } from './config.ts'
 import {
   DATA_SCOPES,
@@ -60,7 +61,12 @@ const recordSchema = z.strictObject({
   /** Distinguishes a steer into this turn from a new prompt, including after a crash. */
   steerRunId: z.string().min(1).max(128).optional(),
   hash: z.string().regex(/^[a-f0-9]{64}$/u),
-  text: text.optional(),
+  text: z.string().max(16_000).optional(),
+  attachmentIds: z
+    .array(z.string().regex(/^[A-Za-z0-9_-]{22}$/u))
+    .min(1)
+    .max(8)
+    .optional(),
   queuedAt: z.string().datetime(),
   state: z.enum(['waiting', 'parked', 'dropped', 'sending', 'uncertain', 'sent', 'removed']),
   waitRunId: z.string().max(128),
@@ -98,6 +104,8 @@ export interface QueueOptions {
   /** Only a Host-derived execution hash is persisted; private context is rebuilt immediately before dispatch. */
   prepare?(actor: QueueActor, sessionId: string, model?: ModelRef): Promise<{ binding: string; model: ModelRef } | undefined>
   check(actor: QueueActor, sessionId: string, model?: ModelRef, binding?: string): Promise<void>
+  holdAttachments?(actor: QueueActor, sessionId: string, ids: string[], requestId: string, model?: ModelRef): Promise<void>
+  releaseAttachments?(actor: QueueActor, sessionId: string, ids: string[], requestId: string): Promise<void>
   beforeEnqueue(actor: QueueActor, sessionId: string, itemId: string): Promise<void>
   /**
    * An item sent at once was refused before the session took it and deleted with its receipt: what was audited for it
@@ -128,6 +136,8 @@ export interface QueueOptions {
       requestId: string
       model?: ModelRef
       binding?: string
+      attachmentIds?: string[]
+      attachmentRequestId?: string
       queuedAt?: string
       itemId?: string
       editor?: QueueActor
@@ -141,6 +151,8 @@ export interface QueueOptions {
 /** The Host owns FIFO scheduling and receipts; drivers still own prompt acceptance and request deduplication. */
 export class PromptQueues {
   private serial: Promise<void> = Promise.resolve()
+  // An upload was reserved, but the atomic queue write had no certain outcome. Keep it parked until a durable write.
+  private readonly unconfirmedAdmissions = new Set<string>()
   private closed = false
   private constructor(
     private readonly options: QueueOptions,
@@ -176,7 +188,8 @@ export class PromptQueues {
         item.state = 'parked'
         item.reason = 'Host 已重启，请确认后发送'
       }
-      if (VISIBLE.has(item.state) && !item.text) throw new AppError(500, 'queue-corrupt', '排队内容缺失，原文件已保留')
+      if (VISIBLE.has(item.state) && (item.text === undefined || (!item.text && !item.attachmentIds?.length)))
+        throw new AppError(500, 'queue-corrupt', '排队内容缺失，原文件已保留')
       entries.set(item.id, item)
     }
     // The driver may already have recorded acceptance when the Host stopped. A quiet session need not emit another event.
@@ -184,7 +197,8 @@ export class PromptQueues {
       const detail = await options.detail(sessionId).catch(() => undefined)
       if (!detail) continue
       for (const item of pending)
-        if (receivedSteer(item, detail)) entries.set(item.id, { ...item, state: 'sent', text: undefined, reason: undefined })
+        if (receivedSteer(item, detail))
+          entries.set(item.id, { ...item, state: 'sent', text: undefined, attachmentIds: undefined, reason: undefined })
     }
     const queue = new PromptQueues(options, entries)
     if (items.length) await queue.commit(new Map(entries))
@@ -196,6 +210,16 @@ export class PromptQueues {
   knowsRequest(deviceId: string, requestId: string): boolean {
     for (const item of this.entries.values()) if (item.deviceId === deviceId && item.requestId === requestId) return true
     return false
+  }
+
+  holdsUpload(deviceId: string, requestId: string): boolean {
+    for (const item of this.entries.values())
+      if (item.deviceId === deviceId && item.requestId === requestId && item.attachmentIds?.length && VISIBLE.has(item.state)) return true
+    return false
+  }
+
+  heldAttachmentIds(sessionId: string): string[] {
+    return this.items(sessionId).flatMap(item => item.attachmentIds ?? [])
   }
 
   knows(sessionId: string, deviceId: string, requestId: string): boolean {
@@ -236,6 +260,7 @@ export class PromptQueues {
     return this.items(sessionId).map(item => ({
       id: item.id,
       text: item.text!,
+      ...(item.attachmentIds?.length ? { attachmentCount: item.attachmentIds.length } : {}),
       queuedAt: item.queuedAt,
       state: item.state === 'sending' ? 'waiting' : item.state === 'uncertain' ? 'parked' : (item.state as PromptQueueItem['state']),
       ...(item.orderRevision !== undefined ? { orderRevision: item.orderRevision } : {}),
@@ -256,18 +281,21 @@ export class PromptQueues {
   submit(
     actor: QueueActor,
     sessionId: string,
-    input: { prompt: string; requestId: string; model?: ModelRef; coauthors?: readonly string[] },
+    input: { prompt: string; requestId: string; model?: ModelRef; coauthors?: readonly string[]; attachmentIds?: string[] },
     existingOnly = false,
   ): Promise<{ accepted: true } | { queued: { id: string } }> {
     return this.lock(async () => {
       this.assertOpen()
       const coauthors = checkedCoauthors(input.coauthors)
-      const hash = sha256Hex(canonicalJson({ text: input.prompt, ...(input.model ? { model: input.model } : {}) }))
+      const files = input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}
+      if (!input.prompt && !files.attachmentIds) throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
+      const hash = sha256Hex(canonicalJson({ text: input.prompt, ...(input.model ? { model: input.model } : {}), ...files }))
       const prior = [...this.entries.values()].find(
         item => item.sessionId === sessionId && item.deviceId === actor.deviceId && item.requestId === input.requestId,
       )
       if (prior) {
         if (prior.hash !== hash) throw new AppError(409, 'request-conflict', '同一次排队请求不能提交不同内容')
+        if (this.unconfirmedAdmissions.has(prior.id)) await this.commit(new Map(this.entries))
         return VISIBLE.has(prior.state) ? { queued: { id: prior.id } } : { accepted: true }
       }
       if (existingOnly) throw new AppError(409, 'queue-settled', '没有可重试的排队回执。')
@@ -288,6 +316,7 @@ export class PromptQueues {
           requestId: input.requestId,
           sendRequestId: input.requestId,
           hash,
+          ...files,
           text: input.prompt,
           queuedAt: new Date(this.now()).toISOString(),
           waitRunId: detail.summary.runId ?? '',
@@ -299,17 +328,18 @@ export class PromptQueues {
         valid(immediate)
         next.set(immediate.id, immediate)
         await this.options.beforeEnqueue(actor, sessionId, immediate.id)
-        await this.commit(next)
+        await this.admit(immediate, next)
         try {
           await this.options.send(actor, sessionId, {
             text: input.prompt,
             requestId: input.requestId,
             itemId: immediate.id,
+            ...files,
             ...(immediate.coauthors ? { coauthors: immediate.coauthors } : {}),
             ...(model ? { model } : {}),
             ...(binding ? { binding } : {}),
           })
-          await this.patch(immediate, { state: 'sent', text: undefined })
+          await this.patch(immediate, { state: 'sent', text: undefined, attachmentIds: undefined })
         } catch (error) {
           // Refused before the session took it: the receipt goes too, so nothing on record can still send it and the
           // refusal stays definite (NOT_ACCEPTED_5XX). The client sends again as a new request, or not at all.
@@ -324,6 +354,7 @@ export class PromptQueues {
               /* Kept on disk: it stays a visible item to retry, so the answer cannot be definite. */
             }
             if (dropped) {
+              if (files.attachmentIds) await this.options.releaseAttachments?.(actor, sessionId, files.attachmentIds, immediate.requestId)
               this.options.dropped?.(actor, sessionId, immediate.id)
               this.options.changed(sessionId)
               throw error
@@ -349,6 +380,7 @@ export class PromptQueues {
         requestId: input.requestId,
         sendRequestId: input.requestId,
         hash,
+        ...files,
         text: input.prompt,
         queuedAt: new Date(this.now()).toISOString(),
         waitRunId: detail.summary.runId ?? '',
@@ -367,10 +399,33 @@ export class PromptQueues {
       // Audit I/O can outlive revocation or a policy change.
       await this.options.check(actor, sessionId, model, binding)
       next.set(item.id, item)
-      await this.commit(next)
+      await this.admit(item, next)
       this.options.changed(sessionId)
       return { queued: { id: item.id } }
     })
+  }
+
+  private async admit(item: Record, next: Map<string, Record>): Promise<void> {
+    if (item.attachmentIds) {
+      if (!this.options.holdAttachments) throw new AppError(409, 'attachments-unsupported', '当前会话不能保存排队附件。')
+      await this.options.holdAttachments(item, item.sessionId, item.attachmentIds, item.requestId, item.model)
+      try {
+        await this.options.check(item, item.sessionId, item.model, item.binding)
+      } catch (error) {
+        await this.options.releaseAttachments?.(item, item.sessionId, item.attachmentIds, item.requestId)
+        throw error
+      }
+    }
+    try {
+      await this.commit(next)
+    } catch (cause) {
+      if (!item.attachmentIds) throw cause
+      // rename or directory sync may already have succeeded. Never release or dispatch on that uncertainty.
+      this.entries.set(item.id, { ...item, state: 'parked', reason: '排队保存结果未确认，请确认后发送' })
+      this.unconfirmedAdmissions.add(item.id)
+      this.options.changed(item.sessionId)
+      throw new AppError(503, 'queue-save-unknown', '排队保存结果未确认，请重试原请求或到队列里移除。')
+    }
   }
 
   edit(sessionId: string, itemId: string, value: string, actor: QueueActor, authorize?: () => Promise<void>): Promise<void> {
@@ -379,6 +434,7 @@ export class PromptQueues {
       const item = this.find(sessionId, itemId)
       if (!VISIBLE.has(item.state) || item.state === 'sending' || item.state === 'uncertain')
         throw new AppError(409, 'queue-settled', '这一项已经发送或正在确认结果')
+      if (!text.safeParse(value).success) throw new AppError(400, 'queue-item-invalid', '排队内容无效。')
       if (item.text === value) return
       await this.options.check(actor, sessionId, item.model, item.binding)
       await authorize?.()
@@ -405,7 +461,10 @@ export class PromptQueues {
       authorize?.()
       const item = this.find(sessionId, itemId)
       const unknown = item.state === 'sending' || item.state === 'uncertain'
-      if (item.state !== 'removed') await this.patch(item, { state: 'removed', text: undefined, reason: undefined })
+      if (item.state !== 'removed') {
+        await this.patch(item, { state: 'removed', text: undefined, attachmentIds: undefined, reason: undefined })
+        if (!unknown && item.attachmentIds) await this.options.releaseAttachments?.(item, sessionId, item.attachmentIds, item.requestId)
+      }
       return { removed: true, ...(unknown ? { deliveryUnknown: true } : {}) }
     })
   }
@@ -467,6 +526,8 @@ export class PromptQueues {
   private canSteer(item: Record): boolean {
     return (
       (item.state === 'parked' || item.state === 'waiting')
+      && !item.attachmentIds
+      && !mentionsConversationReference(item.text ?? '')
       && !item.model
       && !item.binding
       && !!this.options.steer
@@ -532,7 +593,7 @@ export class PromptQueues {
         await this.save(item)
         throw new AppError(409, 'queue-steer-unavailable', '当前轮次没有接受追加，队列会按原顺序处理。')
       }
-      await this.patch(sending, { state: 'sent', text: undefined, reason: undefined })
+      await this.patch(sending, { state: 'sent', text: undefined, attachmentIds: undefined, reason: undefined })
     })
   }
 
@@ -542,7 +603,7 @@ export class PromptQueues {
       if (item.state === 'sending') await this.patch(item, { state: 'uncertain' })
       return false
     }
-    await this.patch(item, { state: 'sent', text: undefined, reason: undefined })
+    await this.patch(item, { state: 'sent', text: undefined, attachmentIds: undefined, reason: undefined })
     return true
   }
 
@@ -647,6 +708,7 @@ export class PromptQueues {
         requestId: item.sendRequestId,
         queuedAt: item.queuedAt,
         itemId: item.id,
+        ...(item.attachmentIds ? { attachmentIds: item.attachmentIds, attachmentRequestId: item.requestId } : {}),
         ...(item.editor ? { editor: item.editor } : {}),
         ...(item.coauthors ? { coauthors: item.coauthors } : {}),
         ...(beforeSend ? { authorize: beforeSend } : {}),
@@ -671,7 +733,7 @@ export class PromptQueues {
     }
     const detail = await this.options.detail(item.sessionId)
     const next = new Map(this.entries)
-    next.set(item.id, { ...item, state: 'sent', text: undefined, reason: undefined })
+    next.set(item.id, { ...item, state: 'sent', text: undefined, attachmentIds: undefined, reason: undefined })
     for (const [key, pending] of next)
       if (pending.sessionId === item.sessionId && (pending.state === 'waiting' || (resume && pending.state === 'parked'))) {
         next.set(key, { ...pending, state: 'waiting', waitRunId: detail.summary.runId ?? '', reason: undefined })
@@ -713,6 +775,7 @@ export class PromptQueues {
   private async commit(next: Map<string, Record>): Promise<void> {
     await writeFileAtomic(join(this.options.dataDir, 'queues.json'), JSON.stringify({ version: 1, items: [...next.values()] }))
     this.entries = next
+    this.unconfirmedAdmissions.clear()
   }
   private lock<T>(action: () => Promise<T>): Promise<T> {
     const result = this.serial.then(action)

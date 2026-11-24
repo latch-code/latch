@@ -328,6 +328,8 @@ Latch 内置的会话有五档（`BUILTIN_MODES`，[permission-modes.ts](../pack
 
 ## 注册完整 Harness Driver
 
+内置 Standard 的 [PR 自动续办](GIT-REVIEW.md) 将每轮的无人值守授权复核带到实际派发处；第三方 Harness 的既有 L3 分类保持适用。
+
 需要自己的 Agent 循环、存储或外部进程时实现 Driver，不塞进 Provider。通用的外部 Agent 优先经 [ACP](./HARNESSES.md) 接入，不用写插件。
 
 ```js
@@ -390,6 +392,7 @@ Driver 上的其他声明：
 | `registry` | 运行开始时 `acquire(providerId, { tools })`，租约持有到运行真正结束 |
 | `clock()` | 消息与运行的时间用它记录，不直接读 `Date.now`：客户端按 Host 的 `hostTime` 校准（[STREAMING.md](./STREAMING.md#时间与用量)） |
 | `classifyToolCall` | 只传给内置 Harness |
+| `mcpTools({ sessionId, signal, runId, unattended })` | Standard 在每轮开始时提供当前轮次 ID 与无人值守状态。Host 据此选择本轮可用的会话工具，并在会话引用读取前和返回前核对轮次 |
 | `securityEvent(event)` | 上报 `permission-drift`、`permission-unverified`、`model-route-bypassed`、`approval-auto-rejected`、`tool-judged`，只带哈希与枚举。Host 写审计（`task.permission-drift`、`task.model.bypassed`、`task.approval-auto-rejected`、`task.tool.judged`；`permission-unverified` 只写日志）并刷新会话，不向 Driver 抛错。只有 `tool-judged` 返回 Promise：审计写不进去时它被拒绝，Driver 应取消这一轮 |
 | `modelGateway` | 给声明了 `models.wires` 的 Driver：按进程 `open` 一个凭据，进程结束时 `close`，`active()` 为假后换进程；一轮发出时与结束时各调用一次 `takeTurn()`，把结果记进 `TurnStats.routed`。凭据不进参数、URL、日志与消息（网关的规则见 [ARCHITECTURE.md](ARCHITECTURE.md#模型网关)） |
 | `turnEnded(turn)` | 每轮结束时调用一次：ACP Driver 只在不走模型路由时调用，带与 `TurnStats.usage` 相同的用量、步数、用时与 Harness 报告的花费差值；内置 Harness 带这一轮的 `providerId` 与各步用量之和，Host 只留插件服务的轮次。Host 只追加到自己登录轮次的记录，不向 Driver 抛错 |

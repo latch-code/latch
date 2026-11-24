@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import type { ChangedFile, FileChangeDetail, GitCommitDiff, GitCommitEntry, GitCommitFileDiff, GitHistory } from '@latch/protocol'
-import { Button, Collapse, ICON_STROKE, ChevronLeftGlyph, ChevronRightGlyph, CommitGlyph } from '@latch/ui'
+import {
+  containsSecret,
+  type BranchListing,
+  type ChangedFile,
+  type FileChangeDetail,
+  type GitCommitDiff,
+  type GitCommitEntry,
+  type GitCommitFileDiff,
+  type GitHistory,
+} from '@latch/protocol'
+import { Button, Collapse, Dialog, ICON_STROKE, SearchField, ChevronLeftGlyph, ChevronRightGlyph, CommitGlyph } from '@latch/ui'
 import { VisibleText } from '../../components/VisibleText.tsx'
-import { api, ApiError, errorMessage } from '../../core/api.ts'
+import { api, ApiError, errorMessage, MessageError } from '../../core/api.ts'
 import { ChangesFile } from './ChangesFile.tsx'
 import { fileId } from './model.ts'
 import { commitRow, historyFile, historyTitle } from './staging.ts'
@@ -14,6 +23,14 @@ const COPY = defineCopy(
     latest: (count: number) => `只显示最近 ${formatNumber(count)} 个提交`,
     reading: '正在读取…',
     noBase: '没有可以比较的基线',
+    baseline: '选择比较基线',
+    searchBase: '搜索分支、提交，或粘贴完整提交号',
+    branches: '本地分支',
+    changesMoved: '比较两端的提交已改变。请重新打开基线比较。',
+    compareTyped: '使用输入的分支或提交',
+    ends: '比较的提交',
+    auto: '自动（分叉点）',
+    compare: '比较',
     retry: '重试',
     noChanges: '没有改动的文件',
     commitPrefix: '提交 ',
@@ -30,6 +47,14 @@ const COPY = defineCopy(
     latest: (count: number) => plural(count, { one: 'Only the latest commit is shown', other: 'Only the latest {n} commits are shown' }),
     reading: 'Reading…',
     noBase: 'No comparison base available',
+    baseline: 'Choose comparison base',
+    searchBase: 'Search branches or commits, or paste a full commit ID',
+    branches: 'Local branches',
+    changesMoved: 'The compared commits changed. Reopen the comparison.',
+    compareTyped: 'Use this branch or commit',
+    ends: 'Compared commits',
+    auto: 'Automatic (fork point)',
+    compare: 'Compare',
     retry: 'Retry',
     noChanges: 'No changed files',
     commitPrefix: 'Commit ',
@@ -51,6 +76,7 @@ export interface GitHistoryViewProps {
   /** The session's primary folder, for opening a file. */
   root: string
   mode: HistoryMode
+  canChooseComparisonBase: boolean
   layout: 'unified' | 'split'
   phone: boolean
   /** Read again when this changes. */
@@ -77,7 +103,7 @@ function useRead<T>(path: string | undefined, poke: string, offline: boolean): [
       (cause: unknown) => {
         if (controller.signal.aborted) return
         setRead(current =>
-          current.kind === 'ready'
+          current.kind === 'ready' && !(cause instanceof ApiError && cause.status < 500)
             ? current
             : { kind: 'failed', code: cause instanceof ApiError ? cause.code : '', text: errorMessage(cause) },
         )
@@ -105,6 +131,7 @@ function detailOf(root: string, answer: GitCommitFileDiff): FileChangeDetail {
 function TreeFiles({
   base,
   query,
+  reference,
   root,
   only,
   layout,
@@ -117,21 +144,32 @@ function TreeFiles({
   /** `…/git/history/<sha>` or `…/git/compare`. */
   base: string
   query: string
+  reference?: string
   /** A file's history shows that one file of each commit, opened. */
   only?: string
 }) {
-  const [read, retry] = useRead<GitCommitDiff>(only === undefined ? base : undefined, `${poke}:${query}`, offline)
+  const [read, retry] = useRead<GitCommitDiff>(
+    only === undefined ? base + (reference ? '?' + new URLSearchParams({ base: reference }).toString() : '') : undefined,
+    `${poke}:${query}`,
+    offline,
+  )
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set(only === undefined ? [] : [fileId({ root, path: only })]))
+  const tip = read.kind === 'ready' ? read.value.sha : undefined
+  const parent = read.kind === 'ready' ? read.value.parent : undefined
   const readFile = useCallback(
-    async (file: Pick<ChangedFile, 'root' | 'path'>, signal: AbortSignal) =>
-      detailOf(root, await api<GitCommitFileDiff>(`${base}?${new URLSearchParams({ path: file.path }).toString()}`, { signal })),
-    [base, root],
+    async (file: Pick<ChangedFile, 'root' | 'path'>, signal: AbortSignal) => {
+      const params = new URLSearchParams({ path: file.path, ...(reference ? { base: reference } : {}) })
+      const answer = await api<GitCommitFileDiff>(`${base}?${params}`, { signal })
+      if (tip && (answer.sha !== tip || answer.parent !== parent)) throw new MessageError(COPY.changesMoved)
+      return detailOf(root, answer)
+    },
+    [base, root, reference, tip, parent],
   )
   const row = (file: ChangedFile) => {
     const id = fileId(file)
     return (
       <ChangesFile
-        key={id}
+        key={JSON.stringify([tip, parent, id])}
         file={file}
         open={opened.has(id)}
         selected={false}
@@ -173,9 +211,16 @@ function TreeFiles({
       </p>
     )
   const diff = read.value
-  if (!diff.files.length) return <p className="changes-body-note">{COPY.noChanges}</p>
   return (
     <>
+      {diff.base && diff.parent && (
+        <div className="changes-line compare-ends" aria-label={COPY.ends}>
+          <code title={diff.parent}>{diff.parent.slice(0, 9)}</code>
+          <span aria-hidden="true">→</span>
+          <code title={diff.sha}>HEAD · {diff.sha.slice(0, 9)}</code>
+        </div>
+      )}
+      {!diff.files.length && <p className="changes-body-note">{COPY.noChanges}</p>}
       {diff.files.map(file => row(historyFile(root, file)))}
       {diff.more ? <p className="changes-body-note">{COPY.more(diff.more)}</p> : null}
     </>
@@ -211,9 +256,79 @@ function CommitRow({
   )
 }
 
+function ComparePicker({ base, close, choose }: { base: string; close(): void; choose(value: string): void }) {
+  const [query, setQuery] = useState('')
+  const [branches, retryBranches] = useRead<BranchListing>(base + '/compare-branches', '', false)
+  const [commits, retryCommits] = useRead<GitHistory>(base + '/history', '', false)
+  const typed = query.trim()
+  const matches = (text: string) => text.toLowerCase().includes(typed.toLowerCase())
+  const names = branches.kind === 'ready' ? branches.value.branches.filter(item => matches(item.name)).slice(0, 20) : []
+  const recent =
+    commits.kind === 'ready' ? commits.value.commits.filter(item => matches(item.sha) || matches(item.subject ?? '')).slice(0, 12) : []
+  const selectTyped =
+    typed && !containsSecret(typed) && !names.some(item => item.name === typed) && !recent.some(item => item.sha === typed)
+  const failure = branches.kind === 'failed' ? branches.text : commits.kind === 'failed' ? commits.text : undefined
+  return (
+    <Dialog open onClose={close} title={COPY.baseline}>
+      <div className="compare-pick">
+        <SearchField
+          label={COPY.searchBase}
+          value={query}
+          maxLength={200}
+          onValueChange={setQuery}
+          onKeyDown={event => {
+            if (event.key === 'Enter' && !event.nativeEvent.isComposing && typed && !containsSecret(typed)) {
+              event.preventDefault()
+              choose(typed)
+            }
+          }}
+        />
+        <div className="compare-options">
+          <Button size="sm" variant="ghost" onClick={() => choose('')}>
+            {COPY.auto}
+          </Button>
+          {selectTyped && (
+            <Button size="sm" variant="outline" onClick={() => choose(typed)}>
+              {COPY.compareTyped}
+            </Button>
+          )}
+          {failure && (
+            <p role="status">
+              {failure}{' '}
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => {
+                  retryBranches()
+                  retryCommits()
+                }}>
+                {COPY.retry}
+              </Button>
+            </p>
+          )}
+          {(branches.kind === 'loading' || commits.kind === 'loading') && <p role="status">{COPY.reading}</p>}
+          {!!names.length && <h3>{COPY.branches}</h3>}
+          {names.map(branch => (
+            <button type="button" key={branch.name} onClick={() => choose(branch.name)}>
+              <VisibleText text={branch.name} />
+            </button>
+          ))}
+          {!!recent.length && <h3>{COPY.commit}</h3>}
+          {recent.map(item => (
+            <button type="button" key={item.sha} onClick={() => choose(item.sha)}>
+              <code>{item.sha.slice(0, 9)}</code>
+              <VisibleText text={item.subject ?? ''} />
+            </button>
+          ))}
+        </div>
+      </div>
+    </Dialog>
+  )
+}
+
 /** The history views: read-only, each list read from the Host when it is opened and bounded there. */
 export function GitHistoryView(props: GitHistoryViewProps) {
-  const { sessionId, mode, poke, offline, onBack } = props
+  const { sessionId, mode, poke, offline, onBack, canChooseComparisonBase } = props
   const base = `tasks/${encodeURIComponent(sessionId)}/git`
   const listPath =
     mode.kind === 'compare' || mode.kind === 'commit'
@@ -223,6 +338,8 @@ export function GitHistoryView(props: GitHistoryViewProps) {
         : `${base}/history`
   const [read, retry] = useRead<GitHistory>(listPath, poke, offline)
   const [opened, setOpened] = useState<string>()
+  const [reference, setReference] = useState('')
+  const [choosingBase, setChoosingBase] = useState(false)
   const shared = {
     root: props.root,
     layout: props.layout,
@@ -253,7 +370,31 @@ export function GitHistoryView(props: GitHistoryViewProps) {
           <div className="changes-line" data-tone="muted">
             <span className="changes-line-text">{COPY.committed}</span>
           </div>
-          <TreeFiles {...shared} base={`${base}/compare`} query="compare" />
+          {canChooseComparisonBase && (
+            <div className="changes-line">
+              <Button
+                size="xs"
+                variant="outline"
+                aria-label={COPY.baseline}
+                icon={CommitGlyph}
+                disabled={offline}
+                onClick={() => setChoosingBase(true)}>
+                {reference ? <VisibleText text={reference} /> : COPY.auto}
+              </Button>
+            </div>
+          )}
+          {canChooseComparisonBase && choosingBase && !offline && (
+            <ComparePicker
+              key={sessionId}
+              base={base}
+              close={() => setChoosingBase(false)}
+              choose={value => {
+                setReference(value)
+                setChoosingBase(false)
+              }}
+            />
+          )}
+          <TreeFiles key={reference} {...shared} reference={reference} base={`${base}/compare`} query={reference} />
         </div>
       </div>
     )

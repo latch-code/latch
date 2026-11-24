@@ -1,5 +1,14 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { Device, DeviceScope, HostFeatures, PresenceAction, PresencePreview, PresenceSubject } from '@latch/protocol'
+import type {
+  Device,
+  DeviceScope,
+  HostFeatures,
+  PrFollowOutcome,
+  PrFollowRestriction,
+  PresenceAction,
+  PresencePreview,
+  PresenceSubject,
+} from '@latch/protocol'
 import type { PluginRegistry } from '@latch/core'
 import type { ProjectFolder } from '@latch/sdk'
 import type { BucketName, Presented, RateLimiter } from '../access.ts'
@@ -70,6 +79,19 @@ export interface RouteContext {
    * has left its project or is gone.
    */
   sessionRoots: (sessionId: string) => Promise<ProjectFolder[] | 'removed' | undefined>
+  /** The registered project and Git location whose verified PR snapshot a device may use. */
+  worktreeSource: (workspaceId: string) => Promise<{ path: string; identity: string }>
+  prFollowBasis: (id: string, device: string) => Promise<{ basis: string } | { reason: PrFollowRestriction }>
+  continuePr: (
+    id: string,
+    device: string,
+    basis: string,
+    requestId: string,
+    prompt: string,
+    current: () => boolean,
+    matchesHead: () => Promise<boolean>,
+  ) => Promise<PrFollowOutcome>
+  reviewProof: (deviceId: string, workspaceId: string, identity: string, number: number, repository: string, commit: string) => string
   /** What a device must pass to send new input to a session: its scope, the session's access, its folders. */
   assertSessionInput: (caller: DeviceCaller, sessionId: string) => Promise<void>
   /** Runs starting and settling, sessions archived or deleted, and the Host stopping (`session-lifecycle.ts`). */

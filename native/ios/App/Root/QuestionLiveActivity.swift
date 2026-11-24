@@ -13,7 +13,7 @@ import SwiftUI
         let permitted = enabled && ActivityAuthorizationInfo().areActivitiesEnabled
         // The model withdraws its data while suspended. The last generic reminder goes stale on its own.
         guard active || !permitted else { return }
-        let activities = Live.activities.filter { !ending.contains($0.id) }
+        let activities = Live.activities.filter { $0.attributes.route == nil && !ending.contains($0.id) }
         guard permitted, let attention, !attention.entries.isEmpty else {
             requestedFor = nil
             for activity in activities { end(activity) }

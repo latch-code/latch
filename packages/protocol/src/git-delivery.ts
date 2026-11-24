@@ -126,6 +126,16 @@ export interface GitAbortResult {
   head?: string
 }
 
+/** The PR head fetched from its base repository, including for cross-repository pull requests. */
+export interface GitReviewHead {
+  number: number
+  commit: string
+  fork: boolean
+  baseRepository: string
+  repository: string
+  branch: string
+}
+
 /** The pull request bound to a session (`sessions-meta.json`): where it is and which branches it joins. */
 export interface GitPrBinding {
   number: number
@@ -177,8 +187,20 @@ export interface GitPrComment {
   at?: string
 }
 
+/** An explicitly enabled follow-up for the session's bound PR. Its grant and comparison hashes stay on the Host. */
+export type PrFollowOutcome = 'sent' | 'busy' | 'policy' | 'changed' | 'unknown'
+export interface GitPrFollow {
+  enabled: boolean
+  revision: string
+  automatic?: true
+  notice?: { at: string; comments: number; failures: number; outcome?: PrFollowOutcome | undefined }
+}
+
 /** `GET /link/api/tasks/:id/git/pr`. */
+export type PrFollowRestriction = 'harness' | 'scope' | 'session' | 'configuration'
 export interface GitPrState {
+  automaticRestriction?: PrFollowRestriction
+  follow?: GitPrFollow
   /** The pull request bound to the session; absent before one is created or found. */
   pr?: GitPullRequest
   /** Checks of `pr.headSha`. */

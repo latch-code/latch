@@ -563,6 +563,16 @@ export class Worktrees {
     head: string,
   ): Promise<{ commit: string; existing?: string }> {
     if (start.from === 'head') return { commit: head }
+    if (start.from === 'pr') {
+      const commit = start.commit
+      if (
+        !OID.test(commit)
+        || (await git.run(source, ['cat-file', '-t', commit], { maxBytes: 64 }).catch(() => undefined))?.toString('ascii').trim()
+          !== 'commit'
+      )
+        throw refuse('worktree-start-missing', '已核对的 PR 提交在本地找不到，请重新获取。')
+      return { commit }
+    }
     const asked = start.from === 'commit' ? start.ref : start.branch
     const shown = escapeSecurityText(asked.slice(0, 80))
     const named = (await this.validName(git, source, asked)) ? await git.commit(source, `refs/heads/${asked}`) : undefined

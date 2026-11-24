@@ -118,7 +118,7 @@ pnpm desktop -- --demo
 | | 现状 |
 | --- | --- |
 | Mac | 从源码运行。签名并公证的版本还没有实际构建过，所以没有安装包和自动更新。 |
-| iPhone 与 iPad | 从源码构建，与 Mac 配对。尚未上架，还没有在真机上验收；没有推送通知。 |
+| iPhone 与 iPad | 从源码构建，与 Mac 配对。可为已配对设备[配置锁屏提醒和实时活动](docs/IOS-NOTIFICATIONS.md)，需要 Apple 推送凭据。尚未上架，真机投递与交互待验收。 |
 | 其他设备 | 任何浏览器，经你自己提供证书的 HTTPS。Latch 不生成证书，也没有明文 HTTP 接入。 |
 | Linux | Host 可以运行，但 Linux 上没有本机确认，浏览器和手机无法连接；桌面端用离线连接码连接。 |
 | Windows | 尚未实现：Host 需要放 `host.sock` 的每用户运行目录，Windows 上还没有实现。 |

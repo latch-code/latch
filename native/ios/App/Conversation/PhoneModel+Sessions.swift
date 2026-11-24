@@ -2,6 +2,7 @@ import Foundation
 import LatchNativeCore
 
 extension PhoneModel {
+    var canQueueAttachments: Bool { canQueueCurrent && snapshot["catalog"]["features"]["queueAttachments"].bool }
     var canQueueCurrent: Bool { snapshot["catalog"]["features"]["queue"].bool }
     var currentSummary: NativeJSON { PhoneSessions.currentSummary(snapshot: snapshot, detail: detail, sessionId: sessionId, cached: detailCached) }
     /** Whether the open session is stopping: this phone asked and has no answer yet, or the Host says so, whoever asked. */
@@ -119,7 +120,7 @@ extension PhoneModel {
         guard transportReady else { return false }
         if let target, target != sessionId { if let key = target { attachTrays[key, default: PhoneAttachTray()].note = PhoneAttachSend.movedWords }; return false }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty, text.count <= 16_000,
-              attachments.count <= PhoneAttachments.perMessage, attachments.isEmpty || (!queue && !steer) else { return false }
+              attachments.count <= PhoneAttachments.perMessage, attachments.isEmpty || (!steer && (!queue || canQueueAttachments)) else { return false }
         let current = generation, selected = sessionId, reading = contentGeneration
         do {
             guard canRun else { throw NativeFailure.forbidden }
@@ -162,6 +163,12 @@ extension PhoneModel {
             pending.removeAll { $0.requestId == request.requestId }
             if attached, let key = Self.trayKey(request) { attachmentsSent(key) }
             guard contentGeneration == reading else { return false }
+            if let target = selected, sessionId == target, hasContentWindow, canRun,
+               request.path == "/link/api/tasks/\(target)/conversation-references", let ref = value["reference"].string, UUID(uuidString: ref) != nil {
+                let fields = try? JSONDecoder().decode(NativeJSON.self, from: request.body)
+                let name = fields?["source"].string.flatMap { self.summary(of: $0)["title"].string } ?? "会话"
+                addToDraft("[conversation-ref:\(ref)] " + name.components(separatedBy: .newlines).joined(separator: " ") + " · read_conversation_reference", session: target)
+            }
             if sessionId == selected, contentGeneration == reading, let id = value["sessionId"].string { sessionId = id }
             if request.method == "DELETE", value["removed"].bool, value["deliveryUnknown"].bool {
                 error = "排队项已移除。先前的发送结果仍待确认，请核对会话记录。"

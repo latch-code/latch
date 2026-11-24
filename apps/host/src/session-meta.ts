@@ -166,6 +166,31 @@ const noteText = z.string().refine(value => {
   return length >= 1 && length <= CARD_NOTE_CHARS && value === value.trim() && !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(value)
 })
 
+const prFollowSchema = z.strictObject({
+  deviceId: z.string().min(1).max(256),
+  urlHash: hex64Text,
+  deviceEpoch: z.string().uuid().optional(),
+  revision: requestIdText,
+  enabled: z.boolean(),
+  nativeWindowHash: hex64Text.optional(),
+  automatic: z.literal(true).optional(),
+  basis: hex64Text.optional(),
+  paused: z.literal(true).optional(),
+  discussion: z.array(hex64Text).max(512),
+  failures: z.array(hex64Text).max(512),
+  discussionThrough: z.number().int().nonnegative().optional(),
+  failuresThrough: z.number().int().nonnegative().optional(),
+  notice: z
+    .strictObject({
+      at: isoTime,
+      comments: z.number().int().nonnegative(),
+      failures: z.number().int().nonnegative(),
+      outcome: z.enum(['sent', 'busy', 'policy', 'changed', 'unknown']).optional(),
+    })
+    .optional(),
+})
+export type StoredPrFollow = z.infer<typeof prFollowSchema>
+
 /** One session's entry; `update` checks each change against it, so the file never holds what it cannot read back. */
 const sessionEntrySchema = z.object({
   id: z.string().min(1).max(256),
@@ -222,6 +247,7 @@ const sessionEntrySchema = z.object({
     })
     .optional(),
   firstStart: z.literal(true).optional(),
+  prFollow: prFollowSchema.optional(),
   pr: prBindingSchema.optional(),
   forkOf: z
     .object({
@@ -318,6 +344,7 @@ export interface StoredMeta {
   firstStart?: true
   /** The pull request 交付 made or found for the session's branch. */
   pr?: GitPrBinding
+  prFollow?: StoredPrFollow
   forkOf?: TaskSummary['forkOf']
   /**
    * Brought in from the harness `from`'s own session `agentSessionId` (docs/HARNESSES.md#接入已有会话), or rebuilt as text
@@ -480,6 +507,10 @@ export class SessionMetaStore implements SessionReceipts {
   /** Sessions brought in from a harness's own record. */
   imported(): Array<{ sessionId: string; imported: ImportedMeta }> {
     return [...this.meta.entries()].flatMap(([sessionId, meta]) => (meta.imported ? [{ sessionId, imported: meta.imported }] : []))
+  }
+
+  followedPrs(): string[] {
+    return [...this.meta].flatMap(([id, meta]) => (meta.pr && !meta.archived && meta.prFollow?.enabled ? [id] : []))
   }
 
   /** Folder names owned by sessions in the Host metadata. */

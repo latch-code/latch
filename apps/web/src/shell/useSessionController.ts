@@ -269,6 +269,7 @@ export function useSessionController({
   const access = useMemo(() => deviceAccess(snapshot, shell), [scopesKey, shell])
   const owner = access.admin
   const canQueue = catalog?.features?.queue === true
+  const queueAttachments = canQueue && catalog?.features?.queueAttachments === true
   const gateFor = useCallback((approval: Approval) => approvalActions(approval, access.device), [access])
   const canRetryApproval = useStableCallback(
     (choice: UncertainChoice) =>
@@ -482,8 +483,7 @@ export function useSessionController({
     },
     ...(selectedId ? { sessionId: selectedId } : {}),
     locked: submission.sending || submission.pending !== null,
-    // The Host takes a queued or steered message as text only (`queue-attachments-unsupported`): said before sending.
-    ...(active
+    ...(active && (!queueAttachments || fileMentions.some(ref => hasFileMention(submission.draft, ref)))
       ? {
           heldBack: steer ? COPY.attachmentsInSteer : COPY.attachmentsInQueue,
           heldRefs: fileMentions.some(ref => hasFileMention(submission.draft, ref)),
@@ -571,14 +571,21 @@ export function useSessionController({
       askProject()
       return
     }
-    if (inputId !== null && active && (attachmentDraft.items.length > 0 || mentionChoice.refs.length > 0)) {
+    if (inputId !== null && active && ((!queueAttachments && attachmentDraft.items.length > 0) || mentionChoice.refs.length > 0)) {
       submission.setError(steer ? COPY.attachmentsInSteer : COPY.attachmentsInQueue)
       return
     }
     await settingsLanded()
     const ids = await attachmentDraft.wait()
     if (ids && inputId !== null) clearUnverified(inputId)
-    const followUp = inputId === null || !active ? undefined : steer && !queueForLater ? 'steer' : canQueue ? 'queue' : undefined
+    const followUp =
+      inputId === null || !active
+        ? undefined
+        : steer && !queueForLater && !ids?.length && !submission.draft.includes('[conversation-ref:')
+          ? 'steer'
+          : canQueue
+            ? 'queue'
+            : undefined
     if (ids && (await submission.submit(undefined, undefined, followUp, ids, mentionChoice.refs))) {
       attachmentDraft.clear()
       setFileMentions([])

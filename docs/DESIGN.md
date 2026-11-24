@@ -14,8 +14,10 @@ sources:
   - apps/web/src/usage
   - apps/web/public
   - native/ios/Sources/LatchNativeCore/PhoneSlash.swift
+  - native/ios/QuestionWidget/LatchQuestionWidget.swift
   - build/icon.png
   - native/ios/App/Assets.xcassets
+  - native/ios/Shared/LatchMark.png
 ---
 # Latch 界面设计
 
@@ -25,7 +27,7 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 
 ## 品牌与原则
 
-- **名称与图标。** 名称为 Latch。`apps/web/public/icon.png` 用于界面、窗口与主屏幕，`apps/web/public/favicon.png` 用于浏览器标签，`build/icon.png` 是源图。iOS 的 `native/ios/App/Assets.xcassets/AppIcon.appiconset` 是同一图形：源图的圆角底板等比铺满 1024 方形，空白处填底板本色，无透明、无圆角，由系统裁圆角。不改动图形本身。图标是界面里唯一的暖色元素，它的橙色不用来表达状态。
+- **名称与图标。** 名称为 Latch。`apps/web/public/icon.png` 用于界面、窗口与主屏幕，`apps/web/public/favicon.png` 用于浏览器标签，`build/icon.png` 是源图。iOS 的 `native/ios/App/Assets.xcassets/AppIcon.appiconset` 是同一图形：源图的圆角底板等比铺满 1024 方形，空白处填底板本色，无透明、无圆角，由系统裁圆角。App 内和[锁屏实时活动](IOS-NOTIFICATIONS.md#收到后如何处理)共用 `native/ios/Shared/LatchMark.png`。不改动图形本身。图标是界面里唯一的暖色元素，它的橙色不用来表达状态。
 - **简约、克制。** 默认黑白，侧栏、画布与编辑面用不同明度。设备可选墨灰、雾蓝或暖灰；主色默认跟随工作台，另可选深蓝、青绿、鸢尾紫，见 [CUSTOMIZATION](CUSTOMIZATION.md)。层次只靠几层平涂的表面、细线、阴影与墨色深浅，不用装饰色、渐变、底纹、插画或表情。桌面与平板的普通选择浮层（模型、项目、分支、Harness、会话操作、文件与命令建议）可透出模糊的背景。设备可选实色、磨砂或通透，默认磨砂；系统要求减少透明度或浏览器不支持时用实底。手机面板、代码、审批和设备权限都用实底。控件按数据的形状选择，一种意思只用一种画法。
 - **每种颜色只表达一件事，并且总配文字或图形。**
 
@@ -757,6 +759,10 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 
 ### 原生待办与审阅
 
+iPhone 的锁屏实时活动显示 Latch 标识和状态。展开灵动岛时，传感器两侧是 Latch 和状态或 Host 判定的高风险。正文第一行是当前会话的标题，在已验证的 Agent 图标旁显示。iPhone 解封成功后才展示标题，否则省去这一行。第二行用对应图标标明真实操作，命令与文件名用等宽字体，多个文件可显示已核实的类型与数量。Host 报告会在 Agent 沙箱外运行时，同一行显示简短的警示。联网、扩大权限、向命令输入和执行计划各有对应图标与查看入口。
+
+有明确目标或文件范围时，下方是等宽的「拒绝」与「批准」，批准在右。缺少公开详情时提供解锁查看。点入口后由 App 核对原审批再处理。
+
 iOS 启动时先打开设备的安全存储。失败时显示原因和重试入口，成功后才显示配对或已连接的电脑。前台短暂断链时保留当前会话和草稿，连接路径由 App 自动选择。恢复期间仍可编辑，发送键在连接就绪后可用。持续连不上时显示离线。
 
 「设置 › 电脑」的详情可以重连当前离线的 Mac，也可以切换到其他已保存的 Mac。离线时确认「从这台设备移除」，会清除这台设备上的连接资料与缓存，Mac 上的设备记录保留。需要时可重新扫码连接。对当前已连接的 Mac，「断开这台 Mac」仍由 Mac 撤销此设备。
@@ -815,6 +821,8 @@ iPhone 的 Code 顶栏只放电脑菜单（多台电脑时替代标题，过长�
 
 **草稿。** 切换会话保留原会话未发送的文字，回到同一会话才恢复；附件与文件引用不随切换携带。每台设备最多 20 份、合计 256,000 个字符（[sessionDrafts.ts](../apps/web/src/core/sessionDrafts.ts)）；含凭据的文字，以及数据范围不足的设备上的私有文字只留在内存；设备被移除或退出时立即清除。存储见 [STREAMING.md](STREAMING.md)。结果未知的提交复用原请求，不从草稿另发。
 
+终端的「引用报错」在草稿与已发消息里显示终端名称、等宽诊断和保留缩进的调用栈。草稿中可直接改报错文字，引用下方可继续输入。复制和发送保留原始 Markdown，代码里的反引号、文件名与命令按原文呈现。
+
 **搜索与归档。** 命中项按原会话与消息身份定位（[STREAMING.md](STREAMING.md#搜索定位与阅读标记)）；查询改变即取消旧请求。归档视图的批量恢复与删除部分失败时，失败项保持选中并写出原因（[ARCHITECTURE.md](ARCHITECTURE.md#会话搜索与批处理)）。
 
 **命令面板**（`apps/web/src/palette/`）。
@@ -859,6 +867,8 @@ iPhone 的 Code 顶栏只放电脑菜单（多台电脑时替代标题，过长�
 - Harness 用自己的记录分叉时，首条消息只有一行说明、没有可展开的文字，因为文字没有发给它（[STREAMING.md](STREAMING.md#输入身份与分叉上下文)）。
 
 ### 后续输入托盘
+
+带截图的后续消息可以排到下一轮。iPhone 和 iPad 可从「＋」选择照片，或在会话输入框粘贴截图。支持图片的会话里，运行中只加截图也会显示「排队」，说明可选。「接下来」显示附件数及已写的说明。要针对助手回答中的某句话追问，可以选中并引用到草稿。要让 Agent 按需查阅另一条会话的文字，可从支持该能力的输入框选择已有会话，选择时显示读取范围。
 
 排队只在声明 `queue` 能力的 Host 上出现，队列状态以 Host 为准（[STREAMING.md](STREAMING.md#排队状态与实际发送)）。
 

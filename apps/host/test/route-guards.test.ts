@@ -1,11 +1,12 @@
 import { connect } from 'node:net'
-import { createHash, createPrivateKey, generateKeyPairSync, sign, type KeyObject } from 'node:crypto'
+import { createHash, createPrivateKey, generateKeyPairSync, randomBytes, randomUUID, sign, type KeyObject } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createTransportCertificate, openNativeHttp, type NativeHttpClient } from '@latch/link-client'
 import { nodeCrypto } from '@latch/link-client/crypto'
 import { invitationCode, nativeKnockSecret, nativeVerificationText, parsePairingPayload } from '@latch/link-wire'
 import { testDeviceKey, type TestDevice } from '@latch/testkit'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import * as applePush from '../src/apple-push.ts'
 
 const cleanups: Array<() => void | Promise<void>> = []
 afterEach(async () => {
@@ -100,6 +101,48 @@ async function verifyPhone(t: TestHost, phone: NativeHttpClient, deviceId: strin
 }
 
 describe('route guards', () => {
+  it('takes an actual approval to a registered phone through a content window and rejects the same hint after settlement', async () => {
+    const delivered: applePush.AppleMessage[] = []
+    const sender = vi.spyOn(applePush, 'appleSender').mockResolvedValue(async message => {
+      delivered.push(message)
+      return 'accepted'
+    })
+    cleanups.push(() => sender.mockRestore())
+    const t = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    cleanups.push(() => t.close())
+    const owner = await t.enroll({ listener: 'unix' })
+    const { phone, deviceId, verificationKey } = await (await pairPhone(t)).enroll()
+    const registration = { route: randomUUID(), token: randomBytes(32).toString('hex') }
+    const subscriptions = '/link/api/native/attention-subscription',
+      targets = '/link/api/native/attention-target'
+    expect((await owner.request('native/attention-subscription', { method: 'POST', body: registration })).status).toBe(403)
+    expect((await phone.request('POST', subscriptions, registration)).status).toBe(403)
+    await verifyPhone(t, phone, deviceId, verificationKey)
+    expect((await phone.request('POST', subscriptions, registration)).status).toBe(200)
+    const { sessionId } = await t.host.bridge.createTask({ prompt: '生成一份需要审批的报告', requestId: randomUUID() })
+    await vi.waitFor(() => expect(delivered).toHaveLength(1), { timeout: 12000 })
+    const approval = (await t.host.bridge.detail(sessionId)).approvals[0]!
+    const hint = { route: registration.route, ticket: delivered[0]!.ticket }
+    expect((await phone.request('POST', targets, hint)).body).toMatchObject({
+      target: { session: sessionId, id: approval.id, kind: 'approval' },
+    })
+    const decision = await owner.request('approvals/' + approval.id, {
+      method: 'POST',
+      body: { decision: 'reject', requestId: randomUUID() },
+    })
+    expect(decision.status).toBe(200)
+    expect((await phone.request('POST', targets, hint)).body).toEqual({ target: null })
+    const second = await t.host.bridge.createTask({ prompt: '请审批这份报告', requestId: randomUUID() })
+    await vi.waitFor(() => expect(delivered).toHaveLength(2), { timeout: 12000 })
+    const exact = (await t.host.bridge.detail(second.sessionId)).approvals[0]!
+    const freshHint = { route: registration.route, ticket: delivered[1]!.ticket }
+    expect((await phone.request('POST', targets, freshHint)).body).toMatchObject({ target: { id: exact.id } })
+    const acted = await phone.request('POST', '/link/api/approvals/' + exact.id, { decision: 'allow', requestId: randomUUID() })
+    expect(acted.status).toBe(200)
+    expect((await phone.request('POST', targets, freshHint)).body).toEqual({ target: null })
+    expect((await phone.request('POST', subscriptions, { disabled: true })).status).toBe(200)
+  }, 20000)
+
   it('keeps every terminal route from a verified phone on the native entry', async () => {
     const t = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     cleanups.push(() => t.close())

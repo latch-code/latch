@@ -22,6 +22,7 @@
  * for 重新打开.
  */
 .terminal-panel {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -67,6 +68,30 @@
 .terminal-notice {
   flex: none;
   margin: var(--sp-6) var(--sp-12) 0;
+}
+.terminal-find {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: none;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-8);
+  border-bottom: 1px solid var(--line);
+}
+.terminal-find .ui-search {
+  min-width: 0;
+  flex: 1 1 24rem;
+  max-width: 32rem;
+}
+@container (max-width: 520px) {
+  .terminal-error-label {
+    display: none;
+  }
+}
+.terminal-find [role='status'] {
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+  white-space: nowrap;
 }
 .terminal-screens {
   position: relative;

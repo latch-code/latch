@@ -3,6 +3,7 @@ import { TERMINALS_PER_SESSION } from '@latch/protocol'
 import { atPrompt, fillTab, pasteData } from './fill.ts'
 import { terminalFills, useFillAsk, type FillAsk } from './fills.ts'
 import type { TerminalTab } from './model.ts'
+import type { TerminalMatch } from './find.ts'
 import type { TerminalsRead } from './useTerminals.ts'
 import { defineCopy, formatNumber, plural } from '../../core/i18n.ts'
 
@@ -31,6 +32,7 @@ const COPY = defineCopy(
 export interface ScreenHandle {
   paste(data: string): Promise<void>
   focus(): void
+  find(query: string, previous: number | undefined, direction: 1 | -1): TerminalMatch
 }
 
 type Step = { ask: FillAsk; phase: 'choose' } | { ask: FillAsk; phase: 'opening' } | { ask: FillAsk; phase: 'wait'; terminalId: string }

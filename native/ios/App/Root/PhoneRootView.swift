@@ -5,6 +5,8 @@ import UIKit
 struct PhoneRootView: View {
     @EnvironmentObject private var model: PhoneModel
     @State private var scan = false
+    @ObservedObject private var push = PhonePush.shared
+    @Environment(\.scenePhase) private var pushPhase
     /** 额度与用量, asked for by a quota widget. */
     @State private var quota = false
     private var hasComputers: Bool {
@@ -50,8 +52,22 @@ struct PhoneRootView: View {
             PairingView { scan = false }.environmentObject(model)
         }
         .modifier(QuestionLiveActivityObserver())
+        .onChange(of: push.revision, initial: true) { _, _ in pushChanged() }
+        .onChange(of: model.lastConfirmed) { _, _ in pushChanged() }
+        .onChange(of: model.hasContentWindow) { _, _ in pushChanged() }
+        .onChange(of: pushPhase) { _, _ in pushChanged() }
+        .alert("后台提醒", isPresented: Binding(get: { push.message != nil }, set: { if !$0 { push.message = nil } })) {
+            Button("好") { push.message = nil }
+        } message: { Text(push.message ?? "") }
         .onOpenURL { url in
-            if url == LatchQuestionAttributes.link {
+            let parts = url.pathComponents.filter { $0 != "/" }
+            if url.scheme == LatchLink.scheme && url.host == "pending" && parts.count == 3,
+               parts[2] == "review" || parts[2] == "reject", let hint = PhonePushHint(route: parts[0], ticket: parts[1], reject: parts[2] == "reject") {
+                #if LATCH_SCREENS
+                if model.staged { ScreensStage.notePendingLink(hint) }
+                #endif
+                push.visit(hint)
+            } else if url == LatchQuestionAttributes.link {
                 Task { await model.requestPendingQuestion() }
             } else if url == LatchLink.quota {
                 // A cold start is still opening its store; the sheet shows what arrives.
@@ -76,6 +92,11 @@ struct PhoneRootView: View {
         .onChange(of: model.staged) { _, _ in if ScreensStage.scanning { scan = true } }
         #endif
     }
+    private func pushChanged() {
+        guard pushPhase == .active else { return }
+        Task { await push.open(model); await push.sync(model) }
+    }
+
 }
 
 /** A stop or a rejection whose result never came back; it keeps its request identity until the Host answers. */

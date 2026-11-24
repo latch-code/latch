@@ -1,6 +1,8 @@
 import { expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { reviewNotesMessage } from '@latch/protocol'
-import { fencedParts } from '../src/components/MentionedText.tsx'
+import { fencedParts, UserText } from '../src/components/MentionedText.tsx'
 
 it('cuts a sent line feedback at its quoted lines, so they show as code and not as fences', () => {
   const text = reviewNotesMessage([
@@ -22,4 +24,35 @@ it('keeps a fence that never closes, or a shorter closing run, as typed', () => 
   expect(fencedParts('看这个\n```ts\nopen')).toEqual([{ kind: 'text', text: '看这个\n```ts\nopen' }])
   expect(fencedParts('````\na\n```\n````')).toEqual([{ kind: 'code', text: 'a\n```' }])
   expect(fencedParts('plain `code` text')).toEqual([{ kind: 'text', text: 'plain `code` text' }])
+})
+
+it('keeps file chips, reply citations and ordinary code alongside multiple terminal excerpts', () => {
+  const fence = '`'.repeat(3)
+  const source = (label: string, body: string) => [label, fence + 'text', body, fence].join('\n')
+  const text = [
+    '看 @web:report.txt',
+    source('终端 1 · 最近报错', 'Error: @web:report.txt\n    at a()'),
+    '[引用回复 session/message@0]\n> 原句',
+    source('Terminal 2 · Latest error', 'Error: file\u202Ename'),
+    fence,
+    'code sample',
+    fence,
+  ].join('\n')
+  const html = renderToStaticMarkup(createElement(UserText, { text, refs: [{ root: 'web', path: 'report.txt' }] }))
+  expect(html.match(/<figure /gu)).toHaveLength(2)
+  expect(html.match(/class="file-chip prompt-chip"/gu)).toHaveLength(1)
+  expect(html).toContain('Error: @web:report.txt')
+  expect(html).toContain('class="user-reply-quote">原句')
+  expect(html).toContain('<pre class="user-code"><code>code sample</code></pre>')
+  expect(html).toContain('class="hidden-char"')
+  expect(html).not.toContain('\u202E')
+  expect(html).not.toContain(fence)
+})
+
+it('retains original blank lines around a reply quote when the message has no terminal excerpt', () => {
+  const text = '\n前文\n\n[引用回复 session/message@0]\n> 原句\n\n后文\n'
+  expect(renderToStaticMarkup(createElement(UserText, { text }))).toBe('\n前文\n\n<span class="user-reply-quote">原句</span>\n\n后文\n')
+  expect(renderToStaticMarkup(createElement(UserText, { text: 'before\n```ts\nlet i = 0\n```\nafter' }))).toBe(
+    'before<pre class="user-code"><code>let i = 0</code></pre>after',
+  )
 })

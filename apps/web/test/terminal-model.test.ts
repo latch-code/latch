@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TerminalSummary } from '@latch/protocol'
+import { terminalExcerpts } from '../src/composer/terminalExcerpt.ts'
 import { TerminalLink, type TerminalSink } from '../src/panel/terminal/link.ts'
 import {
   draftText,
@@ -138,6 +139,62 @@ describe('terminal input and keys', () => {
     expect(draftText('终端 2', { text: 'ls', lines: 1, truncated: false, redacted: false, mayContainSecret: false })).toBe(
       '终端 2\n```text\nls\n```',
     )
+  })
+})
+
+describe('latest-error excerpts in a draft or sent message', () => {
+  const chinese = '终端 1 · 最近报错'
+  const english = 'Terminal 2 · Latest error'
+  const fence = '```'
+
+  it.each([
+    [chinese, ''],
+    [chinese, '（较早的输出未包含）'],
+    [english, ''],
+    [english, ' (earlier output omitted)'],
+    [english, '（较早的输出未包含）'],
+  ])('keeps the heading, truncation note and exact pasted body for %s%s', (label, notes) => {
+    const body = ['Error: 找不到模块 🚧', '  at load (src/a.ts:8)', '', 'end  '].join('\n')
+    const source = [label + notes, fence + 'text', body, fence].join('\n')
+    expect(terminalExcerpts(source)).toEqual([{ from: 0, to: source.length, label, notes, body }])
+  })
+
+  it('finds consecutive excerpts among notes using CodeMirror offsets even when real terminal output contains fences', () => {
+    const body = ['错误 🚧', fence + 'text', 'do not interpret @file', fence, 'run ````x````'].join('\n')
+    const first = draftText(chinese, { text: body, lines: 5, truncated: false, redacted: false, mayContainSecret: false })
+    const second = draftText(english, { text: 'failure\n', lines: 1, truncated: false, redacted: false, mayContainSecret: false })
+    const preface = '先看 👩‍💻\n'
+    const between = '\n\n补充说明：\n'
+    const firstFrom = preface.length,
+      secondFrom = firstFrom + first.length + between.length
+    const source = preface + first + between + second + '\n下一步再发。'
+    expect(terminalExcerpts(source)).toEqual([
+      { from: firstFrom, to: firstFrom + first.length, label: chinese, notes: '', body },
+      { from: secondFrom, to: secondFrom + second.length, label: english, notes: '', body: 'failure' },
+    ])
+  })
+
+  it('keeps ordinary code and complete error-shaped examples in larger Markdown fences as code', () => {
+    const sample = [english, fence + 'text', 'example stack', fence].join('\n')
+    const ordinary = [fence + 'text', 'normal log', fence, chinese, fence + 'js', 'throw reason', fence]
+    for (const wrapper of ['~~~~', '````']) {
+      const before = [...ordinary, wrapper + 'markdown', sample, wrapper, ''].join('\n')
+      expect(terminalExcerpts(before + sample)).toEqual([
+        { from: before.length, to: before.length + sample.length, label: english, notes: '', body: 'example stack' },
+      ])
+    }
+  })
+
+  it('leaves unfinished or emptied manual edits as typed and cannot borrow an unrelated code sample’s closing fence', () => {
+    const start = [english, fence + 'text', 'partial'].join('\n')
+    for (const source of [
+      english,
+      start,
+      start + '\n``',
+      start + '\n' + fence + 'js\nunrelated()\n' + fence,
+      [chinese, fence + 'text', '   ', fence].join('\n'),
+    ])
+      expect(terminalExcerpts(source)).toEqual([])
   })
 })
 

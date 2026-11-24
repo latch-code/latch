@@ -352,7 +352,6 @@ export function Composer({
     && !!run
     && (queueable || steerable)
     && !empty
-    && !attachments?.items.length
     && !fileMentions?.refs.length
     && answer === undefined
     && typedAction === undefined

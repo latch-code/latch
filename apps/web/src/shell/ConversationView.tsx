@@ -32,6 +32,7 @@ import {
   type BackdropKind,
   type BackdropLevel,
 } from '@latch/ui'
+import { PrFollowNotice } from '../panel/delivery/PrFollow.tsx'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
 import { DEVICE_FAILURE_STEPS, OWNER_FAILURE_STEPS, SendingBubble, SessionComposer, takeFailureStep } from './SessionComposers.tsx'
 import type { ShellState } from './useShellLayout.tsx'
@@ -44,6 +45,8 @@ import { useSessionBoardProposals } from '../board/SessionProposals.tsx'
 import { MemberLine } from '../teams/MemberLine.tsx'
 import { MemberTile, TeamPageContext, type TeamPage } from '../teams/TeamGraph.tsx'
 import { leadTeamOf, memberChoices } from '../teams/rounds.ts'
+import { ReplyQuoteControl, ReplyQuoteSource } from '../conversation/ReplyQuoteControl.tsx'
+import { revealQuote, writeReplyQuote } from '../conversation/replyQuote.ts'
 import { SentCatalogue } from '../components/MentionedText.tsx'
 import { RoundPageContext, type RoundPage } from '../teams/RoundControls.tsx'
 import { placeTeams } from '../teams/placeTeams.tsx'
@@ -379,6 +382,22 @@ export function ConversationView({
       ) : selectedId === null ? null : (
         <div className="conversation">
           <div className="transcript-shell" inert={sideQuestionPage || undefined}>
+            {visible && current && access.scopes.has('run') && !current.summary.archived && !submission.pending && (
+              <ReplyQuoteControl
+                key={current.summary.id}
+                sessionId={current.summary.id}
+                insert={quote => {
+                  if (
+                    quote.sessionId !== current.summary.id
+                    || !current.messages.some(row => row.id === quote.messageId && row.role === 'assistant')
+                  )
+                    return
+                  submission.setDraft(previous => [previous.trimEnd(), writeReplyQuote(quote)].filter(Boolean).join('\n\n') + '\n\n')
+                  document.getSelection()?.removeAllRanges()
+                  composerRef.current?.focus()
+                }}
+              />
+            )}
             {showBackdrop && <span className="transcript-backdrop-clear" data-backdrop-clear="" aria-hidden="true" />}
             {findOpen && current && (
               <FindBar
@@ -443,107 +462,109 @@ export function ConversationView({
                               resumed={current.messages.find(message => message.role === 'user')?.nativeFork === true}
                             />
                           )}
-                          <SentCatalogue.Provider value={sentCatalogue}>
-                            <Transcript
-                              detail={current}
-                              observeStream={showTranscript && frozenAt === undefined}
-                              projection={projection}
-                              replyViewport={reading.containerRef}
-                              onSource={choose}
-                              failureSteps={owner ? OWNER_FAILURE_STEPS : access.scopes.has('run') ? DEVICE_FAILURE_STEPS : undefined}
-                              checkUnknown={access.scopes.has('run')}
-                              onFailureStep={step => takeFailureStep(step, openSettings)}
-                              onCopyError={cause => setToast({ text: errorMessage(cause), tone: 'error' })}
-                              {...(mayEdit && catalog?.features?.fork
-                                ? { onEditFrom: (message, before) => void editFrom.start(message, before) }
-                                : {})}
-                              onFork={
-                                catalog?.features?.fork && access.scopes.has('run')
-                                  ? (upToMessageId, draft = FORK_CONTINUATION_PROMPT) => {
-                                      submission.setFork({
-                                        taskId: current.summary.id,
-                                        upToMessageId,
-                                        title: current.summary.title,
-                                        choice: forkChoice(),
-                                        source: forkSource(current, harnessInfo),
-                                      })
-                                      choose(null)
-                                      submission.setDraft(draft)
-                                      shell.showHome()
-                                    }
-                                  : undefined
-                              }
-                              approvals={approvals}
-                              harnessName={harnessName}
-                              {...(speaker ? { speaker } : {})}
-                              login={
-                                harnessInfo?.login
-                                  ? {
-                                      harnessId: harnessInfo.id,
-                                      login: harnessInfo.login,
-                                      // In this session's 终端 tab, where it can have one.
-                                      surface: loginSurface(
-                                        catalog?.features,
-                                        current.summary.archived || current.summary.personal ? undefined : current.summary.id,
-                                      ),
-                                    }
-                                  : undefined
-                              }
-                              harness={topHarness}
-                              demo={demo}
-                              active={active}
-                              changes={{
-                                // The Host shows a session's files only to a device whose data scope covers them.
-                                enabled: catalog?.features?.changes === true && readsProjectFiles(snapshot.device.dataScope),
-                                undo: sessionReadOnly(current.summary) || !access.scopes.has('run') ? 'read-only' : 'open',
-                                // As the 改动 tab reads it: nothing can be written until the connection is back.
-                                offline: connection === 'reconnecting' || connection === 'offline',
-                              }}
-                              {...(run ? { onStop: run.onCancel } : {})}
-                              {...(current.summary.personal
-                                ? {}
-                                : {
-                                    onStopSubagent: async (subagentId: string) => {
-                                      try {
-                                        await api(`tasks/${encodeURIComponent(current.summary.id)}/stop-subagent`, {
-                                          method: 'POST',
-                                          body: { subagentId },
+                          <ReplyQuoteSource.Provider value={{ id: current.summary.id, open: quote => revealQuote(quote, reading.reveal) }}>
+                            <SentCatalogue.Provider value={sentCatalogue}>
+                              <Transcript
+                                detail={current}
+                                observeStream={showTranscript && frozenAt === undefined}
+                                projection={projection}
+                                replyViewport={reading.containerRef}
+                                onSource={choose}
+                                failureSteps={owner ? OWNER_FAILURE_STEPS : access.scopes.has('run') ? DEVICE_FAILURE_STEPS : undefined}
+                                checkUnknown={access.scopes.has('run')}
+                                onFailureStep={step => takeFailureStep(step, openSettings)}
+                                onCopyError={cause => setToast({ text: errorMessage(cause), tone: 'error' })}
+                                {...(mayEdit && catalog?.features?.fork
+                                  ? { onEditFrom: (message, before) => void editFrom.start(message, before) }
+                                  : {})}
+                                onFork={
+                                  catalog?.features?.fork && access.scopes.has('run')
+                                    ? (upToMessageId, draft = FORK_CONTINUATION_PROMPT) => {
+                                        submission.setFork({
+                                          taskId: current.summary.id,
+                                          upToMessageId,
+                                          title: current.summary.title,
+                                          choice: forkChoice(),
+                                          source: forkSource(current, harnessInfo),
                                         })
-                                      } catch (cause) {
-                                        setToast({ text: errorMessage(cause), tone: 'error' })
-                                        throw cause
+                                        choose(null)
+                                        submission.setDraft(draft)
+                                        shell.showHome()
                                       }
-                                    },
-                                  })}
-                              onReveal={reading.reveal}
-                              {...(handing ? { onHandoff: handOff } : {})}
-                              {...(ownTeams.length ? { teams: ownTeams } : {})}
-                              {...(returned.length || placeProposals || placeResults || placeBoard || placeOwnTeams
-                                ? {
-                                    placed: (turns: ReadonlyArray<{ key: string; at: number | undefined }>) =>
-                                      // After a turn, what it proposed comes first (想定时), then the results of what was
-                                      // set up since, which can only come later.
-                                      joinPlaced(
+                                    : undefined
+                                }
+                                approvals={approvals}
+                                harnessName={harnessName}
+                                {...(speaker ? { speaker } : {})}
+                                login={
+                                  harnessInfo?.login
+                                    ? {
+                                        harnessId: harnessInfo.id,
+                                        login: harnessInfo.login,
+                                        // In this session's 终端 tab, where it can have one.
+                                        surface: loginSurface(
+                                          catalog?.features,
+                                          current.summary.archived || current.summary.personal ? undefined : current.summary.id,
+                                        ),
+                                      }
+                                    : undefined
+                                }
+                                harness={topHarness}
+                                demo={demo}
+                                active={active}
+                                changes={{
+                                  // The Host shows a session's files only to a device whose data scope covers them.
+                                  enabled: catalog?.features?.changes === true && readsProjectFiles(snapshot.device.dataScope),
+                                  undo: sessionReadOnly(current.summary) || !access.scopes.has('run') ? 'read-only' : 'open',
+                                  // As the 改动 tab reads it: nothing can be written until the connection is back.
+                                  offline: connection === 'reconnecting' || connection === 'offline',
+                                }}
+                                {...(run ? { onStop: run.onCancel } : {})}
+                                {...(current.summary.personal
+                                  ? {}
+                                  : {
+                                      onStopSubagent: async (subagentId: string) => {
+                                        try {
+                                          await api(`tasks/${encodeURIComponent(current.summary.id)}/stop-subagent`, {
+                                            method: 'POST',
+                                            body: { subagentId },
+                                          })
+                                        } catch (cause) {
+                                          setToast({ text: errorMessage(cause), tone: 'error' })
+                                          throw cause
+                                        }
+                                      },
+                                    })}
+                                onReveal={reading.reveal}
+                                {...(handing ? { onHandoff: handOff } : {})}
+                                {...(ownTeams.length ? { teams: ownTeams } : {})}
+                                {...(returned.length || placeProposals || placeResults || placeBoard || placeOwnTeams
+                                  ? {
+                                      placed: (turns: ReadonlyArray<{ key: string; at: number | undefined }>) =>
+                                        // After a turn, what it proposed comes first (想定时), then the results of what was
+                                        // set up since, which can only come later.
                                         joinPlaced(
                                           joinPlaced(
-                                            joinPlaced(returned.length ? placeReturned(turns) : undefined, placeProposals?.(turns)),
-                                            placeBoard?.(turns),
+                                            joinPlaced(
+                                              joinPlaced(returned.length ? placeReturned(turns) : undefined, placeProposals?.(turns)),
+                                              placeBoard?.(turns),
+                                            ),
+                                            // A team started from a turn's proposal stands where that proposal stood.
+                                            placeOwnTeams?.(turns),
                                           ),
-                                          // A team started from a turn's proposal stands where that proposal stood.
-                                          placeOwnTeams?.(turns),
+                                          placeResults?.(turns),
                                         ),
-                                        placeResults?.(turns),
-                                      ),
-                                  }
-                                : {})}
-                              {...(frozenAt !== undefined ? { frozenAt } : {})}
-                              cancelling={cancelState === 'cancelling'}
-                              coarse={coarse}
-                              providerName={providerName}
-                              {...(fallbackElapsed !== undefined ? { fallbackElapsed } : {})}
-                              {...(retry ? { retry } : {})}
-                            />
-                          </SentCatalogue.Provider>
+                                    }
+                                  : {})}
+                                {...(frozenAt !== undefined ? { frozenAt } : {})}
+                                cancelling={cancelState === 'cancelling'}
+                                coarse={coarse}
+                                providerName={providerName}
+                                {...(fallbackElapsed !== undefined ? { fallbackElapsed } : {})}
+                                {...(retry ? { retry } : {})}
+                              />
+                            </SentCatalogue.Provider>
+                          </ReplyQuoteSource.Provider>
                           <SendingBubble shell={shell} />
                         </RoundPageContext.Provider>
                       </TeamPageContext.Provider>
@@ -644,6 +665,9 @@ export function ConversationView({
                 }}
                 onOpen={id => choose(id)}
               />
+            )}
+            {selectedId && visible && !frozenAt && shell.canDeliver && readsProjectFiles(snapshot.device.dataScope) && (
+              <PrFollowNotice key={selectedId} sessionId={selectedId} open={() => shell.showSurface({ kind: 'delivery' })} />
             )}
             <div inert={sideQuestionPage || undefined}>
               {personalAgent?.workComputer

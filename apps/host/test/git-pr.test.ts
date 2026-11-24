@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -20,6 +20,7 @@ import {
   repoOfUrl,
   TITLE_LIMIT,
 } from '../src/git-pr.ts'
+import { installFakeSsh } from './helpers/fake-ssh.ts'
 import { SessionMetaStore } from '../src/session-meta.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -157,6 +158,34 @@ describe('the pull request step', () => {
       expect(repoOfUrl(url), url).toBeUndefined()
     expect(repoOfPr('https://github.com/acme/widgets/pull/12')).toMatchObject({ number: 12, repo: { full: 'github.com/acme/widgets' } })
     expect(repoOfPr('https://github.com/acme/widgets/pull/12?x=1')).toBeUndefined()
+  })
+
+  it('fetches the fork PR ref from the base repository, verifies its head and refuses a moved head', SLOW, async () => {
+    const f = await fixture()
+    const delivery = await f.delivery()
+    const caller = f.caller()
+    await delivery.createPr(caller, { ...input, requestId: id(21) })
+    const commit = f.git('rev-parse', 'main')
+    f.git('push', '-q', 'origin', `${commit}:refs/pull/1/head`)
+    await mkdir(join(f.root, 'acme'))
+    await symlink(join(f.root, 'remote.git'), join(f.root, 'acme', 'widgets.git'))
+    await installFakeSsh({ root: f.root, marks: f.root, served: f.root, git: 'git' })
+    f.git('config', '--global', 'core.sshCommand', join(f.root, 'fake-ssh-bin', 'ssh'))
+    f.git('remote', 'set-url', 'origin', 'git@github.com:acme/widgets.git')
+    await f.gh.update(state => {
+      Object.assign(state.prs[0]!, {
+        headRefOid: commit,
+        headRepositoryOwner: { login: 'contributor' },
+        headRepository: { name: 'widgets' },
+        isCrossRepository: true,
+      })
+    })
+    expect(await delivery.reviewHead(caller, id(22), 1)).toMatchObject({ number: 1, fork: true, commit, repository: 'contributor/widgets' })
+    expect(f.git('rev-parse', 'feature')).not.toBe(commit)
+    await f.gh.update(state => {
+      state.prs[0]!.headRefOid = f.git('rev-parse', 'feature')
+    })
+    await expect(delivery.reviewHead(caller, id(23), 1)).rejects.toMatchObject({ code: 'pr-head-changed' })
   })
 
   it('tells a missing gh, a logged-out gh, an unknown repository and an unreachable GitHub apart', () => {

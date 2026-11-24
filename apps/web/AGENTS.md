@@ -30,15 +30,15 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 - Harness 与模型图标取自 `src/assets/brands/`（许可见 `public/licenses/brands/`），经 `?no-inline` 用于图片或遮罩。预设都有图标，缺图用中性图形，禁用字母。草稿模型面板打开时补读选项（HARNESSES）。
 - 只读 `HarnessInfo.capabilities` 与 `level`，不判断 Driver 种类；共享编码与 Host、测试向量一致（`test/client-security.test.ts`）。
 - 项目按会话记录的身份分组，普通会话归「无项目」；只有旧会话按主目录回退，不从附加文件夹推断归属（`test/client-sessions.test.ts`）。
-- 分支用 Host 摘要，可见时每 30 秒同步。按 `checkedOut` 分类，页面不运行 Git。
+- 分支用 Host 摘要，可见时每 30 秒同步。按 `checkedOut` 分类，页面不运行 Git。基线见 GIT-REVIEW。
 - 桌面文件夹签名操作需 `folders.protocolVersion === 1`（`test/shell-folders.test.ts`）。
 - 电脑菜单按来源识别当前电脑，经 `computers.switchTo` 切换。
 - Agent 资料的「动态」含即将进行的定时，电脑、唤醒、通知和 MCP 在「运行设置」（DESIGN）。
 
 仅淡入消息。脚本用 `motionAllowed`。
 
-设置保留草稿与授权读回，准备沿用原号；终端折叠保活，暂存保留回执。ProfileLayer 跨断点沿用实例、草稿、焦点与未知写，撤权卸载。
+设置留草稿与授权读回，准备沿用原号；终端折叠保活，报错保留原文，暂存留回执。ProfileLayer 跨断点保留实例、草稿、焦点与未知写，撤权卸载。
 
-- 附件专用上传，未知提交沿用请求与引用；断线读能力看连接横幅；裸 `@` 无预选。纯文本粘贴替换选区。
+- 附件排队绑定原上传，未知写沿用请求；断线读能力见横幅；裸 `@` 无预选。纯文本粘贴替换选区。
 - Slash 透传 Harness 命令；技能只补全，pi 限开头（HARNESSES）。替换 `/btw` 先确认；PR 摘录只追加草稿。
 - 配色与主色可按设备选；安全界面锁色。外观未知写按 Host、设备在同页保留，设置与安全模式共用（CUSTOMIZATION）。

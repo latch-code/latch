@@ -97,6 +97,9 @@ export const GIT_ACTIONS = {
   'git.pr.link': z.strictObject({ ...request, number: prNumber, remoteHash: hex64, headHash: hex64 }),
   /** 获取: which rule chose the remote, its name's hash and the transport it was fetched over; never its address. */
   'git.fetch': z.strictObject(fetch),
+  'git.pr.review.fetch': z.strictObject({ workspaceId: opaqueId, requestHash: hex64, number: prNumber }),
+  'git.pr.watch': z.strictObject({ ...request, number: prNumber, enabled: z.boolean(), automatic: z.boolean() }),
+  'git.pr.continue': z.strictObject({ ...request, number: prNumber }),
   /** 拉取: a fetch, then a fast-forward from `preHead`. */
   'git.pull': z.strictObject({ ...fetch, preHead: oid.optional() }),
   /** 中止 of the operation under way, with HEAD and the number of conflicted files when it was pressed. */

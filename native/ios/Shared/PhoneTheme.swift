@@ -74,6 +74,18 @@ enum PhoneTheme {
 /** These marks are loose files in the bundle, which SwiftUI's named images do not look through. */
 func bundled(_ name: String) -> Image { UIImage(named: name).map(Image.init(uiImage:)) ?? Image(systemName: "cpu") }
 
+/** WidgetKit rejects images much larger than their view. */
+@MainActor func widgetImage(_ name: String, points: CGFloat) -> Image? {
+    guard let source = UIImage(named: name) else { return nil }
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 3
+    let size = CGSize(width: points, height: points)
+    let small = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+        source.draw(in: CGRect(origin: .zero, size: size))
+    }
+    return Image(uiImage: small)
+}
+
 /** An engine's own mark, the app's own icon for the built-in engine, or a neutral glyph. Never a letter. */
 struct EngineTile: View {
     /** The Host's key for its icon; nil draws the neutral glyph. */
@@ -100,12 +112,8 @@ struct EngineTile: View {
      * vectors a thousand points across. Mono marks come back as templates for the ink to tint.
      */
     static func smallImage(_ mark: String?, scheme: ColorScheme, points: CGFloat) -> Image? {
-        guard let art = mark.flatMap({ marks[$0] }), let source = UIImage(named: scheme == .dark ? art.dark : art.light) else { return nil }
-        let format = UIGraphicsImageRendererFormat(); format.scale = 3
-        let small = UIGraphicsImageRenderer(size: CGSize(width: points, height: points), format: format).image { _ in
-            source.draw(in: CGRect(x: 0, y: 0, width: points, height: points))
-        }
-        return Image(uiImage: small).renderingMode(art.mono ? .template : .original)
+        guard let art = mark.flatMap({ marks[$0] }) else { return nil }
+        return widgetImage(scheme == .dark ? art.dark : art.light, points: points)?.renderingMode(art.mono ? .template : .original)
     }
     var body: some View {
         Group {

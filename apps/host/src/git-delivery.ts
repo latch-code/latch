@@ -37,6 +37,7 @@ import type {
 import { canonicalJson, redactKnownSecrets, sha256Hex } from '@latch/core/node-kit'
 import type { RESULT_CODES } from './audit-actions/git.ts'
 import { readGitLayout, type GitLayout } from './branch-reader.ts'
+import { BranchListError, listBranches, listableBranch } from './branch-list.ts'
 import { GitError, GitReader, configHookArgs, findGit, gitOperation } from './changes/git.ts'
 import {
   aheadOfBase,
@@ -100,6 +101,7 @@ import {
   readLineComments,
   readPrList,
   readPrView,
+  readReviewHead,
   repoOfPr,
   repoOfUrl,
   validTitle,
@@ -1033,6 +1035,17 @@ export class GitDelivery {
     })
   }
 
+  /** Suggestions come from the session's repository, including when its primary folder is a linked worktree. */
+  async comparisonBranches(folder: string) {
+    const layout = await this.layout(folder)
+    try {
+      return await listBranches(layout)
+    } catch (error) {
+      if (error instanceof BranchListError) throw refuse('branches-unreadable', '读不到这个仓库的分支。')
+      throw error
+    }
+  }
+
   /** `GET …/git/history`: the session's commits, or one file's. */
   async history(folder: string, options: { path?: string } = {}): Promise<GitHistory> {
     const git = this.git(),
@@ -1049,7 +1062,11 @@ export class GitDelivery {
   }
 
   /** Both ends of a history read: a commit HEAD reaches against its first parent, or HEAD against where it left main. */
-  private async ends(layout: GitLayout, sha: string | undefined): Promise<{ from?: string; to: string; base?: string }> {
+  private async ends(
+    layout: GitLayout,
+    sha: string | undefined,
+    selectedBase?: string,
+  ): Promise<{ from?: string; to: string; base?: string }> {
     const git = this.git()
     try {
       if (sha !== undefined) {
@@ -1058,6 +1075,24 @@ export class GitDelivery {
         return { to: commit.sha, ...(commit.parent ? { from: commit.parent } : {}) }
       }
       const head = await git.commit(layout, 'HEAD')
+      if (selectedBase !== undefined) {
+        let from: string | undefined
+        if (OID.test(selectedBase)) {
+          // A hash alone is not authority to read a discarded commit or another Git object.
+          const refs = await git
+            .run(
+              layout,
+              ['for-each-ref', '--count=1', '--format=%(objectname)', '--contains=' + selectedBase, 'refs/heads/', 'refs/remotes/'],
+              { maxBytes: 1024 },
+            )
+            .catch(() => undefined)
+          if (refs?.length || ('detached' in layout.head && (await reachableCommit(git, layout, selectedBase)))) from = selectedBase
+        } else if (!selectedBase.startsWith('refs/') && listableBranch(selectedBase)) {
+          from = (await git.commit(layout, `refs/heads/${selectedBase}`)) ?? (await git.commit(layout, `refs/remotes/${selectedBase}`))
+        }
+        if (!head || !from) throw refuse('git-compare-base', '找不到这个分支或可达提交。')
+        return { from, to: head, base: selectedBase }
+      }
       const base = head ? await baseOfBranch(git, layout, head) : undefined
       if (!head || !base) throw refuse('git-no-base', '没有可以比较的基线：不在分支上、就在主分支上，或没有主分支。')
       return { from: base.fork, to: head, base: base.name }
@@ -1068,10 +1103,10 @@ export class GitDelivery {
   }
 
   /** `GET …/git/history/:sha` and `GET …/git/compare`: the files changed. */
-  async treeDiff(folder: string, options: { sha?: string } = {}): Promise<GitCommitDiff> {
+  async treeDiff(folder: string, options: { sha?: string; base?: string } = {}): Promise<GitCommitDiff> {
     const git = this.git(),
       layout = await this.layout(folder)
-    const ends = await this.ends(layout, options.sha)
+    const ends = await this.ends(layout, options.sha, options.base)
     try {
       const diff = await readTreeDiff(git, layout, ends.from, ends.to)
       return { sha: ends.to, ...(ends.from ? { parent: ends.from } : {}), ...(ends.base ? { base: ends.base } : {}), ...diff }
@@ -1082,11 +1117,11 @@ export class GitDelivery {
   }
 
   /** One file of a commit or of the comparison, for a device that may read the session's files. */
-  async treeFile(folder: string, options: { sha?: string; path: string }): Promise<GitCommitFileDiff> {
+  async treeFile(folder: string, options: { sha?: string; base?: string; path: string }): Promise<GitCommitFileDiff> {
     const git = this.git(),
       layout = await this.layout(folder)
     const path = await this.onePath(layout, options.path)
-    const ends = await this.ends(layout, options.sha)
+    const ends = await this.ends(layout, options.sha, options.base)
     try {
       const file = await readTreeFile(git, layout, ends.from, ends.to, path)
       if (!file) throw new AppError(404, 'git-commit-not-found', '这个提交没有改这个文件。')
@@ -1788,6 +1823,7 @@ export class GitDelivery {
     common: string,
     plan: { remote: string; transport: YourTransport },
     operation: 'fetch' | 'pull',
+    reviewNumber?: number,
   ): Promise<string> {
     const failed = async (code: (typeof RESULT_CODES)[number], error: AppError) => {
       await this.reportResult(caller, { operation, outcome: 'failed', code })
@@ -1811,6 +1847,7 @@ export class GitDelivery {
       if (error instanceof AppError && error.code === 'git-repo-config') throw await failed('git-repo-config', error)
       throw await failed('git-fetch-failed', new AppError(422, 'git-fetch-failed', '读不出 Git 的配置，没有获取。'))
     }
+    if (reviewNumber !== undefined) await caller.authorize('fetch')
     const outcome = await this.runAs(
       'git',
       layout,
@@ -1824,8 +1861,10 @@ export class GitDelivery {
         '--no-auto-maintenance',
         '--no-recurse-submodules',
         '--no-write-commit-graph',
+        ...(reviewNumber === undefined ? [] : ['--no-tags', '--refmap=']),
         '--end-of-options',
         plan.remote,
+        ...(reviewNumber === undefined ? [] : [`refs/pull/${reviewNumber}/head`]),
       ],
       { timeoutMs: this.timeouts.fetch, allowProtocol: plan.transport },
     )
@@ -1850,6 +1889,58 @@ export class GitDelivery {
       )
     }
     return (await lastFetch(layout.gitdir, common)) ?? new Date(this.now()).toISOString()
+  }
+
+  async matchesPrHead(folder: string, pr: { head: string; headSha?: string }): Promise<boolean> {
+    if (!pr.headSha || !OID.test(pr.headSha)) return false
+    const layout = await this.layout(folder)
+    return (
+      'branch' in layout.head
+      && layout.head.branch === pr.head
+      && !(await gitOperation(layout))
+      && (await this.git().commit(layout, 'HEAD')) === pr.headSha
+    )
+  }
+
+  /** Fetch the pull ref from the configured base repository, never the contributor's remote or a local namesake. */
+  async reviewHead(caller: DeliveryCaller, requestId: string, number: number) {
+    if (!Number.isSafeInteger(number) || number < 1 || number > 999_999_999) throw new AppError(400, 'bad-request', 'PR 编号无效。')
+    return this.once(caller, requestId, payloadHash({ kind: 'review-head', number }), async () => {
+      const layout = await this.layout(caller.folder)
+      return this.hold(caller, layout, 'fetch', requestId, async (running, common) => {
+        const config = await this.config(layout)
+        assertQuietConfig(config)
+        const plan = await this.fetchPlan(layout, config)
+        const address = await this.git().run(layout, ['ls-remote', '--get-url', '--end-of-options', plan.remote], { maxBytes: 8192 })
+        const target = repoOfUrl(address.toString('utf8').trim())
+        if (!target) throw noRemote()
+        await caller.authorize('fetch')
+        await this.allowHost(layout, caller.sessionId, target)
+        const head = readReviewHead(
+          await this.ghRead(layout, caller.sessionId, [
+            'pr',
+            'view',
+            String(number),
+            '--repo',
+            target.full,
+            '--json',
+            'number,url,headRefOid,isCrossRepository,headRepositoryOwner,headRepository,headRefName',
+          ]),
+          target,
+          number,
+        )
+        await caller.authorize('fetch')
+        await caller.audit({ action: 'git.fetch', detail: this.fetchDetail(caller, requestId, plan) })
+        await this.quietFetch(caller, layout, running, common, plan, 'fetch', number)
+        const fetched = await this.git().run(layout, ['rev-parse', '--verify', '--end-of-options', 'FETCH_HEAD^{commit}'], {
+          maxBytes: 256,
+        })
+        if (fetched.toString('ascii').trim() !== head.commit) throw refuse('pr-head-changed', 'PR 提交已变化，请重新读取后再开始。')
+        await caller.authorize('fetch')
+        await this.reportResult(caller, { operation: 'fetch', outcome: 'done' })
+        return head
+      })
+    })
   }
 
   /** Where the branch's push goes, on GitHub: the remote 推送 would use, and the repository its URL names. */
@@ -1948,23 +2039,29 @@ export class GitDelivery {
     discussion: boolean
     title: boolean
     boundOnly?: boolean
+    expectedUrlHash?: string
+    authorizeRead?: () => void
   }): Promise<GitPrState> {
     const layout = await this.layout(input.folder)
     const bound = this.options.prs?.get(input.sessionId)
+    if (input.expectedUrlHash && (!bound || sha256Hex(bound.url) !== input.expectedUrlHash)) return { checks: [] }
     if (bound) {
       const where = repoOfPr(bound.url)
       if (!where) throw noRemote()
+      input.authorizeRead?.()
       await this.allowHost(layout, input.sessionId, where.repo)
+      input.authorizeRead?.()
       const view = readPrView(
         await this.ghRead(layout, input.sessionId, ['pr', 'view', String(where.number), '--repo', where.repo.full, '--json', PR_FIELDS]),
         where.repo,
       )
-      if (view.pr.state !== 'open' && (await this.movedOn(layout, input.sessionId, bound, view.pr.headSha))) {
+      if (input.expectedUrlHash && sha256Hex(view.pr.url) !== input.expectedUrlHash) throw refuse('pr-follow-changed', '绑定的 PR 已变化。')
+      if (!input.expectedUrlHash && view.pr.state !== 'open' && (await this.movedOn(layout, input.sessionId, bound, view.pr.headSha))) {
         await this.options.prs?.unbind(input.sessionId)
         return input.boundOnly ? { checks: [] } : this.unboundState(layout, input)
       }
       let discussion: { items: GitPrState['discussion'] & object; capped: boolean } | undefined
-      if (input.discussion) discussion = await this.discussion(layout, input.sessionId, where)
+      if (input.discussion) discussion = await this.discussion(layout, input.sessionId, where, input.authorizeRead)
       return {
         pr: view.pr,
         checks: view.checks,
@@ -2002,8 +2099,10 @@ export class GitDelivery {
     layout: GitLayout,
     sessionId: string,
     where: { repo: GhRepo; number: number },
+    authorizeRead?: () => void,
   ): Promise<{ items: NonNullable<GitPrState['discussion']>; capped: boolean }> {
     try {
+      authorizeRead?.()
       const talk = readDiscussion(
         await this.ghRead(layout, sessionId, [
           'pr',
@@ -2017,6 +2116,7 @@ export class GitDelivery {
           DISCUSSION_JQ,
         ]),
       )
+      authorizeRead?.()
       const lines = readLineComments(
         await this.ghRead(layout, sessionId, [
           'api',

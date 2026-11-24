@@ -1,13 +1,19 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
-import type { WorktreeBase, WorktreeStart } from '@latch/protocol'
-import { Hint, Icon, IconButton, SearchField, SegmentedControl, Spinner, CheckGlyph, ChevronLeftGlyph } from '@latch/ui'
+import type { GitReviewHead, WorktreeBase, WorktreeStart } from '@latch/protocol'
+import { Button, Hint, Icon, IconButton, SearchField, SegmentedControl, Spinner, CheckGlyph, ChevronLeftGlyph } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
+import { api, errorMessage, newRequestId } from '../core/api.ts'
 import type { BaseState } from './FolderControl.tsx'
 import { defineCopy } from '../core/i18n.ts'
 
 const COPY = defineCopy(
   {
+    prNumber: 'GitHub PR 编号',
+    fetchPr: '获取 PR 提交',
+    forkPr: '来自 fork',
+    sameRepo: '同一仓库',
+    pickPr: '从此提交新建工作树',
     leftover: '残留',
     archived: '已归档',
     checkedOut: '已在另一个工作树检出',
@@ -37,6 +43,11 @@ const COPY = defineCopy(
     newBranchDetail: '从选中的分支或提交新建一个 latch/ 分支，原分支不变。未提交的改动不会带过去。',
   },
   {
+    prNumber: 'GitHub PR number',
+    fetchPr: 'Fetch PR head',
+    forkPr: 'From a fork',
+    sameRepo: 'Same repository',
+    pickPr: 'Start from this commit',
     leftover: 'Left over',
     archived: 'Archived',
     checkedOut: 'Checked out in another worktree',
@@ -70,7 +81,7 @@ const COPY = defineCopy(
   },
 )
 
-type Mode = 'new' | 'checkout' | 'reuse'
+type Mode = 'new' | 'checkout' | 'reuse' | 'pr'
 
 /** Rows shown at once; the search narrows the rest. */
 const SHOWN = 60
@@ -141,10 +152,12 @@ function rows(mode: Mode, base: WorktreeBase, query: string): Row[] {
  */
 export function WorktreeStartPanel({
   base,
+  projectId,
   current,
   onBack,
   onPick,
 }: {
+  projectId: string
   base: BaseState | undefined
   current: WorktreeStart | undefined
   onBack: () => void
@@ -172,6 +185,7 @@ export function WorktreeStartPanel({
         }}
         options={[
           { value: 'new', label: COPY.newBranch },
+          { value: 'pr', label: 'PR' },
           { value: 'checkout', label: COPY.checkoutBranch },
           {
             value: 'reuse',
@@ -181,51 +195,125 @@ export function WorktreeStartPanel({
           },
         ]}
       />
-      <SearchField
-        label={mode === 'reuse' ? COPY.searchWorktrees : mode === 'checkout' ? COPY.branchName : COPY.branchOrCommit}
-        value={query}
-        onValueChange={setQuery}
-        maxLength={200}
-        autoComplete="off"
-        spellCheck={false}
-      />
-      {!ready ? (
-        <p className="permission-list-note">{base?.state === 'refused' ? base.message : <Spinner size={12} label={COPY.reading} />}</p>
-      ) : listed.length === 0 ? (
-        <p className="permission-list-note">
-          {COPY.noMatching}
-          {mode === 'reuse' ? COPY.worktree : COPY.branch}
-        </p>
+      {mode === 'pr' ? (
+        <ReviewStart projectId={projectId} onPick={onPick} />
       ) : (
-        <div className="worktree-start-list" role="group" aria-label={COPY.start}>
-          {listed.slice(0, SHOWN).map(row => {
-            const selected = same(current, row.start) || (current === undefined && row.start.from === 'head')
-            return (
-              <button
-                key={row.key}
-                type="button"
-                className="worktree-start-row"
-                aria-pressed={selected}
-                aria-disabled={row.disabledReason ? true : undefined}
-                title={row.disabledReason}
-                onClick={() => {
-                  if (!row.disabledReason) onPick(row.start)
-                }}>
-                <span className="worktree-start-check">{selected && <Icon icon={CheckGlyph} size={14} />}</span>
-                <span className="worktree-start-label">
-                  <VisibleText text={row.label} />
-                </span>
-                {(row.disabledReason ?? row.meta) && (
-                  <span className="worktree-start-meta">{row.disabledReason ?? <VisibleText text={row.meta!} />}</span>
-                )}
-              </button>
-            )
-          })}
-        </div>
+        <>
+          <SearchField
+            label={mode === 'reuse' ? COPY.searchWorktrees : mode === 'checkout' ? COPY.branchName : COPY.branchOrCommit}
+            value={query}
+            onValueChange={setQuery}
+            maxLength={200}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {!ready ? (
+            <p className="permission-list-note">{base?.state === 'refused' ? base.message : <Spinner size={12} label={COPY.reading} />}</p>
+          ) : listed.length === 0 ? (
+            <p className="permission-list-note">
+              {COPY.noMatching}
+              {mode === 'reuse' ? COPY.worktree : COPY.branch}
+            </p>
+          ) : (
+            <div className="worktree-start-list" role="group" aria-label={COPY.start}>
+              {listed.slice(0, SHOWN).map(row => {
+                const selected = same(current, row.start) || (current === undefined && row.start.from === 'head')
+                return (
+                  <button
+                    key={row.key}
+                    type="button"
+                    className="worktree-start-row"
+                    aria-pressed={selected}
+                    aria-disabled={row.disabledReason ? true : undefined}
+                    title={row.disabledReason}
+                    onClick={() => {
+                      if (!row.disabledReason) onPick(row.start)
+                    }}>
+                    <span className="worktree-start-check">{selected && <Icon icon={CheckGlyph} size={14} />}</span>
+                    <span className="worktree-start-label">
+                      <VisibleText text={row.label} />
+                    </span>
+                    {(row.disabledReason ?? row.meta) && (
+                      <span className="worktree-start-meta">{row.disabledReason ?? <VisibleText text={row.meta!} />}</span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          <Hint label={mode === 'reuse' ? COPY.keepFiles : mode === 'checkout' ? COPY.commitsHere : COPY.newLatchBranch}>
+            {mode === 'reuse' ? COPY.reuseDetail : mode === 'checkout' ? COPY.commitsDetail : COPY.newBranchDetail}
+          </Hint>
+        </>
       )}
-      <Hint label={mode === 'reuse' ? COPY.keepFiles : mode === 'checkout' ? COPY.commitsHere : COPY.newLatchBranch}>
-        {mode === 'reuse' ? COPY.reuseDetail : mode === 'checkout' ? COPY.commitsDetail : COPY.newBranchDetail}
-      </Hint>
+    </div>
+  )
+}
+
+function ReviewStart({ projectId, onPick }: { projectId: string; onPick: (value: WorktreeStart) => void }) {
+  const [number, setNumber] = useState('')
+  const [head, setHead] = useState<GitReviewHead & { proof: string }>()
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const active = useRef<AbortController | undefined>(undefined)
+  const request = useRef<string | undefined>(undefined)
+  useEffect(() => () => active.current?.abort(), [])
+  const fetchHead = async () => {
+    if (busy || !/^[1-9][0-9]{0,8}$/u.test(number)) return
+    active.current?.abort()
+    const controller = new AbortController()
+    active.current = controller
+    setBusy(true)
+    setError('')
+    try {
+      const result = await api<GitReviewHead & { proof: string }>(`workspaces/${encodeURIComponent(projectId)}/review-head`, {
+        method: 'POST',
+        body: { number: Number(number), requestId: (request.current ??= newRequestId()) },
+        signal: controller.signal,
+        timeoutMs: 180_000,
+      })
+      if (!controller.signal.aborted) setHead(result)
+    } catch (cause) {
+      if (!controller.signal.aborted) setError(errorMessage(cause))
+    } finally {
+      if (!controller.signal.aborted) setBusy(false)
+    }
+  }
+  return (
+    <div className="worktree-start-list">
+      <SearchField
+        label={COPY.prNumber}
+        value={number}
+        maxLength={9}
+        onValueChange={next => {
+          active.current?.abort()
+          request.current = undefined
+          setBusy(false)
+          setHead(undefined)
+          setError('')
+          setNumber(next)
+        }}
+      />
+      <Button size="xs" variant="outline" disabled={busy || !/^[1-9][0-9]{0,8}$/u.test(number)} onClick={() => void fetchHead()}>
+        {COPY.fetchPr}
+      </Button>
+      {error && <p role="alert">{error}</p>}
+      {head && (
+        <>
+          <p>
+            #{head.number} · {head.fork ? COPY.forkPr : COPY.sameRepo} · <VisibleText text={head.repository} /> /{' '}
+            <VisibleText text={head.branch} /> · <code>{head.commit.slice(0, 12)}</code>
+          </p>
+          <Button
+            size="xs"
+            variant="outline"
+            onClick={() =>
+              onPick({ from: 'pr', number: head.number, repository: head.baseRepository, commit: head.commit, proof: head.proof })
+            }>
+            {COPY.pickPr}
+          </Button>
+        </>
+      )}
     </div>
   )
 }

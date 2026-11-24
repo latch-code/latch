@@ -35,16 +35,24 @@ struct ApprovalDrawer: View {
     let total: Int
     var work: PhoneWorkDecisionContext? = nil
     @State private var details = false
-    /** Counted once per request: this view redraws on every update of the session. */
-    @State private var stat: PhoneDiffStat?
+    /** Cache only for the diff projection currently in view. */
+    @State private var counted: (diffs: NativeJSON, stat: PhoneDiffStat?)?
     private static let argumentsLimit = 16_000
     var body: some View {
         let gate = PhoneConversation.approvalGate(approval, canApproveStandard: model.canApproveStandard, canApproveElevated: model.canApproveElevated, canRun: model.canRun)
         // What may read as something else is drawn with its hidden characters marked, as the web does.
         let mark: (String) -> String = { gate.hidden ? PhoneConversation.visible($0) : $0 }
-        let arguments = (approval["tool"]["input"].string ?? approval["arguments"].string).map(mark)
-        let diffs = approval["tool"]["diffs"].array.map { gate.hidden ? PhoneConversation.visibleDiff($0) : $0 }
-        let places = approval["tool"]["locations"].array.compactMap(\.string).map(mark)
+        let tool = approval["tool"], diffValue = tool["diffs"], diffs = diffValue.array
+        let command = PhoneConversation.approvalCommand(approval)
+        let locations = tool["locations"].array.compactMap(\.string)
+        let diffPaths = diffs.compactMap { $0["path"].string }
+        var seen = Set<String>()
+        let paths = (locations + diffPaths).filter { !$0.isEmpty && seen.insert($0).inserted }
+        let fileEdit = !paths.isEmpty && PhoneConversation.isApprovalFileEdit(approval)
+        let arguments = (command != nil ? command?.details : tool["input"].string ?? approval["arguments"].string).map(mark)
+        let patchText = fileEdit && diffs.isEmpty && tool["output"].string?.isEmpty == false ? tool["output"].string.map(mark) : nil
+        let stat = counted?.diffs == diffValue && diffPaths.count == paths.count && Set(diffPaths) == Set(paths) ? counted?.stat : nil
+        let hasDetails = arguments != nil || !diffs.isEmpty || patchText != nil || (!fileEdit && locations.count > 1)
         let id = approval["id"].string
         let rejecting = id.map { model.controlsInFlight.contains(PhoneModel.approvalPath($0)) } ?? false
         DrawerCard {
@@ -53,25 +61,79 @@ struct ApprovalDrawer: View {
                 Text("需要你允许").font(.system(size: 14, weight: .medium)).foregroundStyle(gate.riskClause == nil ? PhoneTheme.amber : PhoneTheme.red)
                 if total > 1 { Text("1/\(total)").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
                 Spacer()
-                if arguments != nil || !diffs.isEmpty || places.count > 1 {
+                if hasDetails {
                     Button(details ? "收起" : "详情") { withAnimation(.easeOut(duration: 0.2)) { details.toggle() } }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
                 }
             }
-            // What is being allowed is never cut: a command's tail is where it does its damage.
-            HStack(alignment: .top, spacing: 6) {
+            if let command {
+                if let asker = approval["subagent"].string { Text("子 Agent \(PhoneConversation.visible(asker, preservingLayout: false))").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
+                Label("运行命令", systemImage: "terminal").font(PhoneTheme.body.weight(.medium)).foregroundStyle(PhoneTheme.ink)
+                // What is being allowed is never cut by the drawer: a command's tail is where it does its damage.
+                BoundedScroll(limit: 124) {
+                    ConversationText(text: mark(command.text), monospaced: true, size: 15).padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                }.background(PhoneTheme.sunken, in: RoundedRectangle(cornerRadius: 10))
+                if command.grant == .outsideSandbox {
+                    Label("Agent 请求在沙箱外运行", systemImage: "shield.lefthalf.filled").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
+                } else if command.grant == .review {
+                    if details {
+                        Label("请核对权限请求", systemImage: "shield").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
+                    } else {
+                        Button("核对权限请求", systemImage: "shield") { details = true }
+                            .font(PhoneTheme.caption).tint(PhoneTheme.amber)
+                    }
+                }
+                if let directory = command.directory {
+                    BoundedScroll(limit: 54) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text("工作目录").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).fixedSize()
+                            Text(PhoneConversation.visible(directory, preservingLayout: false)).font(.system(size: 12, design: .monospaced)).foregroundStyle(PhoneTheme.ink2)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            } else if fileEdit {
+                if let asker = approval["subagent"].string { Text("子 Agent \(PhoneConversation.visible(asker, preservingLayout: false))").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
+                let newFile = paths.count == 1 && diffPaths == paths && diffs.count == 1 && diffs[0]["previous"].string == "none" && PhoneConversation.hasApprovalDiff(diffs[0])
+                HStack(spacing: 6) {
+                    Label(newFile ? "新建文件" : "修改文件", systemImage: newFile ? "doc.badge.plus" : "doc.text").font(PhoneTheme.body.weight(.medium)).foregroundStyle(PhoneTheme.ink)
+                    Spacer(minLength: 6)
+                    if let stat, stat.add > 0 || stat.del > 0 { DiffStatText(add: stat.add, del: stat.del) }
+                }
+                // The built-in writer also names the owning folder when the session spans several roots.
+                if approval["toolName"].string == "write_file", let title = tool["title"].string, title.hasPrefix("写入「") {
+                    BoundedScroll(limit: 54) { Text(mark(title)).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2).frame(maxWidth: .infinity, alignment: .leading) }
+                } else {
+                    BoundedScroll(limit: 110) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(paths, id: \.self) { path in
+                                Text(PhoneConversation.visible(path, preservingLayout: false)).font(.system(size: 13, design: .monospaced)).foregroundStyle(PhoneTheme.ink2)
+                            }
+                        }.frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                    }.background(PhoneTheme.sunken, in: RoundedRectangle(cornerRadius: 10))
+                }
+            } else {
                 BoundedScroll(limit: 124) { Text(mark(gate.heading)).font(.system(size: 15)).foregroundStyle(PhoneTheme.ink).frame(maxWidth: .infinity, alignment: .leading) }
-                if let stat { DiffStatText(add: stat.add, del: stat.del) }
             }
             if let clause = gate.riskClause { Text(clause).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.red) }
             if gate.hidden { Label(PhoneConversation.hiddenNote, systemImage: "exclamationmark.triangle").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber) }
-            if details {
-                BoundedScroll(limit: 220) {
+            if details && hasDetails {
+                BoundedScroll(limit: fileEdit || command != nil ? 156 : 220) {
                     VStack(alignment: .leading, spacing: 8) {
-                        if places.count > 1 { ForEach(places, id: \.self) { Text($0).font(.system(size: 12, design: .monospaced)).foregroundStyle(PhoneTheme.ink2) } }
-                        if !diffs.isEmpty { ForEach(Array(diffs.enumerated()), id: \.offset) { _, diff in DiffPreview(diff: diff) } }
-                        else if let arguments {
-                            ConversationText(text: String(arguments.prefix(Self.argumentsLimit)), monospaced: true, size: 14)
-                            if arguments.count > Self.argumentsLimit { Text("还有 \(arguments.count - Self.argumentsLimit) 个字没有显示，到 Mac 上看全部").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber) }
+                        if !fileEdit && paths.count > 1 { ForEach(paths, id: \.self) { Text(mark($0)).font(.system(size: 12, design: .monospaced)).foregroundStyle(PhoneTheme.ink2) } }
+                        if let patchText, !patchText.isEmpty { argumentText(patchText) }
+                        if !diffs.isEmpty {
+                            ForEach(Array(diffs.enumerated()), id: \.offset) { _, diff in
+                                if paths.count > 1, let path = diff["path"].string {
+                                    Text(PhoneConversation.visible(path, preservingLayout: false)).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2)
+                                }
+                                if PhoneConversation.hasApprovalDiff(diff) {
+                                    DiffPreview(diff: gate.hidden ? PhoneConversation.visibleDiff(diff) : diff)
+                                } else if let text = diff["newText"].string {
+                                    Text("无法比较完整差异").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+                                    argumentText(mark(text))
+                                }
+                            }
+                        } else if let arguments {
+                            argumentText(arguments)
                         }
                     }
                 }
@@ -101,7 +163,13 @@ struct ApprovalDrawer: View {
                 }.disabled(model.busy)
             }
         }
-        .task(id: id) { stat = PhoneConversation.diffStat(approval["tool"]); if PhoneConversation.hidesText(approval) { details = true } }
+        .task(id: diffValue) { counted = (diffValue, PhoneConversation.diffStat(tool, requireComplete: true)) }
+        .task(id: id) { details = gate.hidden }
+        .onChange(of: gate.hidden) { _, hidden in if hidden { details = true } }
+    }
+    @ViewBuilder private func argumentText(_ text: String) -> some View {
+        ConversationText(text: String(text.prefix(Self.argumentsLimit)), monospaced: true, size: 14)
+        if text.count > Self.argumentsLimit { Text("还有 \(text.count - Self.argumentsLimit) 个字没有显示，到 Mac 上看全部").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber) }
     }
     private func button(_ title: String, prominent: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
@@ -270,9 +338,17 @@ struct QueueChips: View {
         let delivery = item["delivery"].string, state = item["state"].string
         let run = model.detail["summary"]["runId"].string
         let running = PhoneSessionMenu.active(model.detail["summary"])
+        let caption = item["text"].string ?? ""
+        let attachments = item["attachmentCount"].integer ?? 0
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(PhoneConversation.visible(item["text"].string ?? "")).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2).lineLimit(2)
+                if !caption.isEmpty {
+                    Text(PhoneConversation.visible(caption)).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2).lineLimit(attachments > 0 ? 1 : 2)
+                }
+                if attachments > 0 {
+                    Label("\(attachments) 个附件", systemImage: "paperclip")
+                        .font(PhoneTheme.caption).foregroundStyle(caption.isEmpty ? PhoneTheme.ink2 : PhoneTheme.muted)
+                }
                 if let reason = item["reason"].string {
                     Text(PhoneConversation.visible(reason)).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).lineLimit(1)
                 } else if state == "parked" || state == "dropped" {

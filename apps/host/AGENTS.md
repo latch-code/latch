@@ -31,5 +31,5 @@
 - 插件草稿与应用分离，批准执行摘要后才导入，旧租约真实释放后回收（PLUGIN-DEVELOPMENT、`test/plugin-package-api.test.ts`）。
 - 准备及配置回执见 ARCHITECTURE。外观写入需基版与回执，替换前复核权限，目录同步未确认复用原请求（CUSTOMIZATION）。
 - 插件连接仅随原生入口启用；远程 review/正文窗口与真实关闭见 [STREAMING](../../docs/STREAMING.md#原生客户端的流)。
-- 家只由分配器建、核身份，空时重建，经 `latch-home` 删；默认项走 startConfig。后台按实际等级核上限，手动运行不授后台权。
-- 网关、Agent、设备、Git、终端等功能的规则见 ARCHITECTURE「各功能的安全规则」。
+- 家只由分配器建并验身份，空时重建，经 `latch-home` 删；默认项走 startConfig。后台按实际等级核上限，手动运行不授后台权。
+- 权限见 ARCHITECTURE，基线与 PR 续办见 GIT-REVIEW，推送见 IOS-NOTIFICATIONS。

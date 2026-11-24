@@ -264,7 +264,21 @@ struct ConversationView: View {
                 }.padding(.horizontal, 16)
             }
             if hasContent {
-                if let question = model.detail["questions"].array.first {
+                if let focus = model.pushFocus, focus.target.session == id {
+                    if !model.connected || model.detailCached || !model.hasContentWindow {
+                        Text("连接并验证电脑后才能处理这条提醒。").font(PhoneTheme.caption)
+                    } else if let record = focus.target.record(in: model.detail) {
+                        if focus.target.approval {
+                            if focus.reject { Text("核对请求后，可在下方拒绝这次操作。").font(PhoneTheme.caption) }
+                            ApprovalDrawer(approval: record, total: 1).id(focus.target.id)
+                        } else {
+                            QuestionDrawer(question: record, sessionId: id, total: 1, asker: engine).id(focus.target.id)
+                        }
+                    } else {
+                        Text("这条审批或提问已经处理。").font(PhoneTheme.caption)
+                    }
+                    Button("查看会话中的其他事项") { model.pushFocus = nil }.font(PhoneTheme.caption)
+                } else if let question = model.detail["questions"].array.first {
                     QuestionDrawer(question: question, sessionId: id, total: model.detail["questions"].array.count, asker: engine)
                 } else if let approval = model.detail["approvals"].array.first {
                     ApprovalDrawer(approval: approval, total: model.detail["approvals"].array.count)

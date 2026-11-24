@@ -441,6 +441,26 @@ describe('terminal service', () => {
     expect((await rejection(() => terminals.extract({ sessionId: 'other', terminalId: id }, mac))).code).toBe('terminal-not-found')
   })
 
+  it('quotes the latest recognisable diagnostic with its stack, after redaction and without unrelated output', async () => {
+    const terminals = await service()
+    const { id } = await terminals.create('s1', mac, { cols: 80, rows: 24 })
+    const ref = { sessionId: 's1', terminalId: id }
+    helperAt(0).print('$ echo "Error: printed"\r\n0 errors, all tests passed\r\n')
+    expect(terminals.extract(ref, mac, { recentError: true }).text).toBe('')
+    helperAt(0).print(
+      `file.ts:4:3: error TS2322: wrong type\r\n\x1b[31mTypeError: ${modelKey}\x1b[0m\r\n    at render (app.ts:5:2)\r\n$ next\r\nother output\r\n`,
+    )
+    expect(terminals.extract(ref, mac, { recentError: true })).toMatchObject({
+      text: 'TypeError: [redacted]\n    at render (app.ts:5:2)',
+      redacted: true,
+      lines: 2,
+    })
+    helperAt(0).print('Traceback (most recent call last):\r\n  File "page.py", line 4\r\n    render()\r\nValueError: missing colour\r\n$ ')
+    expect(terminals.extract(ref, mac, { recentError: true }).text).toBe(
+      'Traceback (most recent call last):\n  File "page.py", line 4\n    render()\nValueError: missing colour',
+    )
+  })
+
   it('bounds the work of 「加入对话」 on crafted output, and how often each device may ask', async () => {
     let clock = Date.parse('2026-10-27T00:00:00Z')
     const terminals = await service({ now: () => clock })

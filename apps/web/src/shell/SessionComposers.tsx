@@ -27,6 +27,7 @@ import { basename } from '../format.ts'
 import { scopedTemplates } from '../hooks/usePromptTemplates.ts'
 import { useHarnessCommands } from '../hooks/useHarnessCommands.ts'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
+import { ConversationReferencePicker, REFERENCE_COPY } from '../conversation/ConversationReferencePicker.tsx'
 import { Composer } from '../composer/Composer.tsx'
 import { CodexTeam } from '../composer/CodexTeam.tsx'
 import { canStartTeam } from '../teams/model.ts'
@@ -823,309 +824,348 @@ export function SessionComposer({
     : chooseCommand
       ? COMPOSER_COPY.commands
       : words
+  const [referencing, setReferencing] = useState<string>()
+  const referenceTarget =
+    current?.canReferenceConversation && current.summary.id === selectedId && !answer && gate.kind === 'open' && canSend
+      ? current.summary
+      : undefined
   const composer = (
-    <Composer
-      showSlashButton={speaker === undefined}
-      textareaRef={composerRef}
-      lastPrompt={current?.messages.findLast(message => message.role === 'user')?.text}
-      attachments={catalog?.features?.attachments === true && gate.kind === 'open' && !answer ? attachmentDraft : undefined}
-      fileMentions={mentionChoice}
-      members={
-        choices && catalog
-          ? {
-              mention: {
-                label: TEAM_COPY.member,
-                items: choices.map(choice => {
-                  const harness = catalog.harnesses.find(item => item.id === choice.harnessId)
-                  return {
-                    id: choice.itemId,
-                    token: choice.token,
-                    name: choice.name,
-                    title: choice.title,
-                    media: <MemberTile harnessId={choice.harnessId} harnesses={catalog.harnesses} />,
-                    // Its task under its name, then its Harness.
-                    description: choice.name === choice.title ? (harness ? harnessName(harness) : choice.harnessId) : choice.title,
-                    source: memberWords(choice.member.state),
-                    ...(choice.disabled ? { disabled: choice.disabled } : {}),
-                  }
-                }),
-              },
-              marks: choices.map(choice => ({
-                ...choice,
-                media: <MemberTile harnessId={choice.harnessId} harnesses={catalog.harnesses} size={16} />,
-              })),
-              ...(roundDraft ? { round: { ready: roundDraft.ready, ...(roundDraft.reason ? { reason: roundDraft.reason } : {}) } } : {}),
-              sending: teamRound.status.state === 'sending',
-              sendLabel: TEAM_COPY.sendToMembers,
-            }
-          : undefined
-      }
-      commands={commands}
-      skills={skills}
-      skillsTruncated={selectedId === null ? cachedCommands?.skillsTruncated : current?.skillsTruncated}
-      commandSource={
-        commandHarness
-          ? {
-              name: harnessName(commandHarness),
-              media: <HarnessTile harness={commandHarness} size={16} />,
-              firstTurn: !!seedService || (!!summary?.agent && !current?.messages.some(message => message.role === 'user')),
-              ...(selectedId === null
-                ? { previousSession: !!cachedCommands, awaitingSession: !!commandHarness.commandCatalogue && !cachedCommands }
-                : {}),
-            }
-          : undefined
-      }
-      actions={actions}
-      onCreateTemplate={owner ? () => openSettings('general') : undefined}
-      historyScope={{ deviceId: shell.snapshot.device.id, harnessId: selectedId === null ? choice.harnessId : summary?.harnessId }}
-      templates={templates}
-      variant={selectedId === null ? 'new' : 'session'}
-      label={noteComposer ? APPROVAL_COPY.rejectPlaceholder : selectedId === null ? SHELL_COPY.message : SHELL_COPY.continueChat}
-      placeholder={inputHint}
-      draft={submission.draft}
-      onDraft={setSubmissionDraft}
-      pending={submission.pending}
-      pendingInTranscript={pendingInTranscript}
-      {...(pendingHome === undefined || pendingHome === selectedId
-        ? {}
-        : {
-            onOpenPending: () => {
-              choose(pendingHome, () => {
-                if (pendingHome === null) base.showHome()
-              })
-            },
-          })}
-      sending={submission.sending}
-      error={
-        noteComposer?.error
-        || refusal
-        || roundFailure
-        || (actionError?.sessionId === selectedId ? actionError.text : '')
-        || (sideBlocked ?? '')
-      }
-      {...(!noteComposer?.error && refusal
-        ? composerFailure(submission.errorCode, owner, openSettings, () => {
-            void sendDraft()
-          })
-        : {})}
-      pendingReason={offline ? CONNECTION_COPY.offline : submission.pendingReason}
-      onRetry={() => {
-        void retryDraft()
-      }}
-      onAbandon={() => {
-        void abandonPending()
-      }}
-      abandoning={abandoning}
-      abandonHeld={submission.sendingElsewhere ? SHELL_COPY.retryElsewhere : undefined}
-      pendingNote={pendingQueued === 'waiting' ? SHELL_COPY.queued : pendingQueued === 'parked' ? SHELL_COPY.parked : undefined}
-      canSend={canSend}
-      blockReason={offline ? CONNECTION_COPY.offline : (block?.message ?? sessionBlock ?? sideBlocked)}
-      readOnly={
-        gate.kind === 'read-only'
-          ? gate.text
-          : gate.kind === 'stopped'
-            ? placeholder
-            : permissionBlocked
-              ? SHELL_COPY.unverified
-              : undefined
-      }
-      {...(gate.kind === 'read-only' && gate.reason ? { readOnlyReason: gate.reason } : {})}
-      {...(answer ? { answer } : {})}
-      drawers={drawers}
-      stepBack={approvals.length > 0 || answersQuestion}
-      status={home ? undefined : status}
-      vitals={
-        !home && selectedId !== null && summary && !speaker && !summary.personal ? (
-          <SessionVitalsLine summary={summary} detail={current} harness={harnessInfo} phone={phone} />
-        ) : undefined
-      }
-      below={
-        selectedId === null && catalog ? (
-          <>
-            {!phone && homePlace}
-            {/* Captions open under the input like disclosures, so the input and everything above it stay put. */}
-            <Collapse open={codeRootChoice !== undefined}>
-              <p className="composer-notice" data-tint="warn" role="note">
-                <Icon icon={ShieldAlertGlyph} size={14} />
-                {codeRootChoice && CODE_ROOT_COPY.notice}
-              </p>
-            </Collapse>
-            <Collapse open={chosenScopeCaption !== undefined}>
-              <div className="composer-notice composer-scope" role="note">
-                {chosenScopeCaption && (
-                  <Hint lead={<Icon icon={FolderGlyph} size={14} />} label={<VisibleText text={chosenScopeCaption.label} />}>
-                    {chosenScopeCaption.detail && <VisibleText text={chosenScopeCaption.detail} />}
-                  </Hint>
-                )}
-              </div>
-            </Collapse>
-          </>
-        ) : seedService ? (
-          <div className="composer-notice composer-seed" data-tint="warn" role="note">
-            {/* Where the rebuilt text goes is the words' tooltip; the short line keeps its amber. */}
-            <Hint className="agent-permission-note is-warn" lead={<Icon icon={HistoryGlyph} size={14} />} label={SHELL_COPY.rebuildWarning}>
-              {COMPOSER_COPY.rebuild} <VisibleText text={seedService} />
-            </Hint>
-          </div>
-        ) : undefined
-      }
-      vitalsLead={
-        !seedService && current && selectedId === current.summary.id ? (
-          <CodexTeam
-            key={current.summary.id}
-            detail={current}
-            onApproval={selectApproval}
-            run={run}
-            team={
-              shell.catalog?.features?.teams && access.scopes.has('run') && canStartTeam(current.summary, shell.snapshot.teams)
-                ? {
-                    summary: current.summary,
-                    catalog: shell.catalog,
-                    deviceId: shell.snapshot.device.id,
-                    access,
-                    refresh: shell.refresh,
-                    onManageModels: manageProviders,
-                    computer,
-                    prepare: {
-                      draft: submission.draft,
-                      open: teamPrepare,
-                      put: value => {
-                        setSubmissionDraft(value)
-                        requestAnimationFrame(() => composerRef.current?.focus())
-                      },
-                    },
-                    send: { open: teamSend, go: sendPrompt },
-                  }
-                : undefined
-            }
-          />
-        ) : undefined
-      }
-      // A phone keeps the place over its input, first in reading order as it is on screen.
-      {...(phone && homePlace ? { over: homePlace } : {})}
-      confirmation={
-        <InlineConfirm active={submission.sending || (selectedId !== null && configBusy.has(selectedId))} className="composer-confirm" />
-      }
-      onSubmit={() => {
-        // Members named in it: a round to them, never a message to this session.
-        if (roundDraft) void sendRound()
-        else void sendDraft()
-      }}
-      onQueue={() => {
-        void sendDraft(true)
-      }}
-      sendKey={preferences.sendKey}
-      coarse={coarse}
-      run={run}
-      configUnknown={configUnknownBar(
-        selectedId === null ? undefined : configFeedback.get(selectedId),
-        harnessInfo ? harnessName(harnessInfo) : 'Harness',
-        refreshConfig,
-        retryConfig,
-        abandonConfig,
+    <>
+      {referenceTarget && referencing === referenceTarget.id && (
+        <ConversationReferencePicker
+          key={referenceTarget.id + shell.snapshot.device.id}
+          target={referenceTarget}
+          tasks={shell.snapshot.tasks}
+          phone={phone}
+          close={() => setReferencing(undefined)}
+          select={(id, title) => {
+            submission.setDraft(
+              previous =>
+                [previous.trimEnd(), `[conversation-ref:${id}] ${title.replace(/[\r\n]/gu, ' ')} · read_conversation_reference`]
+                  .filter(Boolean)
+                  .join('\n') + '\n',
+            )
+            setReferencing(undefined)
+            requestAnimationFrame(() => composerRef.current?.focus())
+          }}
+        />
       )}
-      queueable={canQueue && !answer}
-      steerable={steer && !answer}
-      inline={phone}
-      meta={!showControls || phone ? undefined : <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />}
-      // The limit arrives seconds after a turn starts and leaves with the Host's memory: last before send at every width,
-      // so the controls before it stay where they are.
-      // On the start page the limit ends the line that says where the session starts.
-      usage={showControls && !(home && !phone) ? usageChip : undefined}
-      controls={
-        !showControls ? null : !catalog ? (
-          selectedId === null ? (
-            <ModeSwitch
-              value={choice.mode}
-              disabled={newChoicesLocked}
-              onChange={mode => {
-                submission.updateChoice({ mode })
-              }}
-            />
-          ) : null
-        ) : selectedId === null ? (
-          <>
-            <ComposerControl name="harness">
-              <DraftHarnessControl
-                catalog={catalog}
-                choice={choice}
-                onChoice={submission.updateChoice}
-                access={access}
-                disabled={newChoicesLocked}
-                onManage={manageEngines}
-                onAdded={agent => {
-                  submission.updateChoice({ harnessId: agent.id })
-                  void refresh()
-                }}
-                onDefaultsChanged={async () => {
-                  await refresh()
-                  submission.forgetDraftPick()
-                }}
-                onRead={refresh}
-                computer={computer}
-              />
-            </ComposerControl>
-            <ComposerControl name="permission">
-              <ComposerPermission permission={composerPermission} />
-            </ComposerControl>
-            <ComposerControl name="model">
-              <DraftModelControl
-                withLevel
-                catalog={catalog}
-                choice={choice}
-                onChoice={submission.updateChoice}
-                access={access}
-                disabled={newChoicesLocked}
-                onManageModels={manageProviders}
-                onProvidersChanged={() => {
-                  void refresh()
-                }}
-                onRead={refresh}
-                computer={computer}
-              />
-            </ComposerControl>
-          </>
-        ) : (
-          summary && (
+      <Composer
+        attachmentMenu={
+          referenceTarget
+            ? [
+                {
+                  id: 'context',
+                  items: [{ id: 'reference', label: REFERENCE_COPY.title, onSelect: () => setReferencing(referenceTarget.id) }],
+                },
+              ]
+            : undefined
+        }
+        showSlashButton={speaker === undefined}
+        textareaRef={composerRef}
+        lastPrompt={current?.messages.findLast(message => message.role === 'user')?.text}
+        attachments={catalog?.features?.attachments === true && gate.kind === 'open' && !answer ? attachmentDraft : undefined}
+        fileMentions={mentionChoice}
+        members={
+          choices && catalog
+            ? {
+                mention: {
+                  label: TEAM_COPY.member,
+                  items: choices.map(choice => {
+                    const harness = catalog.harnesses.find(item => item.id === choice.harnessId)
+                    return {
+                      id: choice.itemId,
+                      token: choice.token,
+                      name: choice.name,
+                      title: choice.title,
+                      media: <MemberTile harnessId={choice.harnessId} harnesses={catalog.harnesses} />,
+                      // Its task under its name, then its Harness.
+                      description: choice.name === choice.title ? (harness ? harnessName(harness) : choice.harnessId) : choice.title,
+                      source: memberWords(choice.member.state),
+                      ...(choice.disabled ? { disabled: choice.disabled } : {}),
+                    }
+                  }),
+                },
+                marks: choices.map(choice => ({
+                  ...choice,
+                  media: <MemberTile harnessId={choice.harnessId} harnesses={catalog.harnesses} size={16} />,
+                })),
+                ...(roundDraft ? { round: { ready: roundDraft.ready, ...(roundDraft.reason ? { reason: roundDraft.reason } : {}) } } : {}),
+                sending: teamRound.status.state === 'sending',
+                sendLabel: TEAM_COPY.sendToMembers,
+              }
+            : undefined
+        }
+        commands={commands}
+        skills={skills}
+        skillsTruncated={selectedId === null ? cachedCommands?.skillsTruncated : current?.skillsTruncated}
+        commandSource={
+          commandHarness
+            ? {
+                name: harnessName(commandHarness),
+                media: <HarnessTile harness={commandHarness} size={16} />,
+                firstTurn: !!seedService || (!!summary?.agent && !current?.messages.some(message => message.role === 'user')),
+                ...(selectedId === null
+                  ? { previousSession: !!cachedCommands, awaitingSession: !!commandHarness.commandCatalogue && !cachedCommands }
+                  : {}),
+              }
+            : undefined
+        }
+        actions={actions}
+        onCreateTemplate={owner ? () => openSettings('general') : undefined}
+        historyScope={{ deviceId: shell.snapshot.device.id, harnessId: selectedId === null ? choice.harnessId : summary?.harnessId }}
+        templates={templates}
+        variant={selectedId === null ? 'new' : 'session'}
+        label={noteComposer ? APPROVAL_COPY.rejectPlaceholder : selectedId === null ? SHELL_COPY.message : SHELL_COPY.continueChat}
+        placeholder={inputHint}
+        draft={submission.draft}
+        onDraft={setSubmissionDraft}
+        pending={submission.pending}
+        pendingInTranscript={pendingInTranscript}
+        {...(pendingHome === undefined || pendingHome === selectedId
+          ? {}
+          : {
+              onOpenPending: () => {
+                choose(pendingHome, () => {
+                  if (pendingHome === null) base.showHome()
+                })
+              },
+            })}
+        sending={submission.sending}
+        error={
+          noteComposer?.error
+          || refusal
+          || roundFailure
+          || (actionError?.sessionId === selectedId ? actionError.text : '')
+          || (sideBlocked ?? '')
+        }
+        {...(!noteComposer?.error && refusal
+          ? composerFailure(submission.errorCode, owner, openSettings, () => {
+              void sendDraft()
+            })
+          : {})}
+        pendingReason={offline ? CONNECTION_COPY.offline : submission.pendingReason}
+        onRetry={() => {
+          void retryDraft()
+        }}
+        onAbandon={() => {
+          void abandonPending()
+        }}
+        abandoning={abandoning}
+        abandonHeld={submission.sendingElsewhere ? SHELL_COPY.retryElsewhere : undefined}
+        pendingNote={pendingQueued === 'waiting' ? SHELL_COPY.queued : pendingQueued === 'parked' ? SHELL_COPY.parked : undefined}
+        canSend={canSend}
+        blockReason={offline ? CONNECTION_COPY.offline : (block?.message ?? sessionBlock ?? sideBlocked)}
+        readOnly={
+          gate.kind === 'read-only'
+            ? gate.text
+            : gate.kind === 'stopped'
+              ? placeholder
+              : permissionBlocked
+                ? SHELL_COPY.unverified
+                : undefined
+        }
+        {...(gate.kind === 'read-only' && gate.reason ? { readOnlyReason: gate.reason } : {})}
+        {...(answer ? { answer } : {})}
+        drawers={drawers}
+        stepBack={approvals.length > 0 || answersQuestion}
+        status={home ? undefined : status}
+        vitals={
+          !home && selectedId !== null && summary && !speaker && !summary.personal ? (
+            <SessionVitalsLine summary={summary} detail={current} harness={harnessInfo} phone={phone} />
+          ) : undefined
+        }
+        below={
+          selectedId === null && catalog ? (
             <>
-              {harnessInfo && (
-                <ComposerControl name="harness">
-                  <SessionHarnessControl harness={harnessInfo} admin={access.admin} onNewSession={startNew} fork={fork} />
-                </ComposerControl>
-              )}
+              {!phone && homePlace}
+              {/* Captions open under the input like disclosures, so the input and everything above it stay put. */}
+              <Collapse open={codeRootChoice !== undefined}>
+                <p className="composer-notice" data-tint="warn" role="note">
+                  <Icon icon={ShieldAlertGlyph} size={14} />
+                  {codeRootChoice && CODE_ROOT_COPY.notice}
+                </p>
+              </Collapse>
+              <Collapse open={chosenScopeCaption !== undefined}>
+                <div className="composer-notice composer-scope" role="note">
+                  {chosenScopeCaption && (
+                    <Hint lead={<Icon icon={FolderGlyph} size={14} />} label={<VisibleText text={chosenScopeCaption.label} />}>
+                      {chosenScopeCaption.detail && <VisibleText text={chosenScopeCaption.detail} />}
+                    </Hint>
+                  )}
+                </div>
+              </Collapse>
+            </>
+          ) : seedService ? (
+            <div className="composer-notice composer-seed" data-tint="warn" role="note">
+              {/* Where the rebuilt text goes is the words' tooltip; the short line keeps its amber. */}
+              <Hint
+                className="agent-permission-note is-warn"
+                lead={<Icon icon={HistoryGlyph} size={14} />}
+                label={SHELL_COPY.rebuildWarning}>
+                {COMPOSER_COPY.rebuild} <VisibleText text={seedService} />
+              </Hint>
+            </div>
+          ) : undefined
+        }
+        vitalsLead={
+          !seedService && current && selectedId === current.summary.id ? (
+            <CodexTeam
+              key={current.summary.id}
+              detail={current}
+              onApproval={selectApproval}
+              run={run}
+              team={
+                shell.catalog?.features?.teams && access.scopes.has('run') && canStartTeam(current.summary, shell.snapshot.teams)
+                  ? {
+                      summary: current.summary,
+                      catalog: shell.catalog,
+                      deviceId: shell.snapshot.device.id,
+                      access,
+                      refresh: shell.refresh,
+                      onManageModels: manageProviders,
+                      computer,
+                      prepare: {
+                        draft: submission.draft,
+                        open: teamPrepare,
+                        put: value => {
+                          setSubmissionDraft(value)
+                          requestAnimationFrame(() => composerRef.current?.focus())
+                        },
+                      },
+                      send: { open: teamSend, go: sendPrompt },
+                    }
+                  : undefined
+              }
+            />
+          ) : undefined
+        }
+        // A phone keeps the place over its input, first in reading order as it is on screen.
+        {...(phone && homePlace ? { over: homePlace } : {})}
+        confirmation={
+          <InlineConfirm active={submission.sending || (selectedId !== null && configBusy.has(selectedId))} className="composer-confirm" />
+        }
+        onSubmit={() => {
+          // Members named in it: a round to them, never a message to this session.
+          if (roundDraft) void sendRound()
+          else void sendDraft()
+        }}
+        onQueue={() => {
+          void sendDraft(true)
+        }}
+        sendKey={preferences.sendKey}
+        coarse={coarse}
+        run={run}
+        configUnknown={configUnknownBar(
+          selectedId === null ? undefined : configFeedback.get(selectedId),
+          harnessInfo ? harnessName(harnessInfo) : 'Harness',
+          refreshConfig,
+          retryConfig,
+          abandonConfig,
+        )}
+        queueable={canQueue && !answer && (!attachmentDraft?.items.length || catalog?.features?.queueAttachments === true)}
+        steerable={steer && !answer && !attachmentDraft?.items.length && !submission.draft.includes('[conversation-ref:')}
+        inline={phone}
+        meta={!showControls || phone ? undefined : <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />}
+        // The limit arrives seconds after a turn starts and leaves with the Host's memory: last before send at every width,
+        // so the controls before it stay where they are.
+        // On the start page the limit ends the line that says where the session starts.
+        usage={showControls && !(home && !phone) ? usageChip : undefined}
+        controls={
+          !showControls ? null : !catalog ? (
+            selectedId === null ? (
+              <ModeSwitch
+                value={choice.mode}
+                disabled={newChoicesLocked}
+                onChange={mode => {
+                  submission.updateChoice({ mode })
+                }}
+              />
+            ) : null
+          ) : selectedId === null ? (
+            <>
+              <ComposerControl name="harness">
+                <DraftHarnessControl
+                  catalog={catalog}
+                  choice={choice}
+                  onChoice={submission.updateChoice}
+                  access={access}
+                  disabled={newChoicesLocked}
+                  onManage={manageEngines}
+                  onAdded={agent => {
+                    submission.updateChoice({ harnessId: agent.id })
+                    void refresh()
+                  }}
+                  onDefaultsChanged={async () => {
+                    await refresh()
+                    submission.forgetDraftPick()
+                  }}
+                  onRead={refresh}
+                  computer={computer}
+                />
+              </ComposerControl>
               <ComposerControl name="permission">
                 <ComposerPermission permission={composerPermission} />
               </ComposerControl>
               <ComposerControl name="model">
-                <SessionModelControl
+                <DraftModelControl
                   withLevel
                   catalog={catalog}
-                  harness={harnessInfo}
-                  model={effectiveModel}
-                  current={currentModel}
-                  reported={summary.model}
-                  onModel={switchSessionModel}
-                  config={current?.config ?? []}
-                  busy={configBusy.get(summary.id) ?? null}
-                  {...(configFeedback.get(summary.id) ? { feedback: configFeedback.get(summary.id)! } : {})}
-                  onRefresh={refreshConfig}
-                  onConfig={setConfig}
+                  choice={choice}
+                  onChoice={submission.updateChoice}
+                  access={access}
+                  disabled={newChoicesLocked}
                   onManageModels={manageProviders}
-                  locked={gate.kind === 'read-only' ? gate.text : undefined}
-                  route={summary.modelRoute}
+                  onProvidersChanged={() => {
+                    void refresh()
+                  }}
+                  onRead={refresh}
                   computer={computer}
                 />
               </ComposerControl>
             </>
+          ) : (
+            summary && (
+              <>
+                {harnessInfo && (
+                  <ComposerControl name="harness">
+                    <SessionHarnessControl harness={harnessInfo} admin={access.admin} onNewSession={startNew} fork={fork} />
+                  </ComposerControl>
+                )}
+                <ComposerControl name="permission">
+                  <ComposerPermission permission={composerPermission} />
+                </ComposerControl>
+                <ComposerControl name="model">
+                  <SessionModelControl
+                    withLevel
+                    catalog={catalog}
+                    harness={harnessInfo}
+                    model={effectiveModel}
+                    current={currentModel}
+                    reported={summary.model}
+                    onModel={switchSessionModel}
+                    config={current?.config ?? []}
+                    busy={configBusy.get(summary.id) ?? null}
+                    {...(configFeedback.get(summary.id) ? { feedback: configFeedback.get(summary.id)! } : {})}
+                    onRefresh={refreshConfig}
+                    onConfig={setConfig}
+                    onManageModels={manageProviders}
+                    locked={gate.kind === 'read-only' ? gate.text : undefined}
+                    route={summary.modelRoute}
+                    computer={computer}
+                  />
+                </ComposerControl>
+              </>
+            )
           )
-        )
-      }
-      trailing={
-        !showControls || !catalog || (selectedId !== null && !summary) ? null : (
-          <>{phone && selectedId !== null && <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />}</>
-        )
-      }
-    />
+        }
+        trailing={
+          !showControls || !catalog || (selectedId !== null && !summary) ? null : (
+            <>{phone && selectedId !== null && <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />}</>
+          )
+        }
+      />
+    </>
   )
   // The start page asks first, over its input; a session's input, and the start's input held under a pending send, do not.
   if (!home || pendingInTranscript)

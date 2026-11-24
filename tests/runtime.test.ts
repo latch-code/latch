@@ -1007,6 +1007,32 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
     expect(backend.release).toHaveBeenCalledTimes(4)
   })
 
+  it('checks a background grant against the actual model without pinning a session that follows its provider default', async () => {
+    const dataDir = await directory()
+    const alphaSeen: Array<string | undefined> = [],
+      betaSeen: Array<string | undefined> = []
+    const backend = providers([modelsProvider('alpha', ['a'], alphaSeen), modelsProvider('beta', ['b'], betaSeen)])
+    let active = 'alpha'
+    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: backend, providerId: () => active }))
+    const { sessionId } = await bridge.createTask({ prompt: 'first', requestId: 'defaults' })
+    await waitStatus(bridge, sessionId, 'idle')
+    const options = {
+      unattended: true as const,
+      authorizeUnattended: () => ({ revisions: {}, approvalTtlMs: 60_000, model: { providerId: 'alpha', model: 'a' } }),
+    }
+    await bridge.prompt(sessionId, 'follow up', 'automatic', options)
+    await waitStatus(bridge, sessionId, 'idle')
+    expect((await bridge.detail(sessionId)).summary.providerId).toBeUndefined()
+    active = 'beta'
+    await expect(bridge.prompt(sessionId, 'stale grant', 'stale-default', options)).rejects.toMatchObject({
+      code: 'background-model-changed',
+    })
+    expect(betaSeen).toHaveLength(0)
+    await bridge.prompt(sessionId, 'continue', 'human')
+    await waitStatus(bridge, sessionId, 'idle')
+    expect(betaSeen).toEqual(['b'])
+  })
+
   it('runs a declared thinking level, keeps it with the session, and refuses one the model does not declare', async () => {
     const dataDir = await directory()
     const efforts: Array<string | undefined> = []
@@ -1039,6 +1065,16 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
       code: 'request-conflict',
     })
 
+    const auto = (model: ModelRef) => ({
+      unattended: true as const,
+      authorizeUnattended: () => ({ model, revisions: {}, approvalTtlMs: 60_000 }),
+    })
+    await expect(bridge.prompt(sessionId, 'stale effort', 'stale-effort', auto({ ...high, effort: 'low' }))).rejects.toMatchObject({
+      code: 'background-model-changed',
+    })
+    await bridge.prompt(sessionId, 'follow up', 'auto-effort', auto(high))
+    await waitStatus(bridge, sessionId, 'idle')
+    expect((await bridge.detail(sessionId)).summary.effort).toBe('high')
     await bridge.prompt(sessionId, 'y', 'session')
     await waitStatus(bridge, sessionId, 'idle')
     await bridge.prompt(sessionId, 'z', 'default', { model: { providerId: 'alpha', model: 'a-1' } })
@@ -1046,11 +1082,11 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
     expect((await bridge.detail(sessionId)).summary.effort).toBeUndefined()
     await bridge.prompt(sessionId, 'w', 'low', { model: { providerId: 'alpha', model: 'a-1', effort: 'low' } })
     await waitStatus(bridge, sessionId, 'idle')
-    expect(efforts).toEqual(['high', 'high', undefined, 'low'])
+    expect(efforts).toEqual(['high', 'high', 'high', undefined, 'low'])
 
     alpha.modelCapabilities = { 'a-1': { thinking: ['high'] } }
     await expect(bridge.prompt(sessionId, 'v', 'stale')).rejects.toMatchObject({ status: 409, code: 'effort-unavailable' })
-    expect(efforts).toHaveLength(4)
+    expect(efforts).toHaveLength(5)
   })
 
   it('starts a new context on request: the model is sent only what follows, the record keeps everything', async () => {

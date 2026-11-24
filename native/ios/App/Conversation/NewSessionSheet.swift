@@ -202,20 +202,21 @@ struct NewSessionSheet: View {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines), chosen = choice, source = fork, forkPlan = plan
         let host = model.generation, content = model.privateSnapshot.epoch, reading = model.contentGeneration
         Task {
+            let submission = UUID()
             var ids: [String] = []
             if attaches, !model.tray(attachKey).isEmpty {
                 // Waits for uploads still on their way; one that cannot go, or rows taken away meanwhile, keep the sheet open.
-                guard case let .success(value) = await model.attachmentsToSend(attachKey, target: nil) else { model.endAttachmentSend(attachKey); starting = false; return }
+                guard case let .success(value) = await model.attachmentsToSend(attachKey, target: nil, owner: submission) else { model.endAttachmentSend(attachKey, owner: submission); starting = false; return }
                 ids = value
             }
             guard model.generation == host, model.privateSnapshot.epoch == content, model.contentGeneration == reading else {
-                model.endAttachmentSend(attachKey); starting = false; return
+                model.endAttachmentSend(attachKey, owner: submission); starting = false; return
             }
             let started: Bool
             if let source { started = if let forkPlan { await model.startFork(source, plan: forkPlan, prompt: text) } else { false } }
             else { started = await model.start(chosen, prompt: text, attachments: ids) }
             delivered = started
-            model.endAttachmentSend(attachKey)
+            model.endAttachmentSend(attachKey, owner: submission)
             starting = false
             if started, model.pending.isEmpty { dismiss() }
         }

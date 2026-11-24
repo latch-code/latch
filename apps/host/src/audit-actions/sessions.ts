@@ -12,6 +12,9 @@ const attachmentEvent = z.strictObject({
 
 /** Sessions: prompts, queue, questions, attachments, approvals, cancels and full-access starts. */
 export const SESSION_ACTIONS = {
+  'task.conversation-reference.created': z.strictObject({ source: opaqueId, target: opaqueId }),
+  'task.conversation-reference.read': z.strictObject({ source: opaqueId, target: opaqueId }),
+
   /** A handoff is on record before its target starts; the materials and requirements are only counted and hashed. */
   'handoff.created': z.strictObject({
     handoffId: opaqueId,

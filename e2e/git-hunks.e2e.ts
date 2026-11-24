@@ -394,6 +394,23 @@ it('stages and unstages by hunk and by line, settles a lost answer from its rece
     expect(await compared.locator('.diff-add', { hasText: 'line two' }).count()).toBe(0)
     await shots(page, 'compare')
     await noHorizontalOverflow(page)
+    await panel.getByRole('button', { name: '选择比较基线' }).click()
+    const picker = page.getByRole('dialog', { name: '选择比较基线' })
+    await picker.getByRole('button', { name: 'main', exact: true }).waitFor()
+    await picker.getByText('正在读取…', { exact: true }).waitFor({ state: 'hidden' })
+    await shots(page, 'base-picker')
+    await picker.getByRole('button', { name: 'feature', exact: true }).click()
+    await panel.getByText('没有改动的文件', { exact: true }).waitFor()
+    expect(await panel.getByLabel('比较的提交').textContent()).toContain(featureHead.slice(0, 9))
+    await panel.getByRole('button', { name: '选择比较基线' }).click()
+    await picker.getByRole('searchbox').fill('missing-comparison-branch')
+    await picker.getByRole('button', { name: '使用输入的分支或提交' }).click()
+    await panel.getByText('找不到这个分支或可达提交。').waitFor()
+    expect(await fileRow(panel, 'notes.txt').count()).toBe(0)
+    await panel.getByRole('button', { name: '选择比较基线' }).click()
+    await picker.getByRole('button', { name: 'main', exact: true }).click()
+    await fileRow(panel, 'notes.txt').waitFor()
+    await shots(page, 'selected-compare-base')
 
     const sizes = [
       { width: 1440, height: 900 },
@@ -432,10 +449,32 @@ it('stages and unstages by hunk and by line, settles a lost answer from its rece
         await fileRow(panel, 'logo.bin').waitFor()
         await shots(narrow.page, 'staged')
         await openCommitDiff(narrow.page, panel)
+        await pickView(narrow.page, panel, /分支与/u)
+        await panel.getByRole('button', { name: '选择比较基线' }).click()
+        const narrowPicker = narrow.page.getByRole('dialog', { name: '选择比较基线' })
+        const main = narrowPicker.getByRole('button', { name: 'main', exact: true })
+        await main.waitFor()
+        await narrowPicker.getByText('正在读取…', { exact: true }).waitFor({ state: 'hidden' })
+        await shots(narrow.page, 'base-picker')
+        await main.click()
+        await fileRow(panel, 'notes.txt').waitFor()
+        await shots(narrow.page, 'selected-compare-base')
       } finally {
         await narrow.context.close()
       }
     }
+
+    // A scope change closes the picker and returns the open comparison to the automatic baseline.
+    await panel.getByRole('button', { name: '选择比较基线' }).click()
+    await picker.getByRole('button', { name: 'feature', exact: true }).click()
+    await panel.getByText('没有改动的文件', { exact: true }).waitFor()
+    await panel.getByRole('button', { name: '选择比较基线' }).click()
+    await picker.waitFor()
+    expect((await owner.request(`devices/${desk.deviceId}`, { method: 'PATCH', body: { dataScope: 'files' } })).status).toBe(200)
+    await picker.waitFor({ state: 'hidden' })
+    await panel.getByRole('button', { name: '选择比较基线' }).waitFor({ state: 'hidden' })
+    await fileRow(panel, 'notes.txt').waitFor()
+    await shots(page, 'automatic-compare')
 
     // ---- a device whose data scope does not cover the files: no history, no lines, no line writes ----------------------
     // A connected browser reads project files by default (200b8c6d): this one is narrowed to work.

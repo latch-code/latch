@@ -124,6 +124,52 @@
   font-size: var(--fs-code);
   line-height: var(--lh-code);
 }
+.sent-terminal-excerpt {
+  min-width: 0;
+  max-width: 100%;
+  margin: var(--sp-4) 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-8);
+  background: var(--sunken);
+}
+.sent-terminal-excerpt figcaption {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-6);
+  padding: var(--sp-6) var(--sp-12);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.sent-terminal-excerpt figcaption small,
+.sent-terminal-stack {
+  color: var(--muted);
+}
+.sent-terminal-excerpt figcaption small {
+  font-size: inherit;
+}
+.sent-terminal-excerpt pre {
+  margin: 0;
+  padding: var(--sp-8) var(--sp-12);
+  overflow-x: auto;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
+  white-space: pre;
+}
+.sent-terminal-excerpt code {
+  font: inherit;
+}
+@media (max-width: 640px) {
+  .sent-terminal-excerpt pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+}
 .user-bubble[data-clamped] > .user-bubble-text {
   max-height: 176px;
   overflow: hidden;
@@ -1858,4 +1904,33 @@ button.summary-file:hover {
 .generated-image-line.is-failed,
 .generated-image-line.is-failed > .process-slot {
   color: var(--red);
+}
+
+.reply-quote-action {
+  position: fixed;
+  z-index: var(--z-float);
+}
+
+.user-reply-quote {
+  display: grid;
+  gap: var(--sp-4);
+  border-inline-start: 2px solid var(--line);
+  padding-inline-start: var(--sp-8);
+}
+
+.user-reply-quote button {
+  width: fit-content;
+  color: var(--ink-2);
+  text-decoration: underline;
+}
+
+.conversation-reference-picker {
+  display: grid;
+  gap: var(--sp-8);
+  padding: var(--sp-16);
+  overflow: auto;
+  max-height: 60vh;
+}
+.conversation-reference-picker button {
+  justify-content: flex-start;
 }

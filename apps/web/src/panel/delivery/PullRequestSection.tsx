@@ -1,5 +1,6 @@
 import { CircleDashed, CircleHelp, CircleMinus, GitPullRequest, MessageSquarePlus } from 'lucide-react'
 import { useMemo, useState, type ReactNode, type Ref } from 'react'
+import { PrFollowControl } from './PrFollow.tsx'
 import type { GitCheck, GitPrComment, GitPrState, GitPullRequest as PullRequest } from '@latch/protocol'
 import {
   Badge,
@@ -117,6 +118,7 @@ export interface PrForm {
 }
 
 export interface PullRequestSectionProps {
+  sessionId?: string
   sectionRef?: Ref<HTMLElement>
   read: PrRead
   /** The commit the branch is at here: checks of another one are 「旧提交」. */
@@ -533,6 +535,17 @@ export function PullRequestSection(props: PullRequestSectionProps) {
       {pr && (
         <>
           <PrRow pr={pr} onReload={props.onReload} loading={loading} />
+          {props.sessionId && canWrite && props.canReadFiles && (pr.state === 'open' || state.follow?.enabled) && (
+            <PrFollowControl
+              key={pr.url}
+              sessionId={props.sessionId}
+              number={pr.number}
+              value={state.follow}
+              restriction={state.automaticRestriction}
+              disabled={disabled}
+              reload={props.onReload}
+            />
+          )}
           <PrFeedback
             key={JSON.stringify([pr.url, pr.number, pr.headSha])}
             state={state}

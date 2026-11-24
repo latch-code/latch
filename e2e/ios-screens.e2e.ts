@@ -92,6 +92,7 @@ const SCENES = [
   'usage-quota',
   'usage-spend',
   'question-reminder',
+  'push-approval',
   'conversation',
   'recovering-chat',
   'offline-draft',

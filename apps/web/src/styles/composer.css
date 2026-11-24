@@ -203,6 +203,44 @@
 .composer-input:has(.cm-content[aria-disabled='true']) {
   color: var(--ink-2);
 }
+.prompt-editor .terminal-excerpt {
+  box-sizing: border-box;
+  --prompt-line-padding: 0 var(--sp-12);
+  border-inline: 1px solid var(--line);
+  background: var(--sunken);
+}
+.prompt-editor .terminal-excerpt-heading {
+  --prompt-line-padding: var(--sp-6) var(--sp-12) var(--sp-2);
+  border-top: 1px solid var(--line);
+  border-radius: var(--r-8) var(--r-8) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.terminal-excerpt-icon {
+  display: inline-flex;
+  margin-inline-end: var(--sp-6);
+  vertical-align: -2px;
+}
+.terminal-excerpt-note {
+  font-weight: 400;
+}
+.prompt-editor .terminal-excerpt-body {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
+  overflow-wrap: anywhere;
+}
+.prompt-editor .terminal-excerpt-detail {
+  color: var(--muted);
+}
+.prompt-editor .terminal-excerpt-end {
+  --prompt-line-padding: 0 var(--sp-12) var(--sp-6);
+  border-bottom: 1px solid var(--line);
+  border-radius: 0 0 var(--r-8) var(--r-8);
+}
 /*
  * A token the Harness will read as one (a file chosen with @, a skill, a command, a member) is a chip, in the input and
  * in a sent message alike: the glyph, then the name, both centred on the chip, a little lower than the line, with room

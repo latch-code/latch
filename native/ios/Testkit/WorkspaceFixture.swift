@@ -88,6 +88,10 @@ import LatchNativeCore
             return ["inlineFiles": inline, "oldPanelClosed": oldPreview == nil && oldList == nil && oldInline == nil, "previewable": previewable, "badFolderRejected": unsafe, "wrongRootRejected": wrongRoot]
         }
         let lease = try await workspace.verify()
+        if let target = input["queuedScreenshot"] as? String, let other = input["otherSession"] as? String,
+           let marker = input["returnedMarker"] as? String {
+            return try await queuedScreenshotFixture(workspace, target: target, other: other, marker: URL(fileURLWithPath: marker))
+        }
         if let id = input["workSettlementItem"] as? String, let markers = input["workSettlementMarkers"] as? String {
             return try await settledWorkWindowFixture(workspace, vault: vault, lease: lease, item: id, markers: URL(fileURLWithPath: markers))
         }

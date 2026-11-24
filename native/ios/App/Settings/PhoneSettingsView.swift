@@ -1,12 +1,12 @@
 import DeviceCheck
 import LatchNativeCore
 import SwiftUI
-import UserNotifications
 import UIKit
 
 struct PhoneSettingsView: View {
     @EnvironmentObject private var model: PhoneModel
     let addComputer: () -> Void
+    @ObservedObject private var push = PhonePush.shared
     @State private var copied = false
     @AppStorage(PhoneFaceID.key) private var faceID = false
     @State private var faceIDAvailable = true
@@ -52,6 +52,14 @@ struct PhoneSettingsView: View {
                 }
                 .onAppear { faceIDAvailable = PhoneFaceID.available }
                 Section {
+                    if model.snapshot["host"]["native"]["attentionPush"].bool || push.route(model.selectedHost) != nil {
+                        Toggle("这台电脑的锁屏提醒", isOn: Binding(get: { push.route(model.selectedHost) != nil }, set: { next in
+                            Task { await push.toggle(next, model: model) }
+                        })).disabled(push.changing || !model.connected)
+                        if push.route(model.selectedHost) != nil && !push.confirmed(model.selectedHost) {
+                            Button("等待电脑确认 · 重试登记") { Task { await push.toggle(true, model: model) } }
+                        }
+                    }
                     Toggle("Agent 提问提醒", isOn: $questionReminders).tint(PhoneTheme.accent)
                     Toggle("其他电脑等你处理时通知", isOn: Binding(get: { notifyOthers }, set: { next in
                         changingNotices = true; noticesRefused = false
@@ -61,8 +69,13 @@ struct PhoneSettingsView: View {
                         }
                     })).tint(PhoneTheme.accent).disabled(changingNotices)
                 } header: { Text("通知") } footer: {
-                    if noticesRefused { Text("系统设置里没有允许 Latch 发通知。") }
-                    else { Text("使用 Latch 时提醒你回答新问题。支持实时活动的设备也会显示待回答状态。") }
+                    VStack(alignment: .leading, spacing: 6) {
+                        if noticesRefused { Text("系统设置里没有允许 Latch 发通知。") }
+                        else { Text("使用 Latch 时提醒你回答新问题。支持实时活动的设备也会显示待回答状态。") }
+                        if model.snapshot["host"]["native"]["attentionPreview"].bool {
+                            Text("展开灵动岛可以看到工作会话名称和待审批操作。私有会话只显示提醒。")
+                        }
+                    }
                 }
                 Section("关于") {
                     LabeledContent("版本", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
@@ -159,19 +172,6 @@ actor NativeAppAttestHook {
         guard service.isSupported, challengeHash.count == 32, !keyId.isEmpty, keyId.utf8.count <= 512 else { throw NativeFailure.unsupported }
         let data = try await service.generateAssertion(keyId, clientDataHash: challengeHash)
         guard data.count <= 65_536 else { throw NativeFailure.invalidRecord }; return data
-    }
-}
-
-@MainActor enum NativePushHook {
-    static func requestPermission(hostSupportsPush: Bool) async throws -> Bool {
-        guard hostSupportsPush else { throw NativeFailure.unsupported }
-        let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])
-        if granted { UIApplication.shared.registerForRemoteNotifications() }
-        return granted
-    }
-    static func persistToken(_ token: Data, in vault: EncryptedVault) async throws {
-        guard (16...256).contains(token.count) else { throw NativeFailure.invalidRecord }
-        try await vault.storeMetadata(token, name: "apns-token")
     }
 }
 

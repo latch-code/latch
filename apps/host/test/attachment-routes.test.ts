@@ -68,6 +68,19 @@ describe('authenticated attachment routes', () => {
     expect(replay).toEqual(created)
     expect(seen).toHaveLength(1)
     expect(seen[0]![1]!.attachments).toEqual([{ type: 'image', mimeType: 'image/png', data: png.toString('base64') }])
+    // Already bound in this session: two subsequent queued requests can reuse the picture independently.
+    // Replaying either original request must never send the same turn twice.
+    for (const prompt of ['compare this screenshot', 'check the same screenshot again']) {
+      const body = { prompt, requestId: randomUUID(), queue: true, attachmentIds: [ref.id] }
+      const send = () => local.json(`tasks/${created.sessionId}/prompt`, { body })
+      await send()
+      await vi.waitFor(async () => expect((await local.json<TaskDetail>(`tasks/${created.sessionId}`)).summary.status).toBe('idle'))
+      expect(await send()).toEqual({ accepted: true })
+      const latest = seen.at(-1)?.findLast(message => message.role === 'user')
+      expect(latest?.content).toBe(prompt)
+      expect(latest?.attachments).toEqual([{ type: 'image', mimeType: 'image/png', data: png.toString('base64') }])
+    }
+    expect(seen).toHaveLength(3)
     const detail = await local.json<TaskDetail>(`tasks/${created.sessionId}`)
     expect(detail.messages[0]!.attachments).toEqual([ref])
     expect(JSON.stringify(detail)).not.toContain(png.toString('base64'))

@@ -154,10 +154,10 @@ export function useTerminals(input: {
 
   /** The Host's redacted text of the selection, or of the last lines; nothing is attached by this. */
   const extract = useCallback(
-    (id: string, selection: string) =>
+    (id: string, selection: string, recentError = false) =>
       api<TerminalText>(`${base}/${encodeURIComponent(id)}/attach`, {
         method: 'POST',
-        body: selection ? { selection } : { lines: ATTACH_LAST_LINES },
+        body: recentError ? { recentError: true } : selection ? { selection } : { lines: ATTACH_LAST_LINES },
       }),
     [base],
   )

@@ -521,6 +521,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
   const prReady = !!prState && !!prInput(prForm, prState).title && !!prInput(prForm, prState).base
   const prSection = prEnabled ? (
     <PullRequestSection
+      sessionId={summary.id}
       sectionRef={prSectionRef}
       read={pull.read}
       head={state?.head}

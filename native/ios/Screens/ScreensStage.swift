@@ -1,3 +1,4 @@
+import ActivityKit
 import Foundation
 import LatchNativeCore
 import SwiftUI
@@ -20,6 +21,73 @@ import UIKit
     /** The 额度与用量 scenes: the sheet opened from 设置 on this tab. */
     static var usageTab: UsageTab?
     private static var locked = false
+    private static var pendingActivityBusy = false
+
+    private struct PendingActivityFixture: Decodable {
+        let attributes: LatchQuestionAttributes
+        let contentState: LatchQuestionAttributes.ContentState
+    }
+
+    /** Simulator visual check of the real Widget renderer, independent of signed APNs delivery. */
+    static func showPendingActivity() async {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard scene == "push-approval", arguments.contains("-LatchShowPendingActivity"),
+              UIApplication.shared.applicationState == .active, !pendingActivityBusy else { return }
+        pendingActivityBusy = true
+        defer { pendingActivityBusy = false }
+        typealias Live = Activity<LatchQuestionAttributes>
+        let variant = UserDefaults.standard.string(forKey: "LatchPendingActivityVariant")
+        // Replay the Host's attributes with their matching content state so the preview uses the same routing context.
+        let fixture = arguments.firstIndex(of: "-LatchPendingActivityFixture").flatMap {
+            arguments.dropFirst($0 + 1).first
+        }.flatMap { try? JSONDecoder().decode(PendingActivityFixture.self, from: Data($0.utf8)) }
+        #if targetEnvironment(simulator)
+        if arguments.contains("-LatchInstallScreenshotPreviewKey"), let route = fixture?.attributes.route {
+            let receipt = ApprovalPreviewFixture.install(route: route)
+            try? Data(receipt.utf8).write(to: FileManager.default.temporaryDirectory.appendingPathComponent("LatchScreensPreviewKeyStatus"))
+        }
+        #endif
+        let isApproval = fixture?.attributes.approval ?? (variant != "question")
+        let content = ActivityContent(state: fixture?.contentState ?? .init(), staleDate: Date().addingTimeInterval(variant == "stale" ? 1 : 600))
+        let activities = Live.activities
+        let existing = activities.first { activity in
+            guard activity.attributes.approval == isApproval else { return false }
+            guard let fixture else { return true }
+            return activity.attributes.route == fixture.attributes.route && activity.attributes.ticket == fixture.attributes.ticket
+        }
+        for previous in activities where previous.id != existing?.id {
+            await endPendingActivity(previous.id)
+        }
+        if let existing {
+            await refreshPendingActivity(existing.id, content: content)
+            return
+        }
+        guard UIApplication.shared.applicationState == .active else { return }
+        let attributes = fixture?.attributes ?? LatchQuestionAttributes(
+            route: UUID().uuidString.lowercased(), ticket: String(repeating: "a", count: 32), approval: isApproval
+        )
+        let result: String
+        do {
+            _ = try Live.request(attributes: attributes, content: content, pushType: nil)
+            result = "started"
+        } catch { result = "unavailable" }
+        try? Data(result.utf8).write(to: FileManager.default.temporaryDirectory.appendingPathComponent("LatchScreensActivityResult"))
+    }
+
+    static func notePendingLink(_ hint: PhonePushHint) {
+        guard scene == "push-approval", ProcessInfo.processInfo.arguments.contains("-LatchShowPendingActivity") else { return }
+        let matches = Activity<LatchQuestionAttributes>.activities.contains { $0.attributes.route == hint.route && $0.attributes.ticket == hint.ticket }
+        let result = (matches ? "same-activity-" : "unknown-activity-") + (hint.reject ? "reject" : "review")
+        try? Data(result.utf8).write(to: FileManager.default.temporaryDirectory.appendingPathComponent("LatchScreensActivityLink"))
+    }
+
+    private nonisolated static func refreshPendingActivity(_ id: String, content: ActivityContent<LatchQuestionAttributes.ContentState>) async {
+        await Activity<LatchQuestionAttributes>.activities.first { $0.id == id }?.update(content)
+    }
+
+    private nonisolated static func endPendingActivity(_ id: String) async {
+        await Activity<LatchQuestionAttributes>.activities.first { $0.id == id }?.end(nil, dismissalPolicy: .immediate)
+    }
 
     static func stage(_ model: PhoneModel) {
         let name = scene
@@ -168,6 +236,38 @@ import UIKit
             }
         case "clearing":
             model.tab = .code; model.sessionId = "ses_review"; model.detail = conversation(); model.clearing = ["ses_review"]
+        case "push-approval":
+            model.tab = .code
+            let variant = UserDefaults.standard.string(forKey: "LatchPendingActivityVariant")
+            let fixture = switch variant {
+            case "command", "private": commandApprovalText
+            case "file": fileApprovalText
+            default: approvalText
+            }
+            let request = json(fixture)
+            model.sessionId = request["summary"]["id"].string
+            if variant != nil {
+                model.snapshot = patched(value) { snapshot in
+                    snapshot["tasks"] = .array(value["tasks"].array.map { row in
+                        guard row["id"].string == "ses_wait" else { return row }
+                        return patched(row) { fields in
+                            for key in ["id", "title", "branch"] { fields[key] = request["summary"][key] }
+                        }
+                    })
+                }
+            }
+            model.detail = patched(request) { detail in
+                let original = detail["approvals"]!.array[0]
+                let actual = variant != nil
+                    ? patched(original) { $0["advisory"] = .bool(true) }
+                    : original
+                let unrelated = patched(actual) { $0["id"] = .string("another-approval"); $0["toolName"] = .string("unrelated") }
+                detail["approvals"] = .array([unrelated, actual])
+            }
+            if let session = model.sessionId, let approval = request["approvals"].array.first?["id"].string,
+               let selected = PhonePushTarget(.object(["session": .string(session), "kind": .string("approval"), "id": .string(approval)])) {
+                model.pushFocus = (selected, variant == nil)
+            }
         case "approval-more":
             model.tab = .code; model.sessionId = "ses_wait"; model.detail = json(approvalText)
         case "approval-hidden":
@@ -631,6 +731,23 @@ import UIKit
      "messages":[{"id":"w1","role":"user","text":"把 swift-nio 升到 2.104，跑一遍测试。","createdAt":"{{-200}}"},
       {"id":"w2","role":"tool","toolName":"write_file","state":"awaiting-approval","tool":{"toolTitle":"编辑","locations":["native/ios/Package.swift"]}}]}
     """ }
+    private static var fileApprovalText: String { #"""
+    {"summary":{"id":"ses_activity_file","title":"补充 README 安装说明","status":"waiting-approval","harnessId":"codex","workspaceId":"latch","mode":"agent","branch":"docs/install"},
+     "sync":{"instanceId":"screens","revision":42},"questions":[],"queue":[],
+     "approvals":[{"id":"apr_activity_file","risk":"R1","toolName":"write_file","tool":{"kind":"edit","toolTitle":"编辑","locations":["README.md"],
+       "diffs":[{"path":"README.md","previous":"text","oldText":"## 安装\npnpm install\n","newText":"## 安装\ncorepack enable\npnpm install\n"}]},
+       "options":[{"id":"once","kind":"allow_once","label":"允许一次"},{"id":"no","kind":"reject_once","label":"拒绝"}]}],
+     "messages":[{"id":"w1","role":"user","text":"在 README 里补上 Corepack 启用步骤。","createdAt":"{{-200}}"},
+      {"id":"w2","role":"tool","toolName":"write_file","state":"awaiting-approval","tool":{"kind":"edit","toolTitle":"编辑","locations":["README.md"]}}]}
+    """# }
+    private static var commandApprovalText: String { #"""
+    {"summary":{"id":"ses_activity_shell","title":"验证终端截图队列","status":"waiting-approval","harnessId":"codex","workspaceId":"latch","mode":"agent","branch":"fix/test"},
+     "sync":{"instanceId":"screens","revision":42},"questions":[],"queue":[],
+     "approvals":[{"id":"apr_activity_shell","risk":"R2","toolName":"shell","tool":{"kind":"execute","input":"{\"command\":\"pnpm test\",\"cwd\":\"/Users/dev/Projects/latch\",\"grants\":[\"允许后，这条命令在沙箱之外运行\"]}"},
+       "options":[{"id":"once","kind":"allow_once","label":"允许一次"},{"id":"no","kind":"reject_once","label":"拒绝"}]}],
+     "messages":[{"id":"w1","role":"user","text":"跑一遍当前分支的测试。","createdAt":"{{-200}}"},
+      {"id":"w2","role":"tool","toolName":"shell","state":"awaiting-approval","tool":{"kind":"execute","input":"{\"command\":\"pnpm test\",\"cwd\":\"/Users/dev/Projects/latch\"}"}}]}
+    """# }
     private static let hitsText = """
     {"hits":[{"sessionId":"ses_old","messageId":"h1","title":"检查 relay 的超时","snippet":"连接在 relay 握手后 15 秒没有数据就断开","match":{"start":4,"end":9},"archived":false},
      {"sessionId":"ses_arch2","messageId":"h2","title":"试验 relay 的 v2 填充","snippet":"relay 外层填充改为 v2 之后","match":{"start":0,"end":5},"archived":true}],"truncated":false}
@@ -726,9 +843,10 @@ import UIKit
             PhoneRootView().environmentObject(model).tint(.blue).preferredColorScheme(theme)
                 .task {
                     // Live mode (`-LatchLive 1`) opens the store and pairs like the product; otherwise a canned scene.
-                    if PhoneLive.isOn { await model.open() } else { ScreensStage.stage(model); ScreensStage.fitWindow() }
+                    if PhoneLive.isOn { await model.open() } else { ScreensStage.stage(model); ScreensStage.fitWindow(); await ScreensStage.showPendingActivity() }
                 }
                 .onChange(of: phase) { _, next in
+                    if next == .active && !PhoneLive.isOn { Task { await ScreensStage.showPendingActivity() } }
                     guard PhoneLive.isOn else { return }
                     if next == .background { model.enterBackground() }
                     if next == .active { Task { await model.open() } }

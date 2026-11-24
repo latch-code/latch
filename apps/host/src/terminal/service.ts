@@ -541,7 +541,11 @@ export class TerminalService {
    * 「加入对话」: the selection the client sends, or the last lines of the output, as plain text through redactSecrets.
    * Its work is linear in input of bounded size, and it runs at most EXTRACTS_PER_WINDOW times per window.
    */
-  extract(ref: TerminalRef, requester: TerminalRequester, options: { lines?: number; selection?: string } = {}): TerminalText {
+  extract(
+    ref: TerminalRef,
+    requester: TerminalRequester,
+    options: { lines?: number; selection?: string; recentError?: true } = {},
+  ): TerminalText {
     this.admit(requester)
     const terminal = this.find(ref)
     // A login prints device codes and links that carry them, which the best-effort redaction would not know.
@@ -558,7 +562,7 @@ export class TerminalService {
     const raw = scrollback.read(start, scrollback.end - start)
     const onLine = start === 0 || (start > scrollback.start && scrollback.read(start - 1, 1)[0] === 0x0a)
     // All of the window, not only its last lines: redaction needs what surrounds them, and the work is linear.
-    const text = attachmentText((onLine ? raw : fromFirstWholeLine(raw)).toString('utf8'), lines)
+    const text = attachmentText((onLine ? raw : fromFirstWholeLine(raw)).toString('utf8'), lines, options.recentError)
     return start === 0 ? text : { ...text, truncated: true }
   }
 

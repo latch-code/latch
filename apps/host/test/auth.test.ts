@@ -1892,6 +1892,21 @@ describe('device names', () => {
 })
 
 describe('scope changes against a confirmed base', () => {
+  it('persists invalidation of a PR follow grant across scope restoration and Host restart', async () => {
+    const context = await fixture(),
+      device = await enroll(context, unix)
+    const seen: string[] = []
+    context.devices.onPrAuthorityReduced(id => seen.push(id))
+    expect(context.devices.prFollowEpoch(device.id)).toBeUndefined()
+    await context.devices.setScopes(device.id, { dataScope: 'files' }, actor, 'none')
+    const epoch = context.devices.prFollowEpoch(device.id)
+    expect(epoch).toBeTruthy()
+    await context.devices.setScopes(device.id, { dataScope: 'all' }, actor, 'lpc-local')
+    expect(seen).toEqual([device.id])
+    expect((await context.reopen()).prFollowEpoch(device.id)).toBe(epoch)
+    expect(context.devices.get(device.id)).not.toHaveProperty('prFollowEpoch')
+  })
+
   it('applies a change only while the device still has the base the confirmation showed', async () => {
     const context = await fixture()
     const browser = await enroll(context, loopback, { scopes: ['view', 'run', 'approve:standard', 'admin'] })

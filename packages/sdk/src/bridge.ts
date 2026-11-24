@@ -155,6 +155,8 @@ export interface PromptOptions {
    * session (本会话始终允许) does not carry into it; every call that asks, asks.
    */
   unattended?: true
+  /** The built-in runtime rechecks an automatic continuation at acceptance and leases only these approved plugin revisions. */
+  authorizeUnattended?: () => { revisions: Record<string, string>; model: ModelRef; approvalTtlMs: number }
 }
 
 export interface DecideOptions {

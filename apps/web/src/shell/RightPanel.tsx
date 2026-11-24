@@ -142,6 +142,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
                 canRun={access.scopes.has('run')}
                 stagingWrites={stagingWrites}
                 canRead={readsProjectFiles(snapshot.device.dataScope)}
+                canChooseComparisonBase={snapshot.device.dataScope === 'all'}
                 hostName={snapshot.hostName}
                 phone={phone}
                 offline={offline}

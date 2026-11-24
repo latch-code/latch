@@ -358,17 +358,18 @@ private struct NewTopicView: View {
         let host = model.generation, content = model.privateSnapshot.epoch, reading = model.contentGeneration
         let owner = frame.owner, chosenAgent = agent, chosen = choice, key = attachKey
         Task {
+            let submission = UUID()
             var ids: [String] = []
             if !model.tray(attachKey).isEmpty {
                 // Waits for uploads still on their way; one that cannot go keeps the message here.
-                guard case let .success(value) = await model.attachmentsToSend(attachKey, target: nil) else { model.endAttachmentSend(attachKey); sending = false; return }
+                guard case let .success(value) = await model.attachmentsToSend(attachKey, target: nil, owner: submission) else { model.endAttachmentSend(attachKey, owner: submission); sending = false; return }
                 ids = value
             }
             guard model.generation == host, model.privateSnapshot.epoch == content, model.contentGeneration == reading else {
-                model.endAttachmentSend(key); sending = false; return
+                model.endAttachmentSend(key, owner: submission); sending = false; return
             }
             let done = await model.startTopic(owner: owner, agent: chosenAgent, choice: chosen, prompt: text, attachments: ids)
-            model.endAttachmentSend(key)
+            model.endAttachmentSend(key, owner: submission)
             guard model.generation == host, model.privateSnapshot.epoch == content else { sending = false; return }
             delivered = done
             prompt = PhoneAgentChat.promptAfterStart(prompt, pending: model.pending, owner: frame.owner, started: done)

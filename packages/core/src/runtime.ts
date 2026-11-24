@@ -224,7 +224,7 @@ export interface RuntimeOptions {
    * The session's remote MCP tools, read when an agent run begins (`HarnessHostOptions.mcpTools`). They never take the
    * name of a plugin's tool, and a failure leaves them out: the run goes on without them.
    */
-  mcpTools?(input: { sessionId: string; signal: AbortSignal }): Promise<ToolDefinition[]>
+  mcpTools?: HarnessHostOptions['mcpTools']
 }
 
 /** The tool a run of an Agent's or 通用's session may call to propose a memory; it saves nothing by itself. */
@@ -335,6 +335,7 @@ interface Run {
   proposals?: ToolDefinition[]
   /** A scheduled run: nobody watched what it read, so all it proposes is external. */
   unattended?: boolean
+  approvalDeadline?: number
   /** Tokens the model spent judging this run's calls (由模型判断), for the turn's record beside its steps'. */
   judgeUsage?: TokenUsage
   /**
@@ -1184,6 +1185,7 @@ class HarnessRuntime implements Bridge {
           foldersOf(task.summary, recorded),
           agentContext,
           task.workProposals === true,
+          options.unattended ? options.authorizeUnattended?.() : undefined,
         )
         let context: string
         try {
@@ -1267,6 +1269,7 @@ class HarnessRuntime implements Bridge {
     agentContext?: AgentExecutionContext,
     /** The session was created with `workProposals`: its runs offer the board's proposal tools. */
     workProposals = false,
+    followGrant?: ReturnType<NonNullable<PromptOptions['authorizeUnattended']>>,
   ): Run {
     if (this.closed) throw new AppError(503, 'runtime-closed', '运行节点已关闭')
     // Chat runs never use tools, so they must not pin tool plugins either.
@@ -1275,8 +1278,18 @@ class HarnessRuntime implements Bridge {
       ...(agentContext?.pluginIds ? { pluginIds: agentContext.pluginIds } : {}),
       ...(agentContext?.skillIds ? { skillIds: agentContext.skillIds } : {}),
       ...(agentContext?.expectedRevisions ? { expectedRevisions: agentContext.expectedRevisions } : {}),
+      ...(followGrant ? { expectedRevisions: followGrant.revisions, pluginIds: Object.keys(followGrant.revisions) } : {}),
     })
     const model = selection.model ?? lease.provider.model
+    if (
+      followGrant
+      && (selection.providerId !== followGrant.model.providerId
+        || model !== followGrant.model.model
+        || selection.effort !== followGrant.model.effort)
+    ) {
+      lease.release()
+      throw new AppError(409, 'background-model-changed', '本轮实际模型或思考档位已改变，没有开始后台运行。')
+    }
     const available = lease.provider.models?.length ? lease.provider.models : [lease.provider.model]
     if (!available.includes(model)) {
       lease.release()
@@ -1315,7 +1328,8 @@ class HarnessRuntime implements Bridge {
       activity: { phase: 'model', since: isoTime(clock.startedAt) },
       lastEventAt: clock.startedAt,
     }
-    if (agentContext?.unattended) run.unattended = true
+    if (agentContext?.unattended || followGrant) run.unattended = true
+    if (followGrant) run.approvalDeadline = run.clock.startedAt + followGrant.approvalTtlMs
     const board = workProposals && this.options.proposeWork !== undefined
     if (agentContext?.proposals || board) {
       // Memories, schedules and board proposals share the session's count, as they share the skills server's file.
@@ -1342,7 +1356,7 @@ class HarnessRuntime implements Bridge {
         ...(agent && this.options.recallMemory ? [recallMemoryTool(run, this.options.recallMemory, session)] : []),
         ...(board ? boardTools(run, this.options.proposeWork!, session) : []),
         // Only while the person lets this session's agent send its team work; each call is checked again by the Host.
-        ...(board && this.options.teamRoster?.(sessionId) && this.options.dispatchTeam
+        ...(board && !run.unattended && this.options.teamRoster?.(sessionId) && this.options.dispatchTeam
           ? teamTools(this.options.teamRoster, this.options.dispatchTeam, run)
           : []),
       ]
@@ -1472,7 +1486,12 @@ class HarnessRuntime implements Bridge {
   private async remoteTools(run: Run, taken: readonly ToolDefinition[]): Promise<ToolDefinition[]> {
     if (!this.options.mcpTools) return []
     try {
-      const tools = await this.options.mcpTools({ sessionId: run.sessionId, signal: run.controller.signal })
+      const tools = await this.options.mcpTools({
+        sessionId: run.sessionId,
+        signal: run.controller.signal,
+        runId: run.id,
+        unattended: run.unattended === true,
+      })
       return Array.isArray(tools) ? tools.filter(tool => !taken.some(item => item.name === tool.name)) : []
     } catch {
       return []
@@ -1641,9 +1660,17 @@ class HarnessRuntime implements Bridge {
       settle({ decision: 'cancel', at: this.now() })
     }
     let outcome: Decision | undefined
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    const expire = () => {
+      if (run.approvalDeadline === undefined || pending.claimed || signal.aborted) return
+      const remaining = run.approvalDeadline - this.clock()
+      if (remaining > 0) timeout = setTimeout(expire, Math.min(remaining, 2_147_483_647))
+      else run.controller.abort(new Error('Approval expired'))
+    }
     this.pending.set(value.id, pending)
     signal.addEventListener('abort', abort, { once: true })
     if (signal.aborted) abort()
+    expire()
     // The wait is measured from the moment the approval is published until it is answered or withdrawn.
     run.clock.openWait(value.id)
     try {
@@ -1662,6 +1689,7 @@ class HarnessRuntime implements Bridge {
       if (outcome.decision === 'allow') run.approved = { callId: call.id, approvalId: value.id }
       return outcome
     } finally {
+      clearTimeout(timeout)
       signal.removeEventListener('abort', abort)
       this.pending.delete(value.id)
       run.clock.closeWait(value.id)

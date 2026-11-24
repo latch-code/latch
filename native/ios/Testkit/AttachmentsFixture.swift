@@ -114,6 +114,34 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         PhoneAttachments.heldBack(.queue, running: true, count: 0) ?? "",
         PhoneAttachments.heldBack(.send, running: false, count: 1) ?? "",
     ]
+    let originalSend = UUID(), subsequentSend = UUID()
+    var locks = ["s": originalSend]
+    PhoneAttachments.releaseSend("s", owner: originalSend, locks: &locks)
+    let ownLockReleased = locks["s"] == nil
+    locks["s"] = subsequentSend
+    PhoneAttachments.releaseSend("s", owner: originalSend, locks: &locks)
+    result["sendOwnership"] = [ownLockReleased, locks["s"] == subsequentSend]
+    let stagedWindowImage = try PhoneAttachStage.write(Data([137, 80, 78, 71]), temporary: fixtureTemporary)
+    let latePick = PhonePicked(name: "screen.png", kind: .image, file: stagedWindowImage, size: stagedWindowImage.size)
+    let firstWindow = UUID(), nextWindow = UUID()
+    let timely = PhoneAttachments.takePicked([latePick], window: firstWindow, currentWindow: firstWindow, sameTarget: true)
+    let afterRenewal = PhoneAttachments.takePicked([latePick], window: firstWindow, currentWindow: nextWindow, sameTarget: true)
+    result["renewedWindowImage"] = [timely?.first == latePick, afterRenewal == nil, !FileManager.default.fileExists(atPath: stagedWindowImage.url.path)]
+    let sourceReference = "[conversation-ref:00000000-0000-4000-8000-000000000000] Earlier work · read_conversation_reference"
+    let quote = PhoneReplyQuote.create(session: "s:1", message: "m/1", selected: "quoted words", body: "Now: quoted words.") ?? ""
+    let richBody = "Before **red moon** after red moon."
+    let rich = PhoneReplyQuote.create(session: "s", message: "m", selected: "moon after", body: richBody) ?? ""
+    let repeated = PhoneReplyQuote.create(session: "s", message: "m", selected: "red moon", body: richBody, block: "Before red moon after red moon.", blockOffset: 22) ?? ""
+    let wire = "A\n" + sourceReference + "\n" + quote + "\nB"
+    let labels = PhoneInputReferences(wire)
+    result["conversationReferences"] = [
+        labels.display, labels.restore(labels.display + "!") == wire + "!" ? "roundtrip" : "lost",
+        labels.restore(labels.display.replacingOccurrences(of: "〔会话：Earlier work〕", with: "")).contains("conversation-ref:") ? "kept" : "removed",
+        PhoneReplyQuote.parse(quote).first?.original(in: "Now: quoted words.")?.range.location == 5 ? "located" : "missing",
+        PhoneReplyQuote.parse(rich).first?.original(in: richBody)?.range.location == 11 ? "formatted" : "missing",
+        PhoneReplyQuote.parse(repeated).first?.original(in: richBody)?.range.location == 22 ? "second" : "ambiguous",
+        PhoneInputReferences(sourceReference + "\nB").restore("〔会话：Earlier work〕 copy\n" + PhoneInputReferences(sourceReference + "\nB").display).components(separatedBy: sourceReference).count == 2 ? "one reference" : "duplicated",
+    ]
     result["picks"] = [PhoneAttachPick.cancelled, .lost, .files(0), .files(2)].map { PhoneAttachments.pickNote($0) ?? "" }
     result["startSelection"] = [
         PhoneAttachments.selection(startFields: ["prompt": .string("x"), "customAgentId": .string("agt"), "harnessId": .string("fake"), "workspaceId": .string("default"),
@@ -240,6 +268,22 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     let folder = fixtureTemporary.appendingPathComponent("pick-" + UUID().uuidString)
     let inbox = folder.appendingPathComponent("codes.latch.ios-Inbox")
     try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
+    // A keyboard that vends only PNG bytes must stage exactly the same metadata-free pixels as the file picker.
+    let pastePng = try fixturePhoto(width: 120, height: 90, alpha: true)
+    let pasteURL = folder.appendingPathComponent("paste-source.png")
+    try pastePng.write(to: pasteURL)
+    let pasteDataImage = PhoneAttachLoader.image(data: pastePng, name: "screen.png", limit: PhoneAttachments.streamBytes, temporary: folder)
+    let pasteFileImage = PhoneAttachLoader.image(url: pasteURL, name: "screen.png", limit: PhoneAttachments.streamBytes, temporary: folder)
+    guard let pasteStage = pasteDataImage.file, let fileStage = pasteFileImage.file else { throw NativeFailure.unavailable }
+    let pastePixels = try Data(contentsOf: pasteStage.url)
+    let excess = PhoneImagePrep.sourceBytes + 1
+    let refusedPaste = PhoneAttachLoader.image(data: Data(count: excess), name: "large.png", limit: PhoneAttachments.streamBytes, temporary: folder)
+    result["pastedPng"] = [
+        pasteStage.sha256 == fileStage.sha256, pastePixels != pastePng, metadataKeys(pastePixels).isEmpty,
+        refusedPaste.file == nil && refusedPaste.size == excess,
+    ]
+    PhoneAttachStage.remove(pasteStage); PhoneAttachStage.remove(fileStage)
+    try FileManager.default.removeItem(at: pasteURL)
     var picks: [String: Data] = [
         "IMG_9001.JPG": try fixturePhoto(width: 1200, height: 900), "big.log": Data(repeating: 0x61, count: 300_000), "note.md": Data("# 笔记\n".utf8),
         "deck.pdf": Data("%PDF-1.7\n%\u{e2}\u{e3}\n1 0 obj\n".utf8), "page.html": Data("<!doctype html><p>你好</p>\n".utf8), "blob.bin": Data([0, 1, 2, 3, 0xff, 0xfe]),
@@ -561,7 +605,7 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         catch { early = String(describing: error) }
         result["earlyRefusal"] = early
 
-        // A queued message cannot carry them: the Host's own refusal, said before sending on the phone.
+        // This turn settled before enqueue: the queued request delivers its uploaded file immediately.
         stage = "queue"
         let extra = try await workspace.uploadAttachment(try fixtureDraft(name: "q.txt", kind: .text, data: Data("q".utf8)), selection: selection, sessionId: first)
         do {
@@ -576,6 +620,63 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     }
     await workspace.closeOpening()
     return result
+}
+
+/** Only a picture, queued during a turn and still attached to that session after reading another. */
+@MainActor func queuedScreenshotFixture(_ workspace: NativeWorkspace, target: String, other: String, marker: URL) async throws -> [String: Any] {
+    defer { try? FileManager.default.removeItem(at: fixtureTemporary) }
+    func open(_ id: String) async throws -> NativeJSON {
+        let reading = try await workspace.beginBody(id)
+        let update = try await workspace.readBody(for: reading)
+        var detail = NativeJSON.null
+        guard let receipt = reading.publication.apply(update, to: { value in detail = value.detail ?? .null; return true }) else {
+            throw FixtureStage(name: "open screenshot session")
+        }
+        try await workspace.applied(receipt)
+        return detail
+    }
+    guard try await workspace.snapshot()["catalog"]["features"]["queueAttachments"].bool,
+          try await open(target)["summary"]["status"].string == "running" else { throw FixtureStage(name: "screenshot target") }
+    let selection = PhoneAttachments.selection(harnessId: "standard", workspaceId: nil, model: nil)
+    let caps = try await workspace.attachmentCapabilities(selection: selection, sessionId: target)
+    let source = fixtureTemporary.appendingPathComponent("clipboard.png")
+    try fixturePhoto(width: 16, height: 12, alpha: true).write(to: source)
+    let picked = PhoneAttachLoader.image(url: source, name: "screen.png", limit: PhoneAttachments.limit(.image, caps), temporary: fixtureTemporary)
+    guard picked.kind == .image, let file = picked.file else { throw FixtureStage(name: "screenshot intake") }
+    let originalImage = try PhoneAttachStage.read(file, offset: 0, count: file.size)
+    let shot = PhoneAttachDraft(name: picked.name, kind: .image, file: file, thumbnail: picked.thumbnail)
+    var tray = PhoneAttachTray()
+    guard tray.add(shot) else { throw FixtureStage(name: "screenshot tray") }
+    let plan = PhoneAttachSend(target: target, tray: tray)
+    let ref = try await workspace.uploadAttachment(shot, selection: selection, sessionId: target)
+    guard tray.ready(shot.id, ref: ref), case let .success(ids) = plan.finish(current: target, tray: tray, caps: caps),
+          ids.count == 1, ref["id"].string == ids.first else { throw FixtureStage(name: "screenshot upload") }
+    let request = try NativePendingWrite(method: .post, path: "/link/api/tasks/" + target + "/prompt",
+        fields: ["prompt": .string(""), "queue": .bool(true), "attachmentIds": .array(ids.map { .string($0) })])
+    _ = try await workspace.submit(request, explain: true)
+    tray.clear()
+    let original = try await workspace.detail(target)
+    guard original["queue"].array.count == 1, let item = original["queue"].array.first, item["state"].string == "waiting",
+          item["text"].string == "", item["attachmentCount"].integer == 1 else { throw FixtureStage(name: "screenshot waiting") }
+    let elsewhere = try await open(other)
+    guard elsewhere["queue"].array.isEmpty, elsewhere["messages"].array.allSatisfy({ $0["attachments"].array.isEmpty }),
+          try await open(target)["queue"].array.first == item else { throw FixtureStage(name: "screenshot after switching") }
+    // The local test model may finish its first turn only after the phone saw the same waiting item on return.
+    try Data().write(to: marker, options: .atomic)
+    for _ in 0..<200 {
+        let detail = try await workspace.detail(target)
+        let photos = detail["messages"].array.filter { $0["role"].string == "user" && !$0["attachments"].array.isEmpty }
+        if detail["summary"]["status"].string == "idle", detail["queue"].array.isEmpty, let photo = photos.first {
+            guard photos.count == 1, photo["text"].string == "", photo["attachments"].array.map({ $0["id"] }) == [ref["id"]] else {
+                throw FixtureStage(name: "screenshot transcript")
+            }
+            _ = try await workspace.submit(request, explain: true)
+            await workspace.closeOpening()
+            return ["original": originalImage.base64EncodedString(), "id": ids[0]]
+        }
+        try await Task.sleep(for: .milliseconds(25))
+    }
+    throw FixtureStage(name: "screenshot queued delivery")
 }
 
 /** The upload ID a `started` callback heard. */

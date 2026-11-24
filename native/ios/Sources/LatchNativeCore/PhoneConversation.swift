@@ -78,6 +78,13 @@ public struct PhoneApprovalChoice: Equatable, Sendable, Identifiable {
     public let label: String
     public let allows: Bool
 }
+public struct PhoneApprovalCommand: Equatable, Sendable {
+    public enum Grant: String, Sendable { case outsideSandbox, review }
+    public let text: String
+    public let directory: String?
+    public let grant: Grant?
+    public let details: String?
+}
 public struct PhoneApprovalGate: Equatable, Sendable {
     public let heading: String
     /** The Host's reason for a risky request, on its own line. */
@@ -255,6 +262,51 @@ public enum PhoneConversation {
         }
         return nil
     }
+    /** A shell request can show its command whole. Other grants keep their own heading and argument block. */
+    public static func approvalCommand(_ approval: NativeJSON) -> PhoneApprovalCommand? {
+        let tool = approval["tool"]
+        let kind = tool["kind"].string, name = approval["toolName"].string ?? ""
+        guard approval["plan"].string == nil, tool["plan"].string == nil,
+              kind == "execute" || (kind == nil && ["shell", "Bash", "PowerShell"].contains(name)),
+              let raw = tool["input"].string ?? approval["arguments"].string, raw.utf8.count <= 65_536,
+              var input = (try? NativeJSON.decode(Data(raw.utf8)))?.object, !input.isEmpty else { return nil }
+        if let second = approval["arguments"].string, second != raw {
+            guard second.utf8.count <= 65_536, (try? NativeJSON.decode(Data(second.utf8))) == .object(input) else { return nil }
+        }
+        guard input["network"] == nil, input["grantRoot"] == nil, input["args"] == nil,
+              input["grants"]?.array.contains(.string("允许后，Codex 向这个正在运行的命令写入内容")) != true else { return nil }
+        let command = input.removeValue(forKey: "command"), cmd = input.removeValue(forKey: "cmd")
+        guard command == nil || cmd == nil || command == cmd,
+              let text = (command ?? cmd)?.string, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let cwd = input["cwd"], workdir = input["workdir"]
+        var directory: String?
+        if cwd == nil || workdir == nil || cwd == workdir,
+           let path = (cwd ?? workdir)?.string, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            directory = path
+            input.removeValue(forKey: "cwd")
+            input.removeValue(forKey: "workdir")
+        }
+        let grant: PhoneApprovalCommand.Grant?
+        switch input["grants"] {
+        case .array([.string("允许后，这条命令在沙箱之外运行")]):
+            grant = .outsideSandbox
+            input.removeValue(forKey: "grants")
+        case nil, .array([]), .array([.string("允许后运行这条命令")]):
+            grant = nil
+        default:
+            grant = .review
+        }
+        let details = input.isEmpty ? nil : (try? NativeJSON.object(input).encoded()).map { String(decoding: $0, as: UTF8.self) }
+        return PhoneApprovalCommand(text: text, directory: directory, grant: grant, details: details)
+    }
+    public static func isApprovalFileEdit(_ approval: NativeJSON) -> Bool {
+        let tool = approval["tool"], kind = tool["kind"].string
+        guard approval["plan"].string == nil, tool["plan"].string == nil,
+              kind == "edit" || !tool["diffs"].array.isEmpty || (kind == nil && ["write_file", "apply_patch"].contains(approval["toolName"].string ?? "")) else { return false }
+        if let raw = tool["input"].string ?? approval["arguments"].string, raw.utf8.count <= 65_536,
+           let input = try? NativeJSON.decode(Data(raw.utf8)), input.object["grantRoot"] != nil { return false }
+        return true
+    }
     private static func titledObject(_ tool: NativeJSON) -> (object: String, path: Bool)? {
         if let located = tool["locations"].array.first?.string { return (located, true) }
         let groups: [([String], Bool)] = [(["path", "file", "file_path", "filePath"], true), (["command", "cmd"], false), (["query", "pattern", "q"], false), (["url"], false)]
@@ -324,14 +376,19 @@ public enum PhoneConversation {
     }
     /** Line diff. Above a million LCS cells the changed middle reads as a full replacement, as the desktop draws it. */
     public static func diffLines(old: String?, new: String) -> [PhoneDiffLine] {
+        lineDiff(old: old, new: new, requireComplete: false) ?? []
+    }
+    private static func lineDiff(old: String?, new: String, requireComplete: Bool) -> [PhoneDiffLine]? {
         let a = lines(old ?? ""), b = lines(new)
         var start = 0
         while start < a.count, start < b.count, a[start] == b[start] { start += 1 }
         var endA = a.count, endB = b.count
         while endA > start, endB > start, a[endA - 1] == b[endB - 1] { endA -= 1; endB -= 1 }
+        let replaceMiddle = (endA - start) * (endB - start) > 1_000_000
+        if requireComplete && replaceMiddle { return nil }
         var result = a[0..<start].map { PhoneDiffLine(kind: .context, text: $0) }
         let midA = Array(a[start..<endA]), midB = Array(b[start..<endB]), m = midA.count, n = midB.count
-        if m * n > 1_000_000 {
+        if replaceMiddle {
             result += midA.map { PhoneDiffLine(kind: .remove, text: $0) } + midB.map { PhoneDiffLine(kind: .add, text: $0) }
         } else {
             let width = n + 1
@@ -354,12 +411,25 @@ public enum PhoneConversation {
         result += a[endA...].map { PhoneDiffLine(kind: .context, text: $0) }
         return result
     }
-    public static func diffStat(_ tool: NativeJSON) -> PhoneDiffStat? {
+    /** An explicit empty old side is a new file. Missing or clipped sides cannot support a comparative preview. */
+    public static func hasApprovalDiff(_ diff: NativeJSON) -> Bool {
+        let old = diff["oldText"].string
+        guard let new = diff["newText"].string, !new.hasSuffix("\n…（内容过长，已截断）"),
+              old?.hasSuffix("\n…（内容过长，已截断）") != true else { return false }
+        if diff["previous"].string == "none" { return old == nil || old == "" }
+        return diff["previous"].string != "unavailable" && old != nil
+    }
+    public static func diffStat(_ tool: NativeJSON, requireComplete: Bool = false) -> PhoneDiffStat? {
         let diffs = tool["diffs"].array
         guard !diffs.isEmpty else { return nil }
         var add = 0, del = 0
         for diff in diffs {
-            for line in diffLines(old: diff["oldText"].string, new: diff["newText"].string ?? "") {
+            if requireComplete && !hasApprovalDiff(diff) { return nil }
+            let old = diff["oldText"].string ?? "", new = diff["newText"].string ?? ""
+            // The rendered line diff normalizes CRLF and final line endings. A count could hide such a change.
+            if requireComplete && (old.utf8.contains(13) || new.utf8.contains(13) || (!old.isEmpty && !new.isEmpty && old.hasSuffix("\n") != new.hasSuffix("\n"))) { return nil }
+            guard let diffLines = lineDiff(old: old, new: new, requireComplete: requireComplete) else { return nil }
+            for line in diffLines {
                 if line.kind == .add { add += 1 } else if line.kind == .remove { del += 1 }
             }
         }
@@ -480,9 +550,11 @@ public enum PhoneConversation {
      */
     public static func hidesText(_ approval: NativeJSON) -> Bool {
         let tool = approval["tool"]
+        let command = approvalCommand(approval)
+        let fileOutput = isApprovalFileEdit(approval) ? tool["output"].string : nil
         // Everything the drawer can show: the heading, each place, the arguments and every diff.
         let texts = [toolHeading(tool, toolName: approval["toolName"].string), approval["toolName"].string, approval["reason"].string, approval["subagent"].string,
-            tool["input"].string ?? approval["arguments"].string, tool["title"].string, tool["toolTitle"].string] + tool["locations"].array.map(\.string)
+            tool["input"].string ?? approval["arguments"].string, tool["title"].string, tool["toolTitle"].string, command?.text, command?.directory, command?.details, fileOutput] + tool["locations"].array.map(\.string)
             + tool["diffs"].array.flatMap { [$0["path"].string, $0["newText"].string, $0["oldText"].string] }
         return texts.contains { text in (text ?? "").unicodeScalars.contains(where: hidden) }
     }
@@ -495,7 +567,7 @@ public enum PhoneConversation {
     }
     /** The text with each hidden character drawn as `\u{XXXX}`, as the web marks them. */
     public static func visible(_ text: String) -> String { visible(text, preservingLayout: true) }
-    private static func visible(_ text: String, preservingLayout: Bool) -> String {
+    public static func visible(_ text: String, preservingLayout: Bool) -> String {
         var result = ""
         for scalar in text.unicodeScalars {
             let layoutControl = !preservingLayout && (scalar == "\n" || scalar == "\t" || scalar == "\r")

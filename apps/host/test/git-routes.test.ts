@@ -1,12 +1,15 @@
-import { execFileSync } from 'node:child_process'
+import { promisify } from 'node:util'
+import { execFile, execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
+  BranchListing,
   GitCloneState,
   GitCommitDiff,
+  GitCommitFileDiff,
   GitDeliveryState,
   GitHistory,
   GitHunkDiff,
@@ -18,6 +21,7 @@ import type {
 import { FAKE_ACP_AGENT, installFakeGh, type FakeGh, type TestDevice } from '@latch/testkit'
 import { AuditLog } from '../src/audit.ts'
 import { findGit } from '../src/changes/git.ts'
+import { HarnessHub } from '../src/hub.ts'
 import { GitDelivery } from '../src/git-delivery.ts'
 import { installFakeSsh } from './helpers/fake-ssh.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
@@ -33,7 +37,14 @@ afterEach(async () => {
 const SLOW = { timeout: 20_000 }
 
 /** A Host whose start directory is a repository, and one settled `shell-edit` turn of the fake agent there. */
-async function fixture(options: { gh?: (scratch: string) => Promise<FakeGh>; rateLimits?: 'default' } = {}) {
+async function fixture(
+  options: {
+    gh?: (scratch: string) => Promise<FakeGh>
+    rateLimits?: 'default'
+    registerPoll?: (fn: () => Promise<void>) => void
+    builtin?: boolean
+  } = {},
+) {
   const scratch = await mkdtemp(join(tmpdir(), 'latch-git-routes-'))
   cleanups.push(() => rm(scratch, { recursive: true, force: true }))
   const home = join(scratch, 'home')
@@ -41,7 +52,9 @@ async function fixture(options: { gh?: (scratch: string) => Promise<FakeGh>; rat
   const gh = await options.gh?.(scratch)
   const t = await startTestHost({
     ...(options.rateLimits ? { rateLimits: options.rateLimits } : {}),
+    worktreesDir: join(scratch, 'worktrees'),
     gitDelivery: {
+      ...(options.registerPoll ? { registerPoll: options.registerPoll } : {}),
       home,
       hostEnv: { HOME: home, USER: 'tester', PATH: '/usr/bin:/bin', TMPDIR: scratch, GH_TOKEN: 'ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
       shell: gh ? gh.shell : async () => ({ file: '/bin/sh', argv: ['-sh'] }),
@@ -67,7 +80,13 @@ async function fixture(options: { gh?: (scratch: string) => Promise<FakeGh>; rat
   expect(saved.status).toBe(201)
   const created = await owner.confirmed('tasks', {
     method: 'POST',
-    body: { prompt: 'shell-edit', requestId: randomUUID(), mode: 'agent', harnessId: 'fake', workspaceId: 'default' },
+    body: {
+      prompt: options.builtin ? 'hello' : 'shell-edit',
+      requestId: randomUUID(),
+      mode: 'agent',
+      harnessId: options.builtin ? 'standard' : 'fake',
+      workspaceId: 'default',
+    },
   })
   expect(created.status).toBe(201)
   const { sessionId } = (await created.json()) as { sessionId: string }
@@ -239,6 +258,63 @@ describe('git delivery routes', () => {
       expect((await viewer.request(refused)).status, refused).toBe(403)
     expect((await post(viewer, `${path}/unstage-lines`, body([[2, 2]]))).status).toBe(403)
     expect((await owner.request(`${path}/history`)).status).toBe(200)
+  })
+
+  it('keeps automatic comparison and history at file scope and requires full access to choose a base', SLOW, async () => {
+    const { t, owner, path, git } = await fixture()
+    const main = git('rev-parse', 'HEAD')
+    git('switch', '-qc', 'topic')
+    await writeFile(join(t.workspaceRoot, 'tracked.txt'), 'committed\nnew line\n')
+    git('commit', '-qam', 'topic change')
+    const head = git('rev-parse', 'HEAD')
+    const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'], dataScope: 'files' })
+    expect((await viewer.json<GitHistory>(`${path}/history`)).commits.map(commit => commit.sha)).toEqual([head])
+    expect(await viewer.json<GitCommitDiff>(`${path}/compare`)).toMatchObject({ sha: head, parent: main })
+    expect(await viewer.json<GitCommitFileDiff>(`${path}/compare?path=tracked.txt`)).toMatchObject({
+      file: { path: 'tracked.txt', add: 1 },
+    })
+
+    const choices = `${path}/compare-branches`
+    expect(await errorOf(await viewer.request(choices))).toEqual({ status: 403, error: 'git-compare-scope' })
+    expect((await owner.json<BranchListing>(choices)).branches).toContainEqual(expect.objectContaining({ name: 'main' }))
+    for (const base of ['main', main]) {
+      const compare = `${path}/compare?base=${base}`
+      const file = `${compare}&path=tracked.txt`
+      expect(await errorOf(await viewer.request(compare))).toEqual({ status: 403, error: 'git-compare-scope' })
+      expect(await errorOf(await viewer.request(file))).toEqual({ status: 403, error: 'git-compare-scope' })
+      expect(await owner.json<GitCommitDiff>(compare)).toMatchObject({ sha: head, parent: main, base })
+      expect(await owner.json<GitCommitFileDiff>(file)).toMatchObject({ sha: head, parent: main, file: { path: 'tracked.txt', add: 1 } })
+    }
+  })
+
+  it('checks full data access again before returning a custom comparison or its error', SLOW, async () => {
+    const { t, path } = await fixture()
+    const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'] })
+    for (const [method, url] of [
+      ['comparisonBranches', `${path}/compare-branches`],
+      ['treeDiff', `${path}/compare?base=main`],
+      ['treeFile', `${path}/compare?base=missing&path=tracked.txt`],
+    ] as const) {
+      await t.host.security.devices.setScopes(viewer.id, { dataScope: 'all' }, { listener: 'unix' }, 'lpc-local')
+      let release!: () => void
+      const gate = new Promise<void>(resolve => {
+        release = resolve
+      })
+      const read = vi.spyOn(GitDelivery.prototype, method).mockImplementation(async () => {
+        await gate
+        if (method === 'treeFile') throw new Error('comparison read failed')
+        return { branches: [{ name: 'main' }], files: [] } as never
+      })
+      const request = viewer.request(url)
+      try {
+        await expect.poll(() => read.mock.calls.length).toBe(1)
+        await t.host.security.devices.setScopes(viewer.id, { dataScope: 'files' }, { listener: 'unix' }, 'lpc-local')
+      } finally {
+        release()
+      }
+      expect(await errorOf(await request), method).toEqual({ status: 403, error: 'git-compare-scope' })
+      read.mockRestore()
+    }
   })
 
   it('counts the new routes against the device limits before anything is read or run', SLOW, async () => {
@@ -473,12 +549,119 @@ describe('git delivery routes', () => {
     expect(await audited(t)).toEqual([])
   })
 
+  it('rejects a review start copied to another device or project or changed to a different commit', SLOW, async () => {
+    const { t, owner, scratch, git } = await fixture()
+    const add = async (name: string) => {
+      const folder = join(scratch, name)
+      await mkdir(folder)
+      await promisify(execFile)('git', ['init', '-q', '-b', 'main', folder])
+      const response = await owner.addFolders({ paths: [folder] })
+      expect(response.status).toBe(201)
+      return ((await response.json()) as { workspace: { id: string } }).workspace.id
+    }
+    const id = await add('one'),
+      second = await add('two')
+    const commit = git('rev-parse', 'HEAD')
+    vi.spyOn(GitDelivery.prototype, 'reviewHead').mockResolvedValueOnce({
+      number: 7,
+      commit,
+      repository: 'contributor/example',
+      baseRepository: 'github.com/org/example',
+      branch: 'work',
+      fork: true,
+    })
+    const head = await owner.json<{ proof: string; baseRepository: string }>(`workspaces/${id}/review-head`, {
+      method: 'POST',
+      body: { number: 7, requestId: randomUUID() },
+    })
+    const other = await t.enroll({ listener: 'loopback-tcp', scopes: ['run', 'view'], dataScope: 'all' })
+    const start = (device: TestDevice, workspaceId: string, sha: string) =>
+      post(device, 'tasks', {
+        requestId: randomUUID(),
+        mode: 'agent',
+        harnessId: 'standard',
+        workspaceId,
+        prompt: 'hello',
+        worktree: { from: 'pr', number: 7, repository: head.baseRepository, commit: sha, proof: head.proof },
+      })
+    for (const [device, workspace, sha] of [
+      [other, id, commit],
+      [owner, second, commit],
+      [owner, id, 'f'.repeat(40)],
+    ] as const) {
+      expect(await errorOf(await start(device, workspace, sha))).toEqual({ status: 409, error: 'pr-head-unverified' })
+    }
+  })
+
+  it(
+    'continues an explicitly authorized idle built-in session once and stops after its author loses scope',
+    { timeout: 65_000 },
+    async () => {
+      let gh!: FakeGh
+      let poll!: () => Promise<void>
+      const { t, owner, sessionId, path, git, scratch } = await fixture({
+        builtin: true,
+        gh: async root => (gh = await installFakeGh(join(root, 'gh'))),
+        registerPoll: tick => {
+          poll = tick
+        },
+      })
+      const remote = join(scratch, 'remote.git')
+      execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote])
+      git('remote', 'add', 'origin', 'https://github.com/acme/widgets.git')
+      git('config', 'remote.origin.pushurl', remote)
+      git('push', '-q', '-u', 'origin', 'main')
+      git('switch', '-q', '-c', 'feature')
+      git('commit', '-q', '--allow-empty', '-m', 'new change')
+      git('push', '-q', '-u', 'origin', 'feature')
+      await owner.json(`${path}/pr`, { method: 'POST', body: { requestId: randomUUID(), title: 'Review change', body: '', base: 'main' } })
+      await gh.update(state => {
+        state.prs[0]!.headRefOid = git('rev-parse', 'HEAD')
+      })
+      const requestId = randomUUID()
+      await owner.json(`${path}/pr/follow`, {
+        method: 'POST',
+        body: { requestId, revision: null, number: 1, enabled: true, automatic: true },
+      })
+      await gh.update(state => {
+        state.prs[0]!.comments.push({ author: { login: 'reviewer' }, body: 'Check the empty path', createdAt: '2026-11-23T01:00:00Z' })
+      })
+      await poll()
+      expect(await owner.json(`${path}/pr/follow`)).toMatchObject({ follow: { automatic: true, notice: { comments: 1, outcome: 'sent' } } })
+      await poll()
+      const detail = await owner.json<TaskDetail>(`tasks/${sessionId}`)
+      expect(detail.messages.filter(message => message.role === 'user' && message.text.includes('Check the empty path'))).toHaveLength(1)
+      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+      const prompt = vi.spyOn(HarnessHub.prototype, 'prompt').mockRejectedValueOnce(new Error('connection lost after dispatch'))
+      const comment = (body: string) =>
+        gh.update(state => {
+          state.prs[0]!.comments.push({ author: { login: 'reviewer' }, body, createdAt: '2026-11-23T02:00:00Z' })
+        })
+      await comment('second question')
+      await poll()
+      expect(await owner.json(`${path}/pr/follow`)).toMatchObject({ follow: { notice: { outcome: 'unknown' } } })
+      await comment('a later question')
+      await poll()
+      expect(prompt).toHaveBeenCalledTimes(1)
+      prompt.mockRestore()
+      await t.host.security.devices.setScopes(owner.id, { dataScope: 'work' }, { listener: 'unix' }, 'lpc-local')
+      const calls = (await gh.calls()).length
+      await poll()
+      expect((await gh.calls()).length).toBe(calls)
+      expect((await owner.request(`${path}/pr/follow`)).status).toBe(403)
+    },
+  )
+
   it(
     'reads and creates the pull request through your gh: view to read, full scope for logs, run and the audit to create',
-    SLOW,
+    { timeout: 65_000 },
     async () => {
       let gh: FakeGh | undefined
+      let poll!: () => Promise<void>
       const { t, owner, path, git, scratch } = await fixture({
+        registerPoll: fn => {
+          poll = fn
+        },
         gh: async scratch => (gh = await installFakeGh(join(scratch, 'gh'))),
       })
       const bare = join(scratch, 'remote.git')
@@ -511,7 +694,19 @@ describe('git delivery routes', () => {
       expect(meta.sessions.find(session => session.pr)?.pr).toEqual(made.pr)
       expect((await viewer.json<GitPrState>(`${path}/pr`)).pr).toMatchObject({ number: 1, draft: true, state: 'open' })
 
+      const watch = { requestId: randomUUID(), revision: null, number: 1, enabled: true }
+      expect((await owner.json<GitPrState>(`${path}/pr`)).automaticRestriction).toBe('harness')
+      expect((await post(owner, `${path}/pr/follow`, { ...watch, automatic: true })).status).toBe(409)
+      expect((await post(viewer, `${path}/pr/follow`, watch)).status).toBe(403)
+      expect((await post(owner, `${path}/pr/follow`, watch)).status).toBe(200)
+      expect((await post(owner, `${path}/pr/follow`, watch)).status).toBe(200)
+      expect((await viewer.request(`${path}/pr/follow`)).status).toBe(403)
       await gh!.update(state => {
+        state.prs[0]!.comments.push({
+          author: { login: 'reviewer' },
+          body: 'Please check the empty case',
+          createdAt: '2026-11-22T10:01:00Z',
+        })
         state.prs[0]!.statusCheckRollup = [
           {
             __typename: 'CheckRun',
@@ -523,6 +718,29 @@ describe('git delivery routes', () => {
         ]
         state.logs['42'] = 'test\tRun\t2026-11-12T10:00:00Z FAIL'
       })
+      await poll()
+      const feedback = await owner.json(`${path}/pr/follow`)
+      expect(feedback).toMatchObject({ follow: { enabled: true, notice: { comments: 1, failures: 1 } } })
+      expect(JSON.stringify(feedback)).not.toContain('Please check')
+      await poll()
+      expect(await owner.json(`${path}/pr/follow`)).toEqual(feedback)
+      const initialCalls = (await gh!.calls()).length
+      await t.host.security.devices.setScopes(owner.id, { dataScope: 'work' }, { listener: 'unix' }, 'none')
+      await t.host.security.devices.setScopes(owner.id, { dataScope: 'all' }, { listener: 'unix' }, 'lpc-local')
+      // Restore the original scopes before the next poll. The old request cannot reauthorize the subscription.
+      expect(await owner.json(`${path}/pr/follow`)).toMatchObject({ follow: { enabled: false, revision: watch.requestId } })
+      expect((await post(owner, `${path}/pr/follow`, watch)).status).toBe(409)
+      await poll()
+      expect((await gh!.calls()).length).toBe(initialCalls)
+      const restart = { ...watch, requestId: randomUUID(), revision: watch.requestId }
+      expect((await post(owner, `${path}/pr/follow`, restart)).status).toBe(200)
+      expect(
+        (await post(owner, `${path}/pr/follow`, { ...watch, requestId: randomUUID(), enabled: false, revision: restart.requestId })).status,
+      ).toBe(200)
+      expect((await post(owner, `${path}/pr/follow`, watch)).status).toBe(409)
+      const before = (await gh!.calls()).length
+      await poll()
+      expect((await gh!.calls()).length).toBe(before)
       expect(await errorOf(await viewer.request(`${path}/pr/checks/42/log`))).toEqual({ status: 403, error: 'file-scope' })
       expect(await owner.json(`${path}/pr/checks/42/log`)).toEqual({ name: 'test', text: '[Run]\nFAIL' })
 

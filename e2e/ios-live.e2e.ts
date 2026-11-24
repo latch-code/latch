@@ -16,6 +16,7 @@ import { readDeviceClipboard, writeDeviceClipboard } from './helpers/iosDeviceCl
 import { pairingStagePage } from './helpers/iosPairingStage.ts'
 import { iosSlashEnvironment, prepareIosSlash, seedIosPromptHistory } from './helpers/iosSlash.ts'
 import { iosLiveMetricRecorder, seedIosStream } from './helpers/iosLiveMetrics.ts'
+import { verifyIosQueuedScreenshots } from './helpers/iosQueueScreenshots.ts'
 
 const run = promisify(execFile)
 const PREFIX = 'latch-live-'
@@ -168,6 +169,25 @@ async function simulatorAppOpen(): Promise<boolean> {
 }
 const SIMULATOR_APP =
   'Simulator or DeviceHub is open: its pasteboard sync could carry the pairing code to this Mac’s clipboard, so no code was written'
+
+/** A pre-installed LatchScreens live-mode simulator; explicit controls leave time to exercise the system paste menu. */
+it.skipIf(process.platform !== 'darwin' || !process.env.LATCH_IOS_QUEUE_UI)(
+  'receives two queued screenshots from the native simulator UI and delivers each exactly once',
+  async () => {
+    const address = await lanAddress()
+    if (!DEVICE || !listSimulators().some(entry => entry.udid === DEVICE && entry.state === 'Booted') || !address)
+      throw new Error('A running dedicated simulator, its LATCH_IOS_LIVE_DEVICE, and a private LAN interface are required.')
+    try {
+      await verifyIosQueuedScreenshots(resolve(process.env.LATCH_IOS_QUEUE_UI!), address, async owner => {
+        if (await simulatorAppOpen()) throw new Error(SIMULATOR_APP)
+        await writeDeviceClipboard(DEVICE, await pairingCode(owner))
+      })
+    } finally {
+      if (!(await simulatorAppOpen())) await writeDeviceClipboard(DEVICE, '').catch(() => {})
+    }
+  },
+  45 * 60_000,
+)
 
 /**
  * Opt-in (`LATCH_IOS_LIVE=1`, macOS with an iOS Simulator runtime): the LatchScreens target in live mode, against a

@@ -944,6 +944,53 @@
 .staging-file-actions .ui-button {
   flex: none;
 }
+.compare-pick {
+  display: grid;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.compare-options {
+  display: grid;
+  align-content: start;
+  gap: var(--sp-2);
+  max-height: min(50dvh, 26rem);
+  overflow: auto;
+}
+.compare-options > h3,
+.compare-options > p {
+  margin: var(--sp-8) var(--sp-6) var(--sp-2);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+.compare-options > button:not(.ui-button) {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-8);
+  padding: var(--sp-6) var(--sp-8);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--ink);
+  text-align: start;
+}
+.compare-options > button:hover {
+  background: var(--hover);
+}
+.compare-options > button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.compare-options code,
+.compare-ends code {
+  font-family: var(--mono);
+  font-size: var(--fs-caption);
+}
+.compare-ends {
+  color: var(--muted);
+}
+
 .history-commit-head {
   display: flex;
   align-items: center;

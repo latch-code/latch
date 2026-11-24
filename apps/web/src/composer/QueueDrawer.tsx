@@ -10,6 +10,7 @@ import { VisibleText, escapeHiddenCharacters } from '../components/VisibleText.t
 const COPY = defineCopy(
   {
     editTitle: '编辑排队内容',
+    attachments: (count: number) => `${formatNumber(count)} 个附件`,
     cancel: '取消',
     save: '保存',
     message: '排队消息',
@@ -32,6 +33,7 @@ const COPY = defineCopy(
   },
   {
     editTitle: 'Edit queued message',
+    attachments: (count: number) => (count === 1 ? '1 attachment' : `${formatNumber(count)} attachments`),
     cancel: 'Cancel',
     save: 'Save',
     message: 'Queued message',
@@ -313,6 +315,7 @@ export function QueueDrawer({
                   )}
                   <span className="prompt-queue-text" title={escapeHiddenCharacters(item.text)}>
                     <VisibleText text={item.text} />
+                    {item.attachmentCount && <span className="prompt-queue-reason">{COPY.attachments(item.attachmentCount)}</span>}
                     {item.state === 'dropped' && (
                       <span className="prompt-queue-reason">
                         <VisibleText text={COPY.notSent(item.reason ?? COPY.changed)} />

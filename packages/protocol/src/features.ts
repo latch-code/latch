@@ -33,6 +33,7 @@ export interface HostFeatures {
   queue?: true
   /** An item can be steered into a specific running turn; queue order is compared and changed on the Host. */
   queueControl?: true
+  queueAttachments?: true
   questions?: true
   /** User messages retain the prompt's requestId, so a client may replace a pending bubble by identity. */
   messageIdentity?: true
@@ -146,6 +147,7 @@ export interface AgentProbeResult {
 
 /** Visible queue state; authority and deduplication receipts remain private to the Host. */
 export interface PromptQueueItem {
+  attachmentCount?: number
   id: string
   text: string
   queuedAt: string

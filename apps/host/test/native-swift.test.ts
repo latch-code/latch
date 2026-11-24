@@ -4879,6 +4879,18 @@ S4 -->|是\n继续| End["保留\\n"]`
     expect(result.takes).toEqual([false, true, false, true])
     expect(result.icons).toEqual(['image', 'text', 'pdf', 'video', 'audio', 'archive', 'document', 'document', 'video'])
     expect(result.classes).toEqual(['refused', 'refused', 'refused', 'retry', 'released', 'confirm', 'retry'])
+    expect(result.pastedPng).toEqual([true, true, true, true])
+    expect(result.sendOwnership).toEqual([true, true])
+    expect(result.renewedWindowImage).toEqual([true, true, true])
+    expect(result.conversationReferences).toEqual([
+      'A\n〔会话：Earlier work〕\n〔引用原句〕\n> quoted words\nB',
+      'roundtrip',
+      'removed',
+      'located',
+      'formatted',
+      'second',
+      'one reference',
+    ])
     expect(result.heldBack).toEqual(['排队的消息不能带附件，本轮结束后再发送。', '追加的消息不能带附件，本轮结束后再发送。', '', ''])
     // A pick that yields nothing always says why; only a cancel is silent.
     expect(result.picks).toEqual(['', '没有收到选中的文件，请再选一次。', '没有收到选中的文件，请再选一次。', ''])
@@ -5030,7 +5042,7 @@ S4 -->|是\n继续| End["保留\\n"]`
         // A PDF as its own bytes, and text past 256 KB by its path: both declared files, kept as what they are.
         files: ['file', 'application/pdf', 'text', '300000'],
         cancelMid: { stopped: true, afterCancel: 0, partial: true },
-        queue: 'queue-attachments-unsupported',
+        queue: 'accepted',
       })
       // Nothing the phone began is left unfinished on the Host: every cancel and removed row aborted its upload.
       const folder = join(host.dataDir, 'attachments', '_uploads')
@@ -5044,6 +5056,80 @@ S4 -->|是\n继续| End["保留\\n"]`
       await host.close()
     }
   }, 90_000)
+  it('queues only a screenshot from the Swift phone and delivers the original image once after switching sessions', async () => {
+    const seen: Array<{ text: string; images: Buffer[] }> = []
+    let marker: string
+    const model = { providerId: 'screen-fixture', model: 'vision' }
+    const host = await startTestHost({
+      native: { host: '127.0.0.1', port: 0 },
+      demo: false,
+      plugins: [
+        {
+          id: 'screen-fixture',
+          name: 'Screenshot fixture',
+          description: '',
+          version: '1.0.0',
+          activate(context) {
+            context.registerProvider({
+              id: model.providerId,
+              name: 'Screenshot fixture',
+              model: model.model,
+              modelCapabilities: { vision: { vision: true } },
+              async *stream({ messages, signal }) {
+                const message = messages.findLast(item => item.role === 'user')!
+                seen.push({
+                  text: message.content,
+                  images: (message.attachments ?? []).flatMap(item => (item.type === 'image' ? [Buffer.from(item.data, 'base64')] : [])),
+                })
+                if (message.content === 'hold this turn')
+                  await vi.waitFor(() => expect(signal.aborted || existsSync(marker)).toBe(true), { timeout: 20_000 })
+                yield { type: 'text', text: 'Done.' }
+                yield { type: 'finish', reason: 'stop' }
+              },
+            })
+          },
+        },
+      ],
+    })
+    try {
+      marker = join(host.root, 'phone-returned')
+      const start = (prompt: string) => host.host.bridge.createTask({ requestId: randomUUID(), prompt, mode: 'chat', model })
+      const other = await start('other session')
+      await vi.waitFor(async () => expect((await host.host.bridge.detail(other.sessionId)).summary.status).toBe('idle'))
+      const target = await start('hold this turn')
+      const owner = await host.enroll({ listener: 'unix' })
+      const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+      const result = await invoke(
+        {
+          operation: 'nativeWorkspace',
+          payload: invitation.payload,
+          port: host.host.nativePort,
+          queuedScreenshot: target.sessionId,
+          otherSession: other.sessionId,
+          returnedMarker: marker,
+        },
+        25_000,
+      )
+      expect(typeof result.original).toBe('string')
+      const original = Buffer.from(result.original as string, 'base64')
+      expect(original.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a')
+      expect(seen).toEqual([
+        { text: 'other session', images: [] },
+        { text: 'hold this turn', images: [] },
+        { text: '', images: [original] },
+      ])
+      for (const [id, count] of [
+        [target.sessionId, 1],
+        [other.sessionId, 0],
+      ] as const) {
+        const detail = await owner.json<TaskDetail>(`tasks/${id}`)
+        expect(detail.queue ?? []).toEqual([])
+        expect(detail.messages.flatMap(message => message.attachments ?? []).map(ref => ref.id)).toEqual(count ? [result.id] : [])
+      }
+    } finally {
+      await host.close()
+    }
+  }, 30_000)
   it('runs the App’s stop and search flows: a refused stop clears, and no earlier query’s hits show under a new one', async () => {
     const result = await invoke({ operation: 'phoneFlows' })
     // Refused: cleared. Answered: kept until the Host settles it. Pressed again meanwhile: not sent. Another connection: untouched.
@@ -5061,6 +5147,50 @@ S4 -->|是\n继续| End["保留\\n"]`
     // The same query keeps what it found.
     expect(result.busySame).toEqual({ loadingHits: ['old'], hits: ['old'], error: '', asked: 5, paused: 4, loading: false })
     expect(result.afterBusy).toEqual({ loadingHits: [], hits: ['new'], error: '', asked: 2, paused: 1, loading: false })
+  })
+  it('uses full structured commands and compares only complete file sides in approval details', async () => {
+    const line = 'pnpm test\npnpm check:quick'
+    const shell = (input: string, argumentsLine?: string) => ({
+      toolName: 'shell',
+      tool: { kind: 'execute', input },
+      arguments: argumentsLine,
+    })
+    const edit = (diff: object, input?: string) => ({ toolName: 'apply_patch', tool: { kind: 'edit', diffs: [diff], input } })
+    const change = { path: 'README.md', oldText: 'one\ntwo\n', newText: 'one\nthree\n' }
+    const outsideSandbox = '允许后，这条命令在沙箱之外运行'
+    const otherGrants = [outsideSandbox, '还需要访问外部目录']
+    const { approvalPresentations } = await invoke({
+      operation: 'phoneActions',
+      approvalPresentations: [
+        shell(JSON.stringify({ command: line, cwd: '/fixture/project', timeout_ms: 5000 })),
+        shell('{"command":"pnpm\\u200b test"}'),
+        shell(JSON.stringify({ command: line, network: { host: 'example.invalid' } })),
+        shell(JSON.stringify({ command: line }), JSON.stringify({ command: 'swift test' })),
+        shell(JSON.stringify({ command: line, grants: [outsideSandbox] })),
+        shell(JSON.stringify({ command: line, grants: otherGrants })),
+        shell(JSON.stringify({ command: line, grants: ['允许后运行这条命令'] })),
+        edit(change),
+        edit({ path: change.path, newText: change.newText }),
+        edit({ path: change.path, newText: change.newText, previous: 'none' }),
+        edit({ ...change, newText: 'partial\n…（内容过长，已截断）' }),
+        edit(change, JSON.stringify({ grantRoot: '/fixture' })),
+      ],
+    })
+    const empty = { command: '', directory: '', grant: '', details: '', edit: false, hidden: false, stat: [] }
+    expect(approvalPresentations).toEqual([
+      { ...empty, command: line, directory: '/fixture/project', details: '{"timeout_ms":5000}' },
+      { ...empty, command: 'pnpm\u200b test', hidden: true },
+      empty,
+      empty,
+      { ...empty, command: line, grant: 'outsideSandbox' },
+      { ...empty, command: line, grant: 'review', details: JSON.stringify({ grants: otherGrants }) },
+      { ...empty, command: line, details: '{"grants":["允许后运行这条命令"]}' },
+      { ...empty, edit: true, stat: [1, 1] },
+      { ...empty, edit: true },
+      { ...empty, edit: true, stat: [2, 0] },
+      { ...empty, edit: true },
+      { ...empty, stat: [1, 1] },
+    ])
   })
   it('derives the session actions the phone offers and the writes it sends for them', async () => {
     const at = (minute: number) => `2026-11-01T10:${String(minute).padStart(2, '0')}:00.000Z`

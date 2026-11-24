@@ -217,6 +217,39 @@ const lineComment = z.object({
 const repoView = z.object({ defaultBranchRef: z.object({ name: z.string().max(1000) }).nullish() })
 
 /** The fields `gh pr view --json` is asked for. */
+const reviewHead = z.object({
+  number: z.number().int().positive(),
+  url: z.string().regex(PR_URL),
+  headRefOid: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u),
+  isCrossRepository: z.boolean(),
+  headRefName: z.string().min(1).max(255),
+  headRepositoryOwner: z.object({ login: z.string().regex(NAME) }),
+  headRepository: z.object({ name: z.string().regex(NAME) }),
+})
+
+export function readReviewHead(output: string, target: GhRepo, number: number) {
+  const row = parsed(reviewHead, output)
+  const where = repoOfPr(row.url)
+  if (!where || where.number !== number || row.number !== number || !sameRepo(where.repo, target)) throw ghUnreadable()
+  const origin = repo(target.host, row.headRepositoryOwner.login, row.headRepository.name)
+  if (
+    !origin
+    || sameRepo(origin, target) === row.isCrossRepository
+    || !storableName(row.headRefName)
+    || oneLine(origin.full, 512) !== origin.full
+    || oneLine(target.full, 512) !== target.full
+  )
+    throw ghUnreadable()
+  return {
+    number,
+    baseRepository: target.full,
+    commit: row.headRefOid,
+    fork: row.isCrossRepository,
+    repository: `${origin.owner}/${origin.name}`,
+    branch: oneLine(row.headRefName),
+  }
+}
+
 export const PR_FIELDS = 'number,url,title,state,isDraft,reviewDecision,headRefOid,headRefName,baseRefName,statusCheckRollup'
 export const PR_LIST_FIELDS = 'number,url,headRefName,baseRefName,isCrossRepository'
 

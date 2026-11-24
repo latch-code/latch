@@ -689,6 +689,8 @@ export interface DriverTaskDetail extends Omit<TaskDetail, 'summary'> {
 }
 
 export interface TaskDetail {
+  /** This session has a tool for reading the message references a person attaches. */
+  canReferenceConversation?: true
   /** Actual availability on this conversation's local Codex process, when known. */
   codexTeam?: 'available' | 'disabled'
   /** Authorized detail projection only, never an unverified list/status snapshot. */
