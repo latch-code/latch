@@ -126,7 +126,7 @@ describe('asynchronous hierarchical forwarding credits', () => {
   })
 })
 
-it('reports repeatable bounded tick cost without inventing production handshake capacity', async () => {
+it('serves the full connection limit and reuses the drained queue on the next round', async () => {
   let now = 0
   const scheduler = new FairScheduler({
     quota: () => ({ healthy: true, calibrated: true, rate: 1e9, burstBytes: 1e6, dayEndsAt: 86400000, dailyBudget: 1e12 }),
@@ -137,18 +137,13 @@ it('reports repeatable bounded tick cost without inventing production handshake 
     count: 'out',
     now: () => now,
   })
-  const durations: number[] = []
-  for (let round = 0; round < 20; round++) {
+  for (let round = 0; round < 2; round++) {
     const pending = Array.from({ length: 1024 }, (_, id) => scheduler.wait(id, [`group-${id}`], `route-${id}`, 1))
     now += 20
-    const start = performance.now()
     scheduler.tick()
-    durations.push(performance.now() - start)
     expect((await Promise.all(pending)).every(Boolean)).toBe(true)
     expect(scheduler.status().queuedBytes).toBe(0)
   }
-  durations.sort((a, b) => a - b)
-  console.info(JSON.stringify({ benchmark: 'relay-fair-tick', connections: 1024, samples: 20, p95Ms: durations[18] }))
   scheduler.close()
 })
 

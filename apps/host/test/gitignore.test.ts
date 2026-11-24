@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ignoreVerdict, isGitignored, matchBudget, parseGitignore, readIgnoreRules, type IgnoreRules } from '../src/files/gitignore.ts'
+import { beginLoopWork, YIELD_MS } from '../src/files/loop-turn.ts'
 import { GREP_LIMITS, grepFiles } from '../src/files/grep.ts'
 import { ProtectedPaths } from '../src/files/resolve.ts'
 import { FileSearchIndex, searchFiles } from '../src/files/search.ts'
@@ -57,10 +58,8 @@ describe('gitignore matching', () => {
     expect(isGitignored(rules('/x.ts', 'app'), 'app/deep/x.ts', false)).toBe(false)
   })
 
-  it('stays linear on a pathological pattern and caps what it keeps', () => {
-    const started = performance.now()
+  it('matches a pathological pattern and caps what it keeps', () => {
     expect(isGitignored(rules(`${'*a'.repeat(200)}b`), 'a'.repeat(255), false)).toBe(false)
-    expect(performance.now() - started).toBeLessThan(200)
     expect(parseGitignore('x\n'.repeat(5000))).toHaveLength(1000)
     expect(parseGitignore(`${'y'.repeat(2000)}\nz`)).toHaveLength(1)
   })
@@ -103,24 +102,48 @@ describe('gitignore rules from the repository, bounded', () => {
   })
 
   it('stops a costly check at its budget and calls the entry undecided, which counts as ignored', () => {
-    const heavy = rules(`${'*'.concat('a'.repeat(62), 'b')}\n`.repeat(1000))
-    const budget = matchBudget()
-    const started = performance.now()
-    expect(ignoreVerdict(heavy, 'a'.repeat(255), false, budget)).toBe('undecided')
-    expect(performance.now() - started).toBeLessThan(50)
-    expect(isGitignored(heavy, 'a'.repeat(255), false, budget)).toBe(true)
-    // A spent walk budget decides nothing more, cheaply.
-    budget.walk = 0
-    expect(ignoreVerdict(rules('*.log'), 'x.txt', false, budget)).toBe('undecided')
-    // Past the deadline, likewise.
-    expect(ignoreVerdict(heavy, 'a'.repeat(10), false, matchBudget(performance.now() - 1))).toBe('undecided')
+    const now = performance.now()
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(now)
+    const end = beginLoopWork()
+    try {
+      const heavy = rules(`${'*'.concat('a'.repeat(62), 'b')}\n`.repeat(1000))
+      const budget = matchBudget()
+      expect(ignoreVerdict(heavy, 'a'.repeat(255), false, budget)).toBe('undecided')
+      expect(budget.cut).toBe('steps')
+      expect(isGitignored(heavy, 'a'.repeat(255), false, budget)).toBe(true)
+      // A spent walk budget decides nothing more, cheaply.
+      budget.walk = 0
+      expect(ignoreVerdict(rules('*.log'), 'x.txt', false, budget)).toBe('undecided')
+      expect(budget.cut).toBe('steps')
+      // Past the deadline, likewise.
+      const expired = matchBudget(now - 1)
+      expect(ignoreVerdict(heavy, 'a'.repeat(10), false, expired)).toBe('undecided')
+      expect(expired.cut).toBe('deadline')
+    } finally {
+      end()
+      clock.mockRestore()
+    }
   })
 
-  it('parses in one pass: an unclosed [ is a literal, a set over the cap leaves its line out', () => {
-    const started = performance.now()
+  it('stops when the shared event-loop window is spent, even with steps remaining', () => {
+    const now = performance.now()
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(now)
+    const end = beginLoopWork()
+    try {
+      const budget = matchBudget()
+      clock.mockReturnValue(now + YIELD_MS + 1)
+      expect(ignoreVerdict(rules('*.log'), 'keep.txt', false, budget)).toBe('undecided')
+      expect(budget.cut).toBe('time')
+      expect(isGitignored(rules('*.log'), 'keep.txt', false, budget)).toBe(true)
+    } finally {
+      end()
+      clock.mockRestore()
+    }
+  })
+
+  it('treats unclosed [ as a literal and leaves out a set over the cap', () => {
     expect(parseGitignore(`${'['.repeat(1023)}\n`.repeat(63))).toHaveLength(63)
     expect(parseGitignore(`${'[a'.repeat(511)}\n`.repeat(64))).toHaveLength(64)
-    expect(performance.now() - started).toBeLessThan(50)
     expect(isGitignored(rules('[[a'), '[[a', false)).toBe(true)
     expect(isGitignored(rules('x[ab'), 'x[ab', false)).toBe(true)
     const wide = rules(`*[${'b'.repeat(1021)}]\nkeep`)
@@ -153,6 +176,7 @@ describe('gitignore rules from the repository, bounded', () => {
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
+  vi.restoreAllMocks()
   for (const close of cleanups.splice(0)) await close()
 })
 

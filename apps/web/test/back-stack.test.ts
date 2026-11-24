@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BackStack, type SessionHistory } from '../src/hooks/backStack.ts'
 
 /**
@@ -54,7 +54,15 @@ function setup(history = new FakeHistory()) {
 }
 
 /** Lets the page's microtasks and any traversal it asked for run. */
-const settle = () => new Promise(done => setTimeout(done, 5))
+const settle = () => vi.runAllTimersAsync()
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('back stack', () => {
   it('pushes one entry per open layer and closes the top one when the person goes back', async () => {

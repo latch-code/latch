@@ -998,36 +998,50 @@ describe('ACP agent environment', () => {
     expect(assistants(await settled(kept, b.sessionId)).at(-1)?.text).toBe('echo: echo b again')
   })
 
-  // Skipped at the owner's word (2026-11-19): it fails only when this file runs beside others on a busy machine, within
-  // a quarter of a second and not by a timeout, and the cause is not found. Warming is an optimisation, not a boundary.
-  it.skip("warms a settled session's process without a turn, and only under the limit, never stopping another's", async () => {
+  it("warms a reclaimed session's process without a turn and leaves an already warm process alone", async () => {
     const fixture = await setup({ FAKE_ACP_CAPS: 'resume' }, { maxProcesses: 1, idleMs: 80 })
     const bridge = await fixture.open()
-    const first = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
-    await settled(bridge, first.sessionId)
-    // Reclaimed when idle; warming it starts it again with no prompt. Gone, not only told to go: while the reclaimed
-    // process is still leaving it holds the one slot, and a warm-up then rightly gives up.
-    await vi.waitFor(async () => expect((await fixture.log()).some(entry => entry.event === 'exit')).toBe(true), {
-      timeout: 5_000,
-      interval: 20,
+    const wires: AcpWire[] = []
+    const spawn = AcpWire.spawn
+    const started = vi.spyOn(AcpWire, 'spawn').mockImplementation((...args) => {
+      const wire = spawn(...args)
+      wires.push(wire)
+      return wire
     })
-    const prompts = received(await fixture.log(), 'session/prompt').length
-    expect(await bridge.warm!(first.sessionId)).toBe(true)
-    let log = await fixture.log()
-    expect(log.filter(entry => entry.event === 'start')).toHaveLength(2)
-    expect(received(log, 'session/resume')).toHaveLength(1)
-    expect(received(log, 'session/prompt')).toHaveLength(prompts)
-    // Already running: nothing more starts.
-    expect(await bridge.warm!(first.sessionId)).toBe(false)
+    const restore = () => {
+      vi.useRealTimers()
+      started.mockRestore()
+    }
+    cleanups.push(restore)
+    try {
+      const first = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+      await settled(bridge, first.sessionId)
+      expect(wires).toHaveLength(1)
+      // The fixture logs `exit` before its process actually closes. Only `exited` also waits for the runtime's
+      // exit handler to release the slot, after the real idle timer has reclaimed the process.
+      expect((await wires[0]!.exited).reason).toBe('stop')
+      const prompts = received(await fixture.log(), 'session/prompt').length
+      // Keep the newly warmed process in its idle window while checking it, regardless of test-runner load.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      expect(await bridge.warm!(first.sessionId)).toBe(true)
+      expect(await bridge.warm!(first.sessionId)).toBe(false)
+      const log = await fixture.log()
+      expect(log.filter(entry => entry.event === 'start')).toHaveLength(2)
+      expect(received(log, 'session/resume')).toHaveLength(1)
+      expect(received(log, 'session/prompt')).toHaveLength(prompts)
+    } finally {
+      restore()
+    }
+  })
 
-    // At the limit a warm-up gives up rather than stopping the live process of another session.
+  it("warms only under the process limit, never stopping another session's process", async () => {
     const busy = await setup({ FAKE_ACP_CAPS: 'resume' }, { maxProcesses: 1, idleMs: 60_000 })
     const kept = await busy.open()
     const a = await kept.createTask({ prompt: 'echo a', requestId: rid() })
     await settled(kept, a.sessionId)
     const b = await kept.createTask({ prompt: 'echo b', requestId: rid() })
     await settled(kept, b.sessionId)
-    log = await busy.log()
+    let log = await busy.log()
     const bPid = promptPid(log, 'echo b')
     expect(await kept.warm!(a.sessionId)).toBe(false)
     log = await busy.log()
@@ -5794,9 +5808,17 @@ describe('what a Harness offers before a session, and choosing it before the fir
         FAKE_ACP_CAPS: 'resume',
         FAKE_ACP_CONFIG_ANSWER_FILE: answerFile,
       },
-      { requestTimeoutMs: 150, configTimeoutMs: 150, idleMs: 60_000 },
+      { idleMs: 60_000 },
     )
     const bridge = await fixture.open()
+    const request = AcpWire.prototype.request
+    const deadline = vi.spyOn(AcpWire.prototype, 'request').mockImplementation(function (this: AcpWire, ...args) {
+      const [method, params] = args
+      if (method === 'session/set_config_option' && isRecord(params) && params.configId === 'effort' && params.value === 'high')
+        args[2] = 150
+      return request.apply(this, args)
+    })
+    cleanups.push(() => void deadline.mockRestore())
     const { sessionId } = await bridge.createTask({
       prompt: 'echo first',
       requestId: rid(),
@@ -5806,6 +5828,15 @@ describe('what a Harness offers before a session, and choosing it before the fir
       ],
     })
     expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
+    await vi.waitFor(async () => {
+      const log = await fixture.log()
+      const unanswered = received(log, 'session/set_config_option').find(entry => entry.params?.configId === 'effort')
+      expect(unanswered?.params?.value).toBe('high')
+      expect(unanswered?.id).toEqual(expect.any(Number))
+      expect(received(log, '$/cancel_request')).toContainEqual(expect.objectContaining({ params: { requestId: unanswered?.id } }))
+      expect(received(log, 'session/prompt')).toHaveLength(0)
+    })
+    deadline.mockRestore()
     await writeFile(answerFile, '')
     await bridge.setConfig!(sessionId, 'mode', 'read-only')
     await bridge.close()
@@ -6261,13 +6292,20 @@ describe('ACP steering', () => {
   })
 
   it('leaves a steer the agent did not answer unknown, and never sends it again', async () => {
-    const fixture = await setup({ FAKE_ACP_CAPS: 'steer', FAKE_ACP_STEER: 'hang' }, { requestTimeoutMs: 300 })
+    const fixture = await setup({ FAKE_ACP_CAPS: 'steer', FAKE_ACP_STEER: 'hang' })
     const bridge = await fixture.open()
     const { sessionId } = await bridge.createTask({ prompt: 'steerable', requestId: rid() })
     await until(bridge, sessionId, detail => detail.liveText === 'working')
+    const request = AcpWire.prototype.request
+    const deadline = vi.spyOn(AcpWire.prototype, 'request').mockImplementation(function (this: AcpWire, ...args) {
+      if (args[0] === '_session/steering') args[2] = 300
+      return request.apply(this, args)
+    })
+    cleanups.push(() => void deadline.mockRestore())
     const requestId = rid()
     await expect(bridge.steer!(sessionId, 'more', requestId)).rejects.toMatchObject({ status: 409, code: 'steer-unknown' })
     await expect(bridge.steer!(sessionId, 'more', requestId)).rejects.toMatchObject({ code: 'steer-unknown' })
+    deadline.mockRestore()
     expect(received(await fixture.log(), '_session/steering')).toHaveLength(1)
     await bridge.cancel(sessionId)
     const detail = await bridge.detail(sessionId)

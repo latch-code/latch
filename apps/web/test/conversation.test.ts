@@ -99,6 +99,7 @@ function detail(messages: Message[], extra: Partial<TaskDetail> = {}, status: Ta
 
 afterEach(() => {
   resetHostClock()
+  vi.useRealTimers()
 })
 
 describe('turns of a conversation', () => {
@@ -725,13 +726,14 @@ describe('the live run', () => {
   })
 
   it('follows the Host clock, ignoring an offset that changed by less than a second', () => {
+    vi.useFakeTimers({ now: T0 - 30_000, toFake: ['Date'] })
     observeHostTime(new Date(T0).toISOString(), T0 - 30_000)
-    const shifted = hostNow() - Date.now()
-    expect(shifted).toBe(30_000)
+    expect(hostNow()).toBe(T0)
     observeHostTime(new Date(T0 + 500).toISOString(), T0 - 30_000)
-    expect(hostNow() - Date.now()).toBe(30_000)
+    expect(hostNow()).toBe(T0)
     observeHostTime('not a time')
-    expect(hostNow() - Date.now()).toBe(30_000)
+    vi.setSystemTime(T0 - 20_000)
+    expect(hostNow()).toBe(T0 + 10_000)
   })
 
   it('says what the run does: stopping, waiting for you, a running tool, the reply, reasoning, starting or the model', () => {
@@ -1199,7 +1201,6 @@ describe('a settled turn', () => {
     // Once the reply writes, its text speaks for itself; a turn at rest says nothing either.
     expect(turn('running', '正在写')).not.toContain('thinking-line')
     expect(turn('idle', '')).not.toContain('thinking-line')
-    vi.useRealTimers()
   })
 
   it('names the model of a running turn from the run before its first step records one', () => {

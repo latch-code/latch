@@ -27,8 +27,8 @@ describe('charts', () => {
         <BarChart label="每日 tokens" series={['缓存读取', '输入', '输出']} columns={columns} format={format} />
       </div>,
     )
+    await vi.waitFor(() => expect(screen.container.querySelectorAll('.ui-chart-column')).toHaveLength(3))
     const groups = Array.from(screen.container.querySelectorAll('.ui-chart-column'))
-    await vi.waitFor(() => expect(groups).toHaveLength(3))
     const parts = (index: number) => Array.from(groups[index].querySelectorAll('rect:not(.ui-chart-band)'))
     expect(parts(0).map(rect => rect.getAttribute('fill'))).toEqual(['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)'])
     expect(parts(1)).toHaveLength(0)

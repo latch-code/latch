@@ -84,16 +84,19 @@ describe('bounded filename index', () => {
     vi.mocked(opendir).mockImplementation(
       (() => new Promise((_, reject) => stuck.push(() => reject(new Error('released'))))) as typeof opendir,
     )
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
-      const started = performance.now()
-      await expect(search('report')).rejects.toMatchObject({ code: 'file-search-timeout' })
-      expect(performance.now() - started).toBeLessThan(7000)
+      const failed = expect(search('report')).rejects.toMatchObject({ code: 'file-search-timeout' })
+      await vi.waitFor(() => expect(opendir).toHaveBeenCalledOnce())
+      await vi.advanceTimersByTimeAsync(5000)
+      await failed
       expect(hungFileOperations.count).toBe(1)
-      const closing = performance.now()
-      await index.close()
-      expect(performance.now() - closing).toBeLessThan(3000)
+      const closing = index.close()
+      await vi.advanceTimersByTimeAsync(2000)
+      await closing
     } finally {
       for (const release of stuck.splice(0)) release()
+      vi.useRealTimers()
     }
     await vi.waitFor(() => expect(hungFileOperations.count).toBe(0))
   }, 15_000)

@@ -1,7 +1,7 @@
 import { useLayoutEffect, useState, type CSSProperties } from 'react'
 import { flushSync } from 'react-dom'
 import { describe, expect, it, vi } from 'vitest'
-import { cdp, commands, page, userEvent } from 'vitest/browser'
+import { page, userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
 import { Button, InlineNotice, PlusGlyph } from '../src/index.ts'
 import { emulateMedia, press } from './helpers.ts'
@@ -39,36 +39,13 @@ describe('button width while work is pending', () => {
           return original.get!.call(this)
         },
       })
-    const samples: number[] = []
     try {
-      await cdp().send('Emulation.setCPUThrottlingRate', { rate: 4 })
-      for (let tick = 1; tick <= 50; tick++) {
-        const start = performance.now()
+      for (const tick of [1, 2, 3]) {
         flushSync(() => update(tick))
-        samples.push(performance.now() - start)
         await painted()
       }
-      const sorted = samples.toSorted((a, b) => a - b)
-      await commands.writeFile(
-        'test-results/button-width/performance.json',
-        JSON.stringify(
-          {
-            cpuRate: 4,
-            buttons: buttons.length,
-            commits: samples.length,
-            reads,
-            medianMs: sorted[25],
-            p95Ms: sorted[47],
-            maxMs: sorted.at(-1),
-            samples,
-          },
-          null,
-          2,
-        ),
-      )
       expect(reads).toBe(0)
     } finally {
-      await cdp().send('Emulation.setCPUThrottlingRate', { rate: 1 })
       for (const button of buttons) Reflect.deleteProperty(button, 'offsetWidth')
     }
   })

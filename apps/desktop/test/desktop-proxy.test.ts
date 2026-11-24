@@ -1665,13 +1665,21 @@ describe('desktop shell proxy', () => {
     const context = await shell()
     await enroll(context)
     let controller: ReadableStreamDefaultController<Uint8Array> | undefined
-    const body = new ReadableStream<Uint8Array>({
-      start(value) {
-        controller = value
+    let read!: () => void
+    const reading = new Promise<void>(resolve => (read = resolve))
+    const body = new ReadableStream<Uint8Array>(
+      {
+        start(value) {
+          controller = value
+        },
+        pull() {
+          read()
+        },
       },
-    })
+      { highWaterMark: 0 },
+    )
     const pending = context.request('/link/api/devices/dev_other', { method: 'DELETE', body, duplex: 'half' } as RequestInit)
-    await new Promise(done => setTimeout(done, 20))
+    await reading
     expect((await context.request('/link/api/devices/current', { method: 'DELETE' })).status).toBe(200)
     expect(context.store.current()).toBeUndefined()
     controller!.enqueue(new TextEncoder().encode('{}'))
