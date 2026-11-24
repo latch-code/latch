@@ -314,7 +314,7 @@ context.registerSkill({ id: 'review', name: '发布检查', description: '逐项
 
 **显示。**
 
-- `title` 是工具做什么的短说法，过程行与审批卡写它加这次调用的对象。Host 截到 40 个字符，把不可见与改变方向的字符转义显示；审批卡仍写出工具名。
+- `title` 是工具做什么的短说法，过程行与审批卡写它加这次调用的对象。Latch 自带工具的标题按原文记录，页面在英文界面按工具名与原文对应到英文（`apps/web/src/conversation/toolTitles.ts`）；插件工具的标题原样显示。Host 截到 40 个字符，把不可见与改变方向的字符转义显示；审批卡仍写出工具名。
 - `kind` 决定工具行的图标与动词。两者都不参与风险分级。
 
 **结果。**
@@ -347,11 +347,11 @@ context.registerSkill({ id: 'review', name: '发布检查', description: '逐项
 
 ### 风险分级与审批
 
-**是否审批由 Host 的分级决定，不由工具声明。** 内置 Harness 在每次工具调用前请 Host 分级（`HarnessHostOptions.classifyToolCall`，规则在 [risk.ts](../apps/host/src/risk.ts) 的 `classifyStandardCall`）。只有列出的内置工具低于 R2。
+**是否审批由 Host 的分级决定，不由工具声明。** 内置 Harness 在每次工具调用前请 Host 分级（`HarnessHostOptions.classifyToolCall`，规则在 [risk.ts](../apps/host/src/risk.ts) 的 `classifyStandardCall`）。只有列出的内置工具与 Host 自己的会话引用读取低于 R2。
 
 | 等级 | 哪些调用 | 审批 |
 | --- | --- | --- |
-| R0 | 内置 `list_folders`，会话任一文件夹中的 `list_files`、`read_file`；内置 `ask_user`；内置浏览器工具里只看不动的（`BROWSER_READS`）与关闭 Agent 自己开的标签；`--demo` 时的 `long_task` | 直接执行 |
+| R0 | 内置 `list_folders`，会话任一文件夹中的 `list_files`、`read_file`；内置 `ask_user`；Host 自己的 `read_conversation_reference`（不属于任何插件，读取前后由 Host 核对并审计，见 [ARCHITECTURE](ARCHITECTURE.md)；同名的插件工具仍是 R2）；内置浏览器工具里只看不动的（`BROWSER_READS`）与关闭 Agent 自己开的标签；`--demo` 时的 `long_task` | 直接执行 |
 | R1 | 内置 `write_file` 写会话任一文件夹内的普通路径；内置浏览器工具的其余操作，关闭人开的标签；`--demo` 时的 `write_report` | 每次询问，可选「本会话始终允许」；会话的[权限档位](#权限档位)可以不问 |
 | R2 | 其余全部，见下 | 每次询问，没有「始终允许」，即使同一工具此前在本会话被始终允许 |
 

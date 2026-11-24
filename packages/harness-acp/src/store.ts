@@ -335,7 +335,7 @@ const subagent: z.ZodType = z.lazy(() =>
 )
 const message = z.object({
   agentBrief: agentBrief.optional(),
-  origin: z.literal('mcp-prompt').optional(),
+  origin: z.enum(['mcp-prompt', 'conversation-reference']).optional(),
   fileRefs: z.array(z.custom<FileMention>(isFileMention)).max(32).optional(),
   outputs: z.array(z.custom<FileChange>(isFileChange)).max(1000).optional(),
   outputsPending: z.literal(true).optional(),

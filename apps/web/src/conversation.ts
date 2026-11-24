@@ -21,6 +21,7 @@ import { diffLines, previousState } from './diff.ts'
 import { toolKind } from './icons.tsx'
 import { thinkingWord } from './composer/modelReasoning.ts'
 import { currentLocale, defineCopy, listText, plural } from './core/i18n.ts'
+import { shownToolTitle } from './conversation/toolTitles.ts'
 
 const COPY = defineCopy(
   {
@@ -703,8 +704,9 @@ export function toolLabel(message: Pick<Message, 'tool' | 'toolName' | 'state'>)
   if (actions) return actionLabel(actions)
   if (tool?.toolTitle) {
     const found = titledObject(tool)
-    if (!found) return { object: tool.toolTitle, mono: false }
-    return { verb: tool.toolTitle, object: found.path ? shortPath(found.object) : found.object, mono: !found.path }
+    const shown = shownToolTitle(tool.toolTitle, message.toolName)
+    if (!found) return { object: shown, mono: false }
+    return { verb: shown, object: found.path ? shortPath(found.object) : found.object, mono: !found.path }
   }
   const kind = toolKind(message)
   const verb = VERBS[kind]
@@ -767,11 +769,13 @@ export function linesBelow(box: { scrollHeight: number; clientHeight: number; sc
  * The words an approval card and an export name a call by: a titled tool's title and object (「写入文件 notes/plan.md」),
  * else the call's own summary or the tool's name.
  */
-export function toolHeading(tool: Message['tool'], toolName: string | undefined): string {
+export function toolHeading(tool: Message['tool'], toolName: string | undefined, recorded = false): string {
   if (isReview(tool)) return JUDGED_COPY.review(tool!.judged!.by)
   if (tool?.toolTitle) {
     const found = titledObject(tool)
-    return found ? `${tool.toolTitle} ${found.object}` : tool.toolTitle
+    // `recorded`: an approval card of another Harness shows the title as reported, which is its evidence.
+    const shown = recorded ? tool.toolTitle : shownToolTitle(tool.toolTitle, toolName)
+    return found ? `${shown} ${found.object}` : shown
   }
   return tool?.title || toolName || COPY.toolCall
 }
@@ -1344,7 +1348,7 @@ function toolText(message: Message): string {
   if (message.subagent) return COPY.subagent(message.subagent.title, message.subagent.stopping ? COPY.stopping : COPY.running)
   const label = toolLabel({ ...message, state: 'running' })
   if (label.verb) return `${label.verb} ${label.object}`
-  return message.tool?.toolTitle ? COPY.doing(message.tool.toolTitle) : COPY.executing(label.object)
+  return message.tool?.toolTitle ? COPY.doing(shownToolTitle(message.tool.toolTitle, message.toolName)) : COPY.executing(label.object)
 }
 
 const PHASE_WORDS: Record<Exclude<LivePhase['kind'], 'tool' | 'starting'>, string> = {
@@ -1427,7 +1431,9 @@ export function runStatus(detail: TaskDetail, opts: LivePhaseOptions & { harness
     const commandLike = live.activity === 'command' || live.activity === 'tool'
     return {
       tone: 'amber',
-      text: commandLike ? COPY.quietCommand(live.commandName ?? COPY.command, minutesText(quiet)) : COPY.quietModel(minutesText(quiet)),
+      text: commandLike
+        ? COPY.quietCommand(live.commandName ? shownToolTitle(live.commandName) : COPY.command, minutesText(quiet))
+        : COPY.quietModel(minutesText(quiet)),
       actions: ['keep-waiting', 'stop'],
     }
   }
@@ -1445,7 +1451,11 @@ export function runStatus(detail: TaskDetail, opts: LivePhaseOptions & { harness
     : detail.messages.findLast(message => message.role === 'tool' && message.state === 'running')
   // The row reads the command itself where the Host may only have the tool's title.
   const command =
-    running && toolKind(running) === 'execute' ? toolLabel(running).object : live?.activity === 'command' ? live.commandName : undefined
+    running && toolKind(running) === 'execute'
+      ? toolLabel(running).object
+      : live?.activity === 'command' && live.commandName
+        ? shownToolTitle(live.commandName)
+        : undefined
   const words = command ? COPY.runningCommand(command) : COPY.running
   return { tone: 'plain', text: words, inHeader: true, ...(clock ? { clock } : {}) }
 }
@@ -1475,7 +1485,7 @@ export function runEndLine(
   const end = summary.runEnd
   if (!end) return undefined
   const results = end.unknownResults ?? []
-  const unknown = results.filter(result => !shown?.has(result.messageId)).map(result => result.name)
+  const unknown = results.filter(result => !shown?.has(result.messageId)).map(result => shownToolTitle(result.name))
   const count = end.unknownResultCount ?? results.length
   const checked = unknownChecked(summary)
   const uncertain = count > 0 ? COPY.uncertainty(count, checked ? COPY.checked : COPY.check) : ''

@@ -354,6 +354,8 @@ function UserMessage({
       )}
       {/* The agent fetched an MCP prompt during this turn: text Latch never saw is in its context. Always said. */}
       {message.origin === 'mcp-prompt' && <p className="message-change-note">{COPY.fromMcp}</p>}
+      {/* The Host handed the agent another conversation's messages during this turn. */}
+      {message.origin === 'conversation-reference' && <p className="message-change-note">{COPY.readReference}</p>}
       <MessageAttachments attachments={message.attachments} />
       {message.text && (
         <div className="user-bubble" data-clamped={tall && !whole ? '' : undefined}>

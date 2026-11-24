@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FileDiff, Message, RunLive, TaskDetail, TaskStatus, TaskSummary } from '@latch/protocol'
 import type { Turn } from '../src/conversation.ts'
+import { setLocale } from '../src/core/i18n.ts'
 import {
   sameData,
   stableTurns,
@@ -249,6 +250,33 @@ describe('process rows', () => {
     ).toEqual({ verb: '编辑', object: '2 个文件', mono: false })
     expect(diffStat({ diffs: [{ path: 'a', oldText: 'x\n', newText: 'y\nz\n' }] })).toEqual({ add: 2, del: 1 })
     expect(diffStat({})).toBeUndefined()
+  })
+
+  it('shows the title Latch’s own tool recorded in the interface language, and any other title as recorded', () => {
+    const write = {
+      toolName: 'write_file',
+      tool: { kind: 'edit' as const, toolTitle: '写入文件', title: 'write_file', input: '{"path":"notes/plan.md"}' },
+    }
+    const reference = { toolName: 'read_conversation_reference', state: 'completed' as const, tool: { toolTitle: '读取引用的会话' } }
+    // A plugin's tool that takes a built-in name keeps the title it declared.
+    const plugin = { toolName: 'read_file', state: 'completed' as const, tool: { toolTitle: '读取档案' } }
+    const ended = {
+      reason: 'turn-ended' as const,
+      at: '2026-01-01T00:00:00.000Z',
+      unknownResults: [{ messageId: 'm', name: '运行长任务' }],
+    }
+    setLocale('en')
+    try {
+      expect(toolLabel({ ...write, state: 'completed' })).toEqual({ verb: 'Write file', object: 'plan.md', mono: false })
+      expect(toolHeading(write.tool, write.toolName)).toBe('Write file notes/plan.md')
+      expect(toolLabel(reference)).toEqual({ object: 'Read referenced conversation', mono: false })
+      expect(toolLabel(plugin)).toEqual({ object: '读取档案', mono: false })
+      expect(runEndLine({ runEnd: ended } as TaskSummary, 'Latch')?.unknown).toEqual(['Run long task'])
+    } finally {
+      setLocale('zh-CN')
+    }
+    expect(toolLabel(reference)).toEqual({ object: '读取引用的会话', mono: false })
+    expect(runEndLine({ runEnd: ended } as TaskSummary, 'Latch')?.unknown).toEqual(['运行长任务'])
   })
 
   it('names a tool that declares a title by that title and its object, and an untitled one by its raw name in mono', () => {

@@ -64,6 +64,7 @@ import type {
   ApprovalOptionKind,
   ContextCompactionEvent,
   Message,
+  MessageOrigin,
   SessionConfigOption,
   RunEnd,
   RunLive,
@@ -3236,13 +3237,14 @@ export class AgentRuntime implements Bridge {
     return this.options.teamRoster !== undefined && this.options.dispatchTeam !== undefined
   }
 
-  async markOutsideContent(sessionId: string): Promise<void> {
+  async markOutsideContent(sessionId: string, origin: MessageOrigin = 'mcp-prompt'): Promise<void> {
     await this.ready()
     const task = this.task(sessionId)
     task.acp.outsideRead = true
     const turn = isActive(task.summary) ? this.runs.get(sessionId)?.userMessageId : undefined
     const message = turn ? task.messages.find(item => item.id === turn && item.role === 'user') : undefined
-    if (message) message.origin = 'mcp-prompt'
+    // An MCP prompt's label is always said: a later reference read in the same turn does not replace it.
+    if (message && message.origin !== 'mcp-prompt') message.origin = origin
     this.touch(task)
     this.mark()
     this.notify(sessionId)
@@ -9099,8 +9101,8 @@ export function proposalTurn(task: { messages: Message[]; acp: { cwd: string; fo
     isAbsolute(path) && roots.some(root => (canonical(path) + sep).startsWith(root.endsWith(sep) ? root : root + sep))
   const external = task.messages.slice(Math.max(fresh, 0)).some(message => {
     if (message.role === 'user' && message.agentBrief?.segments.some(segment => segment.source === 'material')) return true
-    // The local MCP bridge was allowed to fetch a prompt during this turn (`markOutsideContent`).
-    if (message.origin === 'mcp-prompt') return true
+    // An MCP prompt or a referenced conversation was allowed into this turn (`markOutsideContent`).
+    if (message.origin !== undefined) return true
     if (message.subagent) return true
     if (message.role !== 'tool') return false
     const tool = message.tool

@@ -11,6 +11,7 @@ import type {
   HarnessCapabilities,
   HarnessCommandCatalogue,
   KeepWaitingResult,
+  MessageOrigin,
   ModelCapabilities,
   ProviderKind,
   RunEnd,
@@ -1288,10 +1289,10 @@ export class HarnessHub implements Bridge {
     return member.bridge.cancelSubagent(sessionId, subagentId)
   }
 
-  async markOutsideContent(sessionId: string): Promise<void> {
+  async markOutsideContent(sessionId: string, origin?: MessageOrigin): Promise<void> {
     const { bridge } = await this.route(sessionId)
-    if (!bridge.markOutsideContent) throw new AppError(503, 'mcp-prompt-unmarked', '该 Harness 无法保存 MCP 提示的来源')
-    await bridge.markOutsideContent(sessionId)
+    if (!bridge.markOutsideContent) throw new AppError(503, 'mcp-prompt-unmarked', '该 Harness 无法保存外部内容的来源')
+    await bridge.markOutsideContent(sessionId, origin)
   }
 
   /**

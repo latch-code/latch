@@ -3,6 +3,7 @@ import type {
   FileMention,
   Approval,
   Message,
+  MessageOrigin,
   ModelRef,
   AgentExecutionContext,
   RunLive,
@@ -323,11 +324,12 @@ export interface Bridge {
    */
   cancel(sessionId: string, options?: CancelOptions): Promise<boolean | void>
   /**
-   * Persists provenance before forwarding a local prompt through a `latch-mcp` bridge. Rejects if the session
-   * is missing or the write fails. Proposals are external until the context starts over. The running turn, if
-   * any, gets `Message.origin`. The marker records permission to fetch and may outlive a failed fetch.
+   * Persists provenance before forwarding a local prompt through a `latch-mcp` bridge, or before the Host hands over
+   * a referenced conversation (`origin`, by default `mcp-prompt`). Rejects if the session is missing or the write
+   * fails. Proposals are external until the context starts over. The running turn, if any, gets `Message.origin`.
+   * The marker records permission to fetch and may outlive a failed fetch.
    */
-  markOutsideContent?(sessionId: string): Promise<void>
+  markOutsideContent?(sessionId: string, origin?: MessageOrigin): Promise<void>
   /**
    * Optional, with `HarnessHostOptions.teamRoster`. The team this session leads changed (its members, their states, or
    * whether its agent may send them work): the driver reads `teamRoster` again for what its agent reads next.

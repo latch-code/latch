@@ -161,6 +161,14 @@ describe('a turn whose agent fetched an MCP prompt', () => {
     expect(row({ origin: 'mcp-prompt' })).toContain('来自 MCP 提示')
     expect(row({})).not.toContain('来自 MCP 提示')
   })
+
+  it('says a referenced conversation was read, not an MCP prompt, on a turn the Host marked so', () => {
+    const row = renderToStaticMarkup(
+      createElement(MessageRow, { message: { id: 'm', role: 'user', text: 'Use it.', origin: 'conversation-reference' } }),
+    )
+    expect(row).toContain('读取了引用的会话')
+    expect(row).not.toContain('来自 MCP 提示')
+  })
 })
 
 describe('with the connection down', () => {
