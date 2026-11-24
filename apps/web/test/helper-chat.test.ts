@@ -267,7 +267,7 @@ describe('creating a helper: 「你想让谁成为你的帮手？」', () => {
         workComputer: { hostId: 'b'.repeat(52), agentId: 'agt_00000000-0000-4000-8000-000000000007' },
       }),
     )
-    expect(html).toContain('添加工作电脑上的助手')
+    expect(html).toContain('添加工作电脑上的 Agent')
     expect(html).toContain('给它起个名字')
     expect(html).not.toContain('你想让谁成为你的帮手？')
   })

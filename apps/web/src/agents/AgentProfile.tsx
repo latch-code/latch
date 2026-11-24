@@ -51,7 +51,7 @@ const COPY = defineCopy(
     edit: '编辑',
     newSchedule: '新建定时',
     profile: '资料',
-    sourceSettings: '这里修改原电脑保留的配置。要调整新委托使用的技能和工具，请打开工作电脑上的助手。',
+    sourceSettings: '这里修改原电脑上的配置。要调整新委托使用的技能和工具，请打开工作电脑上的 Agent。',
     close: '关闭资料',
     missing: '找不到这个 Agent',
     missingDetail: '它可能已在别处删除。',
