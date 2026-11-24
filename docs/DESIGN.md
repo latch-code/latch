@@ -15,7 +15,7 @@ sources:
   - apps/web/src/usage
   - apps/web/public
   - examples/marketplace
-  - examples/latch.catelog.json
+  - examples/latch.catalog.json
   - native/ios/Sources/LatchNativeCore/PhoneSlash.swift
   - native/ios/QuestionWidget/LatchQuestionWidget.swift
   - build/icon.png

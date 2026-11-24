@@ -61,7 +61,7 @@ it('derives canonical links, the sitemap and robots.txt from SITE_URL', async ()
 })
 
 it('publishes the package a marketplace visitor actually downloads at its advertised digest', async () => {
-  const catalog = JSON.parse(await readFile(join(dist, 'plugins/latch.catelog.json'), 'utf8')) as {
+  const catalog = JSON.parse(await readFile(join(dist, 'plugins/latch.catalog.json'), 'utf8')) as {
     formatVersion: number
     plugins: { id: string; version: string; sha256: string; bundle: string }[]
   }
@@ -83,7 +83,7 @@ it('publishes the package a marketplace visitor actually downloads at its advert
 
 it.each([
   ['examples', 'directory', 'symlink'],
-  ['examples/latch.catelog.json', 'file', 'symlink'],
+  ['examples/latch.catalog.json', 'file', 'symlink'],
   ['examples/sample', 'directory', 'symlink'],
   ['examples/sample/latch-plugin.json', 'file', 'symlink'],
   ['examples/sample/src', 'directory', 'symlink'],
@@ -98,7 +98,7 @@ it.each([
   const content = 'export default function Panel() { return null }\n'
   await mkdir(join(examples, 'sample/src'), { recursive: true })
   await writeFile(
-    join(examples, 'latch.catelog.json'),
+    join(examples, 'latch.catalog.json'),
     JSON.stringify({ plugins: [{ id: 'sample', folder: 'sample', manifest: 'latch-plugin.json', files: ['src/panel.mjs'] }] }),
   )
   await writeFile(join(examples, 'sample/latch-plugin.json'), JSON.stringify(manifest))

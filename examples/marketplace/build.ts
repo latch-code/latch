@@ -2,7 +2,7 @@
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
-import type catalogSource from '../latch.catelog.json'
+import type catalogSource from '../latch.catalog.json'
 
 function readSourceFile(root: string, file: string): string {
   const parts = file.split('/')
@@ -29,7 +29,7 @@ function readSourceFile(root: string, file: string): string {
 
 export function catalogPackages(repository = fileURLToPath(new URL('../../', import.meta.url))) {
   const root = realpathSync(repository)
-  const catalog = JSON.parse(readSourceFile(root, 'examples/latch.catelog.json')) as typeof catalogSource
+  const catalog = JSON.parse(readSourceFile(root, 'examples/latch.catalog.json')) as typeof catalogSource
   return Object.fromEntries(
     catalog.plugins.map(entry => {
       if (!/^[a-z0-9-]+$/u.test(entry.folder)) throw new Error('Invalid catalog folder')

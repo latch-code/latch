@@ -78,7 +78,7 @@ describe('local plugin sources', () => {
       version: nextBundle.manifest.version,
       sha256,
     }
-    await write(directory, 'latch.catelog.json', catalog(catalogEntry, release))
+    await write(directory, 'latch.catalog.json', catalog(catalogEntry, release))
     await write(directory, 'plugins/handoff/latch-plugin.json', JSON.stringify(manifest))
     const found = await findExternalPluginSource(directory, options)
     expect(found.packages.map(entry => [entry.path, entry.name])).toEqual([
@@ -99,7 +99,7 @@ describe('local plugin sources', () => {
     await expect(readExternalPlugin(found.source, release.bundle, options)).rejects.toMatchObject({ code: 'plugin-external-integrity' })
     const renamed = { ...release, bundle: 'files/published-v2.latch-plugin.json' }
     await write(directory, renamed.bundle, published)
-    await write(directory, 'latch.catelog.json', catalog(catalogEntry, renamed))
+    await write(directory, 'latch.catalog.json', catalog(catalogEntry, renamed))
     expect((await listExternalPlugins(found.source, options)).at(-1)).toMatchObject({ path: renamed.bundle, id: release.id })
     expect((await readExternalPlugin(found.source, renamed.bundle, options)).bundle.manifest.id).toBe('published')
   })
@@ -157,10 +157,10 @@ describe('local plugin sources', () => {
     const { directory, options } = await local()
     await write(directory, 'plugins/handoff/latch-plugin.json', JSON.stringify(manifest))
     for (const files of [['../notes.md'], ['notes.MD', 'NOTES.md'], ['secrets/.env'], ['latch-plugin.json']]) {
-      await write(directory, 'latch.catelog.json', catalog({ ...catalogEntry, files }))
+      await write(directory, 'latch.catalog.json', catalog({ ...catalogEntry, files }))
       await expect(findExternalPluginSource(directory, options)).rejects.toMatchObject({ code: 'plugin-external-content-invalid' })
     }
-    await write(directory, 'latch.catelog.json', catalog(catalogEntry))
+    await write(directory, 'latch.catalog.json', catalog(catalogEntry))
     const { source } = await findExternalPluginSource(directory, options)
     await write(directory, 'plugins/handoff/SKILL.md', Buffer.from([0xff]))
     await expect(readExternalPlugin(source, catalogEntry.folder, options)).rejects.toMatchObject({
@@ -173,7 +173,7 @@ describe('local plugin sources', () => {
   it('refuses embedded repositories while allowing the selected directory to be a Git checkout', async () => {
     const { directory, options } = await local()
     await write(directory, '.git', 'gitdir: selected-checkout')
-    await write(directory, 'latch.catelog.json', catalog(catalogEntry))
+    await write(directory, 'latch.catalog.json', catalog(catalogEntry))
     await write(directory, 'plugins/handoff/latch-plugin.json', JSON.stringify(manifest))
     const found = await findExternalPluginSource(directory, options)
     await write(directory, 'plugins/handoff/.git', 'gitdir: embedded-checkout')
