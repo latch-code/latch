@@ -20,20 +20,20 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 - `src/core/` 仅导入本目录、`react` 与 `@latch/protocol`；禁用布局组件（lint）。
 - 正文滚动仅 `useReadingPosition` 写，消息和工具行用 `data-message-id`。刻度列独立滚动，定位（含待办回合）走 `reveal`。上翻、重排、回到最新和切换见 `test/reading-position.test.ts`。缓存见 STREAMING。
 - 文件预览只经授权句柄，项目预览不伪造会话；文件树懒加载。不透明文档框与可信插件分开，见 `src/preview/AGENTS.md`。
-- 插件面板由 `SessionPanels` / `ClientPluginPanel` 挂载并随会话清理；可信代码没有隔离，`compose` 只追加草稿（`e2e/plugin-packages.e2e.ts`）。
+- 插件面板由 `SessionPanels` / `ClientPluginPanel` 挂载并随会话清理；可信代码无隔离，`compose` 只追加草稿（`e2e/plugin-packages.e2e.ts`）。
 - 安全错误文案按码取自 `src/core/securityCopy.ts`。
-- `permissions.ts` 只是展示，Host 会再次检查；事件流用 `eventStream.ts`（fetch），不用 `EventSource`。
+- `permissions.ts` 只是展示，Host 再查；事件流用 `eventStream.ts`（fetch），不用 `EventSource`。
 - 本机按 `isLocalListener`；回环浏览器算远程。缺邀请或用掉后重领（enrollment.e2e，ARCHITECTURE）。
-- 回复仅链接 http(s)、mailto，链接内代码继承目标，文件用后缀图标且不生成 `<a href>`（message-content.test）。闭合围栏内的引用回复保留原文（user-fences.test）。
+- 回复仅链接 http(s)、mailto，链接内代码继承目标，文件用后缀图标且不生成 `<a href>`（message-content.test）。闭合围栏内引用回复保留原文（user-fences.test）。
 - 确认走 `withConfirmation`；未知结果保留原请求，设置确认后解锁。草稿只存文字，按设备与会话存于浏览器，14 天过期；像凭据的只在内存，含摘录的要 `all`；删会话、撤权或退出即清。项目失效保留草稿供显式继续（`composer/WorkspaceRecovery.tsx`）。
 - 复用 `@latch/ui` 令牌、层与原语。对话与看板同底色，列独立滚动（DESIGN）。
 - Harness 与模型图标取自 `src/assets/brands/`（许可见 `public/licenses/brands/`），经 `?no-inline` 用于图片或遮罩。预设都有图标，缺图用中性图形，禁用字母。草稿模型面板打开时补读选项（HARNESSES）。
 - 只读 `HarnessInfo.capabilities` 与 `level`，不判断 Driver 种类；共享编码与 Host、测试向量一致（`test/client-security.test.ts`）。
-- 项目按会话记录的身份分组，普通会话归「无项目」；只有旧会话按主目录回退，不从附加文件夹推断归属（`test/client-sessions.test.ts`）。
-- 分支用 Host 摘要，可见时每 30 秒同步。按 `checkedOut` 分类，页面不运行 Git。基线见 GIT-REVIEW。
+- 项目按会话记录的身份分组，普通会话归「无项目」；仅旧会话按主目录回退，不从附加文件夹推断（`test/client-sessions.test.ts`）。
+- 分支用 Host 摘要，可见时每 30 秒同步。按 `checkedOut` 分类，页面不运行 Git（GIT-REVIEW）。
 - 桌面文件夹签名操作需 `folders.protocolVersion === 1`（`test/shell-folders.test.ts`）。
 - 电脑菜单按来源识别当前电脑，经 `computers.switchTo` 切换。
-- Agent 资料的「动态」含即将进行的定时，电脑、唤醒、通知和 MCP 在「运行设置」（DESIGN）。
+- Agent 资料的「动态」含即将的定时，电脑、唤醒、通知和 MCP 在「运行设置」（DESIGN）。
 
 仅淡入消息。脚本用 `motionAllowed`。
 
