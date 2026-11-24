@@ -2,6 +2,7 @@ import { createContext, Fragment, useContext, type ReactNode } from 'react'
 import { isFileMention, type FileMention } from '@latch/protocol'
 import { Icon, TerminalGlyph } from '@latch/ui'
 import { terminalExcerpts, type TerminalExcerpt } from '../composer/terminalExcerpt.ts'
+import { fencedParts } from '../conversation/fencedParts.ts'
 import { QUOTE_COPY, ReplyQuoteSource } from '../conversation/ReplyQuoteControl.tsx'
 import { replyQuotes } from '../conversation/replyQuote.ts'
 import { mentionRange } from '../fileMentions.ts'
@@ -12,33 +13,6 @@ import { VisibleText } from './VisibleText.tsx'
 
 /** The session's skills, commands and team members, so a sent message draws its tokens as the input drew them. */
 export const SentCatalogue = createContext<PromptCatalogue>({})
-export type TextPart = { kind: 'text' | 'code'; text: string }
-
-/**
- * A person's text cut at its fenced code blocks: a line of three or more backticks opens one, and only a line of at least
- * as many backticks and nothing else closes it. A fence left open is text, as typed.
- */
-export function fencedParts(text: string): TextPart[] {
-  const lines = text.split('\n')
-  const parts: TextPart[] = []
-  let plain: string[] = []
-  for (let index = 0; index < lines.length; index++) {
-    const open = /^(`{3,})[^`]*$/u.exec(lines[index]!)
-    const fence = open?.[1]
-    const closes = (line: string) => fence !== undefined && /^`+$/u.test(line.trimEnd()) && line.trimEnd().length >= fence.length
-    const close = fence === undefined ? -1 : lines.findIndex((line, at) => at > index && closes(line))
-    if (!open || close < 0) {
-      plain.push(lines[index]!)
-      continue
-    }
-    if (plain.length) parts.push({ kind: 'text', text: plain.join('\n') })
-    plain = []
-    parts.push({ kind: 'code', text: lines.slice(index + 1, close).join('\n') })
-    index = close
-  }
-  if (plain.length) parts.push({ kind: 'text', text: plain.join('\n') })
-  return parts
-}
 
 function TerminalExcerptView({ excerpt }: { excerpt: TerminalExcerpt }) {
   return (
@@ -102,7 +76,7 @@ export function UserText({ text, refs }: { text: string; refs?: readonly FileMen
 
 function TextWithQuotes({ text, refs }: { text: string; refs?: readonly FileMention[] }) {
   const source = useContext(ReplyQuoteSource)
-  const quotes = text.includes('[引用回复 ') ? replyQuotes(text) : []
+  const quotes = replyQuotes(text)
   if (!quotes.length) return <UserTextParts text={text} refs={refs} />
   let previous = 0
   return (

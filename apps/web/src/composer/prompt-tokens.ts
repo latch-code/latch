@@ -107,10 +107,8 @@ export function promptChips(text: string, catalogue: PromptCatalogue, refs: read
     for (const match of text.matchAll(/\[conversation-ref:[a-f0-9-]{36}\] ([^\n]{1,500}?) · read_conversation_reference/gu))
       references.push({ start: match.index, end: match.index + match[0].length, kind: 'conversation', name: match[1]!, description: '' })
   }
-  if (text.includes('[引用回复 ')) {
-    for (const { from, quote } of replyQuotes(text))
-      references.push({ start: from, end: text.indexOf('\n', from), kind: 'quote', name: '', description: quote.text })
-  }
+  for (const { from, quote } of replyQuotes(text))
+    references.push({ start: from, end: text.indexOf('\n', from), kind: 'quote', name: '', description: quote.text })
   const all = [...promptMarks(text, catalogue), ...files, ...references].sort((a, b) => a.start - b.start || b.end - a.end)
   const chips: PromptChip[] = []
   for (const chip of all) if (chip.end > chip.start && (!chips.length || chip.start >= chips.at(-1)!.end)) chips.push(chip)

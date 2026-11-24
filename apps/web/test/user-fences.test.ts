@@ -2,7 +2,8 @@ import { expect, it } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { reviewNotesMessage } from '@latch/protocol'
-import { fencedParts, UserText } from '../src/components/MentionedText.tsx'
+import { UserText } from '../src/components/MentionedText.tsx'
+import { fencedParts } from '../src/conversation/fencedParts.ts'
 
 it('cuts a sent line feedback at its quoted lines, so they show as code and not as fences', () => {
   const text = reviewNotesMessage([
@@ -15,15 +16,39 @@ it('cuts a sent line feedback at its quoted lines, so they show as code and not 
     },
   ])
   const parts = fencedParts(text)
-  expect(parts.filter(part => part.kind === 'code')).toEqual([{ kind: 'code', text: 'const a = `x`\ncall(a)' }])
+  expect(parts.filter(part => part.kind === 'code')).toEqual([
+    { kind: 'code', text: 'const a = `x`\ncall(a)', from: text.indexOf('const') },
+  ])
   expect(parts.map(part => part.text).join('')).not.toContain('```')
-  expect(parts.at(-1)).toEqual({ kind: 'text', text: '这里改成常量' })
+  expect(parts.at(-1)).toEqual({ kind: 'text', text: '这里改成常量', from: text.indexOf('这里') })
 })
 
 it('keeps a fence that never closes, or a shorter closing run, as typed', () => {
-  expect(fencedParts('看这个\n```ts\nopen')).toEqual([{ kind: 'text', text: '看这个\n```ts\nopen' }])
-  expect(fencedParts('````\na\n```\n````')).toEqual([{ kind: 'code', text: 'a\n```' }])
-  expect(fencedParts('plain `code` text')).toEqual([{ kind: 'text', text: 'plain `code` text' }])
+  expect(fencedParts('看这个\n```ts\nopen')).toEqual([{ kind: 'text', text: '看这个\n```ts\nopen', from: 0 }])
+  expect(fencedParts('````\na\n```\n````')).toEqual([{ kind: 'code', text: 'a\n```', from: 5 }])
+  expect(fencedParts('plain `code` text')).toEqual([{ kind: 'text', text: 'plain `code` text', from: 0 }])
+})
+
+it('renders reply citations only outside fenced code in a sent message', () => {
+  const marker = '[引用回复 session/example@0]'
+  const text = [
+    '[引用回复 session/first@12]\n> 引用前文',
+    reviewNotesMessage([
+      {
+        path: 'example.md',
+        range: { start: 1, end: 3 },
+        side: 'new',
+        anchor: { lines: ['```', marker, '> 示例文字'] } as never,
+        text: '请保留原示例',
+      },
+    ]),
+    '[引用回复 session/last@25]\n> 引用后文\n> ```',
+  ].join('\n\n')
+  const html = renderToStaticMarkup(createElement(UserText, { text }))
+  expect(html).toContain('<pre class="user-code"><code>```\n' + marker + '\n&gt; 示例文字</code></pre>')
+  expect(html.match(/class="user-reply-quote"/gu)).toHaveLength(2)
+  expect(html).toContain('class="user-reply-quote">引用前文</span>')
+  expect(html).toContain('class="user-reply-quote">引用后文\n```</span>')
 })
 
 it('keeps file chips, reply citations and ordinary code alongside multiple terminal excerpts', () => {
