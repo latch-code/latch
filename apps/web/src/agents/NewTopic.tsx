@@ -19,6 +19,7 @@ import { generalSubmission, newTopicShowing, personalChat } from './chat.ts'
 import { agentHarnesses, agentSessions, delegationChoice, delegationSubmission, generalChoice } from './model.ts'
 import { CarryResults } from './CarryResults.tsx'
 import { carriedText } from './scheduleModel.ts'
+import { AGENT_SPACE_COPY } from './spaceCopy.ts'
 
 const COPY = defineCopy(
   {
@@ -30,7 +31,6 @@ const COPY = defineCopy(
     more: '更多',
     released: '已在 设置 › 设备 里释放，请移除后重新添加。',
     cannotRun: '这台设备不能开始会话',
-    updateNeeded: 'Mac 需要更新后才能开始聊天',
     confirming: '正在确认聊天',
     continue: '打开聊天继续',
     modelNeeded: '先在这台 Mac 的 设置 › 模型服务 接上一个',
@@ -57,7 +57,6 @@ const COPY = defineCopy(
     more: 'More',
     released: 'These attachments were released in Settings › Devices. Remove them and add them again.',
     cannotRun: 'This device can’t start sessions',
-    updateNeeded: 'Update Latch on the Mac to start a chat',
     confirming: 'Confirming chat',
     continue: 'Open the chat to continue',
     modelNeeded: 'Add a model service under Settings › Models on this Mac',
@@ -246,7 +245,7 @@ export function NewTopic({
     : !access.scopes.has('run')
       ? COPY.cannotRun
       : catalog.features?.singleAgentChat !== true
-        ? COPY.updateNeeded
+        ? AGENT_SPACE_COPY.updateChat
         : !chat || chat.state === 'starting'
           ? COPY.confirming
           : chat.state === 'ready'

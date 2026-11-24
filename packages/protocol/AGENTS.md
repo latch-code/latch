@@ -5,6 +5,7 @@
 运行环境 isomorphic：只用 ECMAScript 标准库，不导入 `node:*`，不用 DOM 或 Node 的全局变量（`tsconfig.isomorphic.json`、`.oxlintrc.json`）。没有依赖，不使用其他 workspace 包；模块没有副作用。入口 `@latch/protocol` 导出类型与值；`@latch/protocol/types`（`src/types.ts`）只有类型。
 
 不变量：
+- `CustomAgent.workComputer` 只含 Host 与助手 ID，缺省用本机。
 
 - `@latch/sdk` 的类型文件只用 `@latch/protocol/types`，外部项目才能检查兼容入口（`tests/plugin-sdk.test.ts#type-check in an outside TypeScript project that does not allow .ts import extensions`）。外部项目只接受仅含类型的 .ts 路径导入与导出，所以 `src/types.ts` 只写 `export type`，值由 `src/index.ts` 导出；新模块两处都要加。
 - 技能无正文和私有路径，Harness 插件报告限短名与截断标记。React 面板只含模块摘要，源码经认证另取；数据面板禁 HTML、脚本、样式。

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 
-import { GENERAL_AGENT_ID } from '@latch/protocol'
+import { GENERAL_AGENT_ID, type AgentWorkComputer } from '@latch/protocol'
 import { Button, ICON_STROKE, IconButton, InlineNotice, ChevronLeftGlyph, HistoryGlyph, PlusGlyph, OfflineGlyph } from '@latch/ui'
 import { useBackLayer } from '../hooks/backStack.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
@@ -9,10 +9,12 @@ import { NavTop, shellOverview, shellSpaces, ShellNewAgent, ShellNavFoot } from 
 import { WorkbenchComputer } from '../shell/WorkbenchNav.tsx'
 import { AgentsSpaceList } from './AgentsSpaceList.tsx'
 import { askDelegateFocus } from './delegateFocus.ts'
+import { AgentWorkComputerField } from './AgentWorkComputer.tsx'
+import { useAgentList } from './useAgentData.ts'
 import { HelperCreate } from './HelperCreate.tsx'
 import { AgentImport } from './AgentTransfer.tsx'
 import { AgentChat } from './AgentChat.tsx'
-import { AgentsHome, agentsHomeData, WaitingCards } from './AgentsHome.tsx'
+import { AgentsHome } from './AgentsHome.tsx'
 import { AgentTopics } from './AgentTopics.tsx'
 import { readsAgents } from './model.ts'
 import { LockedAgents } from './parts.tsx'
@@ -24,14 +26,14 @@ import { CONNECTION_COPY } from '../core/hostState.ts'
  * The left of 我的 Agent on wide windows: the sidebar's own top (the switch, 总览, 新建 Agent, 搜索, 定时任务), the roster
  * and the shared foot.
  */
-function AgentsNav({ shell, emptyInOverview }: { shell: ShellState; emptyInOverview: boolean }) {
+function AgentsNav({ shell }: { shell: ShellState }) {
   return (
     <div className="sidebar-body agents-nav-body agents-sidebar" data-space="agents">
       <NavTop
         snapshot={shell.snapshot}
         spaces={shellSpaces(shell)}
         overview={shellOverview(shell)}
-        primary={emptyInOverview ? undefined : <ShellNewAgent shell={shell} />}
+        primary={<ShellNewAgent shell={shell} />}
         onSearch={shell.openSearch}
         {...(shell.catalog?.features?.automations
           ? { onSchedules: () => shell.openMyAgent({ id: GENERAL_AGENT_ID, tab: 'schedules' }) }
@@ -39,7 +41,7 @@ function AgentsNav({ shell, emptyInOverview }: { shell: ShellState; emptyInOverv
         drawer={false}
         computerAtFoot
       />
-      <AgentsSpaceList shell={shell} hideEmpty={emptyInOverview} />
+      <AgentsSpaceList shell={shell} />
       {/* The computer stands at the foot, where the sidebar beside a topic has it, so nothing moves between the two. */}
       <div className="sidebar-work-computer">
         <WorkbenchComputer shell={shell} />
@@ -59,20 +61,24 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
   const offline = connection === 'offline'
   const target = route.myAgent
   const id = target?.id
+  const { read: creationList } = useAgentList(snapshot, id === 'new')
   const chat = id !== undefined && id !== 'new'
   // 导入 is the creation page's other way in: from a file instead of the two steps. It has no route of its own and closes
   // when the creation page does.
   const [importing, setImporting] = useState(false)
+  const [computerDraft, setComputerDraft] = useState<{ deviceId: string; target: AgentWorkComputer }>()
+  const workComputer = computerDraft?.deviceId === snapshot.device.id ? computerDraft.target : undefined
+  const [pickingComputer, setPickingComputer] = useState(false)
   useEffect(() => {
-    if (id !== 'new') setImporting(false)
+    if (id !== 'new') {
+      setImporting(false)
+      setComputerDraft(undefined)
+    }
   }, [id])
   const creating = importing ? COPY.importAgent : COPY.newAgent
   const topics = id === undefined && route.topics === true
   const home = id === undefined && !topics
   const locked = !readsAgents(snapshot)
-  const overview = home && !phone ? agentsHomeData(shell) : null
-  // A shut sidebar already puts this action in the title row.
-  const emptyInOverview = !locked && !shell.sidebarCollapsed && overview?.empty === 'no-agents'
   const refreshShell = shell.refresh
   const writes = useAgentWrites(
     useCallback(() => void refreshShell(), [refreshShell]),
@@ -153,8 +159,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
               </header>
               <div className="settings-scroll">
                 <div className="settings-content agents-root">
-                  {!locked && <WaitingCards shell={shell} />}
-                  <AgentsSpaceList shell={shell} page />
+                  {home && !locked ? <AgentsHome shell={shell} compact /> : <AgentsSpaceList shell={shell} page />}
                   {!locked && (
                     <Button
                       variant="ghost"
@@ -170,7 +175,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
               </div>
             </>
           ) : (
-            <AgentsNav shell={shell} emptyInOverview={emptyInOverview} />
+            <AgentsNav shell={shell} />
           )}
         </div>
         <section
@@ -190,7 +195,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
           inert={(phone && !pushed) || undefined}>
           {chat && (!phone || pushed) && <AgentChat key={id} shell={shell} owner={id} onBack={back} />}
           {/* A phone's root page is the roster; the 总览 is a wide window's. */}
-          {overview && <AgentsHome shell={shell} data={overview} emptyInOverview={emptyInOverview} />}
+          {home && !phone && <AgentsHome shell={shell} />}
           {topics && <AgentTopics shell={shell} onBack={back} />}
           {id === 'new' && (
             <>
@@ -231,13 +236,25 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
                         }}>
                         {COPY.importFile}
                       </Button>
+                      {snapshot.catalog.features?.agentWorkComputer && shell.access.local && canCreate && (
+                        <AgentWorkComputerField
+                          target={workComputer}
+                          creating
+                          disabled={offline || writes.saving || writes.held}
+                          onManage={() => shell.openSettings('computers')}
+                          onPicking={setPickingComputer}
+                          onChange={next => setComputerDraft(next ? { deviceId: snapshot.device.id, target: next } : undefined)}
+                        />
+                      )}
                       <HelperCreate
+                        workComputer={workComputer}
                         key={snapshot.device.id}
                         catalog={snapshot.catalog}
                         access={shell.access}
                         agents={snapshot.customAgents ?? []}
+                        plugins={creationList.state === 'ready' ? creationList.value.plugins : undefined}
                         writes={writes}
-                        disabled={offline || locked}
+                        disabled={offline || locked || pickingComputer}
                         onCreated={agent => {
                           writes.clear()
                           void shell.refresh()

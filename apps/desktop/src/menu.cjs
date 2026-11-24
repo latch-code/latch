@@ -25,6 +25,7 @@ const COPY = defineCopy(
     view: '显示',
     agents: '我的 Agent',
     defaultAppearance: '用默认外观打开',
+    returnToMac: '返回这台 Mac',
     reload: '重新载入',
     developerTools: '开发者工具',
     actualSize: '实际大小',
@@ -57,6 +58,7 @@ const COPY = defineCopy(
     view: 'View',
     agents: 'My Agents',
     defaultAppearance: 'Open with Default Appearance',
+    returnToMac: 'Return to This Mac',
     reload: 'Reload',
     developerTools: 'Developer Tools',
     actualSize: 'Actual Size',
@@ -79,7 +81,7 @@ const COPY = defineCopy(
  * used, so it asks nothing of the page.
  * The two items' keys are the focused window's own bindings (`spaceAccelerator`); the template is built again when they
  * change.
- * @param {{ packaged: boolean, onAbout?: () => void, onSettings?: () => void, onCheckForUpdates: () => void, onPastePlainText?: () => void, onSpace?: (space: 'code' | 'agents') => void, onSafeMode?: () => void, accelerators?: SpaceAccelerators }} input
+ * @param {{ packaged: boolean, onAbout?: () => void, onSettings?: () => void, onCheckForUpdates: () => void, onPastePlainText?: () => void, onSpace?: (space: 'code' | 'agents') => void, onSafeMode?: () => void, onReturnToMac?: () => void, onReload?: () => void, accelerators?: SpaceAccelerators }} input
  * @returns {import('electron').MenuItemConstructorOptions[]}
  */
 function menuTemplate({
@@ -90,6 +92,8 @@ function menuTemplate({
   onPastePlainText = () => {},
   onSpace = () => {},
   onSafeMode = () => {},
+  onReturnToMac = undefined,
+  onReload = undefined,
   accelerators = DEFAULT_SPACE_ACCELERATORS,
 }) {
   return [
@@ -132,6 +136,7 @@ function menuTemplate({
     {
       label: COPY.view,
       submenu: [
+        ...(onReturnToMac ? [{ label: COPY.returnToMac, id: 'return-to-mac', enabled: false, click: onReturnToMac }] : []),
         {
           label: 'Code',
           id: 'space-code',
@@ -148,7 +153,7 @@ function menuTemplate({
         },
         { type: 'separator' },
         { label: COPY.defaultAppearance, id: 'safe-mode', click: () => onSafeMode() },
-        { role: 'reload', label: COPY.reload },
+        onReload ? { label: COPY.reload, accelerator: 'CmdOrCtrl+R', click: onReload } : { role: 'reload', label: COPY.reload },
         ...(packaged ? [] : [/** @type {const} */ ({ role: 'toggleDevTools', label: COPY.developerTools })]),
         { type: 'separator' },
         { role: 'resetZoom', label: COPY.actualSize },

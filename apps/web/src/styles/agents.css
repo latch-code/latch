@@ -804,8 +804,16 @@ button.agent-memory-topic:hover {
   line-height: var(--lh-ui);
   font-weight: 600;
 }
-.agent-profile-section > .ui-segmented {
-  justify-self: start;
+.agent-profile-tabs .ui-tab-list {
+  flex-wrap: wrap;
+}
+.agent-profile-tabs .ui-tab {
+  padding-inline: var(--sp-8);
+}
+.agent-profile-pane:not([hidden]) {
+  display: grid;
+  gap: var(--sp-20);
+  min-width: 0;
 }
 .agent-profile-quiet {
   color: var(--muted);
@@ -1719,10 +1727,48 @@ button.helper-card:focus-visible {
   flex: 1;
   min-width: 0;
 }
-.agents-home-empty .ui-empty-title {
+.agents-first-task {
   display: grid;
-  gap: var(--sp-8);
+  justify-items: start;
+  gap: var(--sp-12);
+  padding-block: var(--sp-16);
+}
+.agents-first-task h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-work-wide-title);
+  font-weight: 600;
+  line-height: var(--lh-work-wide-title);
+}
+.agents-first-task p {
+  margin: 0;
+  color: var(--ink-2);
+}
+.agents-first-task .ui-button {
+  margin-top: var(--sp-4);
+}
+.agent-work-computer-label {
+  flex-shrink: 0;
   color: var(--muted);
+  font-size: var(--fs-caption);
+}
+.agents-home-link {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: var(--sp-2);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+}
+.agents-home-resume .agents-home-schedule-row {
+  border-block-end: 1px solid var(--line);
+  border-radius: 0;
+}
+.agents-home-compact .agents-first-task h2 {
+  font-size: var(--fs-heading);
+}
+.agents-home-compact .agents-first-task {
+  padding-inline: var(--sp-12);
 }
 .space-list[data-page] .agent-roster {
   display: grid;
@@ -1854,17 +1900,17 @@ button.helper-card:focus-visible {
   display: grid;
   gap: var(--sp-16);
 }
-.agents-root > .space-list {
+.agents-root .space-list {
   flex: none;
   margin: 0;
   padding: 0;
   overflow: visible;
 }
+.agents-home-compact .agents-home-content > section + .space-list {
+  margin-top: var(--sp-16);
+}
 .agents-root .space-group {
   margin-top: 0;
-}
-.agents-phone-waiting {
-  padding: 0;
 }
 .agents-root-topics.ui-button {
   justify-content: flex-start;
@@ -2091,4 +2137,37 @@ button.helper-card:focus-visible {
   margin: 0;
   color: var(--muted);
   font-size: var(--fs-ui);
+}
+
+.agent-work-field,
+.agent-work-destination {
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.agent-work-field .ui-value-picker {
+  max-width: 100%;
+}
+.agent-work-label {
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.agent-work-field > .ui-notice {
+  grid-column: 1 / -1;
+}
+@media (min-width: 768px) {
+  .agent-work-field {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+  }
+  .agent-work-field .ui-menu-header {
+    display: grid;
+    gap: var(--sp-4);
+    padding-block: var(--sp-6);
+  }
+}
+.agent-work-destination {
+  padding: var(--sp-12) var(--sp-16);
 }

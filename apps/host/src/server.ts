@@ -2527,6 +2527,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     startupCleanup.push(() => workThreads.flush())
     const harnessHub = await HarnessHub.open({
       dataDir,
+      assertAgentWorksHere: id => customAgents.assertWorksHere(id),
       defaultId: defaultHarnessId,
       log,
       now,
@@ -3276,6 +3277,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
           ...(input.fileRefs?.length ? { fileRefs: input.fileRefs } : {}),
           ...(input.freshContext ? { freshContext: true } : {}),
+          ...(input.queue ? { queue: true } : {}),
+          ...(input.steer ? { steer: true } : {}),
         }),
       )
     /**
@@ -9551,6 +9554,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const retry =
         (slot?.state === 'starting' || (slot?.state === 'ready' && slot.sessionId !== id))
         && customAgents.knowsChatStart(owner, caller.device.id, input.requestId)
+      if (!retry && customAgents.worksElsewhere(owner)) return undefined
       if (!retry && (slot?.state !== 'ready' || slot.sessionId !== id || !(await chatHomeMoved(owner, id)))) return undefined
       await assertSessionAccess(caller, id)
       checkPrivateSession(caller, id, true)
@@ -10221,6 +10225,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       })
     }
 
+    type PromptOutcome = 'steered' | 'accepted' | 'replayed' | 'replayed-steered' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }
+
     /**
      * Every new input to a session, from `POST /tasks/:id/prompt` and from a handoff: access, workspace, private-context,
      * file-reference and attachment checks are the same, and the driver's receipt answers a retry of the same `requestId`.
@@ -10239,12 +10245,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       writers: TurnWriters = {},
       /** A turn nobody pressed (a team round the lead's agent sent): no session-wide allowance carries into it. */
       unattended = false,
-    ): Promise<'steered' | 'accepted' | 'replayed' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
+    ): Promise<PromptOutcome> {
       // The install window: a retry of a turn this Host has on record gets its original answer; a new plain message, and a
       // queued or steered one on a session that is not running (it would start a turn at once), are refused.
       const turnKey = `${id}:${caller.device.id}:${input.requestId}`
       if (turnRequests.has(turnKey) || promptQueues.knows(id, caller.device.id, input.requestId))
-        return sendPromptChecked(caller, id, input, withoutPrivateContext, outsideContent, writers, unattended)
+        return sendPromptChecked(
+          caller,
+          id,
+          input,
+          withoutPrivateContext,
+          outsideContent,
+          writers,
+          unattended,
+          turnRequests.someInFlight(key => key === turnKey),
+        )
       if (updateWindow.isOpen()) {
         if (!(input.queue || input.steer)) refuseWhileUpdating('turn')
         const status = (await hub!.summary(id)).status
@@ -10255,6 +10270,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       )
     }
 
+    async function recordAgentPrompt(
+      caller: DeviceCaller,
+      id: string,
+      input: z.infer<typeof queuedPromptSchema>,
+      outcome: 'accepted' | 'steered',
+    ): Promise<void> {
+      if (!hub!.agentOf(id)?.customAgentId) return
+      await hub!.receipts
+        .recordAgentPrompt({
+          sessionId: id,
+          deviceId: caller.device.id,
+          requestId: input.requestId,
+          payloadHash: turnBodyHash(input),
+          outcome,
+        })
+        .catch(() => log(`会话 ${id} 的助手发送回执暂时无法保存。`))
+    }
+
     async function sendPromptChecked(
       caller: DeviceCaller,
       id: string,
@@ -10263,7 +10296,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       outsideContent = false,
       writers: TurnWriters = {},
       unattended = false,
-    ): Promise<'steered' | 'accepted' | 'replayed' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
+      alreadyInFlight = false,
+    ): Promise<PromptOutcome> {
       recheck(caller, 'run')
       await assertSessionAccess(caller, id)
       checkPrivateSession(caller, id, true)
@@ -10286,13 +10320,28 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const queued = { ...input, ...(coauthors.length ? { coauthors } : {}) }
       if ((input.queue || input.steer) && promptQueues.knows(id, caller.device.id, input.requestId))
         return { queued: await promptQueues.submit(queueActor(caller), id, queued, true) }
-      if (await historicalChat(caller, id)) {
-        // A receipt from before migration may still be retried, including after a Host restart. Nothing new runs here.
+      const chatOwner = hub!.agentOf(id)?.customAgentId
+      const historical = await historicalChat(caller, id)
+      const elsewhere = customAgents.worksElsewhere(chatOwner)
+      if (historical || elsewhere) {
+        if (elsewhere) {
+          const receipt = hub!.receipts.agentPrompt(id, input.requestId)
+          if (receipt) {
+            if (receipt.deviceId !== caller.device.id || receipt.payloadHash !== turnBodyHash(input))
+              throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入。')
+            if (input.attachmentIds?.length) await attachmentStore.bind(caller.device.id, input.attachmentIds, id)
+            agentAccess(caller, true)
+            return receipt.outcome === 'steered' ? 'replayed-steered' : 'replayed'
+          }
+        }
+        // A historical chat still answers retries from messages written before Host receipts were available.
         const detail = await hub!.detail(id)
         agentAccess(caller, true)
         const prior = detail.messages.find(message => message.role === 'user' && message.requestId === input.requestId)
         if (!prior) {
-          const owner = hub!.agentOf(id)?.customAgentId
+          if (elsewhere && alreadyInFlight) throw new AppError(503, 'agent-prompt-unconfirmed', '发送结果尚未确认，请重试同一次提交。')
+          customAgents.assertWorksHere(chatOwner)
+          const owner = chatOwner
           if (owner && !customAgents.list().some(agent => agent.id === owner))
             throw new AppError(409, 'agent-deleted', '这个 Agent 已删除，可以查看旧聊天。')
           throw new AppError(409, 'agent-chat-history-read-only', '之前的聊天仍可查看，请到这个 Agent 的当前聊天发送。')
@@ -10301,12 +10350,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           prior.text !== input.prompt
           || canonicalJson(prior.attachments?.map(ref => ref.id) ?? []) !== canonicalJson(input.attachmentIds ?? [])
           || canonicalJson(prior.fileRefs ?? []) !== canonicalJson(input.fileRefs ?? [])
+          || (elsewhere && Boolean(prior.freshContext) !== Boolean(input.freshContext))
         )
           throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入。')
+        if (elsewhere) throw new AppError(503, 'agent-prompt-unconfirmed', '发送结果尚未确认，请核对原会话记录。')
         if (input.attachmentIds?.length) await attachmentStore.bind(caller.device.id, input.attachmentIds, id)
         agentAccess(caller, true)
         return 'replayed'
       }
+      customAgents.assertWorksHere(hub!.agentOf(id)?.customAgentId)
       if (!input.queue && !input.steer) await healAgentHome(caller, id, input)
       await assertSessionWorkspace(id)
       if (input.model) {
@@ -10337,7 +10389,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             withoutPrivateContext || caller.device.dataScope !== 'all' || writers.narrower === true,
           ),
         )
-        if (steered === 'injected') return 'steered'
+        if (steered === 'injected') {
+          await recordAgentPrompt(caller, id, input, 'steered')
+          return 'steered'
+        }
       }
       if (input.queue || input.steer) return { queued: await promptQueues.submit(queueActor(caller), id, queued) }
       // An existing session whose Harness is now too old is refused as a new one would be, before the turn is recorded.
@@ -10401,6 +10456,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       // The driver resolved only once the turn was durable: from now on a retry is answered from this receipt.
       turnReceipts.set(turnKey, turnBodyHash(input))
+      await recordAgentPrompt(caller, id, input, 'accepted')
       if (attachments.length)
         await attachmentStore
           .bind(
@@ -10479,6 +10535,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       dataScope: DataScope,
     ): Promise<{ binding?: string; model?: ModelRef; agentContext?: AgentExecutionContext } | undefined> {
       const harnessId = await hub!.harnessOf(sessionId)
+      customAgents.assertWorksHere(hub!.agentOf(sessionId)?.customAgentId)
       const context = turnContext(sessionId, harnessId, dataScope)
       const owner = hub!.agentOf(sessionId)
       if (!owner) return context ? { agentContext: context } : undefined
@@ -10824,11 +10881,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const sent = await sendPrompt(caller, id, input)
         // A queued message proposes when it is sent from the queue, not now.
         const refused =
-          input.prompt && typeof sent !== 'object' && sent !== 'replayed'
+          input.prompt && typeof sent !== 'object' && sent !== 'replayed' && sent !== 'replayed-steered'
             ? await rememberFromPerson({ deviceId: caller.device.id, actor: actorOf(caller) }, id, input.prompt, input.requestId)
             : undefined
         const memory = refused ? { memoryRefused: refused } : {}
-        if (sent === 'steered') json(res, { steered: true, ...memory })
+        if (sent === 'steered' || sent === 'replayed-steered') json(res, { steered: true, ...memory })
         else if (sent === 'accepted' || sent === 'replayed') json(res, { accepted: true, ...memory })
         else json(res, sent.queued, 'queued' in sent.queued ? 202 : 200)
         return true

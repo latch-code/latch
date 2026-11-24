@@ -1,10 +1,10 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, open, readFile, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as wait } from 'node:timers/promises'
 import { randomUUID } from 'node:crypto'
 import { afterEach, expect, test, vi } from 'vitest'
-import type { AutomationConfig, AutomationRun, TaskDetail } from '@latch/protocol'
+import type { AutomationConfig, AutomationRun, CustomAgentPatch, TaskDetail } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { Automations, automationSummary, type AutomationPlan } from '../src/automations.ts'
 import { CustomAgents, type AgentActor } from '../src/custom-agents.ts'
@@ -31,7 +31,7 @@ const summary = (id: string, patch: Partial<TaskDetail['summary']> = {}) =>
     approvals: [],
   }) as unknown as TaskDetail
 
-async function fixture() {
+async function fixture(atomicFs?: Parameters<typeof Automations.open>[0]['atomicFs']) {
   const dataDir = await mkdtemp(join(tmpdir(), 'latch-automations-'))
   roots.push(dataDir)
   const f = {
@@ -54,6 +54,7 @@ async function fixture() {
     open: () =>
       Automations.open({
         dataDir,
+        ...(atomicFs ? { atomicFs } : {}),
         audit: f.audit,
         now: () => f.clock,
         timeZone: () => f.zone,
@@ -436,6 +437,103 @@ test('an authorized edit of its agent keeps it on the new definition; a deleted 
   f.planFailure = new AppError(404, 'agent-not-found', 'gone')
   await service.edit(customAgentId, actor, async () => {})
   expect(service.get(value.id)).toMatchObject({ enabled: false, pause: { reason: 'agent-unavailable' } })
+})
+
+test('publishes a work-computer change only after pausing schedules durably; old receipts never pause a new grant', async () => {
+  let failPause = false
+  const { f, service, dataDir } = await fixture({
+    open,
+    async rename(from, to) {
+      if (failPause) throw new Error('unwritable schedules')
+      await rename(from, to)
+    },
+  })
+  const options = { dataDir, audit: f.audit }
+  const agents = await CustomAgents.open(options)
+  const agent = (
+    await agents.create(
+      {
+        name: '云助手',
+        description: '',
+        harnessId: 'standard',
+        mode: 'chat',
+        instructions: '',
+        skills: [],
+        requestId: randomUUID(),
+      },
+      actor,
+    )
+  ).value
+  const { value: schedule } = await service.create(definition({ customAgentId: agent.id }), actor)
+  const link = {
+    requestId: randomUUID(),
+    baseRevision: agent.revision,
+    workComputer: { hostId: 'b'.repeat(52), agentId: `agt_${randomUUID()}` },
+  }
+  const patch = (store: CustomAgents, clock: Automations, body: CustomAgentPatch) =>
+    clock.edit(
+      agent.id,
+      actor,
+      pause => store.patch(agent.id, body, actor, pause),
+      () => store.definitionHash(agent.id),
+    )
+  failPause = true
+  await expect(patch(agents, service, link)).rejects.toMatchObject({ code: 'agent-write-unknown' })
+  expect(agents.get(agent.id).workComputer).toBeUndefined()
+  failPause = false
+  let paused!: () => void
+  const pausedOnDisk = new Promise<void>(resolve => {
+    paused = resolve
+  })
+  let release!: () => void
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const saved = service.edit(agent.id, actor, pause =>
+    agents.patch(agent.id, link, actor, async () => {
+      await pause()
+      paused()
+      await gate
+    }),
+  )
+  try {
+    await Promise.race([pausedOnDisk, saved])
+    expect(service.get(schedule.id).enabled).toBe(false)
+    await expect(
+      service.setEnabled(schedule.id, { enabled: true, baseRevision: service.get(schedule.id).revision, requestId: randomUUID() }, actor),
+    ).rejects.toMatchObject({ code: 'automation-changed' })
+  } finally {
+    release()
+    await saved
+  }
+  expect(service.get(schedule.id).enabled).toBe(false)
+  await agents.close()
+  await service.close()
+  const recovered = await CustomAgents.open(options)
+  const schedules = await f.open()
+  services.push(schedules)
+  try {
+    expect(recovered.get(agent.id).workComputer).toEqual(link.workComputer)
+    const detach = { requestId: randomUUID(), baseRevision: recovered.get(agent.id).revision, workComputer: null }
+    await patch(recovered, schedules, detach)
+    expect(schedules.get(schedule.id).enabled).toBe(false)
+    await expect(
+      schedules.setEnabled(schedule.id, { enabled: true, baseRevision: schedule.revision, requestId: randomUUID() }, actor),
+    ).rejects.toMatchObject({ status: 409 })
+    await schedules.setEnabled(
+      schedule.id,
+      { enabled: true, baseRevision: schedules.get(schedule.id).revision, requestId: randomUUID() },
+      actor,
+    )
+    await patch(recovered, schedules, link)
+    await patch(recovered, schedules, detach)
+    await expect(patch(recovered, schedules, { ...link, requestId: randomUUID() })).rejects.toMatchObject({ status: 409 })
+    await expect(patch(recovered, schedules, { ...link, workComputer: null })).rejects.toMatchObject({ code: 'request-conflict' })
+    expect(schedules.get(schedule.id).enabled).toBe(true)
+    expect(recovered.get(agent.id).workComputer).toBeUndefined()
+  } finally {
+    await recovered.close()
+  }
 })
 
 test('an avatar or name change leaves its automations, their grant and device alone, even with the Harness not ready', async () => {

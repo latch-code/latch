@@ -218,6 +218,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 - **删除家。** 只删记录过、计数仍与人看到的一致、身份（设备号与 inode、0700、不是链接、在 `helpers/` 下）核对通过的家；不符的留下并报告，在用的家留下，`helpers` 本身不删，Agent 的删除从不被家挡住。`latch-home` 不跟随链接、遇到挂载拒绝；导出的 zip 不覆盖已有文件，不含记忆、说明与秘密值，只在本机桌面端、经主进程签名导出。
 - **头像。** Host 进程自己不解析图片，交给空环境、有时限与内存上限的一次性解码进程；类型只按文件头，重新编码去掉元数据。`GET` 只给在用的哈希，带 `nosniff`、`Content-Security-Policy: sandbox; default-src 'none'`、`Cross-Origin-Resource-Policy: same-origin` 与 `no-store`；快照与 SSE 只带哈希。
 - **导出与导入。** 只由人显式操作，Agent 没有这个工具。文件不含模型、`engineOptions`、MCP 与秘密值、设备、审计、家、会话与提议；导入总是新建，导入的记忆算资料，定时以关闭状态创建。
+- **工作电脑。** 自建助手的可选 `workComputer` 只含已选择的目标 Host 指纹和助手 ID。创建或修改这个引用须经来源电脑的 `host.sock`，持有 `run` 与全部数据范围；引用隐藏在同一私有数据范围内。旧记录和显式清除用原电脑。绑定后新委托在目标助手的会话中输入，目标 Host 按自己的凭据、配置和审批执行。原 Host 拒绝新启动、普通续聊、追加和排队执行；已接收的回执仍可在原会话核对。已启用的原定时因工作定义改变而暂停，解除绑定后需人重新启用。历史、记忆、工作文件和草稿各属原电脑；导出文件也不携带这个引用。桌面只在真实点击后打开已配对的对应窗口；手机按完整 Host 指纹和助手 ID 定位。目标离线、未配对或助手已删除时显示原因。
 - **唯一聊天。** Host 只凭自己的记录决定聊天的状态与换下；设备不能让健康的聊天被换下，预热只用 Host 记录的聊天槽，不接受客户端给的会话 ID；开始请求不接受另传的 `config`（400 `config-unsupported`）。
 - **定时。** 开启或恢复的设备成为 `grant.deviceId`，开启、恢复与每次运行前都要仍有 `run` 与 `all`（否则 403 `automation-owner` 并暂停）；超出等级 403 `automation-level`，外部 L3 Agent 不能当作 L1，只能存为关闭、手动运行。只有 Host 调度器创建 `trigger: schedule` 并给会话 `unattended: true`，客户端不能指定。每次运行前重算 `grant.basis`，不同就暂停而不运行；只有 `definitionHash` 变化才把授权换到修改的设备。结果未知时暂停、不重发；错过的时间不补跑；`enabled: false` 不授后台权。
 - **结果卡**不是消息，Harness 收不到；运行的会话删除时，卡上取自它的内容随之抹去。
@@ -859,11 +860,15 @@ iOS 遇到首次发言失去回执时保留原请求。用户点核对后，App 
 - 主进程先读那台 Host 的 `GET /health` 得到 hostId（这台 Mac 自己与已添加的电脑被拒绝），再为它新生成设备密钥并登记；确认在那台电脑上用它自己的本机确认完成。
 - 凭据存入 `latch-devices/<hostId>.json`（safeStorage，0600），一台电脑一份，从不复制给另一台。成功后剪贴板里仍是这条链接时清除。
 
-**来源与分区。** 每台其他电脑的窗口是 `latch://h-<hostId>/`，在自己的会话分区 `persist:latch-host-<hostId>` 里：页面存储、缓存与协议处理互不相通。
+**来源与分区。** 这台 Mac 的页面是 `latch://app/`。每台其他电脑的页面是 `latch://h-<hostId>/`，在自己的会话分区 `persist:latch-host-<hostId>` 里。页面存储、缓存与协议处理互不相通，主窗口和单独打开的窗口都遵守同样的规则。
 
 - 分区里的 `latch:` 只转发到这台 Host；渲染进程的请求、导航与子框都限制在自己的来源。
 - 预览与插件页面运行环境走 `latch-frame://h-<hostId>/…`，只能被同一来源的页面嵌入；`html-script` 预览只在这台 Mac 的页面上提供。
 - 页面来自那台 Host 自己的 `dist/web`。
+
+**在主窗口切换电脑。** 状态菜单的电脑行调用 `computers.switchTo(hostId)`。主进程在同一个主窗口里显示目标电脑自己的页面，保留离开的页面供切回。首次打开目标失败时保留原页面，菜单显示失败原因。切换只传目标电脑的 ID；每台电脑的当前会话和草稿各自保留。单独打开的窗口也可用这个菜单在主窗口切换。浏览器只连当前来源。
+
+保留的页面可以继续接收各自 Host 的事件。`isWorkspaceActive` 与 `subscribeWorkspaceActive` 只向各自页面报告它是否被选中，用于防止隐藏的对话被标成「打开过」。
 
 **转发。** 主进程用 Node 的 HTTPS（自带根证书加系统信任库，不复用连接）按请求的来源选凭据，只附加那台 Host 的 Cookie `__Host-latch_<hostId8>`。
 
@@ -887,8 +892,8 @@ iOS 遇到首次发言失去回执时保留原请求。用户点核对后，App 
 
 **远程页面能做的事。** 凭据、登记、配对链接、睡眠与停止报告、更新、会话文件与添加文件夹的路由在远程来源上一律 403 `shell-managed`。
 
-- 远程页面的 `latchShell` 只有 `{ kind: 'electron', remote: true, devMode, platform, computers: { list, subscribe, open, start, subscribeSession, subscribeStart }, spaces, settings, about?, lights? }`。已登记工作台的顶层页可通过 `about.setAppearance` 上报本窗口的浅深色和四个不透明颜色。主进程只将它们用于该窗口打开的「关于 Latch」。那台 Host 判定 `access.local` 为 false。
-- 这台 Mac 的页面另有 `add`、`cancelAdd`、`remove`、`trustCertificate`。`open`、`start`、`add`、`remove` 与 `trustCertificate` 只接受该页面一秒内的真实点按或按键；同一台电脑同时多次 `open` 只开一个窗口。
+- 远程页面的 `latchShell` 只有 `{ kind: 'electron', remote: true, devMode, platform, computers, spaces, settings, about?, lights? }`。`computers` 提供只读列表、当前页选中状态、切换、显式打开或开始及相应订阅。已登记工作台的顶层页可通过 `about.setAppearance` 上报本窗口的浅深色和四个不透明颜色。主进程只将它们用于该窗口打开的「关于 Latch」。那台 Host 判定 `access.local` 为 false。
+- 这台 Mac 的页面另有 `add`、`cancelAdd`、`remove`、`trustCertificate`。`switchTo`、`open`、`start`、`add`、`remove` 与 `trustCertificate` 只接受该页面一秒内的真实点按或按键；同一台电脑同时多次 `open` 只开一个窗口。
 - 跨电脑交给页面的只有电脑名、状态、上次在线、版本与 Host 宣布的停止原因。
 
 **状态。** `online`、`connecting`、`offline`、`stopping` / `sleeping`（来自 `host-state`，到 `retryAfter` 前不算离线）、`revoked`（那台 Host 撤销或凭据过期，本地凭据随即删除）、`wrong-host`、`cert-error`、`cert-changed`、`outdated`（`health` 没有 hostId，不发凭据）。有 Latch 窗口在前台时主进程每 15 秒、没有时每 60 秒看一次在线的电脑；离线时从 15 秒退避到 5 分钟，`revoked` 不再看。
@@ -912,6 +917,10 @@ iOS 遇到首次发言失去回执时保留原请求。用户点核对后，App 
 
 - 那台电脑的项目、Harness 与模型都由它自己的页面向它自己的 Host 读取；草稿仍按各自来源分开保存，输入的内容不随切换带走，发送前不发往任何地方。
 - 浏览器页面始终只连一台电脑（同源），手机端不变。
+
+**助手的工作电脑。** 在本机桌面端新建助手或打开资料时，可把手动委托指定给一台已配对电脑上的具体助手；默认在本 Host 工作。设置由来源 Host 保存，只含目标 hostId 和助手 ID。桌面主进程核对来源窗口和真实点击，经目标电脑自己的已认证连接读取可运行的助手，在原生菜单里选择；页面只收到选定的一对 ID。菜单也能在那台电脑的窗口打开「新建助手」；创建后回原窗口选定。
+
+打开工作电脑时重新核对目标 Host 身份、可见数据范围、运行权限，以及目标助手仍存在、可用且没有再指定另一台工作电脑。用户在目标窗口向目标助手发送消息。这次导航不带消息、项目、模型、凭据或记忆；原有会话和记忆留在原 Host，已启用的本地定时暂停，进行中的一轮可以结算。变更工作电脑时先将暂停和撤销的定时授权写到磁盘，再保存助手的新目标；原请求的回执、未通过的修改不会暂停后来重新启用的定时。改回本机后可手动重启定时。未配对、离线、权限变化或版本不支持时显示原因。浏览器只连当前来源，不能跨电脑打开。
 
 **移除。** 能以原身份连上时先 `DELETE /devices/current` 撤销这台设备；然后删除凭据文件、列表记录与分区存储，并关闭这个分区里的所有窗口。不在列表中的 `Partitions/latch-host-*` 在下次启动时删除。
 

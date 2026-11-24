@@ -1,17 +1,14 @@
 import LatchNativeCore
 import SwiftUI
 
-/**
- * An Agent's profile, as a bottom sheet: its face, name and duty; 动态 · 资料库 · 记忆; 即将进行 with each schedule's switch;
- * 电脑 with its missed times and 到点前后保持唤醒; 通知; where it works; Harness · 模型; then 设置. Editing the Agent or a schedule
- * is not built here.
- */
 struct AgentProfileSheet: View {
     @EnvironmentObject private var model: PhoneModel
     @Environment(\.dismiss) private var dismiss
     let id: String
     let openTopic: (String) -> Void
-    enum Part: String, CaseIterable { case activity = "动态", library = "资料库", memory = "记忆" }
+    enum Part: String, CaseIterable {
+        case activity = "动态", library = "资料库", memory = "记忆", runSettings = "运行设置"
+    }
     @State private var part = Part.activity
     @State private var read = PhoneAgentRead.loading
     @State private var reading = UUID()
@@ -65,31 +62,57 @@ struct AgentProfileSheet: View {
             }
         }
         #if LATCH_SCREENS
-        .onAppear { if let staged = ScreensStage.profilePart { part = staged }; if ScreensStage.profileComputer { detent = .large } }
+        .onAppear {
+            if let staged = ScreensStage.profilePart { part = staged }
+            if part == .runSettings { detent = .large }
+        }
         #endif
     }
     private func reload() { reading = UUID() }
     private func content(_ entry: PhoneAgentEntry) -> some View {
-        ScrollViewReader { reader in ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                header(entry)
-                VStack(alignment: .leading, spacing: 12) {
-                    Picker("动态 · 资料库 · 记忆", selection: $part) { ForEach(Part.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented)
+        ScrollViewReader { reader in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    header(entry).id("profile-top")
+                    Picker("资料页签", selection: $part) {
+                        ForEach(Part.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }.pickerStyle(.segmented)
                     switch part {
-                    case .activity: ActivitySection(owner: id, openTopic: openTopic, openMemory: { part = .memory })
+                    case .activity:
+                        ActivitySection(owner: id, openTopic: openTopic, openMemory: { part = .memory })
+                        if model.snapshot["catalog"]["features"]["automations"].bool {
+                            section("即将进行") { UpcomingSection(id: id, agent: summary, openTopic: openTopic) }
+                        }
                     case .library:
-                        LibrarySection(owner: id, openTopic: openTopic,
-                            openFile: { files.open(model, reference: $0.reference, root: $0.root == PhoneActivity.attachmentRoot ? PreviewFiles.attachmentRoot : $0.root, session: $0.sessionId) })
-                    case .memory: detailed { MemorySection(owner: id, detail: $0, reload: reload, openTopic: openTopic, editing: $editing) }
+                        LibrarySection(owner: id, openTopic: openTopic, openFile: {
+                            let root = $0.root == PhoneActivity.attachmentRoot ? PreviewFiles.attachmentRoot : $0.root
+                            files.open(model, reference: $0.reference, root: root, session: $0.sessionId)
+                        })
+                    case .memory:
+                        detailed { MemorySection(owner: id, detail: $0, reload: reload, openTopic: openTopic, editing: $editing) }
+                    case .runSettings:
+                        runSettings(entry)
                     }
                 }
-                if model.snapshot["catalog"]["features"]["automations"].bool {
-                    section("即将进行") { UpcomingSection(id: id, agent: summary, openTopic: openTopic) }
-                }
-                section("电脑") { ComputerSection(id: id, agent: general ? .null : summary) }.id("computer")
-                if !general && summary != .null { section("通知") { NotificationSection(agent: summary) } }
-                section("工作位置") { Text(entry.place ?? "不带项目").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2).lineLimit(1) }
-                if model.canRun, PhoneAgentChat.owner(model.currentSummary) == id,
+                .padding(.horizontal, 20).padding(.bottom, 24).frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
+            }.onChange(of: part) { _, _ in reader.scrollTo("profile-top", anchor: .top) }
+        }
+    }
+    @ViewBuilder private func runSettings(_ entry: PhoneAgentEntry) -> some View {
+        if entry.destination != .local { section("工作电脑") { AgentWorkComputer(entry: entry) } }
+        section(entry.destination == .local ? "电脑" : "原电脑上的定时") { ComputerSection(id: id, agent: general ? .null : summary) }
+        if !general, summary != .null { section("通知") { NotificationSection(agent: summary) } }
+        section("工作位置") { Text(entry.place ?? "不带项目").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2).lineLimit(1) }
+        if !general {
+            section("技能与工具") {
+                Text(PhoneAgentChat.kitWords(model.snapshot["catalog"], agent: summary)).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2)
+            }
+        }
+    }
+    private func settings(_ entry: PhoneAgentEntry) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                if entry.destination == .local, model.canRun, PhoneAgentChat.owner(model.currentSummary) == id,
                    PhoneAgentChat.isCurrent(model.snapshot, task: model.currentSummary),
                    model.detail["summary"]["id"].string == model.sessionId {
                     let controls = PhoneSessionConfig.controls(model.detail, harness: model.engineInfo(model.currentSummary["harnessId"].string))
@@ -102,50 +125,38 @@ struct AgentProfileSheet: View {
                         }
                     }
                 }
-                if !general, model.canRun {
-                    detailed { value in
+                detailed { value in
+                    if !general, model.canRun {
                         NavigationLink { HelperDefaultsEditor(agent: value["agent"], saved: reload) } label: {
                             HStack { Text("做事方式"); Spacer(); Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)) }
                                 .font(PhoneTheme.row).foregroundStyle(PhoneTheme.ink).contentShape(Rectangle())
                         }.buttonStyle(.plain)
                     }
-                }
-                section("Harness · 模型") {
-                    HStack(spacing: 6) {
-                        if let harness = entry.harnessId { EngineTile(mark: model.engineMark(harness), size: 14) }
-                        Text(entry.general ? "每个话题自己选" : entry.runs).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2)
+                    if general {
+                        section("Harness · 模型") { Text("每个话题自己选").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2) }
                     }
-                    if !general { Text(PhoneAgentChat.kitWords(model.snapshot["catalog"], agent: summary)).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
+                    AgentSettingsSection(detail: value, general: general)
                 }
-                NavigationLink {
-                    ScrollView {
-                        detailed { AgentSettingsSection(detail: $0, general: general) }.padding(20).frame(maxWidth: 720, alignment: .leading)
-                    }.background(PhoneTheme.canvas).navigationTitle("设置").navigationBarTitleDisplayMode(.inline)
-                } label: {
-                    HStack {
-                        Label("设置", systemImage: "gearshape").font(PhoneTheme.body).foregroundStyle(PhoneTheme.ink)
-                        Spacer()
-                        Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(PhoneTheme.faint)
-                    }.contentShape(Rectangle())
-                }.buttonStyle(.plain)
-            }
-            .padding(.horizontal, 20).padding(.bottom, 24).frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
+            }.padding(20).frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
         }
-        #if LATCH_SCREENS
-        .task { if ScreensStage.profileComputer { try? await Task.sleep(for: .milliseconds(600)); reader.scrollTo("computer", anchor: .top) } }
-        #endif
-        }
+        .background(PhoneTheme.canvas).navigationTitle("设置").navigationBarTitleDisplayMode(.inline)
     }
     private func header(_ entry: PhoneAgentEntry) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            AgentFace(avatar: entry.avatar, size: 64, face: entry.face)
+            HStack(alignment: .top) {
+                AgentFace(avatar: entry.avatar, size: 64, face: entry.face)
+                Spacer()
+                NavigationLink { settings(entry) } label: {
+                    Label("设置", systemImage: "gearshape").font(PhoneTheme.body)
+                }.buttonStyle(.bordered).tint(PhoneTheme.ink)
+            }
             HStack(spacing: 6) {
                 Text(entry.name).font(.system(size: 22, weight: .semibold)).foregroundStyle(PhoneTheme.ink)
                 if entry.general { BuiltInMark() }
                 if let words = entry.face.words { FaceWord(face: entry.face, words: words) }
             }
             if !entry.duty.isEmpty { Text(entry.duty).font(.system(size: 15)).foregroundStyle(PhoneTheme.ink2) }
-            if !entry.available { Unavailable(reason: entry.unavailableReason) }
+            if entry.destination == .local, !entry.available { Unavailable(reason: entry.unavailableReason) }
             else if !model.connected { Label("Mac 不在线", systemImage: "wifi.slash").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
         }
     }

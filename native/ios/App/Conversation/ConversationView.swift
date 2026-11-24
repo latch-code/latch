@@ -27,6 +27,7 @@ struct ConversationView: View {
             && (work.map { model.workStamp($0.itemId) == $0.stamp && model.workDestinationAllowed(.source($0.source), itemId: $0.itemId) } ?? true)
     }
     private var inputReason: String? {
+        if let reason = model.agentDestination(PhoneAgentChat.owner(summary)).localBlocker { return reason }
         if let reason = PhoneConversation.inputGate(summary: summary, permission: model.detail["permission"], canRun: model.canRun, connected: model.connected) { return reason }
         if PhoneAgentChat.owner(summary) != nil, !PhoneAgentChat.isCurrent(model.snapshot, task: summary) {
             return "聊天记录 · 请在这个 Agent 的当前聊天发送"

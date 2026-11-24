@@ -123,6 +123,8 @@ const SCENES = [
   'agents-locked',
   'agent-chat',
   'agent-new',
+  'agent-create',
+  'agent-work-computer',
   'agent-waiting',
   'agent-unavailable',
   'agent-profile',

@@ -96,8 +96,15 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
     // 我的 Agent is the other place beside Code; its list starts with 通用, built in, and nothing of the person's own yet.
     await place(page, '我的 Agent').click()
     await page.getByRole('list', { name: '我的 Agent', exact: true }).locator('[data-agent-id="general"]').waitFor()
-    await page.locator('.agents-page').getByText('还没有自己的 Agent').first().waitFor()
+    const overview = page.locator('.agents-home')
+    await overview.getByRole('button', { name: '和通用聊聊' }).waitFor()
+    expect(await overview.getByRole('textbox').count()).toBe(0)
+    expect(await page.getByRole('button', { name: '新建 Agent', exact: true }).filter({ visible: true }).count()).toBe(1)
     await page.screenshot({ path: `${OUT}/list-empty-1440.png` })
+    await overview.getByRole('button', { name: '和通用聊聊' }).click()
+    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('给通用发消息')
+    expect((await owner.json<AppSnapshot>('snapshot')).tasks.some(item => item.generalChat)).toBe(false)
+    await page.getByRole('button', { name: '总览', exact: true }).filter({ visible: true }).first().click()
 
     // Create one on the fake ACP Harness, working in the project, from the sidebar's own 新建 Agent: first who, then
     // its name and duty, with the project under 更多.
@@ -226,7 +233,7 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
     await expect.poll(() => toggle.getAttribute('aria-checked')).toBe('false')
     expect(await toggle.isDisabled()).toBe(true)
     expect((await owner.json<AppSnapshot>('snapshot')).automations?.find(item => item.id === automation.id)?.enabled).toBe(false)
-    await panel.getByRole('radio', { name: '记忆', exact: true }).click()
+    await panel.getByRole('tab', { name: '记忆', exact: true }).click()
     await panel.getByText('还没有记忆').waitFor()
     await panel.getByRole('button', { name: '添加', exact: true }).click()
     await panel.getByLabel('新记忆').fill('摘要不超过一页。')
@@ -347,7 +354,7 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
     const generalProfile = page.getByRole('region', { name: '通用 的资料', exact: true })
     await generalProfile.getByText('没有定时任务', { exact: true }).waitFor()
     await expect.poll(async () => (await generalProfile.boundingBox())?.width ?? 0).toBeGreaterThan(0)
-    await page.getByText('今天先做什么？', { exact: true }).last().waitFor()
+    await page.locator('.transcript-shell').getByText('今天先做什么？', { exact: true }).waitFor()
     expect((await owner.json<AppSnapshot>('snapshot')).agentChats?.general).toEqual({ state: 'ready', sessionId: talk!.id })
     await noHorizontalOverflow(page)
     await page.screenshot({ path: `${OUT}/general-from-code-schedule-1440.png` })

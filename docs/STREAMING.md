@@ -358,6 +358,8 @@ iOS 在团队关系到达前展示可读的会话摘要。点选缓存行时，�
 
 ## 消息、审批与取消
 
+自建助手改绑工作电脑后，原 Host 仍能核对已经接收的发送和追加。Host 在 `sessions-meta.json` 保存原会话、设备、请求 ID、请求体的 SHA-256 和接收方式，保留最近 4096 条，删除会话时一并清除。重试需来自原设备且请求内容一致。仅有旧消息或尚未结算的请求时，Host 保留「发送结果尚未确认」。排队请求继续沿用原有的队列回执。
+
 源码：[runtime.ts](../packages/core/src/runtime.ts)、[Transcript.tsx](../apps/web/src/components/Transcript.tsx)、[ToolCard.tsx](../apps/web/src/components/ToolCard.tsx)、[conversation.ts](../apps/web/src/conversation.ts)、[approvalDecision.ts](../apps/web/src/core/approvalDecision.ts)、[cancelRequest.ts](../apps/web/src/core/cancelRequest.ts)。
 
 **消息身份。**
@@ -675,6 +677,7 @@ Codex 的原生委派在同一会话的详情里沿用 `Message.subagent`。
 - 会话内查找只创建 DOM Range 与 CSS Highlight，折叠行经 `beforematch` 展开，不改写消息节点。
 - 查找打开时按 `detail.sync.revision` 重扫流式追加，没有同步版本时才退回 `detail.cursor`：正文追加可能让 `cursor` 与已提交的 `messages` 引用都不变，不能据此跳过新文字。重新计数按消息与匹配身份保留当前选择。
 - 手动「标为未读」是每台设备的本地阅读偏好，存在已有的阅读标记里；重新打开或收到该会话的更新时清除，删除会话后清理。
+- 打开失败会话时，客户端只在会话在视野内且文档可见时发送「打开过」标记。支持主窗口切换电脑的桌面端还要等主进程报告当前工作区已选中，切回时才标记此前在后台失败的回合。
 - 文件标签是客户端的阅读状态，不改 Host 的会话状态；文件列按会话与项目分开保留引用，切换上下文取消旧的读取，迟到的结果不更新新上下文。
 
 ## 工作过程的行

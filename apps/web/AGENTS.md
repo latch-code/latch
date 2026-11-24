@@ -1,37 +1,39 @@
 # @latch/web
 
-桌面共用 React 页面，`dist/web` 由 Host 在 `/link/` 提供。
+Web 与桌面共用 `dist/web`（`/link/`）。
 
 | 路径 | 职责 |
 | --- | --- |
 | `src/core/` | API、事件流与增量影子、同步、阅读位置、设备身份、权限、确认、桌面桥接 |
 | `src/shell/` | 壳层：`AppShell`、`routes.ts`、`panelLayout.ts`、`slots.ts`、`useSessionController` |
-| `src/agents/` | 我的 Agent：总览取 Host 待处理与定时摘要 |
+| `src/agents/` | 我的 Agent：总览按 Host 记录开原聊天、运行或工作电脑 |
 | `src/handoffs/` | 交接 |
 | `src/markdown/` | 流式 Markdown |
 | `src/` | `main.tsx` → `App.tsx` → `shell/AppShell.tsx`；品牌 `brands.ts` |
-| `index.html`、`public/`、`vite.config.ts` | 页面、图标与 manifest、Vite 开发代理 |
+| `index.html`、`public/`、`vite.config.ts` | 页面、图标与 manifest、Vite 代理 |
 | `test/` | `pnpm test --project @latch/web` |
 
 browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 
 不变量：
 
-- `src/core/` 只导入本目录的文件、`react` 与 `@latch/protocol`，不依赖布局组件（`.oxlintrc.json`）。
-- 正文滚动仅 `useReadingPosition` 写，消息和工具行用 `data-message-id`。刻度列单独滚动，定位（含待办回合）走 `reveal`。检查上翻、重排、回到最新和切换（`test/reading-position.test.ts`）。缓存见 STREAMING。
+- `src/core/` 仅导入本目录、`react` 与 `@latch/protocol`；禁用布局组件（lint）。
+- 正文滚动仅 `useReadingPosition` 写，消息和工具行用 `data-message-id`。刻度列独立滚动，定位（含待办回合）走 `reveal`。上翻、重排、回到最新和切换见 `test/reading-position.test.ts`。缓存见 STREAMING。
 - 文件预览只经授权句柄，项目预览不伪造会话；文件树懒加载。不透明文档框与可信插件分开，见 `src/preview/AGENTS.md`。
 - 插件面板由 `SessionPanels` / `ClientPluginPanel` 挂载并随会话清理；可信代码没有隔离，`compose` 只追加草稿（`e2e/plugin-packages.e2e.ts`）。
-- 安全文案只按错误码从 `src/core/securityCopy.ts` 取，新安全错误码在此补（`test/client-security.test.ts`）。
+- 安全错误文案按码取自 `src/core/securityCopy.ts`。
 - `permissions.ts` 只是展示，Host 会再次检查；事件流用 `eventStream.ts`（fetch），不用 `EventSource`。
-- 本机按 `isLocalListener`，回环浏览器算远程。缺邀请或用掉后须重领（enrollment.e2e）。客户端的规则见 ARCHITECTURE「客户端」。
+- 本机按 `isLocalListener`；回环浏览器算远程。缺邀请或用掉后重领（enrollment.e2e，ARCHITECTURE）。
 - 回复里的文件引用按后缀显示图标，从不生成 `<a href>`；链接文字里的代码沿用该链接的目标；只有 http(s) 与 mailto 是链接（message-content.test）。
-- 确认走 `withConfirmation`；未知结果保留原请求，设置确认后解锁。草稿只存文字，按设备与会话存于浏览器，14 天过期；像凭据的只在内存，含摘录的要 `all`；删会话、撤权或退出即清。失效项目保留草稿供显式继续（`composer/WorkspaceRecovery.tsx`）。
+- 确认走 `withConfirmation`；未知结果保留原请求，设置确认后解锁。草稿只存文字，按设备与会话存于浏览器，14 天过期；像凭据的只在内存，含摘录的要 `all`；删会话、撤权或退出即清。项目失效保留草稿供显式继续（`composer/WorkspaceRecovery.tsx`）。
 - 复用 `@latch/ui` 令牌、层与原语。对话与看板同底色，列独立滚动（DESIGN）。
-- Harness 与模型图标取自 `src/assets/brands/`（许可在 `public/licenses/brands/`），经 `?no-inline` 用于图片或遮罩，各预设有图标，缺图用中性图形，禁用字母。草稿打开模型面板时读缺失选项，规则见 HARNESSES。
+- Harness 与模型图标取自 `src/assets/brands/`（许可见 `public/licenses/brands/`），经 `?no-inline` 用于图片或遮罩。预设都有图标，缺图用中性图形，禁用字母。草稿模型面板打开时补读选项（HARNESSES）。
 - 只读 `HarnessInfo.capabilities` 与 `level`，不判断 Driver 种类；共享编码与 Host、测试向量一致（`test/client-security.test.ts`）。
 - 项目按会话记录的身份分组，普通会话归「无项目」；只有旧会话按主目录回退，不从附加文件夹推断归属（`test/client-sessions.test.ts`）。
 - 分支用 Host 摘要，可见时每 30 秒同步。按 `checkedOut` 分类，页面不运行 Git。
-- 桌面文件夹操作需 `folders.protocolVersion === 1`；旧壳同名接口不证明支持签名请求（`test/shell-folders.test.ts`）。
+- 桌面文件夹签名操作需 `folders.protocolVersion === 1`（`test/shell-folders.test.ts`）。
+- 电脑菜单按来源识别当前电脑，经 `computers.switchTo` 切换。
+- Agent 资料的「动态」含即将进行的定时，电脑、唤醒、通知和 MCP 在「运行设置」（DESIGN）。
 
 仅淡入消息。脚本用 `motionAllowed`。
 

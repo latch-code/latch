@@ -169,7 +169,6 @@
 .team-cards {
   display: grid;
   gap: var(--sp-12);
-  /* Clear of the footer that overlays the 32 under the turn before. */
   margin-block: var(--sp-32) var(--sp-16);
 }
 .team-card {

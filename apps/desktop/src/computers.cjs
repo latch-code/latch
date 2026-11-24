@@ -7,7 +7,7 @@
 const { randomUUID } = require('node:crypto')
 const { lstat, mkdir, open, readFile, rename, rm } = require('node:fs/promises')
 const { join } = require('node:path')
-const { attentionOf, sameName, sessionsOf } = require('./notifications.cjs')
+const { attentionOf, attentionTitle, sameName, sessionsOf } = require('./notifications.cjs')
 
 const FILE = 'computers.json'
 const COMPUTER_LIMIT = 16
@@ -274,18 +274,18 @@ function createViewSender(send) {
 /**
  * Which page an IPC call came from: `{ kind: 'full' }` for this Mac's own window, `{ kind: 'remote', hostId }` for a
  * listed computer's own window, otherwise undefined (a child frame, another document, an unknown window).
- * @param {{ homeOf: (contents: any) => string, isAppUrl: (url: string, home: string) => boolean, localHome: string, mainContents: () => any, remoteContents: (hostId: string) => any, has: (hostId: string) => boolean }} options
+ * @param {{ homeOf: (contents: any) => string, isAppUrl: (url: string, home: string) => boolean, localHome: string, mainContents: () => any, isRemoteContents: (hostId: string, contents: any) => boolean, has: (hostId: string) => boolean }} options
  */
-function createSenderOf({ homeOf, isAppUrl, localHome, mainContents, remoteContents, has }) {
+function createSenderOf({ homeOf, isAppUrl, localHome, mainContents, isRemoteContents, has }) {
   return event => {
     const frame = event?.senderFrame
     const contents = event?.sender
-    if (!frame || frame.parent || !contents) return undefined
+    if (!frame || frame.detached || frame.parent || !contents) return undefined
     const home = homeOf(contents)
     if (typeof home !== 'string' || !isAppUrl(frame.url, home)) return undefined
     if (home === localHome) return contents === mainContents() ? { kind: 'full' } : undefined
     const hostId = home.slice(2)
-    return has(hostId) && remoteContents(hostId) === contents ? { kind: 'remote', hostId } : undefined
+    return has(hostId) && isRemoteContents(hostId, contents) ? { kind: 'remote', hostId } : undefined
   }
 }
 
@@ -307,6 +307,85 @@ function createStartHandler({ senderOf, gestureOf, has, localHostId, startOn }) 
     if (sender.kind === 'remote' && hostId !== sender.hostId && hostId !== localHostId) return FORBIDDEN
     if (!gestureOf(event)) return NO_GESTURE
     return startOn(hostId)
+  }
+}
+
+const CUSTOM_AGENT = /^agt_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
+const unavailableAgent = () => refusal(409, 'work-computer-unavailable', '这台工作电脑上的助手暂不可用。')
+
+function canRunWorkAgents(snapshot, hostId) {
+  return (
+    snapshot?.host?.hostId === hostId
+    && snapshot?.device?.dataScope === 'all'
+    && Array.isArray(snapshot.device.scopes)
+    && ['view', 'run'].every(scope => snapshot.device.scopes.includes(scope))
+    && snapshot.catalog?.features?.agentWorkComputer === true
+    && Array.isArray(snapshot.customAgents)
+  )
+}
+
+/** The target's authenticated snapshot alone decides which assistants may receive work there. */
+function workAgents(snapshot, hostId) {
+  if (!canRunWorkAgents(snapshot, hostId)) return undefined
+  return snapshot.customAgents.flatMap(agent => {
+    if (
+      !agent
+      || typeof agent.id !== 'string'
+      || !CUSTOM_AGENT.test(agent.id)
+      || agent.available !== true
+      || agent.workComputer !== undefined
+    )
+      return []
+    const name = attentionTitle(agent.name)
+    return name ? [{ id: agent.id, name }] : []
+  })
+}
+
+/** Only the local top-level page can choose a target or open it. The native picker keeps the rest of the remote roster private. */
+function createWorkComputerHandler({ senderOf, gestureOf, localHostId, proxyFor, choose, navigate, localSnapshot }) {
+  return async (event, hostId, agentId, owner) => {
+    if (senderOf(event)?.kind !== 'full') return FORBIDDEN
+    if (typeof hostId !== 'string' || !HOST_ID.test(hostId) || hostId === localHostId) return NOT_FOUND
+    if (agentId !== undefined || owner !== undefined) {
+      if (typeof agentId !== 'string' || !CUSTOM_AGENT.test(agentId) || typeof owner !== 'string' || !CUSTOM_AGENT.test(owner))
+        return unavailableAgent()
+    }
+    const proxy = proxyFor(hostId)
+    if (!proxy) return NOT_FOUND
+    if (!gestureOf(event)) return NO_GESTURE
+    const allowed = async () => {
+      const source = await localSnapshot()
+      if (senderOf(event)?.kind !== 'full' || proxyFor(hostId) !== proxy || !canRunWorkAgents(source, localHostId)) return false
+      // A click from a stale page must not open an old or removed binding.
+      return (
+        owner === undefined
+        || source.customAgents.some(
+          agent => agent?.id === owner && agent.workComputer?.hostId === hostId && agent.workComputer.agentId === agentId,
+        )
+      )
+    }
+    const agents = async () => {
+      if (!(await allowed())) return undefined
+      const result = await proxy.probe()
+      return result?.state === 'online' && proxyFor(hostId) === proxy ? workAgents(result.snapshot, hostId) : undefined
+    }
+    try {
+      const list = await agents()
+      if (!list || !(await allowed())) return unavailableAgent()
+      if (agentId !== undefined) {
+        if (!list.some(item => item.id === agentId)) return unavailableAgent()
+        return navigate(hostId, agentId)
+      }
+      const selected = await choose(hostId, list)
+      if (!selected) return refusal(409, 'canceled', '')
+      const current = await agents()
+      if (!current || !(await allowed())) return unavailableAgent()
+      if (selected === 'new') return navigate(hostId, 'new')
+      if (!current.some(item => item.id === selected)) return unavailableAgent()
+      return { ok: true, hostId, agentId: selected }
+    } catch {
+      return unavailableAgent()
+    }
   }
 }
 
@@ -789,6 +868,7 @@ function createComputers(options) {
     probe,
     /** The scheme handlers of a computer in the list. */
     proxyFor: hostId => entries.get(hostId)?.proxy,
+    stateOf: hostId => entries.get(hostId)?.status.state,
     has: hostId => hostId === localHostId || entries.has(hostId),
     /** Listed, even when its credentials could not be opened: its page storage stays. */
     known: hostId => entries.has(hostId) || unavailable.has(hostId),
@@ -826,5 +906,6 @@ module.exports = {
   createComputers,
   createSenderOf,
   createStartHandler,
+  createWorkComputerHandler,
   whenLoaded,
 }

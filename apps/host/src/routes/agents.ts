@@ -137,10 +137,17 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
     context.log(`启动时没有清除不再使用的 Agent 头像：${String(error)}`),
   )
   return {
-    features: () => ({ customAgents: true }) satisfies HostFeatures,
+    features: () => ({ customAgents: true, agentWorkComputer: true }) satisfies HostFeatures,
     async route({ req, res, caller, path, method }) {
       if (path !== '/link/api/custom-agents' && !path.startsWith('/link/api/custom-agents/')) return false
       const actor = deps.access(caller, method !== 'GET')
+      const checkWorkComputer = (body: unknown) => {
+        if (!body || typeof body !== 'object' || !('workComputer' in body)) return
+        context.requireLocal(caller)
+        const target = body.workComputer
+        if (target && typeof target === 'object' && 'hostId' in target && target.hostId === context.hostId)
+          throw new AppError(400, 'agent-work-computer-local', '请选择另一台电脑，或清除工作电脑以使用本机。')
+      }
       const reply = <T>(result: AgentMutation<T>, code = 200) => {
         actor.authorize()
         if (!result.audited) res.setHeader('x-latch-audit', 'failed')
@@ -148,7 +155,7 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
         json(res, result.value, code)
       }
       /** A change to what an agent's sessions and automations receive. */
-      const edit = async <T>(owner: string, save: () => Promise<AgentMutation<T>>, code = 200) =>
+      const edit = async <T>(owner: string, save: (pauseForMove: () => Promise<void>) => Promise<AgentMutation<T>>, code = 200) =>
         reply(
           await deps.automations().edit(owner === GENERAL_AGENT_ID ? undefined : owner, actor, save, () => agents.definitionHash(owner)),
           code,
@@ -170,7 +177,9 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
           return true
         }
         if (method === 'POST') {
-          reply(await agents.create((await jsonBody(req, CONFIG_BODY_LIMIT)) as Parameters<CustomAgents['create']>[0], actor), 201)
+          const body = await jsonBody(req, CONFIG_BODY_LIMIT)
+          checkWorkComputer(body)
+          reply(await agents.create(body as Parameters<CustomAgents['create']>[0], actor), 201)
           return true
         }
         throw new AppError(404, 'not-found', '接口不存在。')
@@ -538,7 +547,8 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
         const body = await jsonBody(req, CONFIG_BODY_LIMIT)
         if (general) await edit(id, () => agents.patchGeneral(body as Parameters<CustomAgents['patchGeneral']>[0], actor))
         else {
-          await edit(id, () => agents.patch(id, body as Parameters<CustomAgents['patch']>[1], actor))
+          checkWorkComputer(body)
+          await edit(id, pauseForMove => agents.patch(id, body as Parameters<CustomAgents['patch']>[1], actor, pauseForMove))
           // A face chosen in a picture's place leaves that picture unused.
           sweepAvatars()
         }

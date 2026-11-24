@@ -1,22 +1,25 @@
-import { chromium, type Browser, type Page } from '@playwright/test'
+import { chromium, type Browser, type Locator, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { expect, it } from 'vitest'
-import type { AgentComputer, AppSnapshot, Automation, AutomationDetail, CustomAgent } from '@latch/protocol'
+import type { AgentComputer, AppSnapshot, Automation, AutomationDetail, CustomAgent, DeviceScope } from '@latch/protocol'
 import type { TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, reachable } from './helpers/layout.ts'
 import { stillMotion } from './helpers/visual.ts'
 
 const OUT = 'test-results/agent-computer'
 const pad = (value: number) => String(value).padStart(2, '0')
+const profileTabs = ['动态', '资料库', '记忆', '运行设置'] as const
+const profileTab = (profile: Locator, name: (typeof profileTabs)[number]) => profile.getByRole('tab', { name, exact: true })
 
 /** A browser with the full data scope, which an Agent's 「电脑」 needs. */
-async function fullScopeBrowser(page: Page, host: TestHost, owner: TestDevice, name: string) {
+async function fullScopeBrowser(page: Page, host: TestHost, owner: TestDevice, name: string, scopes?: DeviceScope[]) {
   await enrollBrowser(page, host, { name })
   const id = host.host.security.devices.list().find(device => device.name === name)!.id
-  expect((await owner.confirmed(`devices/${id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+  const body = { dataScope: 'all', ...(scopes ? { scopes } : {}) }
+  expect((await owner.confirmed(`devices/${id}`, { method: 'PATCH', body })).status).toBe(200)
   await page.reload()
   await connected(page)
 }
@@ -50,15 +53,15 @@ async function openProfile(page: Page, width: number) {
   await page.locator('.agent-frame').first().waitFor()
   await page.getByRole('button', { name: '晨报助手 的资料', exact: true }).first().click()
   const profile = page.getByRole('region', { name: '晨报助手 的资料', exact: true }).last()
-  await profile.getByRole('group', { name: '电脑' }).waitFor()
+  await profileTab(profile, '动态').waitFor()
   return profile
 }
 
-it('「电脑」 shows the computer as the Host recorded it, a missed time with 立即运行, and the per-Agent switches', async () => {
+it('「运行设置」 contains the computer and per-Agent switches, reads back changes, and preserves the missed-run action and permissions', async () => {
   await mkdir(OUT, { recursive: true })
   // The Host's clock, moved forward while the Mac "sleeps" past a scheduled time.
   let shift = 0
-  const host = await startTestHost({ now: () => Date.now() + shift })
+  const host = await startTestHost({ hostName: '晨报测试电脑', now: () => Date.now() + shift })
   let browser: Browser | undefined
   const report = (body: unknown) => host.raw('unix', 'api/host/state', { method: 'POST', body })
   try {
@@ -88,13 +91,29 @@ it('「电脑」 shows the computer as the Host recorded it, a missed time with 
     const page = await context.newPage()
     page.setDefaultTimeout(20_000)
     await fullScopeBrowser(page, host, owner, '电脑 1440')
-    let profile = await openProfile(page, 1440)
+    const profile = await openProfile(page, 1440)
     const computer = profile.getByRole('group', { name: '电脑' })
+    const notifications = profile.getByRole('group', { name: '通知' })
+    const mcp = profile.getByRole('group', { name: 'MCP', exact: true })
+    expect(await profileTab(profile, '动态').getAttribute('aria-selected')).toBe('true')
+    expect(await computer.or(notifications).count()).toBe(0)
+    await profileTab(profile, '动态').press('End')
+    await expect.poll(() => profileTab(profile, '运行设置').getAttribute('aria-selected')).toBe('true')
+    await mcp.getByText('没有 MCP 服务器', { exact: true }).waitFor()
+    for (const name of ['动态', '资料库', '记忆'] as const) {
+      const tab = profileTab(profile, name)
+      await tab.click()
+      await expect.poll(() => tab.getAttribute('aria-selected')).toBe('true')
+      await expect.poll(() => computer.or(notifications).or(mcp).count()).toBe(0)
+    }
+    await profileTab(profile, '运行设置').click()
     await computer.getByText('在线', { exact: true }).waitFor()
     await expect.poll(() => computer.textContent()).not.toMatch(/永远在线|always on/iu)
 
     // 到点前后保持唤醒: stored on the Host for this Agent; without the desktop app it says it has no effect.
-    await computer.getByRole('switch', { name: '到点前后保持唤醒' }).click()
+    const keepAwake = computer.getByRole('switch', { name: '到点前后保持唤醒' })
+    expect(await keepAwake.getAttribute('aria-checked')).toBe('false')
+    await keepAwake.click()
     await expect.poll(async () => (await agentNow()).keepAwakeForSchedules).toBe(true)
     await computer.getByText('Latch 应用没有运行，现在不起作用').waitFor()
     // The desktop app reports what it keeps awake: the section says so, and the note goes.
@@ -104,8 +123,9 @@ it('「电脑」 shows the computer as the Host recorded it, a missed time with 
     await page.screenshot({ path: `${OUT}/kept-awake-1440.png` })
 
     // 通知 › 完成 off: stored on the Host, which the desktop app reads before it notifies.
-    const notifications = profile.getByRole('group', { name: '通知' })
-    await notifications.getByRole('switch', { name: '完成' }).click()
+    const completion = notifications.getByRole('switch', { name: '完成', exact: true })
+    expect(await completion.getAttribute('aria-checked')).toBe('true')
+    await completion.click()
     await expect.poll(async () => (await agentNow()).notifications).toEqual({ completed: false, failed: true, waiting: true })
 
     // The Mac sleeps past the time: the scheduler records the missed time, the wake report gives its cause.
@@ -118,10 +138,13 @@ it('「电脑」 shows the computer as the Host recorded it, a missed time with 
     expect((await report({ state: 'desktop', keepAwake: null })).status).toBe(200)
     await page.reload()
     await connected(page)
-    profile = await openProfile(page, 1440)
+    await openProfile(page, 1440)
+    await profileTab(profile, '运行设置').click()
     const section = profile.getByRole('group', { name: '电脑' })
     await section.getByText('错过 1 次').waitFor()
     await section.getByText(/上次唤醒 /u).waitFor()
+    await expect.poll(() => keepAwake.getAttribute('aria-checked')).toBe('true')
+    await expect.poll(() => completion.getAttribute('aria-checked')).toBe('false')
     const missed = section.getByRole('list', { name: '错过的定时' })
     await missed.getByText(/Mac 在睡眠/u).waitFor()
     const runNow = missed.getByRole('button', { name: '立即运行', exact: true })
@@ -138,23 +161,55 @@ it('「电脑」 shows the computer as the Host recorded it, a missed time with 
         [768, 1024],
         [1440, 900],
       ] as const) {
-        const sized = await browser.newContext({ viewport: { width, height }, colorScheme: scheme, reducedMotion: 'reduce' })
+        const sized = await browser.newContext({
+          viewport: { width, height },
+          colorScheme: scheme,
+          reducedMotion: 'reduce',
+          isMobile: width < 1024,
+          hasTouch: width < 1024,
+        })
         await stillMotion(sized)
         const view = await sized.newPage()
         view.setDefaultTimeout(20_000)
         await fullScopeBrowser(view, host, owner, `电脑 ${width} ${scheme}`)
         const panel = await openProfile(view, width)
+        const tablist = panel.getByRole('tablist')
+        expect(await tablist.getByRole('tab').allTextContents()).toEqual(profileTabs)
+        for (const name of profileTabs) {
+          const tab = profileTab(panel, name)
+          await reachable(tab)
+          await noHorizontalOverflow(view, tab)
+        }
+        await noHorizontalOverflow(view, tablist)
+        await panel.getByRole('group', { name: '即将进行' }).getByText('晨报', { exact: true }).waitFor()
+        await view.mouse.move(0, 0)
+        await view.screenshot({ path: `${OUT}/activity-${width}-${scheme}.png`, animations: 'disabled', caret: 'hide' })
+        await profileTab(panel, '运行设置').click()
         const group = panel.getByRole('group', { name: '电脑' })
         await group.getByText('错过 1 次').waitFor()
-        await group.scrollIntoViewIfNeeded()
         await still(view)
         await noHorizontalOverflow(view)
-        await view.screenshot({ path: `${OUT}/computer-${width}-${scheme}.png` })
-        await panel.getByRole('group', { name: '通知' }).scrollIntoViewIfNeeded()
-        await still(view)
-        await view.screenshot({ path: `${OUT}/notifications-${width}-${scheme}.png` })
+        await view.mouse.move(0, 0)
+        await view.screenshot({ path: `${OUT}/run-settings-${width}-${scheme}.png`, animations: 'disabled', caret: 'hide' })
+        if (width === 320) {
+          await panel.getByRole('group', { name: '通知' }).scrollIntoViewIfNeeded()
+          await view.screenshot({ path: `${OUT}/notifications-${width}-${scheme}.png`, animations: 'disabled', caret: 'hide' })
+        }
         await sized.close()
       }
+
+    const viewing = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+    const viewer = await viewing.newPage()
+    viewer.setDefaultTimeout(20_000)
+    await fullScopeBrowser(viewer, host, owner, '只读电脑设置', ['view'])
+    const viewingProfile = await openProfile(viewer, 1440)
+    await profileTab(viewingProfile, '运行设置').click()
+    await viewingProfile.getByText('错过 1 次').waitFor()
+    expect(await viewingProfile.getByRole('switch', { name: '到点前后保持唤醒', exact: true }).isDisabled()).toBe(true)
+    const viewingNotifications = viewingProfile.getByRole('group', { name: '通知' })
+    expect(await viewingNotifications.getByRole('switch', { disabled: true }).count()).toBe(3)
+    expect(await viewingProfile.getByRole('button', { name: '立即运行', exact: true }).count()).toBe(0)
+    await viewing.close()
 
     // 立即运行 is a real run: once it is recorded, the missed time is no longer counted.
     await runNow.click()

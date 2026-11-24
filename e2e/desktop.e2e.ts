@@ -285,7 +285,7 @@ async function enrollShell(page: Page, testHost: TestHost) {
 describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')('native desktop shell', () => {
   it('opens default appearance from the native View menu without leaving the Host', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-appearance-'))
-    const testHost = await startTestHost({ demo: true, hostName: '桌面外观验收', uiDir: resolve('dist/web') })
+    const testHost = await startTestHost({ demo: true, hostName: '桌面外观验收' })
     const { host } = testHost
     let application: ElectronApplication | undefined
     try {
@@ -349,7 +349,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
 
   it('opens 设置 and its own 关于 window from the app menu, and draws the chosen background on the start page', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-menu-'))
-    const testHost = await startTestHost({ demo: true, hostName: '桌面菜单验收', uiDir: resolve('dist/web') })
+    const testHost = await startTestHost({ demo: true, hostName: '桌面菜单验收' })
     const { host } = testHost
     let application: ElectronApplication | undefined
     try {
@@ -527,7 +527,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
     const testHost = await startTestHost({
       demo: true,
       hostName: '桌面端测试.local',
-      uiDir: resolve('dist/web'),
       presenceMode: 'manual',
       plugins: [markPlugin(marks)],
       now: () => Date.now() + hostClockOffset,
@@ -628,7 +627,22 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         editors: ['protocolVersion', 'list', 'choose'],
         notifications: ['get', 'set', 'subscribeState', 'subscribe'],
         updates: ['get', 'check', 'download', 'install', 'cancelWaiting', 'setAutoDownload', 'onChange', 'onShow'],
-        computers: ['list', 'subscribe', 'open', 'start', 'subscribeStart', 'add', 'cancelAdd', 'trustCertificate', 'remove'],
+        computers: [
+          'list',
+          'subscribe',
+          'open',
+          'switchTo',
+          'isWorkspaceActive',
+          'subscribeWorkspaceActive',
+          'start',
+          'subscribeStart',
+          'pickWorkAgent',
+          'openWorkAgent',
+          'add',
+          'cancelAdd',
+          'trustCertificate',
+          'remove',
+        ],
         spaces: ['onShow', 'setKeys'],
         settings: ['onShow'],
         localNetwork: ['openSettings'],
@@ -2046,7 +2060,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
 
   it('enrolls over host.sock with an offline code while local confirmation is unavailable', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-'))
-    const testHost = await startTestHost({ demo: true, uiDir: resolve('dist/web'), presenceMode: 'unavailable' })
+    const testHost = await startTestHost({ demo: true, presenceMode: 'unavailable' })
     const { host } = testHost
     let application: ElectronApplication | undefined
     try {
@@ -2104,7 +2118,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
 
   it('drives preview tabs from the page while their pages stay away from the shell, the Host and this Mac', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-browser-'))
-    const testHost = await startTestHost({ demo: true, uiDir: resolve('dist/web'), presenceMode: 'manual' })
+    const testHost = await startTestHost({ demo: true, presenceMode: 'manual' })
     const { host } = testHost
     // Stand-ins that count connections: the Host's TLS listener (as host.json names it) and a `pnpm dev:web` proxy.
     const hostTls = await connectionCounter()

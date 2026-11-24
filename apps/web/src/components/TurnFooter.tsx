@@ -197,10 +197,10 @@ export interface TurnRetry {
 }
 
 /**
- * A turn's footer, after its last row: live prose can be copied; settled turns also show facts, retry and fork. It overlays the gap under the turn,
- * so it takes no room of its own; it rests hidden on desktop and fades in while the pointer or focus is in the turn, and
- * stays on the newest turn of a touch screen or after a tap on the turn. Copy takes the whole turn's prose; 重试 sends
- * the same prompt again as a new turn and never replays a tool.
+ * A turn's footer, after its last row: live prose can be copied; settled turns also show facts, retry and fork. It rests
+ * hidden on desktop and fades in while the pointer or focus is in the turn, and stays on the newest turn of a touch
+ * screen or after a tap on the turn. Copy takes the whole turn's prose; 重试 sends the same prompt again as a new turn
+ * and never replays a tool.
  */
 export function TurnFooter({
   turn,

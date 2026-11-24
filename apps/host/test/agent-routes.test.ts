@@ -67,6 +67,163 @@ async function fixture(options: Parameters<typeof startTestHost>[0] = {}) {
 const settled = (owner: Awaited<ReturnType<TestHost['enroll']>>, id: string, timeout?: number) =>
   expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${id}`)).summary.status, { timeout }).toBe('idle')
 
+test('a work computer belongs to one assistant, prevents local dispatch and can be detached without losing its conversation', async () => {
+  const { host, owner, seen } = await fixture()
+  const remote = await host.enroll({ listener: 'loopback-tcp' })
+  expect((await owner.confirmed(`devices/${remote.id}`, { method: 'PATCH', body: { dataScope: 'all' } })).ok).toBe(true)
+  const agent = await owner.json<CustomAgent>('custom-agents', { method: 'POST', body: definition() })
+  const first = { customAgentId: agent.id, prompt: 'First local turn', requestId: randomUUID() }
+  const { sessionId } = await owner.json<{ sessionId: string }>('tasks', { method: 'POST', body: first })
+  await settled(owner, sessionId)
+  const target = { hostId: 'b'.repeat(52), agentId: `agt_${randomUUID()}` }
+  const schedule = await owner.json<Automation>('automations', {
+    method: 'POST',
+    body: {
+      requestId: randomUUID(),
+      customAgentId: agent.id,
+      name: 'Local schedule',
+      prompt: 'Later',
+      schedule: { kind: 'daily', time: '09:00' },
+      notify: false,
+    },
+  })
+  expect(schedule.enabled).toBe(true)
+  const path = `custom-agents/${agent.id}`
+  const patch = { method: 'PATCH' as const, body: { baseRevision: agent.revision, requestId: randomUUID(), workComputer: target } }
+  expect((await remote.request(path, patch)).status).toBe(403)
+  const snapshot = await owner.json<AppSnapshot>('snapshot')
+  expect(
+    (await owner.request(path, { ...patch, body: { ...patch.body, workComputer: { ...target, hostId: snapshot.host.hostId } } })).status,
+  ).toBe(400)
+  const linked = await owner.json<CustomAgent>(path, patch)
+  expect(linked.workComputer).toEqual(target)
+  const readSchedule = async () => (await owner.json<AutomationDetail>(`automations/${schedule.id}`)).automation
+  expect((await readSchedule()).enabled).toBe(false)
+  const runHere = await owner.request(`automations/${schedule.id}/run`, { method: 'POST', body: { requestId: randomUUID() } })
+  expect(runHere.ok).toBe(false)
+  expect((await owner.json<CustomAgent>(path, patch)).revision).toBe(linked.revision)
+  const observed = await remote.json<AppSnapshot>('snapshot')
+  expect(observed.catalog?.features?.agentWorkComputer).toBe(true)
+  expect(observed.customAgents?.find(item => item.id === agent.id)).toMatchObject({
+    workComputer: target,
+    available: false,
+    canAutomate: false,
+  })
+  for (const extra of [{}, { queue: true }, { steer: true }]) {
+    const refusal = await owner.request(`tasks/${sessionId}/prompt`, {
+      method: 'POST',
+      body: { prompt: 'Wrong computer', requestId: randomUUID(), ...extra },
+    })
+    expect(refusal.status).toBe(409)
+    expect(await refusal.json()).toMatchObject({ error: 'agent-work-computer' })
+  }
+  expect(seen).toHaveLength(1)
+  const restored = await owner.json<CustomAgent>(path, {
+    method: 'PATCH',
+    body: { baseRevision: linked.revision, requestId: randomUUID(), workComputer: null },
+  })
+  expect(restored.workComputer).toBeUndefined()
+  expect((await readSchedule()).enabled).toBe(false)
+  expect((await owner.json<AppSnapshot>('snapshot')).agentChats?.[agent.id]).toEqual({ state: 'ready', sessionId })
+  await owner.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'Continue locally', requestId: randomUUID() } })
+  await settled(owner, sessionId)
+  expect(seen).toHaveLength(2)
+  expect((await remote.request('custom-agents', { method: 'POST', body: definition({ workComputer: target }) })).status).toBe(403)
+  const second = await owner.json<CustomAgent>('custom-agents', { method: 'POST', body: definition({ workComputer: target }) })
+  const refused = await owner.request('tasks', {
+    method: 'POST',
+    body: { customAgentId: second.id, prompt: 'New local chat', requestId: randomUUID() },
+  })
+  expect(refused.status).toBe(409)
+  expect(seen).toHaveLength(2)
+})
+
+test('rechecks a late work-computer change at dispatch and recognizes an already delivered request after restart', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'latch-agent-destination-'))
+  const seen: ModelMessage[][] = []
+  const options = { dataDir: join(root, 'data'), workspaceRoot: join(root, 'workspace'), plugins: [plugin(seen)] }
+  let host: TestHost | undefined
+  let releaseNote!: () => void
+  const noteGate = new Promise<void>(resolve => {
+    releaseNote = resolve
+  })
+  try {
+    host = await startTestHost(options)
+    const owner = await host.enroll({ listener: 'unix' })
+    const other = await host.enroll({ listener: 'unix' })
+    const agent = await owner.json<CustomAgent>('custom-agents', { method: 'POST', body: definition() })
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { customAgentId: agent.id, prompt: 'Start', requestId: randomUUID() },
+    })
+    await settled(owner, sessionId)
+    const path = `tasks/${sessionId}/prompt`
+    const delivered = { prompt: 'Already delivered', requestId: randomUUID() }
+    await owner.json(path, { method: 'POST', body: delivered })
+    await settled(owner, sessionId)
+    let entered!: () => void
+    const readingNote = new Promise<void>(resolve => {
+      entered = resolve
+    })
+    host.host.bridge.notePrompts(async () => {
+      entered()
+      await noteGate
+      return undefined
+    }, 30_000)
+    const waiting = { prompt: 'Waiting for context', requestId: randomUUID() }
+    const inFlight = owner.request(path, { method: 'POST', body: waiting })
+    await readingNote
+    const workComputer = { hostId: 'c'.repeat(52), agentId: `agt_${randomUUID()}` }
+    await owner.json(`custom-agents/${agent.id}`, {
+      method: 'PATCH',
+      body: { baseRevision: agent.revision, requestId: randomUUID(), workComputer },
+    })
+    const duringMove = await owner.request(path, { method: 'POST', body: waiting })
+    expect(duringMove.status).toBe(503)
+    expect(await duringMove.json()).toMatchObject({ error: 'agent-prompt-unconfirmed' })
+    releaseNote()
+    expect((await inFlight).status).toBe(409)
+    expect(seen).toHaveLength(2)
+    await host.close()
+    host = await startTestHost(options)
+    const replay = (body: Record<string, unknown>, credential = owner.credential) =>
+      host!.raw('unix', `api/${path}`, {
+        method: 'POST',
+        headers: { authorization: `Latch-Device ${credential}` },
+        body,
+      })
+    expect(await (await replay(delivered)).json()).toEqual({ accepted: true })
+    for (const changed of [{ prompt: 'Changed body' }, { model }, { freshContext: true }, { queue: true }, { steer: true }]) {
+      const response = await replay({ ...delivered, ...changed })
+      expect(response.status).toBe(409)
+      expect(await response.json()).toMatchObject({ error: 'request-conflict' })
+    }
+    expect((await replay(delivered, other.credential)).status).toBe(409)
+    await host.close()
+    const metaPath = join(options.dataDir, 'sessions-meta.json')
+    const { agentPrompts, ...legacy } = JSON.parse(await readFile(metaPath, 'utf8')) as Record<string, unknown>
+    expect(agentPrompts).toEqual([
+      {
+        sessionId,
+        requestId: delivered.requestId,
+        deviceId: owner.id,
+        payloadHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        outcome: 'accepted',
+      },
+    ])
+    await writeFile(metaPath, JSON.stringify(legacy) + '\n')
+    host = await startTestHost(options)
+    const unknown = await replay(delivered)
+    expect(unknown.status).toBe(503)
+    expect(await unknown.json()).toMatchObject({ error: 'agent-prompt-unconfirmed' })
+    expect(seen).toHaveLength(2)
+  } finally {
+    releaseNote()
+    await host?.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('accepts only one first Personal Agent chat across devices and preserves its original response', async () => {
   const { host, owner } = await fixture()
   const other = await host.enroll({ listener: 'unix' })

@@ -1,6 +1,40 @@
 import LatchNativeCore
 import SwiftUI
 
+/** A bound destination is opened explicitly. The phone may have a different registration set from the desktop. */
+struct AgentWorkComputer: View {
+    @EnvironmentObject private var model: PhoneModel
+    let entry: PhoneAgentEntry
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            switch entry.destination {
+            case let .remote(hostId, target):
+                let hosts = model.otherHosts.filter { $0.device.hostId == hostId }
+                if model.selectedHost?.device.hostId == hostId {
+                    Text("工作电脑指向当前电脑，请在原电脑上重新选择。").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
+                } else if hosts.isEmpty {
+                    Label("工作电脑 · " + String(hostId.prefix(8)), systemImage: "desktopcomputer").font(PhoneTheme.row)
+                    Text("请在「设置 › 添加电脑」配对工作电脑，然后回来打开助手。").font(PhoneTheme.caption)
+                } else {
+                    ForEach(hosts) { host in
+                        Button {
+                            let source = model.generation
+                            Task { await model.openAgentComputer(host, owner: entry.id, target: target, source: source) }
+                        } label: {
+                            Label("在\(model.computerName(host))上打开助手", systemImage: "desktopcomputer")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }.buttonStyle(.bordered).tint(PhoneTheme.ink).disabled(model.busy || model.verifying)
+                    }
+                    Text("新消息在工作电脑上发送。这台电脑保留已有聊天、记忆和定时。").font(PhoneTheme.caption)
+                }
+            case .invalid:
+                Text(entry.destination.localBlocker ?? "").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
+            case .local: EmptyView()
+            }
+        }.frame(maxWidth: 760, alignment: .leading).frame(maxWidth: .infinity)
+    }
+}
+
 /**
  * 「电脑」 of an Agent's profile, as the Host recorded it: online, asleep or kept awake; when it last woke; the times its
  * schedules missed since each last ran, with 立即运行; and, for one of 我的 Agent with schedules, 「到点前后保持唤醒」.

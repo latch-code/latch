@@ -15,7 +15,7 @@ struct AgentsTabView: View {
         NavigationSplitView(preferredCompactColumn: $column) {
             AgentList(selection: selection)
         } detail: {
-            if let id = model.agentPath.first { NavigationStack { AgentChat(id: id).id(id) } }
+            if let id = model.agentPath.first { NavigationStack { AgentChat(id: id).id([model.generation.uuidString, id]) } }
             else {
                 ContentUnavailableView("选择 Agent", systemImage: "person.crop.circle")
                     .frame(maxWidth: .infinity, maxHeight: .infinity).background(PhoneTheme.canvas)
@@ -141,6 +141,9 @@ private struct AgentList: View {
         .sheet(isPresented: $creating) {
             HelperCreateSheet { id in creating = false; selection = id; model.createdHelper = nil }.presentationCornerRadius(28)
         }
+        #if LATCH_SCREENS
+        .onAppear { if ScreensStage.scene == "agent-create" { creating = true } }
+        #endif
         .onChange(of: model.privateSnapshot.epoch) { _, _ in creating = false }
         .refreshable {
             if model.agentAccess == .closed && model.connected { await model.openAgents() }
@@ -189,19 +192,29 @@ private struct AgentRow: View {
                     if entry.general { BuiltInMark() }
                 }
                 if !entry.duty.isEmpty { Text(entry.duty).font(.system(size: 14)).foregroundStyle(PhoneTheme.ink2).lineLimit(1) }
-                if let place = entry.place { Text(place).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1) }
+                if case let .remote(hostId, _) = entry.destination {
+                    let host = model.hosts.first { $0.device.hostId == hostId }
+                    Label(host.map(model.computerName) ?? "工作电脑 · " + String(hostId.prefix(8)), systemImage: "desktopcomputer")
+                        .font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1)
+                } else if let place = entry.place { Text(place).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1) }
                 if let words = liveWords { FaceWord(face: entry.face, words: words) }
-                else if !entry.available { Unavailable(reason: entry.unavailableReason) }
+                else if !entry.available && entry.destination == .local { Unavailable(reason: entry.unavailableReason) }
             }
             Spacer(minLength: 0)
         }.contentShape(Rectangle())
     }
     private var liveWords: String? {
         guard model.connected else { return nil }
+        if entry.face == .waiting {
+            let own = model.snapshot["tasks"].array.filter { PhoneAgentChat.owner($0) == entry.id }
+            if own.contains(where: { PhoneSessions.waitsOnYou($0) && ($0["pendingQuestions"].integer ?? 0) > 0 }) { return "等你回答" }
+            let approvals = Set(model.snapshot["approvals"].array.compactMap { $0["sessionId"].string })
+            if own.contains(where: { $0["status"].string == "waiting-approval" || approvals.contains($0["id"].string ?? "") }) { return "等你批准" }
+        }
         if entry.face == .running, let task = model.snapshot["tasks"].array.first(where: { PhoneAgentChat.owner($0) == entry.id && $0["status"].string == "running" }) {
             return PhoneHelperSpeech.activity(task) ?? entry.face.words
         }
-        return entry.face == .waiting ? "等你点头" : entry.face.words
+        return entry.face.words
     }
 }
 

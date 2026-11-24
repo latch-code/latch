@@ -48,6 +48,7 @@ const COPY = defineCopy(
     skillsUnavailable: '这个 Harness 收不到技能',
     skillsUnavailableDetail: '技能经内置加载或技能服务送达；这个 Harness 两种都不接受，所选技能不会发送。',
     tools: '可以使用',
+    toolsPending: '工具列表暂不可用',
     restrict: '只收紧',
     restrictDetail: '只对内置 Harness 生效：它只能调用勾选的插件的工具，不会因此获得新的能力。',
     allPlugins: '全部已启用的插件',
@@ -93,6 +94,7 @@ const COPY = defineCopy(
     restrict: 'Limits tool access',
     restrictDetail:
       'This applies to the built-in Harness only. Its tool access is limited to the selected plugins and their existing capabilities.',
+    toolsPending: 'Tool list unavailable',
     allPlugins: 'All enabled plugins',
     conflictDetail: 'This record has changed. Load the latest version before editing it.',
     delete: 'Delete',
@@ -218,6 +220,83 @@ function SkillChoice({
   )
 }
 
+export function AgentCapabilities({
+  catalog,
+  acceptsSkills,
+  builtIn,
+  plugins,
+  skills,
+  tools,
+  disabled,
+  onSkills,
+  onTools,
+}: {
+  catalog: HostCatalog
+  acceptsSkills: boolean
+  builtIn: boolean
+  plugins: CustomAgentList['plugins'] | undefined
+  skills: string[]
+  tools: string[] | undefined
+  disabled: boolean
+  onSkills: (skills: string[]) => void
+  onTools: (tools: string[] | undefined) => void
+}) {
+  const toolPlugins = plugins?.filter(plugin => plugin.capabilities.some(item => item.startsWith('tool:'))) ?? []
+  return (
+    <>
+      <Section
+        title={COPY.skills}
+        aside={!acceptsSkills ? <Hint label={COPY.skillsUnavailable}>{COPY.skillsUnavailableDetail}</Hint> : undefined}>
+        <SkillChoice
+          catalog={catalog}
+          value={skills}
+          allowAll={false}
+          disabled={disabled}
+          onChange={skills => {
+            onSkills(skills ?? [])
+          }}
+        />
+      </Section>
+      {builtIn && (
+        <Section
+          title={COPY.tools}
+          aside={
+            <Hint label={COPY.restrict} lead={<ShieldGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
+              {COPY.restrictDetail}
+            </Hint>
+          }>
+          {plugins === undefined ? (
+            <p className="agent-form-empty">{COPY.toolsPending}</p>
+          ) : (
+            <div className="agent-checks">
+              <Checkbox
+                label={COPY.allPlugins}
+                checked={tools === undefined}
+                disabled={disabled}
+                onChange={event => {
+                  onTools(event.target.checked ? undefined : toolPlugins.map(plugin => plugin.id))
+                }}
+              />
+              {toolPlugins.map(plugin => (
+                <Checkbox
+                  key={plugin.id}
+                  label={plugin.name}
+                  checked={tools === undefined || tools.includes(plugin.id)}
+                  disabled={disabled || tools === undefined}
+                  onChange={event => {
+                    const current = tools ?? []
+                    onTools(event.target.checked ? [...current, plugin.id] : current.filter(id => id !== plugin.id))
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </Section>
+      )}
+    </>
+  )
+}
+
 /**
  * Create or edit one of 我的 Agent: name, a one-line description, instructions, the Harness (only those that can receive
  * an Agent), the model where the Harness runs on Latch's models, the default project, skills and 「可以使用」. Saving
@@ -301,7 +380,6 @@ export function AgentForm({
     if (saved) onSaved(saved)
   }
   const isolation = harness ? isolationBrief(harness) : undefined
-  const toolPlugins = plugins.filter(plugin => plugin.capabilities.some(item => item.startsWith('tool:')))
   const builtIn = harness?.agentContext === 'private'
   return (
     <form
@@ -398,54 +476,20 @@ export function AgentForm({
           />
         </div>
       </Section>
-      <Section
-        title={COPY.skills}
-        aside={harness && !harness.skills ? <Hint label={COPY.skillsUnavailable}>{COPY.skillsUnavailableDetail}</Hint> : undefined}>
-        <SkillChoice
-          catalog={catalog}
-          value={draft.skills}
-          allowAll={false}
-          disabled={locked}
-          onChange={skills => {
-            update({ skills: skills ?? [] })
-          }}
-        />
-      </Section>
-      {builtIn && (
-        <Section
-          title={COPY.tools}
-          aside={
-            <Hint label={COPY.restrict} lead={<ShieldGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
-              {COPY.restrictDetail}
-            </Hint>
-          }>
-          <div className="agent-checks">
-            <Checkbox
-              label={COPY.allPlugins}
-              checked={draft.tools === undefined}
-              disabled={locked}
-              onChange={event => {
-                if (event.target.checked) {
-                  const { tools: _tools, ...rest } = draft
-                  setDraft(rest)
-                } else update({ tools: toolPlugins.map(plugin => plugin.id) })
-              }}
-            />
-            {toolPlugins.map(plugin => (
-              <Checkbox
-                key={plugin.id}
-                label={plugin.name}
-                checked={draft.tools === undefined || draft.tools.includes(plugin.id)}
-                disabled={locked || draft.tools === undefined}
-                onChange={event => {
-                  const current = draft.tools ?? []
-                  update({ tools: event.target.checked ? [...current, plugin.id] : current.filter(id => id !== plugin.id) })
-                }}
-              />
-            ))}
-          </div>
-        </Section>
-      )}
+      <AgentCapabilities
+        catalog={catalog}
+        acceptsSkills={Boolean(harness?.skills)}
+        builtIn={builtIn}
+        plugins={plugins}
+        skills={draft.skills}
+        tools={draft.tools}
+        disabled={locked}
+        onSkills={skills => update({ skills })}
+        onTools={tools => {
+          const { tools: _previous, ...rest } = draft
+          setDraft(tools === undefined ? rest : { ...rest, tools })
+        }}
+      />
       <WriteNotice state={state} onRetry={() => void retry()} {...(onReload ? { onReload } : {})} />
       {elsewhere && !(state && 'kind' in state) && (
         <InlineNotice

@@ -67,6 +67,8 @@ export interface HostFeatures {
   /** `/simulators`: this Mac's iOS simulators in the 设备 panel; only on host.sock, for `run` with all data. */
   simulators?: true
   customAgents?: true
+  /** The Host stores and enforces each assistant’s explicitly selected work computer. */
+  agentWorkComputer?: true
   /** The Host owns the stable interactive conversation for each Personal Agent. */
   singleAgentChat?: true
   automations?: true

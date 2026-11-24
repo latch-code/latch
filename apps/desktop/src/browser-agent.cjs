@@ -867,7 +867,7 @@ function createAgentRunner({ access, controller, now = Date.now }) {
     return found
   }
 
-  const inSightNow = target => target.bounds !== null && !target.occluded
+  const inSightNow = target => target.bounds !== null && !target.occluded && !target.suspended
 
   /**
    * A tab out of sight does not lay out, paint or take input, so the call needs it shown: in the session's panel, which
@@ -878,12 +878,14 @@ function createAgentRunner({ access, controller, now = Date.now }) {
     if (access.showing() !== sessionId) throw new AgentFailure('panel-closed')
     if (inSightNow(target)) return
     access.reveal(target)
-    for (let attempt = 0; attempt < REVEAL_TRIES && !inSightNow(target); attempt++) await sleep(REVEAL_STEP_MS)
+    for (let attempt = 0; attempt < REVEAL_TRIES && !inSightNow(target) && access.showing() === sessionId; attempt++)
+      await sleep(REVEAL_STEP_MS)
     if (access.showing() !== sessionId) throw new AgentFailure('panel-closed')
     // The panel is open on the session and placed the tab, but a layer of the page (a menu, a dialog, 选取元素) covers it.
     if (!inSightNow(target)) throw new AgentFailure(target.bounds !== null && target.occluded ? 'panel-covered' : 'panel-closed')
     // Its first frame after it was placed.
     await sleep(150)
+    if (target.suspended) throw new AgentFailure('panel-closed')
   }
 
   async function inWorld(target, code, ms) {
@@ -974,9 +976,10 @@ function createAgentRunner({ access, controller, now = Date.now }) {
    * Before each input the Agent sends: the person may have taken the tab over (or the call been stopped) since the
    * last one. `sent` says whether an earlier input of this call reached the page.
    */
-  function step(target, signal, sent) {
+  function step(target, signal, checkWorkbench, sent) {
     if (target.control === 'person' || signal.reason === 'taken-over') throw new AgentFailure('taken-over', sent)
     if (signal.aborted) throw new AgentFailure('cancelled', sent)
+    checkWorkbench(sent)
   }
 
   /** What has the keyboard: refused when it is a field whose value is never read and the call was not approved at R2. */
@@ -1095,10 +1098,11 @@ function createAgentRunner({ access, controller, now = Date.now }) {
       if (!isPlainObject(raw) || typeof raw.text !== 'string' || !isPlainObject(raw.refs)) throw new AgentFailure('no-target')
       return { text: `${raw.text}${note(target)}`, tab: state(target), refs: cleanRefs(raw.refs) }
     },
-    async browser_screenshot(call) {
+    async browser_screenshot(call, _signal, checkWorkbench) {
       const target = tabFor(call)
       prepare(target)
       await sleep(30)
+      checkWorkbench()
       let rect
       if (call.args.ref !== undefined) {
         const found = await element(target, { ref: call.args.ref }, call.deadline - 1000)
@@ -1111,6 +1115,7 @@ function createAgentRunner({ access, controller, now = Date.now }) {
         if (right <= x || bottom <= y) throw new AgentFailure('no-target')
         rect = { x, y, width: right - x, height: bottom - y }
       }
+      checkWorkbench()
       let image
       try {
         image = await access.snapshot(target, rect, CAPTURE_LIMITS)
@@ -1171,12 +1176,13 @@ function createAgentRunner({ access, controller, now = Date.now }) {
       )
       return { text: lines.length ? lines.join('\n') : '没有请求。', tab: state(target) }
     },
-    async browser_wait(call, signal) {
+    async browser_wait(call, signal, checkWorkbench) {
       const target = tabFor(call)
       prepare(target)
       const until = now() + Math.min(call.args.timeoutMs ?? 10_000, call.deadline - 500)
       for (;;) {
         if (signal.aborted) throw new AgentFailure('cancelled')
+        checkWorkbench()
         // The page may have gone elsewhere while the Agent waits.
         if (!localOrBlank(target.contents.getURL())) throw new AgentFailure('not-local')
         let met = true
@@ -1189,7 +1195,7 @@ function createAgentRunner({ access, controller, now = Date.now }) {
         await sleep(WAIT_STEP_MS, signal)
       }
     },
-    async browser_click(call, signal) {
+    async browser_click(call, signal, checkWorkbench) {
       const target = tabFor(call)
       const verb = call.args.hover ? '悬停' : call.args.double ? '双击' : '点击'
       const label = call.args.hover ? ACTIVITY_COPY.hovering : call.args.double ? ACTIVITY_COPY.doubleClicking : ACTIVITY_COPY.clicking
@@ -1201,7 +1207,7 @@ function createAgentRunner({ access, controller, now = Date.now }) {
         if (found.file) throw new AgentFailure('file-input')
         target.activity = label(targetName(found))
         access.changed(target, true)
-        step(target, signal, false)
+        step(target, signal, checkWorkbench, false)
         mouse(
           target,
           { x: found.rect.x + found.rect.width / 2, y: found.rect.y + found.rect.height / 2 },
@@ -1212,14 +1218,14 @@ function createAgentRunner({ access, controller, now = Date.now }) {
         return { text: `已${verb} ${targetName(found)}。${note(target)}`, tab: state(target), dispatched: true }
       })
     },
-    async browser_key(call, signal) {
+    async browser_key(call, signal, checkWorkbench) {
       const target = tabFor(call)
       return acting(target, ACTIVITY_COPY.key, async () => {
         prepare(target)
         // A character into a password field one key at a time is typing into it: refused below R2, as browser_type is.
         const printable = call.args.key === 'Space' || !Object.hasOwn(NAMED_KEYS, call.args.key)
         if (printable) await keyboardAllows(target, call, call.deadline - 1000)
-        step(target, signal, false)
+        step(target, signal, checkWorkbench, false)
         key(target, call.args.key)
         await sleep(50)
         return { text: `已按 ${call.args.key}。${note(target)}`, tab: state(target), dispatched: true }
@@ -1237,7 +1243,7 @@ function createAgentRunner({ access, controller, now = Date.now }) {
         }
       })
     },
-    async browser_type(call, signal) {
+    async browser_type(call, signal, checkWorkbench) {
       const target = tabFor(call)
       return acting(target, ACTIVITY_COPY.typing(), async () => {
         prepare(target)
@@ -1247,6 +1253,7 @@ function createAgentRunner({ access, controller, now = Date.now }) {
         if (peek.file) throw new AgentFailure('file-input')
         target.activity = ACTIVITY_COPY.typing(targetName(peek))
         access.changed(target, true)
+        step(target, signal, checkWorkbench, false)
         const focused = await element(
           target,
           { ref: call.args.ref, scroll: false, focus: true, select: call.args.clear === true },
@@ -1255,14 +1262,14 @@ function createAgentRunner({ access, controller, now = Date.now }) {
         // Focusing may move the keyboard elsewhere (the page's own script): it must be this field, and checked again.
         if (!focused.focus?.target) throw new AgentFailure('focus-moved')
         if (focused.focus.sensitive && call.risk !== 'R2') throw new AgentFailure('sensitive-field')
-        step(target, signal, false)
+        step(target, signal, checkWorkbench, false)
         if (call.args.clear === true) key(target, 'Backspace')
         // Right before the text goes in: still this field, and still allowed.
         if (!(await keyboardAllows(target, call, 2_000))) throw new AgentFailure('focus-moved', call.args.clear === true)
-        step(target, signal, call.args.clear === true)
+        step(target, signal, checkWorkbench, call.args.clear === true)
         await target.contents.insertText(call.args.text)
         if (call.args.submit === true) {
-          step(target, signal, true)
+          step(target, signal, checkWorkbench, true)
           key(target, 'Enter')
         }
         await sleep(50)
@@ -1288,10 +1295,18 @@ function createAgentRunner({ access, controller, now = Date.now }) {
       if (!call) return undefined
       if (call.invalid) return { callId: call.callId, ok: false, dispatched: false, error: 'invalid' }
       const stop = new AbortController()
+      const revision = access.workbenchRevision()
+      const checkWorkbench = (sent = false) => {
+        if (revision !== access.workbenchRevision()) throw new AgentFailure(sent ? 'result-unknown' : 'panel-closed', sent)
+      }
       running.set(call.callId, { stop, tabId: typeof call.args.tabId === 'string' ? call.args.tabId : undefined })
       try {
-        if (IN_SIGHT.has(call.tool) && call.tool !== 'browser_open') await inSight(tabFor(call), call.sessionId)
-        const result = await TOOLS[call.tool](call, stop.signal)
+        if (IN_SIGHT.has(call.tool) && call.tool !== 'browser_open') {
+          await inSight(tabFor(call), call.sessionId)
+          checkWorkbench()
+        }
+        const result = await TOOLS[call.tool](call, stop.signal, checkWorkbench)
+        if (IN_SIGHT.has(call.tool) && !ACTIONS.has(call.tool)) checkWorkbench()
         const text = (result.text ?? '').slice(0, RESULT_TEXT_LIMIT)
         return {
           callId: call.callId,

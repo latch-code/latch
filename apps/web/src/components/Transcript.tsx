@@ -264,6 +264,7 @@ interface TurnViewProps {
   fallback?: string
   trailingLive: boolean
   latest: boolean
+  hasInsert: boolean
   outcome?: TurnOutcome
   /** The turn's message is a team's results, sent by the Host: the team, or `true` where the page has no record of it. */
   teamReturn?: TeamSummary | true
@@ -454,6 +455,7 @@ const TurnView = memo(function TurnView({
   fallback,
   trailingLive,
   latest,
+  hasInsert,
   outcome,
   teamReturn,
   arrived,
@@ -536,7 +538,7 @@ const TurnView = memo(function TurnView({
   const speaksFailure = turn.replies.some(failedHere)
   const showOutcome = outcome !== undefined && outcome !== 'completed' && !runEnd && !(outcome === 'failed' && speaksFailure)
   return (
-    <div className="turn" data-turn={turn.key} data-settled={latest ? undefined : ''}>
+    <div className="turn" data-turn={turn.key} data-settled={latest ? undefined : ''} data-has-insert={hasInsert ? '' : undefined}>
       {turn.user?.freshContext && <TimelineDivider icon={Eraser} text={COPY.cleared} />}
       {switched && !speaker && <TimelineDivider text={switched} />}
       {turn.user && teamReturn ? (
@@ -564,7 +566,8 @@ const TurnView = memo(function TurnView({
             rowContext.coarse && !latest
               ? event => {
                   // On touch a tap on the reply shows its footer, a second tap hides it.
-                  if (!(event.target instanceof Element && event.target.closest('button, a, [tabindex], pre, summary'))) setTapped(!tapped)
+                  const control = event.target instanceof Element && event.target.closest('button, a, [tabindex], pre, summary')
+                  if (!control || !event.currentTarget.contains(control)) setTapped(shown => !shown)
                 }
               : undefined
           }>
@@ -986,6 +989,7 @@ export function Transcript(props: TranscriptProps) {
     const record = records.get(turn.key)
     const hasChangeRecord = changes?.enabled === true && record !== undefined
     const teamReturn = turn.user && !speaker ? returnOf(turn.user, teams) : false
+    const insert = inserts?.get(turn.key)
     return (
       <Fragment key={turn.key}>
         <TurnView
@@ -1016,6 +1020,7 @@ export function Transcript(props: TranscriptProps) {
           {...(route?.differs && !route.fallback && !route.direct ? { chosen: { model: route.chosen!, reported: route.reported } } : {})}
           {...(route?.fallback ? { fallback: providerName?.(route.fallback.providerId) ?? COPY.otherService } : {})}
           latest={latest}
+          hasInsert={Boolean(insert)}
           trailingLive={trailingLive}
           outcome={outcome}
           {...(teamReturn ? { teamReturn } : {})}
@@ -1040,7 +1045,7 @@ export function Transcript(props: TranscriptProps) {
           onChangesError={changesError}
           {...(onHandoff && !trailingLive ? { onHandoff: handoff } : {})}
         />
-        {inserts?.get(turn.key)}
+        {insert}
       </Fragment>
     )
   }

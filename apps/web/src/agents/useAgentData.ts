@@ -119,8 +119,8 @@ export function useAgentComputer(
   )
 }
 
-export function useAgentList(snapshot: Pick<AppSnapshot, 'device' | 'customAgents' | 'tasks' | 'agentProposals'>) {
-  return useAgentRead<CustomAgentList>(snapshot, 'custom-agents', agentsVersion(snapshot))
+export function useAgentList(snapshot: Pick<AppSnapshot, 'device' | 'customAgents' | 'tasks' | 'agentProposals'>, enabled = true) {
+  return useAgentRead<CustomAgentList>(snapshot, enabled ? 'custom-agents' : null, enabled ? agentsVersion(snapshot) : '')
 }
 
 export function useAgentHome(snapshot: Pick<AppSnapshot, 'device' | 'customAgents' | 'tasks'>, owner: string) {

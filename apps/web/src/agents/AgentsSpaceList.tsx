@@ -187,19 +187,24 @@ function Roster({
   rows,
   frozen,
   menu,
+  resume,
   page = false,
 }: {
   shell: ShellState
   rows: RosterRow[]
   frozen: boolean
   menu: AgentRowMenu
+  resume?: TaskSummary | undefined
   /** A phone's root: larger faces, recent activity and the next scheduled run. */
   page?: boolean
 }) {
   const current = page ? undefined : currentAgent(shell)
+  const last = resume ? rows.find(row => row.id === topicOwner(resume)) : undefined
+  const ordered = last ? [last, ...rows.filter(row => row !== last)] : rows
   return (
     <ul className="agent-roster" aria-label={AGENT_SPACE_COPY.myAgents} data-page={page ? '' : undefined}>
-      {rows.map(row => {
+      {ordered.map(row => {
+        const continuing = row === last ? resume : undefined
         const next = page ? nextRun(shell.snapshot.automations, row.id) : undefined
         return (
           <li key={row.id} className="agent-row">
@@ -211,7 +216,10 @@ function Roster({
               data-unavailable={row.unavailable && row.state === 'idle' ? '' : undefined}
               data-state={page && !frozen ? row.state : undefined}
               aria-current={row.id === current ? 'page' : undefined}
-              onClick={() => openRow(shell, row)}>
+              onClick={() => {
+                if (continuing && shell.delegation.pending?.customAgentId !== row.id) shell.choose(continuing.id)
+                else openRow(shell, row)
+              }}>
               <AgentAvatar avatar={row.avatar} size={page ? 36 : 22} state={faceState(row, frozen)} />
               {page ? (
                 <span className="space-agent-text">
@@ -220,7 +228,7 @@ function Roster({
                   </span>
                   <span className="space-agent-meta">
                     <span className="space-agent-line">
-                      <VisibleText text={helperLine(row, frozen)} />
+                      <VisibleText text={continuing?.title || helperLine(row, frozen)} />
                     </span>
                     {next && (
                       <time className="space-agent-next" dateTime={next}>
@@ -234,6 +242,8 @@ function Roster({
                   <VisibleText text={row.name} />
                 </span>
               )}
+              {continuing && <span className="agents-home-link">{AGENT_SPACE_COPY.continueChat}</span>}
+              {row.workComputer && <span className="agent-work-computer-label">{AGENT_SPACE_COPY.workComputer}</span>}
               {page && row.updatedAt && (
                 <time className="space-agent-time" dateTime={row.updatedAt}>
                   {relativeTime(row.updatedAt, new Date(shell.now))}
@@ -254,12 +264,11 @@ function Roster({
  * 我的 Agent's people, wherever the shell draws them (the sidebar, 我的 Agent's own pane, a phone's root page): the
  * roster. Drawn from the snapshot's summaries, so it is the same wherever it stands.
  */
-export function AgentsSpaceList({ shell, page = false, hideEmpty = false }: { shell: ShellState; page?: boolean; hideEmpty?: boolean }) {
+export function AgentsSpaceList({ shell, page = false, resume }: { shell: ShellState; page?: boolean; resume?: TaskSummary | undefined }) {
   const { snapshot, connection } = shell
   const frozen = useLastConfirmed(connection, snapshot) !== null
   const locked = !readsAgents(snapshot)
   const rows = locked ? [] : shellRoster(shell)
-  const own = rows.filter(row => !row.gone && !row.confirming && row.avatar !== 'general')
   const canRun = shell.access.scopes.has('run') && !locked
   const offline = connection === 'offline'
   const archived = snapshot.tasks.filter(task => task.archived && topicOwner(task)).length
@@ -320,13 +329,11 @@ export function AgentsSpaceList({ shell, page = false, hideEmpty = false }: { sh
           <LockedAgents />
         ) : (
           <>
-            <Roster shell={shell} rows={rows} frozen={frozen} menu={menu} page={page} />
-            {snapshot.customAgents === undefined ? (
+            <Roster shell={shell} rows={rows} frozen={frozen} menu={menu} page={page} resume={resume} />
+            {snapshot.customAgents === undefined && (
               <p className="space-quiet" role="status">
                 {AGENT_SPACE_COPY.confirming}
               </p>
-            ) : (
-              !hideEmpty && own.length === 0 && <p className="space-quiet">{AGENT_SPACE_COPY.noAgents}</p>
             )}
           </>
         )}

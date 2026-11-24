@@ -10,11 +10,9 @@ import UIKit
  */
 @MainActor enum ScreensStage {
     static let marker = "LatchScreens fixture state"
-    /** The Agent scenes: the profile sheet open (at 动态 or 记忆) or a new topic shown. */
+    /** The Agent scenes: the profile sheet opens on a chosen tab. */
     static var profile = false
     static var profilePart: AgentProfileSheet.Part?
-    /** The profile scrolled to 「电脑」, at full height. */
-    static var profileComputer = false
     static var scanning = false
     /** The list's search field, for the 内容中包含 scene. */
     static var query = ""
@@ -203,7 +201,7 @@ import UIKit
         case "search":
             model.tab = .code; query = "relay"
             model.contentSearch = PhoneContentSearch(query: "relay", hits: PhoneSearch.results(json(hitsText)).hits, truncated: false)
-        case "agents", "agents-locked": model.tab = .agents
+        case "agents", "agents-locked", "agent-create": model.tab = .agents
         case "agents-loading":
             model.tab = .agents
             model.snapshot = PhoneAgents.withoutPrivate(model.snapshot)
@@ -227,6 +225,19 @@ import UIKit
             profile = name != "agent-chat"; profilePart = name == "agent-memory" ? .memory : .activity
         case "agent-new":
             model.tab = .agents; model.agentPath = [review]; chat(model, owner: review, session: nil)
+        case "agent-work-computer":
+            let hostId = String(repeating: "b", count: 52)
+            model.hosts = [host(String(repeating: "a", count: 52), "aaaaaaaaaaaaaaaaaaaaaa", "工作室"),
+                           host(hostId, "bbbbbbbbbbbbbbbbbbbbbb", "云端 Mac")].compactMap { $0 }
+            model.selectedHost = model.hosts.first
+            model.snapshot = patched(value) { root in
+                root["customAgents"] = .array(value["customAgents"].array.map { agent in
+                    agent["id"].string != review ? agent : patched(agent) {
+                        $0["workComputer"] = .object(["hostId": .string(hostId), "agentId": .string(daily)])
+                    }
+                })
+            }
+            model.tab = .agents; model.agentPath = [review]; chat(model, owner: review, session: nil)
         case "agent-waiting":
             model.tab = .agents; model.agentPath = [daily]
             model.snapshot = patched(model.snapshot) { object in object["tasks"] = .array(object["tasks"]!.array + [json(waitingTask)]) }
@@ -236,7 +247,7 @@ import UIKit
         case "agent-schedules": model.tab = .agents; model.agentPath = [daily]; profile = true; profilePart = .activity
         case "agent-computer":
             // 每日简报 with two missed times of one schedule, kept awake for a schedule, and its 完成 notification off.
-            model.tab = .agents; model.agentPath = [daily]; profile = true; profilePart = .activity; profileComputer = true
+            model.tab = .agents; model.agentPath = [daily]; profile = true; profilePart = .runSettings
             model.snapshot = patched(model.snapshot) { object in
                 object["computer"] = json(#"{"desktop":true,"keepAwake":"schedule","wokeAt":"{{-10800}}"}"#)
                 object["customAgents"] = .array(object["customAgents"]!.array.map { agent in

@@ -30,6 +30,7 @@ const {
   shell,
   autoUpdater,
   WebContentsView,
+  webContents,
 } = electron
 const { constants: fsConstants } = require('node:fs')
 const { createHash } = require('node:crypto')
@@ -40,7 +41,15 @@ const { readHostStateFile, inspectHostState: inspectHostRecord, readBody, socket
 const { openCredentialStore, secureStorageProblem } = require('./credentials.cjs')
 // Through the module objects, so the multi-computer end-to-end test's bootstrap can trust its test certificate.
 const remotes = require('./remote-proxy.cjs')
-const { createComputers, createSenderOf, createStartHandler, createViewSender, createWindowOpener, whenLoaded } = require('./computers.cjs')
+const {
+  createComputers,
+  createSenderOf,
+  createStartHandler,
+  createWorkComputerHandler,
+  createViewSender,
+  createWindowOpener,
+  whenLoaded,
+} = require('./computers.cjs')
 const { createFolderActions, isTrustedSender } = require('./folders.cjs')
 const {
   createNotifications,
@@ -123,6 +132,7 @@ const DESKTOP_VERSION = '0.1.0'
 const log = text => console.error(`[Latch] ${text}`)
 /** Whether the asking page's window is in full screen: nothing goes in, a boolean comes out, for any window's top page. */
 const FULL_SCREEN_CHANNEL = 'latch:window:full-screen'
+const WORKSPACE_ACTIVE_CHANNEL = 'latch:computers:workspace-active'
 
 /** The line the page's top row stands on, in px from the window's top (--lights-line in the page's styles). */
 const LIGHTS_LINE = 27
@@ -163,8 +173,12 @@ app.setName('Latch')
 app.setPath('userData', resolve(argument('latch-user-data') ?? join(app.getPath('appData'), 'Latch', 'Desktop')))
 const desktopLocale = createLocale(app.getPath('userData'), () => app.getPreferredSystemLanguages())
 const NATIVE_COPY = defineCopy(
-  { chooseConnectionFile: '选择连接文件', exportDiagnostics: '导出诊断' },
-  { chooseConnectionFile: 'Choose connection file', exportDiagnostics: 'Export diagnostics' },
+  { chooseConnectionFile: '选择连接文件', newWorkAgent: '在这台电脑新建助手…', exportDiagnostics: '导出诊断' },
+  {
+    chooseConnectionFile: 'Choose connection file',
+    newWorkAgent: 'Create an assistant on this computer…',
+    exportDiagnostics: 'Export diagnostics',
+  },
 )
 const STARTUP_EN = {
   secureStorage: 'Secure storage is unavailable on this system. Latch cannot store device credentials.',
@@ -214,8 +228,38 @@ let ready = false
 // Below the page's phone breakpoint it drops the title row, and with it what moves the window.
 const DESKTOP_MIN_WIDTH = 768
 
-/** @param {{ width?: number, height?: number, preload?: boolean, partition?: string }} [options] */
-function createWindow({ width = 1250, height = 850, preload = true, partition } = {}) {
+/** @param {{ preload?: boolean, partition?: string, separateWindow?: boolean }} [options] @returns {Electron.WebPreferences} */
+function appWebPreferences({ preload = true, partition = undefined, separateWindow = false } = {}) {
+  const additionalArguments = separateWindow
+    ? ['--latch-switch-in-main-window']
+    : preload && !partition && app.isPackaged
+      ? [`--latch-cli-executable=${PACKAGED_CLI}`]
+      : []
+  return {
+    ...(preload ? { preload: join(__dirname, 'preload.cjs') } : {}),
+    additionalArguments,
+    ...(partition ? { partition } : {}),
+    focusOnNavigation: false,
+    sandbox: true,
+    contextIsolation: true,
+    nodeIntegration: false,
+    nodeIntegrationInWorker: false,
+    nodeIntegrationInSubFrames: false,
+    webviewTag: false,
+    navigateOnDragDrop: false,
+    spellcheck: false,
+    webSecurity: true,
+    allowRunningInsecureContent: false,
+    experimentalFeatures: false,
+    safeDialogs: true,
+    devTools: !app.isPackaged,
+  }
+}
+
+const workbenchBackground = () => (nativeTheme.shouldUseDarkColors ? '#09090b' : '#ebebef')
+
+/** @param {{ width?: number, height?: number, preload?: boolean, partition?: string, show?: boolean }} [options] */
+function createWindow({ width = 1250, height = 850, preload = true, partition, show = true } = {}) {
   const window = new BrowserWindow({
     width,
     height,
@@ -223,36 +267,20 @@ function createWindow({ width = 1250, height = 850, preload = true, partition } 
     minHeight: Math.min(height, 560),
     title: 'Latch',
     // The window's own colour (--sidebar in @latch/ui), so the window shows no flash before the first paint.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#09090b' : '#ebebef',
+    backgroundColor: workbenchBackground(),
+    show,
+    paintWhenInitiallyHidden: show,
     icon,
     // The page's top row holds the traffic lights and moves the window. Their centre is the row's own line, 27px from
     // the window's top in both layouts (the 52px row of 侧栏 stands on it, the 56px bar of 顶栏 within half a pixel);
     // before the shell the enrollment, connection and crash screens draw a strip of the same height. The local error
     // page, which has neither, keeps the standard bar.
     ...(preload && process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: trafficLights() } : {}),
-    webPreferences: {
-      ...(preload ? { preload: join(__dirname, 'preload.cjs') } : {}),
-      ...(preload && !partition && app.isPackaged ? { additionalArguments: [`--latch-cli-executable=${PACKAGED_CLI}`] } : {}),
-      // Another computer's window: its own storage, cache and scheme handlers, shared with nothing else.
-      ...(partition ? { partition } : {}),
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      nodeIntegrationInWorker: false,
-      nodeIntegrationInSubFrames: false,
-      webviewTag: false,
-      navigateOnDragDrop: false,
-      spellcheck: false,
-      webSecurity: true,
-      allowRunningInsecureContent: false,
-      experimentalFeatures: false,
-      safeDialogs: true,
-      devTools: !app.isPackaged,
-    },
+    webPreferences: appWebPreferences({ preload, partition, separateWindow: Boolean(partition) }),
   })
   // Full screen hides the traffic lights: the page's top row is told, so it starts where it does without them.
   const tellFullScreen = () => {
-    if (!window.isDestroyed()) window.webContents.send(FULL_SCREEN_CHANNEL, window.isFullScreen())
+    contentsOf(window)?.send(FULL_SCREEN_CHANNEL, window.isFullScreen())
   }
   window.on('enter-full-screen', tellFullScreen)
   window.on('leave-full-screen', tellFullScreen)
@@ -261,8 +289,22 @@ function createWindow({ width = 1250, height = 850, preload = true, partition } 
 
 /** The window that shows the page; folder and file actions answer only its own top-level page. */
 let mainWindow
+/** @typedef {{ window: Electron.BrowserWindow, view: Electron.WebContentsView, contents: Electron.WebContents, loaded: Promise<boolean> }} WorkbenchRemoteView */
+/** The remote view attached above the main window's local page. @type {WorkbenchRemoteView | undefined} */
+let workbenchView
+let workbenchRevision = 0
+let workbenchChanged = () => {}
+const workbenchOwners = new WeakMap()
+const ownerOf = contents => workbenchOwners.get(contents) ?? BrowserWindow.fromWebContents(contents)
+function contentsOf(window) {
+  if (!window || window.isDestroyed()) return undefined
+  const contents = window === mainWindow && workbenchView ? workbenchView.contents : window.webContents
+  return contents.isDestroyed() ? undefined : contents
+}
+
 const refusedFolders = { status: 'failed', code: 'shell-refused' }
-const trusted = event => isTrustedSender(event, mainWindow?.webContents)
+const localPage = event => isTrustedSender(event, mainWindow?.webContents)
+const trusted = event => !workbenchView && localPage(event)
 /**
  * Which computer each window's page belongs to: `app` (this Mac, the default) or `h-<hostId>`. Navigation, frames and
  * the renderer's requests stay inside it.
@@ -274,6 +316,52 @@ const gestures = new WeakMap()
 /** Other computers' windows by hostId; each in its own partition. */
 const remoteWindows = new Map()
 const partitionOf = hostId => `persist:latch-host-${hostId}`
+
+function sizeWorkbenchView() {
+  if (!workbenchView || !mainWindow || mainWindow.isDestroyed()) return
+  const { width, height } = mainWindow.getContentBounds()
+  workbenchView.view.setBounds({ x: 0, y: 0, width, height })
+}
+
+/** @param {WorkbenchRemoteView} [next] */
+function showWorkbenchView(next) {
+  const window = mainWindow
+  if (!window || window.isDestroyed() || workbenchView === next) return
+  const previous = contentsOf(window)
+  if (previous) gestures.get(previous)?.clear()
+  if (workbenchView) window.contentView.removeChildView(workbenchView.view)
+  workbenchView = next
+  previewBrowser.setWorkbenchVisible(!next)
+  if (next) {
+    sizeWorkbenchView()
+    window.contentView.addChildView(next.view)
+  }
+  const contents = contentsOf(window)
+  previous?.send(WORKSPACE_ACTIVE_CHANNEL, false)
+  if (contents) {
+    gestures.get(contents)?.clear()
+    if (window.isFocused()) contents.focus()
+    contents.send(FULL_SCREEN_CHANNEL, window.isFullScreen())
+    contents.send(WORKSPACE_ACTIVE_CHANNEL, true)
+  }
+  workbenchChanged()
+}
+
+function focusWindow(window) {
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
+  contentsOf(window)?.focus()
+}
+
+function revealLocalWorkbench() {
+  workbenchRevision++
+  if (!mainWindow || mainWindow.isDestroyed()) openWindow()
+  else {
+    showWorkbenchView()
+    focusWindow(mainWindow)
+  }
+}
 
 /**
  * 关于 Latch (about.cjs): one small window with a static page main serves at latch://app/about. It has no preload and
@@ -295,11 +383,18 @@ function focusedAppWindow() {
   return window && !window.isDestroyed() ? window : null
 }
 
+function syncReturnToMac() {
+  const item = Menu.getApplicationMenu()?.getMenuItemById('return-to-mac')
+  const contents = contentsOf(focusedAppWindow())
+  if (item) item.enabled = Boolean(contents && homeOf(contents) !== LOCAL_HOME)
+}
+
 /** The macOS Edit menu invokes native plain-text paste without going through a DOM keydown. */
 async function pastePlainText() {
   const window = BrowserWindow.getFocusedWindow()
   if (!window || window === aboutWindow) return
-  const contents = window.webContents
+  const contents = contentsOf(window)
+  if (!contents) return
   const frame = contents.focusedFrame
   if (!contents.isFocused() || !frame || frame !== contents.mainFrame || !isAppUrl(frame.url, homeOf(contents))) return
   const url = frame.url
@@ -309,6 +404,7 @@ async function pastePlainText() {
     marked === true
     && !window.isDestroyed()
     && window.isFocused()
+    && contentsOf(window) === contents
     && contents.isFocused()
     && contents.focusedFrame === frame
     && !frame.isDestroyed()
@@ -319,7 +415,7 @@ async function pastePlainText() {
 
 function showAbout() {
   const focused = BrowserWindow.getFocusedWindow()
-  if (!aboutWindow || (focused && focused !== aboutWindow)) aboutOwner = focusedAppWindow()?.webContents
+  if (!aboutWindow || (focused && focused !== aboutWindow)) aboutOwner = contentsOf(focusedAppWindow())
   if (aboutWindow && !aboutWindow.isDestroyed()) {
     refreshAbout(true)
     return
@@ -409,14 +505,26 @@ function openGuideWindow({ onClosed }) {
   }
 }
 
-function openWindow() {
-  mainWindow = createWindow()
-  mainWindow.on('focus', () => localNetworkGuide?.mainFocused())
-  previewBrowser.attach(mainWindow)
+function openWindow({ show = true } = {}) {
+  const window = createWindow({ show })
+  mainWindow = window
+  previewBrowser.setWorkbenchVisible(true)
+  window.on('focus', () => {
+    if (workbenchView) contentsOf(window)?.focus()
+    else localNetworkGuide?.mainFocused()
+  })
+  window.on('resize', sizeWorkbenchView)
+  previewBrowser.attach(window)
   // Without the window there is no provider: the Host fails the Agent's browser calls at once and never opens Latch.
   browserProvider?.start()
-  mainWindow.once('closed', () => browserProvider?.stop())
-  void mainWindow.loadURL(APP_URL)
+  window.once('closed', () => {
+    workbenchView = undefined
+    workbenchRevision++
+    browserProvider?.stop()
+    workbenchChanged()
+  })
+  void window.loadURL(APP_URL)
+  return window
 }
 
 /** A session ID as Hosts write them; main hands a page nothing else to open. */
@@ -427,15 +535,9 @@ const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u
  * subscription opens it, and a message that arrives before the page subscribes waits in the preload.
  */
 function openLocalSession(sessionId) {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    openWindow()
-    mainWindow.webContents.once('did-finish-load', () => mainWindow?.webContents.send('latch:notifications:open', sessionId))
-  } else {
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show()
-    mainWindow.focus()
-    mainWindow.webContents.send('latch:notifications:open', sessionId)
-  }
+  revealLocalWorkbench()
+  const contents = mainWindow.webContents
+  whenLoaded(contents, () => contents.send('latch:notifications:open', sessionId))
 }
 
 /** Shows a local error page served by the latch scheme (the renderer may load nothing else), then quits on close. */
@@ -457,7 +559,7 @@ function fatal(message, english) {
 async function hardenSession(target, home = LOCAL_HOME) {
   // Only clipboard writes from the window's own top-level page (proxy.cjs); everything else stays refused.
   const permissions = appPermissionHandlers(home, {
-    fromWebContents: contents => BrowserWindow.fromWebContents(contents),
+    fromWebContents: contents => ({ webContents: contentsOf(ownerOf(contents)) }),
     homeOf,
     isPreviewTab: contents => previewBrowser.owns(contents),
     gestureOf: contents => gestures.get(contents),
@@ -514,14 +616,23 @@ app.on('web-contents-created', (_event, contents) => {
   }
   const gesture = createExternalGesture()
   gestures.set(contents, gesture)
-  contents.on('before-mouse-event', (_event, input) => gesture.mouse(input))
-  contents.on('before-input-event', (_event, input) => gesture.key(input))
+  const covered = () => Boolean(workbenchView && contents === mainWindow?.webContents)
+  contents.on('before-mouse-event', (event, input) => {
+    if (covered()) event.preventDefault()
+    else gesture.mouse(input)
+  })
+  contents.on('before-input-event', (event, input) => {
+    if (covered()) event.preventDefault()
+    else gesture.key(input)
+  })
   contents.on('blur', () => gesture.clear())
   contents.on('did-start-navigation', () => gesture.clear())
   contents.setWindowOpenHandler(({ url }) => {
+    const owner = ownerOf(contents)
+    if (contentsOf(owner) !== contents) return { action: 'deny' }
     // Only this Mac's own page opens a clicked link without a confirmation; another computer's page always confirms.
     const userGesture = contents === mainWindow?.webContents && isAppUrl(contents.getURL()) && gesture.take()
-    void openExternal(url, BrowserWindow.fromWebContents(contents) ?? undefined, { userGesture })
+    void openExternal(url, owner ?? undefined, { userGesture })
     return { action: 'deny' }
   })
   const guard = (event, url) => {
@@ -846,28 +957,28 @@ async function startUpdates({ proxy, supervisor }) {
   // 检查更新…: the main window comes forward on 设置 › 关于, and a check starts.
   const showUpdates = () => {
     void updater.check()
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      if (!ready) return
-      openWindow()
-      mainWindow.webContents.once('did-finish-load', () => mainWindow?.webContents.send(channels.show))
-      return
-    }
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show()
-    mainWindow.focus()
-    mainWindow.webContents.send(channels.show)
+    if (!ready) return
+    revealLocalWorkbench()
+    const contents = mainWindow.webContents
+    whenLoaded(contents, () => contents.send(channels.show))
   }
   // Code and 我的 Agent from the menu: the focused window's page goes there; only the place's name crosses.
   const showSpace = space => {
     if (space !== 'code' && space !== 'agents') return
-    const window = focusedAppWindow()
-    window?.webContents.send('latch:space', space)
+    contentsOf(focusedAppWindow())?.send('latch:space', space)
   }
   // 用默认外观打开: the focused window's page is loaded again with `#safe` (menu.cjs).
   const openSafeMode = () => {
-    const window = focusedAppWindow()
-    const contents = window?.webContents
+    const contents = contentsOf(focusedAppWindow())
     if (contents) menus.openSafeMode(contents, { home: homeOf(contents) })
+  }
+  const reloadPage = () => {
+    if (workbenchView && BrowserWindow.getFocusedWindow() === mainWindow) {
+      workbenchView.contents.reload()
+      return
+    }
+    const focused = webContents.getFocusedWebContents()
+    if (focused) (webContents.getAllWebContents().find(contents => contents.devToolsWebContents === focused) ?? focused).reload()
   }
   // The menu bar, built again when the focused window's keys for Code and 我的 Agent differ (`menus.spaceMenu`).
   buildMenu = accelerators => {
@@ -877,15 +988,18 @@ async function startUpdates({ proxy, supervisor }) {
         menus.menuTemplate({
           packaged: app.isPackaged,
           onAbout: showAbout,
-          onSettings: () => focusedAppWindow()?.webContents.send('latch:settings:show'),
+          onSettings: () => contentsOf(focusedAppWindow())?.send('latch:settings:show'),
           onCheckForUpdates: showUpdates,
           onPastePlainText: () => void pastePlainText(),
           onSpace: showSpace,
           onSafeMode: openSafeMode,
+          onReturnToMac: revealLocalWorkbench,
+          onReload: reloadPage,
           ...(accelerators ? { accelerators } : {}),
         }),
       ),
     )
+    syncReturnToMac()
   }
   buildMenu()
 
@@ -1056,6 +1170,7 @@ function deviceNameHere() {
 const COMPUTER_CHANNELS = Object.freeze({
   list: 'latch:computers:list',
   open: 'latch:computers:open',
+  switchTo: 'latch:computers:switch',
   session: 'latch:computers:session',
   /** Page → main: start a new session on that computer (its own window, on its start screen). */
   start: 'latch:computers:start',
@@ -1070,15 +1185,20 @@ const COMPUTER_CHANNELS = Object.freeze({
 const CODE_FILE_LIMIT = 4096
 
 /**
- * Other computers (computers.cjs, remote-proxy.cjs): their windows, each in a partition of its own whose `latch:` and
- * `latch-frame:` schemes reach only that computer's Host, and `latchShell.computers`. This Mac's page may list, open,
- * add and remove; another computer's page may only list and open. Adding and removing need a native click or key on
- * this Mac's page a moment before; main alone reads the link from the clipboard or a code file.
+ * Other computers (computers.cjs, remote-proxy.cjs), each in a partition of its own whose `latch:` and `latch-frame:`
+ * schemes reach only that computer's Host. The main window changes its visible view when switching computers.
+ * Explicit opens keep using a separate window. Main alone reads the link from the clipboard or a code file.
  */
-async function startComputers({ localHostId, localState, onSnapshot, onChange, onForget }) {
+async function startComputers({ localHostId, localState, localSnapshot, onSnapshot, onChange, onForget }) {
   const userData = app.getPath('userData')
   /** Each partition is hardened and given its handlers once, however many opens race for it. */
   const prepared = new Map()
+  /** @type {Map<string, WorkbenchRemoteView>} */
+  const remoteViews = new Map()
+  const watchedWorkbenches = new WeakSet()
+  /** @type {Electron.BrowserWindow | undefined} */
+  let provisionalWindow
+  let latestSwitch = 0
   /** @type {ReturnType<typeof createComputers>} */
   let computers
 
@@ -1097,9 +1217,93 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
         return target
       })()
       prepared.set(hostId, pending)
-      pending.catch(() => prepared.delete(hostId))
+      pending.catch(() => {
+        if (prepared.get(hostId) === pending) prepared.delete(hostId)
+      })
     }
     return pending
+  }
+
+  function dropView(hostId, entry = remoteViews.get(hostId)) {
+    if (!entry || remoteViews.get(hostId) !== entry) return
+    remoteViews.delete(hostId)
+    if (workbenchView === entry) showWorkbenchView()
+    workbenchOwners.delete(entry.contents)
+    if (!entry.contents.isDestroyed()) entry.contents.close()
+  }
+
+  function remoteView(window, hostId) {
+    const existing = remoteViews.get(hostId)
+    if (existing && existing.window === window) return existing
+    if (existing) dropView(hostId, existing)
+    if (!watchedWorkbenches.has(window)) {
+      watchedWorkbenches.add(window)
+      window.once('closed', () => {
+        for (const [id, entry] of remoteViews) if (entry.window === window) dropView(id, entry)
+      })
+    }
+    const view = new WebContentsView({
+      webPreferences: { ...appWebPreferences({ partition: partitionOf(hostId) }), disableDialogs: true },
+    })
+    view.setBackgroundColor(workbenchBackground())
+    const contents = view.webContents
+    homes.set(contents, `h-${hostId}`)
+    workbenchOwners.set(contents, window)
+    let documentLoaded = false
+    const navigated = (_event, _url, status) => {
+      documentLoaded = status < 400
+    }
+    contents.on('did-navigate', navigated)
+    const loaded = Promise.resolve()
+      .then(() => contents.loadURL(`latch://h-${hostId}/link/`))
+      .then(() => documentLoaded)
+      .catch(() => false)
+      .finally(() => {
+        if (!contents.isDestroyed()) contents.removeListener('did-navigate', navigated)
+      })
+    const entry = { window, view, contents, loaded }
+    remoteViews.set(hostId, entry)
+    contents.once('destroyed', () => dropView(hostId, entry))
+    contents.once('render-process-gone', () => dropView(hostId, entry))
+    return entry
+  }
+
+  const notFound = { ok: false, error: 'computer-not-found', message: '找不到这台电脑。' }
+  const switchFailed = { ok: false, error: 'computer-switch-failed', message: '无法切换到这台电脑，请稍后再试。' }
+
+  async function switchComputer(hostId, stillActive) {
+    if (hostId === localHostId) {
+      revealLocalWorkbench()
+      return { ok: true }
+    }
+    const proxy = computers.proxyFor(hostId)
+    if (!proxy) return notFound
+    if (computers.stateOf(hostId) === 'revoked') return switchFailed
+    const revision = ++workbenchRevision
+    latestSwitch = revision
+    const valid = () => revision === workbenchRevision && stillActive() && computers.proxyFor(hostId) === proxy
+    try {
+      await prepareSession(hostId)
+      if (!valid() || computers.stateOf(hostId) === 'revoked') return switchFailed
+      // A pop-out's explicitly labelled action may reopen the primary window after it was closed.
+      const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : (provisionalWindow = openWindow({ show: false }))
+      const entry = remoteView(window, hostId)
+      if (!(await entry.loaded)) {
+        dropView(hostId, entry)
+        return switchFailed
+      }
+      if (!valid() || window.isDestroyed() || remoteViews.get(hostId) !== entry) return switchFailed
+      showWorkbenchView(entry)
+      focusWindow(window)
+      return { ok: true }
+    } catch {
+      return switchFailed
+    } finally {
+      if (latestSwitch === revision && provisionalWindow) {
+        if (!provisionalWindow.isDestroyed() && !provisionalWindow.isVisible()) provisionalWindow.close()
+        provisionalWindow = undefined
+      }
+    }
   }
 
   /** Each other computer's window hears of a change only when its own view changed (never what waits elsewhere). */
@@ -1110,12 +1314,10 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
     if (kind === 'attention') return
     const view = computers.view()
     for (const window of remoteWindows.values()) if (!window.isDestroyed()) sendRemote(window.webContents, view)
-  }
-
-  function focus(window) {
-    if (window.isMinimized()) window.restore()
-    window.show()
-    window.focus()
+    for (const [hostId, entry] of remoteViews) {
+      if (computers.stateOf(hostId) === 'revoked') dropView(hostId, entry)
+      else if (!entry.contents.isDestroyed()) sendRemote(entry.contents, view)
+    }
   }
 
   /**
@@ -1126,16 +1328,15 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
     const session = typeof taskId === 'string' && SESSION_ID.test(taskId) ? taskId : undefined
     if (hostId === localHostId) {
       if (session) openLocalSession(session)
-      else if (!mainWindow || mainWindow.isDestroyed()) openWindow()
-      else focus(mainWindow)
+      else revealLocalWorkbench()
       return { ok: true }
     }
-    if (!computers.proxyFor(hostId)) return { ok: false, error: 'computer-not-found', message: '找不到这台电脑。' }
+    if (!computers.proxyFor(hostId)) return notFound
     let window
     try {
       window = await openRemote(hostId)
     } catch {
-      return { ok: false, error: 'computer-not-found', message: '找不到这台电脑。' }
+      return notFound
     }
     if (session && window && !window.isDestroyed()) {
       const send = () => {
@@ -1150,13 +1351,13 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
    * 新会话 on a computer: brings its own window forward and has it show its start screen. Nothing typed goes along: each
    * window keeps its own draft, and only that window's page reads its Host's projects, Harnesses and models.
    */
-  async function startOn(hostId) {
+  async function startOn(hostId, agentId = undefined) {
     const opened = await openComputer(hostId, undefined)
     if (!opened.ok) return opened
     const window = hostId === localHostId ? mainWindow : remoteWindows.get(hostId)
     if (window && !window.isDestroyed()) {
       const send = () => {
-        if (!window.isDestroyed()) window.webContents.send(COMPUTER_CHANNELS.startHere)
+        if (!window.isDestroyed()) window.webContents.send(COMPUTER_CHANNELS.startHere, agentId)
       }
       whenLoaded(window.webContents, send)
     }
@@ -1169,10 +1370,12 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
       const window = remoteWindows.get(hostId)
       return window && !window.isDestroyed() ? window : undefined
     },
-    focus,
+    focus: focusWindow,
     async create(hostId) {
+      const proxy = computers.proxyFor(hostId)
+      if (!proxy) throw new Error('这台电脑已移除')
       await prepareSession(hostId)
-      if (!computers.proxyFor(hostId)) throw new Error('这台电脑已移除')
+      if (computers.proxyFor(hostId) !== proxy) throw new Error('这台电脑已移除')
       const window = createWindow({ partition: partitionOf(hostId) })
       homes.set(window.webContents, `h-${hostId}`)
       remoteWindows.set(hostId, window)
@@ -1194,17 +1397,18 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
     parseLink: text => remotes.parseComputerLink(text),
     async forgetPartition(hostId) {
       const target = session.fromPartition(partitionOf(hostId))
+      const preparing = prepared.get(hostId)
+      prepared.delete(hostId)
       remoteWindows.delete(hostId)
+      dropView(hostId)
       // Every window of that computer's partition goes, not only the one in the list.
       for (const window of BrowserWindow.getAllWindows())
         if (!window.isDestroyed() && window.webContents.session === target) window.destroy()
-      await target.clearStorageData()
-      await target.clearCache()
       // A first open may still be preparing the partition: let it finish (it then registers nothing), then unregister.
-      const preparing = prepared.get(hostId)
-      prepared.delete(hostId)
       await preparing?.catch(() => {})
       for (const scheme of ['latch', 'latch-frame']) if (target.protocol.isProtocolHandled(scheme)) target.protocol.unhandle(scheme)
+      await target.clearStorageData()
+      await target.clearCache()
       // Chromium may still write a file or two after the session is cleared; the folder goes again a moment later, and
       // any that is left is removed at the next start (below).
       const folder = join(userData, 'Partitions', `latch-host-${hostId}`)
@@ -1229,22 +1433,26 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
     isAppUrl,
     localHome: LOCAL_HOME,
     mainContents: () => mainWindow?.webContents,
-    remoteContents: hostId => {
+    isRemoteContents: (hostId, contents) => {
       const window = remoteWindows.get(hostId)
-      return window && !window.isDestroyed() ? window.webContents : undefined
+      return remoteViews.get(hostId)?.contents === contents || (window && !window.isDestroyed() && window.webContents === contents)
     },
     has: hostId => computers.has(hostId),
   })
   const senderOf = event => senderCheck(event)?.kind
   const refused = { ok: false, error: 'forbidden', message: '只接受 Latch 页面的请求。' }
   const noGesture = { ok: false, error: 'gesture-required', message: '请在 Latch 页面上点按后再试。' }
-  const gestureOf = event => gestures.get(event.sender)?.take() === true
+  const isDisplayedPage = contents => contentsOf(ownerOf(contents)) === contents
+  const gestureOf = event => isDisplayedPage(event.sender) && gestures.get(event.sender)?.take() === true
 
   ipcMain.handle(COMPUTER_CHANNELS.list, event => {
     const sender = senderOf(event)
     if (!sender) return refused
     return sender === 'full' ? computers.view({ full: true }) : sendRemote.seen(event.sender, computers.view())
   })
+  ipcMain.handle(WORKSPACE_ACTIVE_CHANNEL, event =>
+    senderCheck(event) && event.senderFrame === event.sender.mainFrame ? isDisplayedPage(event.sender) : undefined,
+  )
   ipcMain.handle(COMPUTER_CHANNELS.open, (event, hostId, taskId) => {
     const sender = senderOf(event)
     if (!sender) return refused
@@ -1255,10 +1463,56 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
     const session = sender === 'full' && typeof taskId === 'string' && computers.waits(hostId, taskId) ? taskId : undefined
     return openComputer(hostId, session)
   })
+  ipcMain.handle(COMPUTER_CHANNELS.switchTo, (event, hostId) => {
+    const sender = senderCheck(event)
+    const contents = event.sender
+    const frame = event.senderFrame
+    if (!sender || !frame || frame !== contents.mainFrame) return refused
+    if (typeof hostId !== 'string' || !computers.has(hostId)) return notFound
+    if (!gestureOf(event)) return noGesture
+    if (sender.hostId === hostId || (sender.kind === 'full' && hostId === localHostId)) return { ok: true }
+    return switchComputer(
+      hostId,
+      () => !contents.isDestroyed() && event.senderFrame === frame && Boolean(senderCheck(event)) && isDisplayedPage(contents),
+    )
+  })
   ipcMain.handle(
     COMPUTER_CHANNELS.start,
     createStartHandler({ senderOf: senderCheck, gestureOf, has: hostId => computers.has(hostId), localHostId, startOn }),
   )
+  const workComputer = createWorkComputerHandler({
+    senderOf: event => (isDisplayedPage(event.sender) ? senderCheck(event) : undefined),
+    gestureOf,
+    localHostId,
+    proxyFor: hostId => computers.proxyFor(hostId),
+    localSnapshot,
+    navigate: startOn,
+    choose: (hostId, list) =>
+      new Promise(resolve => {
+        const window = mainWindow
+        if (!window || window.isDestroyed() || !window.isFocused()) return resolve(undefined)
+        const header = { label: computers.nameOf(hostId) ?? '', enabled: false }
+        const seenNames = new Set()
+        const duplicateNames = new Set()
+        for (const item of list) {
+          if (seenNames.has(item.name)) duplicateNames.add(item.name)
+          seenNames.add(item.name)
+        }
+        const choices = list.map(({ id, name }) => ({
+          label: name.replaceAll('&', '&&') + (duplicateNames.has(name) ? ' · ' + id.slice(-8) : ''),
+          click: () => resolve(id),
+        }))
+        const menu = Menu.buildFromTemplate([
+          header,
+          ...choices,
+          { type: 'separator' },
+          { label: NATIVE_COPY.newWorkAgent, click: () => resolve('new') },
+        ])
+        // The native menu can close before its selected item's click is delivered.
+        menu.popup({ window, callback: () => setImmediate(() => resolve(undefined)) })
+      }),
+  })
+  ipcMain.handle('latch:computers:work-agent', workComputer)
   ipcMain.handle(COMPUTER_CHANNELS.add, async (event, source) => {
     if (senderOf(event) !== 'full') return refused
     if (!gestureOf(event)) return noGesture
@@ -1305,13 +1559,15 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
   // 我的 Agent). The page sends only that yes or no; a page that loads a new document says it again.
   const spaceMenu = menus.spaceMenu({
     // The window the items act on: the focused one, else this Mac's (as showSpace does).
-    focused: () => {
-      return focusedAppWindow()?.webContents ?? null
-    },
+    focused: () => contentsOf(focusedAppWindow()) ?? null,
     item: id => Menu.getApplicationMenu()?.getMenuItemById(id),
     rebuild: accelerators => buildMenu(accelerators),
   })
-  const syncSpaceMenu = spaceMenu.sync
+  const syncSpaceMenu = (rebuildLabels = false) => {
+    spaceMenu.sync(rebuildLabels)
+    syncReturnToMac()
+  }
+  workbenchChanged = syncSpaceMenu
   ipcMain.on('latch:locale', (event, preference, language) => {
     if (!trusted(event)) return
     if (desktopLocale.set(preference, language)) syncSpaceMenu(true)
@@ -1340,7 +1596,12 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
     if (!senderOf(event)) return
     spaceMenu.keys(event.sender, keys)
   })
-  app.on('browser-window-blur', () => syncSpaceMenu())
+  app.on('browser-window-blur', (_event, window) => {
+    const contents = contentsOf(window)
+    if (contents) gestures.get(contents)?.clear()
+    workbenchRevision++
+    syncSpaceMenu()
+  })
   app.on('will-quit', () => computers.stop())
   app.on('browser-window-focus', () => {
     computers.refocus()
@@ -1446,8 +1707,8 @@ async function start() {
   handleFolders(proxy, store)
   // Asked by a window's own top page only; a preview tab or a frame is no window and gets false.
   ipcMain.handle(FULL_SCREEN_CHANNEL, event => {
-    const window = event.senderFrame === event.sender.mainFrame ? BrowserWindow.fromWebContents(event.sender) : null
-    return window ? window.isFullScreen() : false
+    const window = event.senderFrame === event.sender.mainFrame ? ownerOf(event.sender) : null
+    return window && contentsOf(window) === event.sender ? window.isFullScreen() : false
   })
   // The renderer may only trigger this; main makes the invitation and gives it to the default browser.
   const openInBrowser = createBrowserOpener({
@@ -1494,7 +1755,7 @@ async function start() {
   ipcMain.on(GUIDE_CLOSE_CHANNEL, event => {
     if (localNetworkGuide?.owns(event.sender)) localNetworkGuide.close()
   })
-  handleBrowserRequests({ ipcMain, trusted, controller: previewBrowser })
+  handleBrowserRequests({ ipcMain, trusted, layoutSender: localPage, controller: previewBrowser })
   // The Agent's browser calls: main registers with this Mac's Host over host.sock, signed with the device key.
   const browserAccess = previewBrowser.agentAccess()
   browserProvider = createBrowserProvider({
@@ -1558,6 +1819,7 @@ async function start() {
   })
   reach = await startComputers({
     localHostId: state.hostId,
+    localSnapshot: async () => (await hostRequest(proxy, 'GET', '/link/api/snapshot')).json,
     localState: () => (['running', 'unresponsive'].includes(supervisor.view().status) ? 'online' : 'offline'),
     onSnapshot: (hostId, name, snapshot) => void notifications.observeRemote(hostId, name, snapshot),
     onChange: updateBadge,
@@ -1584,10 +1846,8 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.focus()
-    } else if (ready) openWindow()
+    if (mainWindow && !mainWindow.isDestroyed()) focusWindow(mainWindow)
+    else if (ready) openWindow()
   })
   app
     .whenReady()

@@ -1,7 +1,7 @@
 /*
  * The conversation as turns, 32 apart; blocks inside a turn stand 12 apart. A turn is the person's prompt and what
- * answered under one author line: quiet work rows, prose, summary cards. What only hovering shows overlays the gap under
- * its turn, so it reserves no room. Only the person's messages have a bubble.
+ * answered under one author line: quiet work rows, prose, summary cards. The footer usually overlays the gap under its
+ * turn. Only the person's messages have a bubble.
  */
 .turn {
   position: relative;
@@ -12,11 +12,12 @@
 .turn + .turn {
   margin-top: var(--sp-32);
 }
-/* Skipping far turns contains their paint, which would clip the footer that overlays the gap under them: the gap is
- * the turn's own padding instead, the same 32 in all. */
 .turn[data-settled] {
   content-visibility: auto;
   contain-intrinsic-block-size: auto 400px;
+}
+/* Skipping far turns contains their paint, so keep the gap for an overlay footer inside the turn. */
+.turn[data-settled]:not([data-has-insert]) {
   padding-bottom: var(--sp-32);
 }
 .turn[data-settled] + .turn {
@@ -191,15 +192,20 @@
   opacity: 0;
   transition: opacity var(--m-micro) var(--e-micro);
 }
-.message-user:is(:hover, :focus-within, [data-shown]) .message-meta,
-.turn:is(:hover, :focus-within) > .turn-reply > .turn-footer,
+.message-user:is(:focus-within, [data-shown]) .message-meta,
+.turn:focus-within > .turn-reply > .turn-footer,
 .turn-reply[data-shown] > .turn-footer,
 .turn-footer[data-pinned] {
   opacity: 1;
-  transition: opacity var(--m-micro) var(--e-micro);
+}
+@media (hover: hover) {
+  .message-user:hover .message-meta,
+  .turn:hover > .turn-reply > .turn-footer {
+    opacity: 1;
+  }
 }
 @media (hover: none) {
-  .turn:last-child .message-meta {
+  .turn:is(:last-child, [data-has-insert]:not([data-settled])) .message-meta {
     opacity: 1;
   }
 }
@@ -1173,7 +1179,7 @@ button.summary-file:hover {
   color: var(--ink-2);
 }
 
-/* A settled turn's footer: facts and actions over the gap under the turn, taking no room of its own. */
+/* Facts and actions over the gap under the turn. */
 .turn-footer {
   position: absolute;
   top: 100%;
@@ -1182,6 +1188,16 @@ button.summary-file:hover {
   z-index: 1;
   min-width: 0;
   margin-top: var(--sp-2);
+}
+/* Inserted cards stand below the full action row, including larger touch targets. */
+.turn[data-has-insert] > .turn-reply > .turn-footer,
+.turn[data-has-insert] > .message-user:last-child > .message-meta {
+  position: relative;
+  top: auto;
+}
+.turn[data-has-insert] > .message-user:last-child > .message-meta {
+  height: auto;
+  min-height: 24px;
 }
 .turn-footer-row {
   display: flex;

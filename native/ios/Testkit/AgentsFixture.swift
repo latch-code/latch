@@ -48,7 +48,23 @@ func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
             "prompt": PhonePending.prompt(write) ?? NSNull()]
     }
     let memory = value["memory"]
+    let destinations = value["destinationCases"].array.map { item -> [String: Any] in
+        guard var agent = agents.first?.object else { return [:] }
+        agent["workComputer"] = item.object["workComputer"]
+        let json = NativeJSON.object(agent), destination = PhoneAgentDestination(json)
+        let route: [String]
+        switch destination {
+        case .local: route = ["local"]
+        case let .remote(host, id): route = [host, id]
+        case .invalid: route = ["invalid"]
+        }
+        return ["route": route, "canStart": (try? PhoneAgents.fields(catalog, agent: json, choice: choices[0], prompt: "第一件事")) != nil]
+    }
     return [
+        "destinations": destinations,
+        "matchedAgents": value["registrations"].array.map { row in
+            PhoneAgentDestination(row["agent"]).agentId(on: row["registered"].string ?? "", from: row["source"].string ?? "") ?? ""
+        },
         "changedHarness": changedHarness,
         "tabs": value["snapshots"].array.map { PhoneTabs.entries($0).map(\.label) },
         "dots": value["snapshots"].array.map { [PhoneTabs.codeDot($0, current: .agents), PhoneTabs.codeDot($0, current: .code)] },
