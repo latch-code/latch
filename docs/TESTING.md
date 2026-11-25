@@ -288,6 +288,8 @@ pnpm exec vitest run --config e2e/vitest.config.ts e2e/harness-acceptance.e2e.ts
 
 原生会话首屏用 `ios-screens` 的 `inbox-first-rows` 场景验收。夹具先提供会话摘要，测试从模拟器截图中确认项目行已经出现，再放行团队关系，核对同一成员只出现一次并缩进到带队会话下。
 
+`conversation-sending` 场景停在发送回执到达前。截图检查新消息、发送进度与输入栏从上到下的顺序，同时核对这段时间没有出现重试按钮。
+
 `native-push.test.ts` 用本地 HTTP/2 假 Apple 服务和临时密钥检查签名、投递、失效令牌回退及待办撤回。`ios-screens` 的 `push-approval` 场景检查原生待审批界面。要验收手机锁屏时的真实投递和灵动岛入口，需要匹配签名的 iPhone、Apple 推送凭据和发出审批的测试 Host，见[手机通知说明](IOS-NOTIFICATIONS.md)。
 
 原生待办的投影、旧窗口、确切问答或审批和提交版本由 `native-swift.test.ts` 编排。交付与原回合的组合读取经实际原生连接换路用例核对，复用原正文租约时拒绝旧连接的下一次读取和发布。缓存回归暂停旧 Vault，检查快速重开时的新资料库会等待收尾，离线只读到已撤下私有项的快照。用 `ios-screens` 的 `work-`、`review` 场景查看任务列表、来源、同 SHA 证据和文件栏布局。回复排版、消息图片与团队看 `markdown`、`markdown-code`、`markdown-prose`、`markdown-dense`、`markdown-diagram`、`pictures`、`team-results`、`team-graph` 场景，Markdown 分块、团队结果的读取与团队分工卡的位置和末端由 `native-swift.test.ts` 核对。实走「待办 → 原回合 → 回到待办」在本次创建的模拟器及临时 Host 上做，覆盖较窄权限、锁屏和断连。审阅还检查 iPad 横竖屏、分屏、辅助使用字号、长路径与过期警告。

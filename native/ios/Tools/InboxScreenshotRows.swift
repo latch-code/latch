@@ -5,7 +5,8 @@ import Vision
 // Read only the expected public fixture labels. The left edge distinguishes a flat row from a team member.
 let args = CommandLine.arguments.dropFirst(2)
 let settled = args.first == "--settled"
-let words = Array(settled ? args.dropFirst() : args)
+let vertical = args.first == "--vertical"
+let words = Array(settled || vertical ? args.dropFirst() : args)
 let url = URL(fileURLWithPath: CommandLine.arguments[1])
 let image = CIImage(contentsOf: url)!
 let context = CIContext(options: [.workingColorSpace: NSNull()])
@@ -28,7 +29,7 @@ for observation in request.results ?? [] {
                 context.render(extrema, toBitmap: &pixels, rowBytes: 8, bounds: extrema.extent, format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
                 if Int(pixels[4]) - Int(pixels[0]) < 140 { continue }
             }
-            positions[word, default: []].append(match.boundingBox.minX)
+            positions[word, default: []].append(vertical ? 1 - match.boundingBox.midY : match.boundingBox.minX)
         }
     }
 }

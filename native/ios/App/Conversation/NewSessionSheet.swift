@@ -110,7 +110,7 @@ struct NewSessionSheet: View {
                     }
                     .background(GeometryReader { proxy in Color.clear.onChange(of: proxy.frame(in: .global).minY, initial: true) { _, value in slashSpace = max(0, value - proxy.safeAreaInsets.top - 12) } })
                 if fork == nil { HistoryEntryRow(entry: PhoneHistory.entry(model.snapshot, workspaceId: choice.workspaceId)) { importing = HistoryScope(model.snapshot, workspaceId: choice.workspaceId) } }
-                ForEach(model.pending, id: \.requestId) { pending in
+                ForEach(model.writesAwaitingConfirmation, id: \.requestId) { pending in
                     HStack {
                         Label(PhonePending.words(pending), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                         Spacer()

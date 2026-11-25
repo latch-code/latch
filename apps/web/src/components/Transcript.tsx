@@ -49,7 +49,7 @@ import { FAILURE_ACTION_LABEL, failureAction, type FailureStep } from '../conver
 import { PlanRow } from '../conversation/PlanRow.tsx'
 import { TurnSummaryOptions, type TurnSummaryOptionsValue } from '../conversation/summaryOptions.ts'
 import { announceChangesWrite, useChangesRevision, useTurnChanges } from '../conversation/useTurnChanges.ts'
-import { messageTime } from '../format.ts'
+import { isActive, messageTime } from '../format.ts'
 import { usePreferences } from '../preferences.ts'
 import { FileSession } from './FileChip.tsx'
 import { FileReferences } from './FileReferences.tsx'
@@ -522,9 +522,9 @@ const TurnView = memo(function TurnView({
   const replyBefore = useLivePrevious(hasReply)
   const replyArrived = hasReply && (arrived || replyBefore === false)
   // A helper speaks for itself; only a login, which the person must do in the Harness, names the Harness.
-  // Until the live turn's text arrives, one quiet mark stands where it will be; then the text speaks for itself.
-  const writing = trailingLive && turn.replies.some(reply => reply.id === rowContext.streamingId && reply.text !== '')
-  const thinking = trailingLive && !writing && summary?.status === 'running' && summary.live ? summary.live : undefined
+  // After a tool the next answer is still pending. Streaming reasoning or a recorded answer already fills that place.
+  const hasAnswer = end?.role === 'assistant' && (end.text || end.attachments?.length || end.id === rowContext.streamingId)
+  const thinking = trailingLive && !hasAnswer && summary?.status === 'running' ? summary.live : undefined
   const voice = speaker?.name ?? engine ?? harnessName
   const endVoice = summary?.runEnd?.reason === 'login-required' ? harnessName : voice
   const runEnd = summary && !trailingLive && latest ? runEndLine(summary, endVoice) : undefined
@@ -969,10 +969,16 @@ export function Transcript(props: TranscriptProps) {
     onError: changesError,
   }
   const renderTurn = (turn: Turn, index: number, latest: boolean) => {
-    const trailingLive = latest && active
-    const outcome = trailingLive ? undefined : turnOutcome(turn, latest ? detail.summary.status : undefined)
+    // A resumed run is announced before its prompt is recorded. Its predecessor keeps its settled reply and footer.
+    const runId = detail.summary.runId ?? detail.summary.live?.runId
+    const previousRun = turn.user?.turnId !== undefined && runId !== undefined && turn.user.turnId !== runId
+    const trailingLive =
+      latest && active && isActive(detail.summary.status) && !previousRun && !turn.user?.turn?.endedAt && !turn.user?.imported
+    const outcome = trailingLive
+      ? undefined
+      : turnOutcome(turn, latest && !isActive(detail.summary.status) ? detail.summary.status : undefined)
     const resend =
-      latest && !trailingLive && retry && turn.user
+      latest && !active && retry && turn.user
         ? {
             warning: resendWarning(sideEffects(turn)),
             onResend: () => {

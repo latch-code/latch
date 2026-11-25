@@ -7,6 +7,7 @@ struct ConversationReader<Content: View>: View {
     let session: String
     let contentEpoch: UUID
     let offersTurnIndex: Bool
+    var submittedPrompt: String? = nil
     @ViewBuilder var content: Content
     @Namespace private var viewport
     @State private var away = false
@@ -23,6 +24,7 @@ struct ConversationReader<Content: View>: View {
                         Color.clear.frame(height: 1).id(ConversationAnchor.latest).accessibilityHidden(true)
                     }
                     .environment(\.revealTurn, RevealTurn(session: session) { turn in
+                        away = true
                         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { reader.scrollTo(turn, anchor: .top) }
                     })
                     .background {
@@ -36,6 +38,11 @@ struct ConversationReader<Content: View>: View {
                 .coordinateSpace(name: viewport)
                 .defaultScrollAnchor(away ? nil : .bottom)
                 .readingGestures(movement)
+                .onChange(of: submittedPrompt) { _, request in
+                    guard request != nil else { return }
+                    away = false
+                    reader.scrollTo(ConversationAnchor.latest, anchor: .bottom)
+                }
                 .onPreferenceChange(TranscriptGeometry.self) { frame in
                     guard let frame else { return }
                     let position = frame.position(after: movement.last, away: away, scrolling: movement.scrolling)
@@ -67,6 +74,7 @@ struct ConversationReader<Content: View>: View {
             .sheet(isPresented: $choosingTurn) {
                 QuestionIndex(session: session, contentEpoch: contentEpoch) { turn in
                     choosingTurn = false
+                    away = true
                     reader.scrollTo(turn, anchor: .top)
                 }
                 .presentationDetents([.medium, .large])
@@ -83,6 +91,7 @@ struct ConversationReader<Content: View>: View {
                 Rectangle().fill(PhoneTheme.line).frame(width: 1, height: 14).accessibilityHidden(true)
             }
             Button {
+                away = false
                 withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
                     reader.scrollTo(ConversationAnchor.latest, anchor: .bottom)
                 }
@@ -102,14 +111,14 @@ struct ConversationReader<Content: View>: View {
 
 private final class ReadingMovement {
     var last: PhoneTranscriptFrame?
-    var scrolling = false
+    var scrolling: Bool? = if #available(iOS 18, *) { false } else { nil }
 }
 
 private extension View {
     @ViewBuilder func readingGestures(_ movement: ReadingMovement) -> some View {
         if #available(iOS 18, *) {
             onScrollPhaseChange { _, phase in
-                movement.scrolling = phase == .tracking || phase == .interacting || phase == .decelerating
+                movement.scrolling = phase == .interacting || phase == .decelerating
             }
         } else { self }
     }

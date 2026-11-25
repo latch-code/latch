@@ -22,6 +22,19 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
         }
         return ["answers": answers]
     }
+    if case let .array(cases) = value["submissionCases"] {
+        let answers = try cases.map { item -> [String] in
+            let request = try NativePendingWrite(method: .post, path: "/link/api/tasks/selected/prompt", fields: item["fields"].object,
+                requestId: "fixture-request-id")
+            let detail = item["detail"], pending = item["pending"].bool ? [request] : []
+            let submission = PhoneSubmittingPrompt(requestId: item["active"].bool ? request.requestId : nil, pending: pending,
+                session: item["session"].string ?? "selected", detail: detail)
+            let turns = PhoneConversation.turns(PhoneConversation.rendered(detail))
+            let live = PhoneConversation.liveTurn(last: turns.last, running: true, summary: detail["summary"], submitting: submission)
+            return [submission?.showsDraft == true ? submission?.text ?? "" : "", submission?.awaitingEcho == true ? submission?.status ?? "" : "", live?.id ?? ""]
+        }
+        return ["answers": answers]
+    }
     if let readings = input["transcriptFrames"] as? [[String: Int]] {
         var prior: PhoneTranscriptFrame?, away = false
         let positions = try readings.map { reading -> [Bool] in
@@ -29,7 +42,8 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
                 throw NativeFailure.invalidRecord
             }
             let frame = PhoneTranscriptFrame(contentHeight: CGFloat(height), viewportHeight: CGFloat(viewport), offset: CGFloat(offset))
-            let position = frame.position(after: prior, away: away, scrolling: reading["drag"] == 1)
+            let phase = reading["drag"].map { $0 == 1 }
+            let position = frame.position(after: prior, away: away, scrolling: phase)
             prior = frame; away = position.away
             return [position.away, position.followEnd]
         }

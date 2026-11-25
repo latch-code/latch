@@ -184,12 +184,30 @@ private func fixtureFailure(_ name: String) -> FixtureStage { FixtureStage(name:
     drafts.set("é", for: "second", opening: old, permitted: true)
     drafts.set("e\u{301}", for: "second", opening: old, permitted: true)
     guard drafts.text(for: "second", visible: true).utf8.elementsEqual("e\u{301}".utf8) else { throw fixtureFailure("draft-exact-text") }
+    guard drafts.take(for: "second", matching: "é") == nil,
+          drafts.take(for: "second", matching: "e\u{301}") == "e\u{301}" else { throw fixtureFailure("submit-changed-draft") }
+    drafts.set("next", for: "second", opening: old, permitted: true)
+    // A matching SSE message or receipt does not touch the new draft. A known refusal gives back only what was taken.
+    drafts.restore("refused", for: "second", opening: old)
+    guard drafts.text(for: "second", visible: true) == "next\n\nrefused" else { throw fixtureFailure("submit-restore-with-next-draft") }
+    let attached = try NativePendingWrite(method: .post, path: "/link/api/tasks/second/prompt",
+        fields: ["prompt": .string("timed out"), "attachmentIds": .array([.string("fixture-upload")])])
+    drafts.set("new draft", for: "second", opening: old, permitted: true)
+    drafts.restoreRefusedPrompt(attached, taken: nil, confirmedRetry: true, opening: old, permitted: true)
+    guard drafts.text(for: "second", visible: true) == "new draft\n\ntimed out", drafts.text(for: "first", visible: true) == note else {
+        throw fixtureFailure("confirmed-retry-after-switch")
+    }
+    drafts.restoreRefusedPrompt(attached, taken: nil, confirmedRetry: false, opening: old, permitted: true)
+    drafts.restoreRefusedPrompt(attached, taken: nil, confirmedRetry: true, opening: old, permitted: false)
+    guard drafts.text(for: "second", visible: true) == "new draft\n\ntimed out" else { throw fixtureFailure("unowned-refusal-restored") }
     drafts.set("", for: "second", opening: old, permitted: true)
     guard drafts.text(for: "second", visible: true).isEmpty else { throw fixtureFailure("draft-deleted") }
     drafts.restore("returned", for: "first", opening: old)
     guard drafts.text(for: "first", visible: true) == PhonePending.joined(note, "returned"),
           drafts.text(for: "second", visible: true).isEmpty else { throw fixtureFailure("draft-returned-to-original") }
     drafts.clear()
+    drafts.restoreRefusedPrompt(attached, taken: nil, confirmedRetry: true, opening: old, permitted: true)
+    guard drafts.text(for: "second", visible: true).isEmpty else { throw fixtureFailure("retry-crossed-draft-opening") }
     drafts.restore("late return", for: "first", opening: old)
     drafts.set(note, for: "first", opening: old, permitted: true)
     guard drafts.text(for: "first", visible: true).isEmpty else { throw fixtureFailure("draft-old-writer") }

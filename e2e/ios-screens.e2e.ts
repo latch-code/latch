@@ -94,6 +94,7 @@ const SCENES = [
   'question-reminder',
   'push-approval',
   'conversation',
+  'conversation-sending',
   'recovering-chat',
   'offline-draft',
   'markdown',
@@ -269,7 +270,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
         { timeout: 300_000, maxBuffer: 16_777_216 },
       )
       const textReader = join(derived, 'read-screen-text')
-      if (chosen.some(scene => ['inbox-first-rows', 'usage-empty', 'prompt-queue'].includes(scene)))
+      if (chosen.some(scene => ['inbox-first-rows', 'usage-empty', 'prompt-queue', 'conversation-sending'].includes(scene)))
         await run('/usr/bin/xcrun', ['swiftc', 'native/ios/Tools/InboxScreenshotRows.swift', '-o', textReader])
       const application = join(derived, 'Build/Products/Debug-iphonesimulator/LatchScreens.app')
       // The marker the product check looks for is really in this target, so its absence there means something.
@@ -355,10 +356,22 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
                 { timeout: 20_000, interval: 500 },
               )
               await copyFile(frame, shot)
-            } else if (scene === 'usage-empty' || scene === 'prompt-queue') {
+            } else if (scene === 'usage-empty' || scene === 'prompt-queue' || scene === 'conversation-sending') {
               await vi.waitFor(
                 async () => {
                   await simctl('io', udid, 'screenshot', shot)
+                  if (scene === 'conversation-sending') {
+                    const words = ['再看一下发送回执', '正在发送', '回复 Codex', '重试这次提交'] as const
+                    const positions = JSON.parse((await run(textReader, [shot, '--vertical', ...words])).stdout) as Record<
+                      (typeof words)[number],
+                      number[]
+                    >
+                    for (const word of words.slice(0, 3)) expect(positions[word], word).toHaveLength(1)
+                    expect(positions['再看一下发送回执'][0]).toBeLessThan(positions['正在发送'][0]!)
+                    expect(positions['正在发送'][0]).toBeLessThan(positions['回复 Codex'][0]!)
+                    expect(positions['重试这次提交']).toHaveLength(0)
+                    return
+                  }
                   if (scene === 'prompt-queue') {
                     const positions = JSON.parse((await run(textReader, [shot, '追加'])).stdout) as { 追加: number[] }
                     expect(positions.追加).toHaveLength(3)

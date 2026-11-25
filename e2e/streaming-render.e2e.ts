@@ -285,12 +285,24 @@ describe('streaming render', () => {
 
   it("stands a thinking mark where the live turn's text will be, and takes it away when text arrives", async () => {
     await open()
-    const user: Message = { id: 'user-wait', role: 'user', text: '继续' }
-    const waitingOnModel = detail([user], { running: true, liveId: 'reply-wait', cursor: 1 })
+    const past = [
+      { id: 'prior', role: 'user', text: '上一条提问', turnId: 'run-prior' },
+      { id: 'prior-reply', role: 'assistant', text: '上一轮已经答复' },
+    ] satisfies Message[]
+    const user: Message = { id: 'user-wait', role: 'user', text: '继续', turnId: 'run-wait' }
     const since = new Date(Date.now() - 12_000).toISOString()
-    waitingOnModel.summary.live = { runId: 'run-wait', activity: 'model', since, runStartedAt: since, lastEventAt: since }
+    const preparing = detail(past, { running: true })
+    preparing.summary.live = { runId: 'run-wait', activity: 'starting', since, runStartedAt: since, lastEventAt: since }
+    await show(preparing)
+    const old = page.locator('[data-turn="prior"]')
+    await old.getByText('上一轮已经答复').waitFor()
+    expect(await old.locator('.thinking-line').count()).toBe(0)
+    const messages = [...past, user]
+    const waitingOnModel = detail(messages, { running: true, liveId: 'reply-wait', cursor: 2 })
+    waitingOnModel.summary.live = { ...preparing.summary.live, activity: 'model' }
     await show(waitingOnModel)
-    const status = page.locator('.thinking-line')
+    const current = page.locator('[data-turn="user-wait"]')
+    const status = current.locator('.thinking-line')
     await expect.poll(() => status.textContent()).toMatch(/^思考中0:1\d$/u)
     // Under the author's line, where the reply's first words will start; the author's line itself says nothing.
     const [line, word] = await Promise.all([page.locator('.assistant-meta').last().boundingBox(), status.boundingBox()])
@@ -299,12 +311,17 @@ describe('streaming render', () => {
     expect(await page.locator('.assistant-meta-status').count()).toBe(0)
     await mkdir('test-results/reply-waiting', { recursive: true })
     await page.screenshot({ path: 'test-results/reply-waiting/waiting.png', animations: 'disabled' })
-    const writing = detail([user], { running: true, liveId: 'reply-wait', liveText: '开始回答', cursor: 2 })
+    const writing = detail(messages, { running: true, liveId: 'reply-wait', liveText: '开始回答', cursor: 3 })
     writing.summary.live = waitingOnModel.summary.live
     await show(writing)
     await page.locator('[data-message-id="reply-wait"]').getByText('开始回答').waitFor()
     await expect.poll(() => status.count()).toBe(0)
     await page.screenshot({ path: 'test-results/reply-waiting/writing.png', animations: 'disabled' })
+    const committed = detail([...messages, { id: 'reply-wait', role: 'assistant', text: '回复已记录' }], { running: true, cursor: 4 })
+    committed.summary.live = waitingOnModel.summary.live
+    await show(committed)
+    await current.getByText('回复已记录').waitFor()
+    expect(await page.locator('.thinking-line').count()).toBe(0)
   })
 
   it('keeps history settled while a new run locks and restores editing', async () => {

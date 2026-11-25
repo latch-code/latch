@@ -140,10 +140,13 @@ struct ConversationView: View {
         let switches = PhoneConversation.switches(turns)
         let status = summary["status"].string ?? model.detail["summary"]["status"].string
         let running = status == "running" || status == "waiting-approval"
+        let submission = PhoneSubmittingPrompt(requestId: model.submittingPromptId, pending: model.pending, session: id, detail: model.detail)
+        let sendingTurn = submission?.showsDraft == true
+        let liveTurn = PhoneConversation.liveTurn(last: turns.last, running: running, summary: summary, submitting: submission)
         let canSend = model.transportReady && inputReason == nil
         let canFork = model.transportReady && model.canFork && summary["personal"] == .null
         return ConversationReader(session: id, contentEpoch: model.privateSnapshot.epoch,
-            offersTurnIndex: turns.lazy.compactMap(\.user).dropFirst().first != nil) {
+            offersTurnIndex: turns.lazy.compactMap(\.user).dropFirst().first != nil, submittedPrompt: submission?.newTurn == true ? submission?.requestId : nil) {
             LazyVStack(alignment: .leading, spacing: 20) {
                 if !model.workItemsShown, model.tab == .code, let itemId = summary["itemId"].string, let item = model.workItem(itemId) {
                     Button {
@@ -173,9 +176,10 @@ struct ConversationView: View {
                 let graphs = hasContent ? PhoneTeamGraph.place(teams, session: id, messages: model.detail["messages"].array, turnIds: turns.map(\.id)) : [:]
                 ForEach(graphs[""] ?? []) { teamGraph($0) }
                 ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
-                    let latest = index == turns.count - 1
-                    TurnView(session: id, turn: turn, latest: latest, status: latest ? status : nil, running: latest && running, frozen: !model.connected,
-                        delivery: latest && running ? PhoneConversation.delivery(model.detail, turn: turn) : nil, switched: switches[turn.id],
+                    let live = turn.id == liveTurn?.id
+                    let latest = index == turns.count - 1 && !sendingTurn && (!running || live)
+                    TurnView(session: id, turn: turn, latest: latest, status: latest ? status : nil, running: live, frozen: !model.connected,
+                        delivery: live ? PhoneConversation.delivery(model.detail, turn: turn) : nil, switched: switches[turn.id],
                         mark: model.engineMark(summary["harnessId"].string), engine: engine, helper: frame?.entry, fileScope: PhoneFileScope(model.detail["summary"]),
                         teamCard: turn.user.flatMap { PhoneTeamReturn.card($0, teams: teams) },
                         endSaid: latest && !running && PhoneConversation.runEnd(model.detail["summary"], engine: engine) != nil,
@@ -186,8 +190,10 @@ struct ConversationView: View {
                     if let placed = results[turn.id] { resultStack(placed) }
                     ForEach(proposals[turn.id] ?? []) { proposalRow($0) }
                 }
-                if running { RunStatusLine(person: frame != nil).id("status") }
-                else if let end = PhoneConversation.runEnd(model.detail["summary"], engine: engine) { RunEndView(end: end) }
+                if let submission, submission.awaitingEcho { submittingRow(submission) }
+                if running && !sendingTurn {
+                    RunStatusLine(person: frame != nil, waitingForReply: liveTurn.map { PhoneConversation.blocks($0, settled: false).isEmpty } ?? false).id("status")
+                } else if !running, !sendingTurn, let end = PhoneConversation.runEnd(model.detail["summary"], engine: engine) { RunEndView(end: end) }
                 if model.detailCached { Text("这是之前读到的内容，连上 Mac 后更新").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
                 if model.detail["permission"]["drift"] != .null || summary["permissionDrift"].bool {
                     Text("这个会话的权限被改变了，已停止接受输入。").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
@@ -199,6 +205,21 @@ struct ConversationView: View {
         .id(id)
         .id(model.privateSnapshot.epoch)
         .refreshable { await model.refresh() }
+    }
+    @ViewBuilder private func submittingRow(_ submission: PhoneSubmittingPrompt) -> some View {
+        if submission.newTurn {
+            if !submission.text.isEmpty { UserBubble(message: .object(["text": .string(submission.text)]), delivery: nil) }
+            if submission.attachmentCount > 0 {
+                Label("\(submission.attachmentCount) 个附件", systemImage: "paperclip").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+        if model.connected {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini).accessibilityHidden(true)
+                Text(submission.status)
+            }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+        }
     }
     private func workTranscript(_ work: PhoneWorkDecisionContext) -> some View {
         let turns = PhoneConversation.turns(PhoneConversation.rendered(model.detail))
@@ -439,6 +460,7 @@ private struct HeaderTitle: View {
 private struct RunStatusLine: View {
     @EnvironmentObject private var model: PhoneModel
     var person = false
+    let waitingForReply: Bool
     var body: some View {
         if !model.connected {
             Text(model.lastConfirmed.map { "上次确认 " + PhoneTime.message($0) } ?? "状态未更新").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
@@ -449,8 +471,12 @@ private struct RunStatusLine: View {
                     : PhoneConversation.runStatus(model.detail, stopping: model.stoppingCurrent, engine: model.engineName(model.currentSummary["harnessId"].string), hostNow: model.hostNow())
                 if status.tone != .quiet {
                     VStack(alignment: .leading, spacing: 8) {
-                        (Text(status.text) + Text(status.clock.map { " · " + $0 } ?? "").monospacedDigit())
-                            .font(PhoneTheme.caption).foregroundStyle(status.tone == .amber ? PhoneTheme.amber : PhoneTheme.muted)
+                        let phase = model.detail["activity"]["phase"].string ?? model.currentSummary["live"]["activity"].string
+                        let thinking = waitingForReply && phase == "model" && !model.stoppingCurrent && status.tone == .plain
+                        HStack(spacing: 6) {
+                            if thinking { ProgressView().controlSize(.mini).accessibilityHidden(true) }
+                            (Text(thinking && !person ? "思考中" : status.text) + Text(status.clock.map { " · " + $0 } ?? "").monospacedDigit())
+                        }.font(PhoneTheme.caption).foregroundStyle(status.tone == .amber ? PhoneTheme.amber : PhoneTheme.muted)
                         if !status.actions.isEmpty {
                             HStack(spacing: 8) {
                                 if status.actions.contains(.keepWaiting) { Button("继续等") { Task { await model.keepWaiting() } } }

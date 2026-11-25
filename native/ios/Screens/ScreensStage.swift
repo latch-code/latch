@@ -160,6 +160,13 @@ import UIKit
                 model.draftInserts["ses_review"] = "请再看一下相关测试。"
                 model.stageReconnect()
             }
+        case "conversation-sending":
+            model.tab = .code; model.sessionId = "ses_review"; model.detail = conversation()
+            if let write = try? NativePendingWrite(method: .post, path: "/link/api/tasks/ses_review/prompt", fields: ["prompt": .string("再看一下发送回执")]) {
+                model.pending = [write]
+                model.submittingPromptId = write.requestId
+                model.busy = true
+            }
         case "conversation-limited":
             // Codex used its 5-hour limit up: the conversation says so above its input.
             model.tab = .code; model.sessionId = "ses_review"; model.detail = conversation()

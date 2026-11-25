@@ -614,7 +614,7 @@ struct PendingWritesBar: View {
             Label(checked, systemImage: "info.circle").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).padding(.horizontal, 16)
                 .task { try? await Task.sleep(for: .seconds(6)); self.checked = nil }
         }
-        ForEach(model.pending, id: \.requestId) { pending in
+        ForEach(model.writesAwaitingConfirmation, id: \.requestId) { pending in
             HStack {
                 Label(PhoneWorkChange(pending)?.pendingWords ?? PhoneReview.pendingWords(pending) ?? PhoneDelivery.pendingWords(pending) ?? PhoneFileEdit.pendingWords(pending) ?? PhoneHandoffs.pendingWords(pending) ?? PhoneAgentWrites.words(pending, proposals: model.proposals.all.flatMap { $0 }), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                 Spacer()
