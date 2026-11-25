@@ -196,12 +196,13 @@ extension PhoneModel {
      * A new topic: the first message to an Agent (or 通用) starts its session through the same start as 新会话, with the same
      * request kept while its result is unknown. Only while the new topic is still what is shown does the answer open it.
      */
-    func startTopic(owner: String, agent: NativeJSON, choice: PhoneStartChoice, prompt: String, attachments: [String] = []) async -> Bool {
+    func startTopic(owner: String, agent: NativeJSON, choice: PhoneStartChoice, prompt: String, attachments: [String] = [], fileRefs: [PhoneFileMatches.Hit] = []) async -> Bool {
         guard transportReady else { return false }
         let current = generation
         do {
             guard canRun, prompt.count <= 16_000, attachments.count <= PhoneAttachments.perMessage else { throw NativeFailure.forbidden }
             var fields = try topicFields(owner: owner, agent: agent, choice: choice, prompt: prompt)
+            try attachStartFiles(fileRefs, to: &fields)
             if !attachments.isEmpty { fields["attachmentIds"] = .array(attachments.map { .string($0) }) }
             if sessionId != nil { closeSession() }
             try await ensureVerified()

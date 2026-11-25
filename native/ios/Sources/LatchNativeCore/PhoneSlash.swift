@@ -94,15 +94,7 @@ public enum PhoneSlash {
     private static func equal(_ a: String?, _ b: String?) -> Bool {
         guard let a, let b else { return false }; return a.utf8.elementsEqual(b.utf8)
     }
-    // ECMAScript whitespace, rather than Foundation's wider set (which also contains U+0085).
-    private static func space(_ unit: UInt16) -> Bool {
-        [9, 10, 11, 12, 13, 32, 160, 5760, 8232, 8233, 8239, 8287, 12288, 65279].contains(unit) || (8192...8202).contains(unit)
-    }
-    private static func trim(_ text: String) -> String {
-        let units = Array(text.utf16), start = units.firstIndex { !space($0) } ?? units.count
-        let end = units.lastIndex { !space($0) }.map { $0 + 1 } ?? start
-        return String(decoding: units[start..<end], as: UTF16.self)
-    }
+    private static func space(_ unit: UInt16) -> Bool { phonePromptWhitespace(unit) }
     private static func boundary(_ units: [UInt16], _ index: Int) -> Bool {
         index >= 0 && index <= units.count && (index == 0 || index == units.count || !((0xD800...0xDBFF).contains(units[index - 1]) && (0xDC00...0xDFFF).contains(units[index])))
     }
@@ -172,12 +164,12 @@ public enum PhoneSlash {
         return PhoneSlashEdit(text: next, selectionStart: caret, selectionEnd: caret)
     }
     public static func actionOf(_ draft: String) -> (action: PhoneSlashAction, argument: String)? {
-        let units = Array(trim(draft).utf16)
+        let units = Array(phonePromptTrim(draft).utf16)
         guard let first = units.first, [47, 65295].contains(first) else { return nil }
         let end = units.dropFirst().firstIndex(where: space) ?? units.count
         let name = String(decoding: units[1..<end], as: UTF16.self).lowercased()
         guard let action = PhoneSlashAction(rawValue: name) else { return nil }
-        return (action, trim(String(decoding: units[end...], as: UTF16.self)))
+        return (action, phonePromptTrim(String(decoding: units[end...], as: UTF16.self)))
     }
     public static func action(_ draft: String, context: PhoneSlashContext) -> PhoneSlashActionResult {
         guard let requested = actionOf(draft) else { return .text }
@@ -224,7 +216,7 @@ public enum PhoneSlash {
             let scope = template["scope"], kind = scope["kind"].string
             guard kind == "all" || kind == "project" && equal(scope["id"].string, context.projectId)
                 || kind == "agent" && equal(scope["id"].string, context.harnessId) else { continue }
-            let description = content.components(separatedBy: "\n").first { !trim($0).isEmpty } ?? ""
+            let description = content.components(separatedBy: "\n").first { !phonePromptTrim($0).isEmpty } ?? ""
             let random = LinkBytes.matches(id, "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
             let matches = [match(name, query: token.query, description: description), random ? nil : match(id, query: token.query, description: description)].compactMap { $0 }
             add(.template, id: id, label: random ? "/" + name : "/" + id + " · " + name, description: description, text: content,

@@ -54,6 +54,43 @@ import LatchNativeCore
         if let markers = input["initialListMarkers"] as? String {
             return try await transports.exerciseInitialList(workspace, markers: URL(fileURLWithPath: markers, isDirectory: true))
         }
+        if let lead = input["mentionLead"] as? String {
+            _ = try await workspace.verify()
+            return try await teamRoundRetryFixture(workspace, lead: lead)
+        }
+        if let agent = input["mentionAgent"] as? String, let item = input["mentionItem"] as? String {
+            _ = try await workspace.verify()
+            return try await workAgentRetryFixture(workspace, agent: agent, item: item)
+        }
+        if let project = input["mentionProject"] as? String, let transport = transports.latest?.epoch {
+            let access = NativeFileAccess(lease: try await workspace.verify(), transport: transport)
+            let live = try await workspace.snapshot(), scope = PhoneMentionScope.project(workspace: project, harness: "standard")
+            let all = try await workspace.findMentionFiles("", in: scope, access: access)
+            guard let hit = all.files.first(where: { $0.path == "meeting notes.md" }) else { throw NativeFailure.invalidRecord }
+            let marker = "@" + hit.root + ":" + hit.path
+            let choice = PhoneStartChoice(harnessId: "standard", workspaceId: project, model: PhoneStart.defaultModel(live["catalog"], harnessId: "standard"))
+            var fields = PhoneStart.newSessionFields(live["catalog"], choice: choice, prompt: "First " + marker)
+            try scope.attach([hit], to: &fields, snapshot: live)
+            let create = try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: fields)
+            guard let id = try await workspace.submit(create)["sessionId"].string else { throw NativeFailure.invalidRecord }
+            for _ in 0..<100 {
+                if try await workspace.detail(id)["summary"]["status"].string == "idle" { break }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            let selected = PhoneMentionScope.session(id), refreshed = try await workspace.snapshot()
+            let found = try await workspace.findMentionFiles("meeting", in: selected, access: access)
+            guard found.files.map(\.id) == [hit.id] else { throw NativeFailure.invalidRecord }
+            var next: [String: NativeJSON] = ["prompt": .string("Next " + marker)]
+            try selected.attach(found.files, to: &next, snapshot: refreshed)
+            let write = try NativePendingWrite(method: .post, path: "/link/api/tasks/" + id + "/prompt", fields: next)
+            _ = try await workspace.submit(write)
+            var queue: [String: NativeJSON] = ["queue": .bool(true)], steer: [String: NativeJSON] = ["steer": .bool(true)]
+            let blocksQueue = (try? selected.attach(found.files, to: &queue, snapshot: refreshed)) == nil
+            let blocksSteer = (try? selected.attach(found.files, to: &steer, snapshot: refreshed)) == nil
+            _ = await workspace.closeOpening()
+            let afterClose = try? await workspace.findMentionFiles("", in: scope, access: access)
+            return ["session": id, "blocksQueue": blocksQueue, "blocksSteer": blocksSteer, "oldWindowClosed": afterClose == nil]
+        }
         if let session = input["fileBrowserSession"] as? String, let transport = transports.latest?.epoch {
             let access = NativeFileAccess(lease: try await workspace.verify(), transport: transport)
             _ = try await workspace.snapshot()

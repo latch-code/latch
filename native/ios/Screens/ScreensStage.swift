@@ -187,7 +187,9 @@ import UIKit
             if name == "project-files" {
                 model.snapshot = patched(value) { root in
                     root["catalog"] = patched(value["catalog"]) { catalog in
-                        catalog["features"] = patched(value["catalog"]["features"]) { $0["fileTree"] = .bool(true); $0["fileSearch"] = .bool(true) }
+                        catalog["features"] = patched(value["catalog"]["features"]) {
+                            $0["fileTree"] = .bool(true); $0["fileSearch"] = .bool(true); $0["fileMentions"] = .bool(true)
+                        }
                     }
                 }
             }
@@ -483,7 +485,8 @@ import UIKit
     private static let checks = "auto_9a1c3d40-5f7e-4b0d-8e4f-3d4e5f607182"
 
     static func fileMatches(_ query: String) throws -> PhoneFileMatches {
-        let paths = ["文档/验收步骤.md", "README.md"].filter { $0.localizedCaseInsensitiveContains(query) }
+        let project = scene == "team-results" ? ["README.md", "src/eden.proxy.ts"] : ["文档/验收步骤.md", "README.md"]
+        let paths = project.filter { query.isEmpty || $0.localizedCaseInsensitiveContains(query) }
         return try PhoneFileMatches(.object(["files": .array(paths.map { path in
             .object(["root": .string("default"), "name": .string(String(path.split(separator: "/").last!)), "path": .string(path)])
         }), "truncated": .bool(false)]))
@@ -669,8 +672,8 @@ import UIKit
     }
 
     private static let harnesses = """
-    [{"id":"standard","status":"ready","modes":["agent","chat"],"agentContext":"private","capabilities":{"display":{"label":"Latch","mark":"latch"},"models":{"owner":"latch"},"permission":{"enforcement":"latch"}}},
-     {"id":"codex","status":"ready","modes":["agent"],"agentContext":"first-turn","capabilities":{"display":{"label":"Codex","mark":"codex"},"models":{"owner":"harness"},"permission":{"enforcement":"harness"}}},
+    [{"id":"standard","status":"ready","modes":["agent","chat"],"agentContext":"private","capabilities":{"display":{"label":"Latch","mark":"latch"},"models":{"owner":"latch"},"permission":{"enforcement":"latch"},"tools":{"fileMentions":true}}},
+     {"id":"codex","status":"ready","modes":["agent"],"agentContext":"first-turn","capabilities":{"display":{"label":"Codex","mark":"codex"},"models":{"owner":"harness"},"permission":{"enforcement":"harness"},"tools":{"fileMentions":true}}},
      {"id":"qwen","status":"missing","modes":["agent"],"agentContext":"first-turn","capabilities":{"display":{"label":"Qwen Code","mark":"qwen"},"models":{"owner":"harness"},"permission":{"enforcement":"harness"}}}]
     """
     private static var snapshotText: String { """
@@ -885,7 +888,7 @@ extension ScreensStage {
         (id: "ses_bbbbbbbbbbbbbbbbbbbbbb", title: "你好", harness: "codex"),
         (id: "ses_cccccccccccccccccccccc", title: "输出检查结果", harness: "standard"),
         (id: "ses_dddddddddddddddddddddd", title: "输出 1", harness: "codex"),
-        (id: "ses_eeeeeeeeeeeeeeeeeeeeee", title: "输出2", harness: "standard"),
+        (id: "ses_eeeeeeeeeeeeeeeeeeeeee", title: "输出 4", harness: "standard"),
     ]
 
     private static func sessionTeamSnapshot(_ base: NativeJSON) -> NativeJSON {
@@ -950,6 +953,11 @@ extension ScreensStage {
         let returned = "msg_return_round_three_x", (one, four) = (teamMembers[2], teamMembers[3])
         let item = { (id: String) in "itm_" + id.dropFirst(4) }
         model.snapshot = patched(sessionTeamSnapshot(base)) { fields in
+            fields["catalog"] = patched(fields["catalog"]!) { catalog in
+                catalog["features"] = patched(catalog["features"]!) {
+                    $0["teams"] = .bool(true); $0["fileSearch"] = .bool(true); $0["fileMentions"] = .bool(true)
+                }
+            }
             var team = fields["teams"]!.array[0].object
             team["members"] = .array(team["members"]!.array.enumerated().map { index, member in
                 patched(member) { $0["said"] = .string(index >= 2 ? "你好" : "完成了检查") }
@@ -1361,6 +1369,11 @@ extension ScreensStage {
             var catalog = object["catalog"]!.object, features = catalog["features"]!.object
             for key in ["workItems", "workItemTurns", "workItemCreateReceipt", "changes", "reviewNotes", "gitDelivery"] { features[key] = .bool(true) }
             catalog["features"] = .object(features); object["catalog"] = .object(catalog)
+            if scene == "work-waiting" {
+                object["agentChats"] = patched(object["agentChats"]!) { chats in
+                    chats[daily] = .object(["state": .string("ready"), "sessionId": .string("ses_daily")])
+                }
+            }
             let item = patched(workItemValue()) { $0.removeValue(forKey: "prompt") }
             let todo = json(#"{"id":"itm_cccccccccccccccccccccc","title":"整理连接说明","projectId":"site","sessionIds":[],"revision":1,"updatedAt":"{{-900}}","board":{"group":"todo"}}"#)
             var items = [

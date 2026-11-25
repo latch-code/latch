@@ -30,10 +30,10 @@ func workChangesFixture(_ workspace: NativeWorkspace, item: String, memberItem: 
     do { _ = try await workspace.submit(close.request(), explain: true, on: transport); throw NativeFailure.invalidRecord }
     catch let refusal as NativeHostRefusal { guard refusal.code == "item-changed" else { throw refusal } }
 
-    let post = PhoneWorkChange.post(item: item, text: "Mobile discussion record", session: nil)
+    let post = PhoneWorkChange.post(item: item, text: "Mobile discussion record", target: nil)
     let savedPost = try await unknown(post.request(), refusalStatus: 401)
     let repeated = try await workspace.submit(savedPost, on: transport)
-    let memberPost = PhoneWorkChange.post(item: memberItem, text: "Mobile member delivery", session: session)
+    let memberPost = PhoneWorkChange.post(item: memberItem, text: "Mobile member delivery", target: .session(session))
     let lostDelivery = try await unknown(memberPost.request(), refusalStatus: 404)
     let delivered = try await workspace.submit(lostDelivery, on: transport)
     let memberThread = try await workspace.readWork(.posts(memberItem, before: nil), on: transport)

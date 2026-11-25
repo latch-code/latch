@@ -42,16 +42,17 @@ extension PhoneModel {
         let title = currentSummary["title"].string ?? detail["summary"]["title"].string ?? ""
         forkDraft = PhoneForkDraft(taskId: id, upToMessageId: messageId, title: title, turn: index + 1)
     }
-    func startFork(_ draft: PhoneForkDraft, plan: PhoneForkPlan, prompt: String) async -> Bool {
+    func startFork(_ draft: PhoneForkDraft, plan: PhoneForkPlan, prompt: String, fileRefs: [PhoneFileMatches.Hit] = []) async -> Bool {
         let current = generation
         do {
             guard canFork, prompt.count <= 16_000 else { throw NativeFailure.forbidden }
             try await ensureVerified()
             guard current == generation else { return false }
             guard pending.isEmpty else { throw NativeFailure.resultUnknown }
-            let catalog = snapshot["catalog"]
+            var fields = draft.fields(snapshot["catalog"], plan: plan, prompt: prompt)
+            try attachStartFiles(fileRefs, to: &fields)
             sessionId = nil; detail = .null; contentGeneration = UUID()
-            let done = await submit(try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: draft.fields(catalog, plan: plan, prompt: prompt)))
+            let done = await submit(try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: fields))
             if done, sessionId != nil { startEvents() }
             return done
         } catch { report(error); return false }

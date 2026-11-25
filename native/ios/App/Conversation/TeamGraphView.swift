@@ -4,9 +4,8 @@ import SwiftUI
 /**
  * A team in its lead's conversation, the web's `TeamGraph` as it draws where the card is narrow: this session as a node,
  * a rail down from it that bends into a two-line pill per member, and last into the node where the results are. A pill
- * opens its member's session; 已交回 goes to the message that brought the results back. The phone has no write path
- * for the team yet, so 停止, 再派一轮 and the switch that lets the lead's agent send work stay on the desktop: the
- * switch's state is said, not offered.
+ * opens its member's session; 已交回 goes to the message that brought the results back. The lead composer sends later rounds with @. The graph shows the dispatch switch
+ * setting and links to member sessions.
  */
 struct TeamGraphView: View {
     @EnvironmentObject private var model: PhoneModel

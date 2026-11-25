@@ -1,5 +1,22 @@
 import Foundation
 
+public enum PhoneWorkPostTarget: Hashable, Sendable {
+    case session(String), agent(String)
+
+    init?(_ value: NativeJSON) {
+        guard value.object.count == 1 else { return nil }
+        if let id = value["sessionId"].string.flatMap(PhoneWorkItems.session) { self = .session(id) }
+        else if let id = value["customAgentId"].string, PhoneAgents.validId(id) { self = .agent(id) }
+        else { return nil }
+    }
+    var wire: NativeJSON {
+        switch self {
+        case let .session(id): .object(["sessionId": .string(id)])
+        case let .agent(id): .object(["customAgentId": .string(id)])
+        }
+    }
+}
+
 /** A person's work-item writes. Creation retries only look up the original Host receipt. */
 public enum PhoneWorkChange: Equatable, Sendable {
     /** The Host binds a discussion post to its originating device, item and original request. These IDs are ASCII. */
@@ -9,7 +26,7 @@ public enum PhoneWorkChange: Equatable, Sendable {
     }
     case creation(title: String, prompt: String, project: String?)
     case completion(item: String, revision: UInt64, closed: Bool)
-    case post(item: String, text: String, session: String?)
+    case post(item: String, text: String, target: PhoneWorkPostTarget?)
 
     public var itemId: String? {
         switch self {
@@ -40,13 +57,13 @@ public enum PhoneWorkChange: Equatable, Sendable {
         case let .completion(item, revision, closed):
             guard PhoneWorkItems.validItem(item), revision <= LinkBytes.maximumInteger else { throw NativeFailure.invalidRecord }
             return try NativePendingWrite(method: .patch, path: "/link/api/work/items/" + item, fields: ["baseRevision": .number(Double(revision)), "closed": .bool(closed)], requestId: requestId)
-        case let .post(item, raw, session):
+        case let .post(item, raw, target):
             let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard PhoneWorkItems.validItem(item), !text.isEmpty, text.utf16.count <= 4000 else { throw NativeFailure.invalidRecord }
             var fields = ["text": NativeJSON.string(text)]
-            if let session {
-                guard PhoneWorkItems.session(session) != nil else { throw NativeFailure.invalidRecord }
-                fields["target"] = .object(["sessionId": .string(session)])
+            if let target {
+                guard PhoneWorkPostTarget(target.wire) == target else { throw NativeFailure.invalidRecord }
+                fields["target"] = target.wire
             }
             return try NativePendingWrite(method: .post, path: "/link/api/work/items/" + item + "/posts", fields: fields, requestId: requestId)
         }
@@ -73,9 +90,10 @@ public enum PhoneWorkChange: Equatable, Sendable {
         } else {
             guard method == .post, suffix.hasSuffix("/posts") else { return nil }
             let item = String(suffix.dropLast("/posts".count))
+            let target = PhoneWorkPostTarget(fields["target"])
             guard PhoneWorkItems.validItem(item), let text = fields["text"].string, fields["requestId"].string == request.requestId,
-                  fields["target"] == .null || fields["target"]["sessionId"].string.flatMap(PhoneWorkItems.session) != nil else { return nil }
-            self = .post(item: item, text: text, session: fields["target"]["sessionId"].string)
+                  fields.object["target"] == nil || target != nil else { return nil }
+            self = .post(item: item, text: text, target: target)
         }
     }
     public func confirmed(by value: NativeJSON, requestId: String) -> Bool {
@@ -86,10 +104,10 @@ public enum PhoneWorkChange: Equatable, Sendable {
         case let .completion(item, revision, closed):
             guard let result = try? PhoneWorkItemDetail(value, itemId: item, privateAllowed: true) else { return false }
             return result.item.revision > revision && result.closed == closed
-        case let .post(_, text, session):
+        case let .post(_, text, target):
             let row = value["post"]
             guard let post = PhoneWorkPost(row), row["requestId"].string == requestId, post.text.utf8.elementsEqual(text.utf8) else { return false }
-            if let session { return post.delivery != nil && (row["target"] == .null || row["target"]["sessionId"].string == session) }
+            if let target { return post.delivery != nil && (row["target"] == .null || post.target == target) }
             return post.delivery == nil && row["target"] == .null
         }
     }

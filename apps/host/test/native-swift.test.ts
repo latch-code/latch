@@ -563,6 +563,152 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       closedPendingReadOnly: true,
     })
   })
+  it('completes native file mentions at the caret and sends only intact, byte-exact file markers', async () => {
+    const path = '资料/Café notes.md'
+    const marker = `@default:${path}`
+    const prefix = '🙂 查一下\n'
+    const edited = `${prefix}${marker} 后缀`
+    const inlinePrefix = '@输出-1 111'
+    const inlineMarker = `${inlinePrefix} ${marker} `
+    const result = await invoke({
+      operation: 'phoneFileMentionTokens',
+      path,
+      drafts: [
+        { text: '@' },
+        { text: `${prefix}@资后缀`, caret: prefix.length + 2 },
+        { text: 'name@example.org' },
+        { text: '@src@file' },
+        { text: ' @file ' },
+        { text: '@🙂', caret: 2 },
+        { text: '@src', caret: 2, length: 1 },
+        { text: '@src', current: '@doc' },
+        { text: `${inlinePrefix}@` },
+        { text: `${inlinePrefix}@eden.proxy.ts`, previous: `${inlinePrefix}@eden` },
+        { text: '🙂正文@查后续', caret: '🙂正文@查'.length },
+        { text: 'review@code' },
+      ],
+      spacing: ['🙂 @a 111 @a ', '🙂  @a  @a  end', '  @a\n\t@a\tend', '@a @a '],
+      markers: [marker, `(前)${marker} \n${marker}\t`, `a${marker}`, `${marker}x`, marker.normalize('NFD'), `\n${marker}\u3000`],
+    })
+    expect(result).toEqual({
+      edits: [
+        { query: '', text: `${marker} `, caret: marker.length + 1 },
+        { query: '资', text: edited, caret: prefix.length + marker.length + 1 },
+        null,
+        null,
+        null,
+        null,
+        null,
+        { query: 'src', text: null, caret: null },
+        { query: '', text: inlineMarker, caret: inlineMarker.length },
+        { query: 'eden.proxy.ts', text: inlineMarker, caret: inlineMarker.length },
+        { query: '查', text: `🙂正文 ${marker} 后续`, caret: `🙂正文 ${marker} `.length },
+        { query: 'code', text: `review ${marker} `, caret: `review ${marker} `.length },
+      ],
+      retained: [true, true, false, false, false, true],
+      visible: ['🙂■111■', '🙂 ■ ■ end', '  ■\n\t■\tend', '■■'],
+      selection: [
+        [13, 16],
+        [3, 26],
+        [10, 0],
+      ],
+    })
+  })
+  it('routes native member mentions to one round of the newest lead team and blocks unavailable recipients', async () => {
+    const members = [
+      ['a', '查 接口', 's1'],
+      ['b', '查 接口', 's2'],
+      ['c', '查-接口-2', 's3'],
+      ['d', '检查输出', 'missing'],
+      ['e', '文档', ''],
+    ].map(([id, name, sessionId]) => ({
+      itemId: id,
+      name,
+      sessionId: sessionId || undefined,
+      title: `工作 ${id}`,
+      harnessId: 'codex',
+      state: 'done',
+    }))
+    const team = { id: 'new', leadSessionId: 'lead', createdAt: '2026-11-21', state: 'returned', members }
+    const snapshot = {
+      catalog: { features: { teams: true } },
+      device: { status: 'active', scopes: ['view', 'run'], dataScope: 'work' },
+      tasks: ['lead', 's1', 's2', 's3'].map(id => ({ id, status: id === 's3' ? 'running' : 'idle' })),
+      teams: [team, { ...team, id: 'elsewhere', leadSessionId: 'other' }, { ...team, id: 'old', createdAt: '2026-11-20' }],
+    }
+    const drafts = [
+      { text: 'email@查-接口 再试' },
+      { text: '@查-接口-2 再试  @查-接口\n@查-接口-2 一遍' },
+      { text: '@查-接口' },
+      { text: '@检查输出 修复' },
+      { text: '@查-接口 修复', materials: true },
+      { text: `@查-接口 ${'🙂'.repeat(2001)}` },
+    ]
+    const result = await invoke({ operation: 'phoneMentionRecipients', snapshot, query: '工作 b', drafts })
+    expect(result).toMatchObject({
+      team: 'new',
+      rows: [
+        ['@查-接口', null],
+        ['@查-接口-2', null],
+        ['@查-接口-2-2', '还在做上一件'],
+        ['@检查输出', '会话已归档'],
+        ['@文档', '没有开始过'],
+      ],
+      matches: ['b'],
+      rounds: [
+        null,
+        { ids: ['b', 'a'], prompt: '再试 \n 一遍', reason: null },
+        { ids: ['a'], prompt: '', reason: '写下要成员做的事' },
+        { ids: ['d'], reason: '工作 d · 会话已归档' },
+        { ids: ['a'], reason: '派给成员只带文字' },
+        { ids: ['a'], reason: '最多 4,000 个字符' },
+      ],
+    })
+    const open = await invoke({
+      operation: 'phoneMentionRecipients',
+      snapshot: { ...snapshot, teams: [{ ...team, state: 'returning' }] },
+      drafts: [{ text: '@查-接口 继续' }],
+    })
+    expect(open.rounds).toEqual([{ ids: ['a'], prompt: '继续', reason: '工作 a · 这一轮还没结束' }])
+  })
+  it('offers linked sessions and visible Agent chats as native discussion recipients, with a single removable target', async () => {
+    const agentId = 'agt_11111111-1111-4111-8111-111111111111'
+    const item = {
+      id: 'itm_AAAAAAAAAAAAAAAAAAAAAA',
+      title: '办事',
+      revision: 1,
+      updatedAt: '2026-11-21T00:00:00.000Z',
+      sessionIds: ['linked', 'missing'],
+    }
+    const snapshot = {
+      catalog: { features: { workItems: true, workItemTurns: true, customAgents: true, singleAgentChat: true } },
+      device: { status: 'active', scopes: ['view', 'run'], dataScope: 'all' },
+      tasks: [
+        { id: 'linked', title: 'API 联调' },
+        { id: 'other', title: '其他会话' },
+      ],
+      customAgents: [{ id: agentId, name: 'API 助手' }],
+      agentChats: { general: { state: 'ready', sessionId: 'existing' } },
+    }
+    const run = (scope: string) =>
+      invoke({
+        operation: 'phoneMentionRecipients',
+        item,
+        snapshot: { ...snapshot, device: { ...snapshot.device, dataScope: scope } },
+        query: 'api',
+      })
+    expect(await run('all')).toEqual({
+      rows: [
+        ['API 联调', null],
+        ['通用', null],
+        ['API 助手', '还没有聊天'],
+      ],
+      matches: ['API 联调', 'API 助手'],
+      text: '后面的正文',
+      caret: 0,
+    })
+    expect((await run('work')).rows).toEqual([['API 联调', null]])
+  })
   it('creates native helper requests from current capabilities while preserving a held request and explicit choices', async () => {
     const standard = {
       ...testHarness('standard', { kind: 'builtin', label: 'Latch' }),
@@ -3662,6 +3808,124 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     },
     30_000,
   )
+  it('keeps a Swift round to two team members unconfirmed after a lost answer without posting it twice', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    let route = ''
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        body: { mode: 'agent', prompt: 'Lead', requestId: randomUUID() },
+      })
+      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+      const { team } = await owner.json<{ team: { id: string; members: Array<{ sessionId: string }> } }>(`tasks/${sessionId}/team`, {
+        body: {
+          requestId: randomUUID(),
+          tasks: ['Frontend', 'Tests'].map(name => ({
+            name,
+            title: name,
+            prompt: name,
+            harnessId: 'standard',
+            model: { providerId: 'demo', model: 'demo' },
+          })),
+        },
+      })
+      await expect
+        .poll(async () => (await owner.json<{ team: { state: string } }>(`teams/${team.id}`)).team.state, { timeout: 15_000 })
+        .toBe('returned')
+      const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+      route = `POST /link/api/teams/${team.id}/rounds`
+      nativeMalformedSuccess.add(route)
+      expect(
+        await invoke({ operation: 'nativeWorkspace', payload: invitation.payload, port: host.host.nativePort, mentionLead: sessionId }),
+      ).toEqual({
+        retainedUntilReleased: true,
+        noPending: true,
+        keptEditedDraft: true,
+        clearedOriginal: true,
+      })
+      expect(nativeSeen.filter(call => call.method + ' ' + call.path === route)).toHaveLength(1)
+      expect((await owner.json<{ team: { round: number } }>(`teams/${team.id}`)).team.round).toBe(2)
+      for (const member of team.members) {
+        const detail = await owner.json<TaskDetail>(`tasks/${member.sessionId}`)
+        expect(detail.messages.filter(message => message.role === 'user' && message.text === 'Continue reviewing.')).toHaveLength(1)
+      }
+    } finally {
+      nativeMalformedSuccess.delete(route)
+      await host.close()
+    }
+  }, 30_000)
+  it('checks a lost Swift work post to a custom Agent without waking its chat twice', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    let route = ''
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const { item } = await owner.json<{ item: { id: string } }>('work/items', { body: { title: 'Mobile work', requestId: randomUUID() } })
+      const agent = await owner.json<{ id: string }>('custom-agents', {
+        body: {
+          requestId: randomUUID(),
+          name: '审阅',
+          description: '检查讨论',
+          instructions: 'Read the discussion.',
+          harnessId: 'standard',
+          mode: 'chat',
+          skills: [],
+        },
+      })
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        body: { requestId: randomUUID(), customAgentId: agent.id, prompt: 'Start this chat.' },
+      })
+      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+      const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+      route = `POST /link/api/work/items/${item.id}/posts`
+      nativeMalformedSuccess.add(route)
+      expect(
+        await invoke({
+          operation: 'nativeWorkspace',
+          payload: invitation.payload,
+          port: host.host.nativePort,
+          mentionItem: item.id,
+          mentionAgent: agent.id,
+        }),
+      ).toEqual({
+        originalTarget: true,
+        samePost: true,
+        wrongTargetRejected: true,
+        noPending: true,
+      })
+      expect(nativeSeen.filter(call => call.method + ' ' + call.path === route)).toHaveLength(1)
+      expect((await owner.json<{ item: { private: boolean } }>(`work/items/${item.id}`)).item.private).toBe(true)
+    } finally {
+      nativeMalformedSuccess.delete(route)
+      await host.close()
+    }
+  }, 30_000)
+  it('sends chosen project file mentions from the Swift phone on the first message and a follow-up', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const folder = join(host.root, 'mention-project')
+      await mkdir(folder)
+      await writeFile(join(folder, 'meeting notes.md'), 'A project file.')
+      const { workspace } = (await (await owner.addFolders({ paths: [folder] })).json()) as {
+        workspace: { id: string; folders: Array<{ id: string }> }
+      }
+      const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+      const result = await invoke({
+        operation: 'nativeWorkspace',
+        payload: invitation.payload,
+        port: host.host.nativePort,
+        mentionProject: workspace.id,
+      })
+      expect(result).toMatchObject({ blocksQueue: true, blocksSteer: true, oldWindowClosed: true })
+      const { messages } = await owner.json<TaskDetail>(`tasks/${result.session}`)
+      const root = workspace.folders[0]!.id
+      expect(messages.filter(message => message.role === 'user')).toMatchObject(
+        ['First', 'Next'].map(word => ({ text: `${word} @${root}:meeting notes.md`, fileRefs: [{ root, path: 'meeting notes.md' }] })),
+      )
+    } finally {
+      await host.close()
+    }
+  }, 30_000)
   it('browses a session folder through the Swift phone and resolves an unmentioned file inside its verified window', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     try {

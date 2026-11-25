@@ -434,6 +434,7 @@ public enum PhonePendingKind: Equatable, Sendable {
 
 public enum PhonePending {
     public static func kind(_ write: NativePendingWrite) -> PhonePendingKind {
+        if let round = write.teamRound { return .session(id: round.session) }
         if write.path == "/link/api/tasks" && write.method == "POST" {
             if let id = (try? NativeJSON.decode(write.body))?["customAgentId"].string { return .topic(owner: id) }
             return .start
@@ -449,6 +450,7 @@ public enum PhonePending {
         return .other
     }
     public static func words(_ write: NativePendingWrite) -> String {
+        if write.teamRound != nil { return "派给团队成员的结果待确认" }
         if let action = PhoneQueueControl(write) { return action == .steer ? "追加结果待确认" : "队列顺序待确认" }
         if let words = PhoneHistory.pendingWords(write) { return words }
         switch kind(write) {

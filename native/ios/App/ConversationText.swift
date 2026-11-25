@@ -122,13 +122,14 @@ struct LocalTextEditor: UIViewRepresentable {
     var selection: Binding<NSRange>? = nil
     var composing: Binding<Bool>? = nil
     var selectionRequest: Binding<EditorSelectionRequest?>? = nil
+    var mentionMarkers: [PromptMentionChip] = []
     var commandKeys: [String] = []
     var onCommand: ((String) -> Void)? = nil
     var suffixHint: String? = nil
     var onPasteImages: (@MainActor ([NSItemProvider]) async -> Void)? = nil
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> LocalPromptView {
-        let view = LocalPromptView(usingTextLayoutManager: true)
+        let view = LocalPromptView(frame: .zero, textContainer: nil)
         view.isEditable = true; view.isSelectable = true; view.delegate = context.coordinator; view.pasteDelegate = context.coordinator
         view.isScrollEnabled = maximumLines == nil
         view.backgroundColor = .clear; view.textColor = .label; view.font = Self.font
@@ -148,7 +149,8 @@ struct LocalTextEditor: UIViewRepresentable {
         if view.isFirstResponder {
             // During a SwiftUI update the binding can still be a snapshot taken before UIKit's last edit.
             // Read the live binding after this render before replacing a focused editor's document or caret.
-            if !(view.text ?? "").utf8.elementsEqual(text.utf8) || selectionRequest?.wrappedValue != nil { coordinator.queueSync(view) }
+            if !view.draft.source.utf8.elementsEqual(text.utf8) || selectionRequest?.wrappedValue != nil
+                || !mentionMarkers.isEmpty || view.hasMentionChips { coordinator.queueSync(view) }
         } else {
             coordinator.sync(view)
         }
@@ -220,18 +222,19 @@ struct LocalTextEditor: UIViewRepresentable {
             let previous = applying
             applying = true; defer { applying = previous }
             let before = view.selectedRange
-            let native = view.text ?? "", wanted = parent.text
+            let document = view.draft, wanted = parent.text
+            let native = document.source
             // An unfinished composition can lead its last delegate notification. A real external draft still wins.
             if view.markedTextRange != nil, wanted.utf8.elementsEqual(lastPublished.utf8), !native.utf8.elementsEqual(wanted.utf8) { return }
-            if !native.utf8.elementsEqual(wanted.utf8) {
-                lastPublished = wanted
-                view.text = wanted
-                if parent.selection != nil { view.selectedRange = NSRange(location: wanted.utf16.count, length: 0) }
-            }
-            if let request = parent.selectionRequest?.wrappedValue, view.markedTextRange == nil {
+            let request = parent.selectionRequest?.wrappedValue
+            let changed = !native.utf8.elementsEqual(wanted.utf8)
+            let completing = request?.text.utf8.elementsEqual(wanted.utf8) == true
+            if changed { lastPublished = wanted }
+            let offsets = view.displayDraft(wanted, chips: parent.mentionMarkers, document: document, changed: changed, completing: completing)
+            if let request, view.markedTextRange == nil {
                 let count = wanted.utf16.count
                 if request.text.utf8.elementsEqual(wanted.utf8), request.range.location <= count,
-                   request.range.length <= count - request.range.location { view.selectedRange = request.range }
+                   request.range.length <= count - request.range.location { view.selectedRange = offsets.displayRange(for: request.range) }
                 DispatchQueue.main.async { [weak self] in
                     guard let self, parent.selectionRequest?.wrappedValue?.id == request.id else { return }
                     parent.selectionRequest?.wrappedValue = nil
@@ -245,12 +248,16 @@ struct LocalTextEditor: UIViewRepresentable {
             }
         }
         func textViewDidChange(_ textView: UITextView) {
-            lastPublished = textView.text ?? ""; parent.text = lastPublished; readSelection(textView)
+            guard !applying, let view = textView as? LocalPromptView else { return }
+            lastPublished = view.draft.source; parent.text = lastPublished; readSelection(view)
         }
         func textViewDidChangeSelection(_ textView: UITextView) { readSelection(textView) }
         func readSelection(_ textView: UITextView) {
             guard !applying else { return }
-            if let selection = parent.selection, selection.wrappedValue != textView.selectedRange { selection.wrappedValue = textView.selectedRange }
+            if let selection = parent.selection, let view = textView as? LocalPromptView, view.selectedRange.location != NSNotFound {
+                let source = view.draft.offsets.sourceRange(for: view.selectedRange)
+                if selection.wrappedValue != source { selection.wrappedValue = source }
+            }
             let marked = textView.markedTextRange != nil
             if let composing = parent.composing, composing.wrappedValue != marked { composing.wrappedValue = marked }
         }
@@ -280,6 +287,69 @@ class LocalTextView: UITextView {
 }
 
 final class LocalPromptView: LocalTextView {
+    // The UIKit convenience initializer can bypass initialization of Swift subclass storage.
+    override init(frame: CGRect, textContainer: NSTextContainer?) {
+        super.init(frame: frame, textContainer: textContainer)
+    }
+    required init?(coder: NSCoder) { super.init(coder: coder) }
+
+    var draft: PromptMentionDocument { PromptMentionDocument(storage: textStorage) }
+    private(set) var hasMentionChips = false
+    override var accessibilityValue: String? {
+        get { hasMentionChips ? draft.source : super.accessibilityValue }
+        set { super.accessibilityValue = newValue }
+    }
+    private var shownChips: [PromptMentionChip] = []
+    private var chipWidth: CGFloat = 0
+    private var chipStyle: UIUserInterfaceStyle = .unspecified
+    private var chipFont: UIFont?
+
+    func displayDraft(_ source: String, chips: [PromptMentionChip], document: PromptMentionDocument,
+                      changed: Bool, completing: Bool) -> PhoneMentionOffsets {
+        if markedTextRange != nil, !changed { return document.offsets }
+        let matches = PromptMentionDocument.matches(chips, in: source)
+        let offsets = PhoneMentionOffsets(markers: matches.map(\.range), in: source)
+        let font = font ?? .preferredFont(forTextStyle: .body)
+        let width = max(36, bounds.width - textContainerInset.left - textContainerInset.right)
+        let style = traitCollection.userInterfaceStyle
+        let visuals = matches.map(\.chip)
+        let appearanceChanged = !matches.isEmpty && (width != chipWidth || style != chipStyle || font != chipFont)
+        let projectionChanged = offsets != document.offsets
+        guard changed || projectionChanged || appearanceChanged || visuals != shownChips else { return offsets }
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.label]
+        let rich = NSMutableAttributedString(string: source, attributes: attributes)
+        for (match, span) in zip(matches, offsets.ranges).reversed() {
+            let attachment = match.chip.attachment(font: font, traits: traitCollection, maxWidth: width)
+            let piece = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
+            piece.addAttributes([.font: font, PromptMentionDocument.marker: match.chip.marker], range: NSRange(location: 0, length: 1))
+            if NSMaxRange(span) > NSMaxRange(match.range) {
+                piece.addAttribute(PromptMentionDocument.trailingDelimiter, value: true, range: NSRange(location: 0, length: 1))
+            }
+            rich.replaceCharacters(in: span, with: piece)
+        }
+        let oldSelection = selectedRange.location == NSNotFound ? NSRange(location: 0, length: 0) : selectedRange
+        let caret = changed ? NSRange(location: source.utf16.count, length: 0) : document.offsets.sourceRange(for: oldSelection)
+        shownChips = visuals; hasMentionChips = !matches.isEmpty; chipWidth = width; chipStyle = style; chipFont = font
+        if isFirstResponder, completing || (!changed && projectionChanged),
+           let all = textRange(from: beginningOfDocument, to: endOfDocument) {
+            // Use a native edit for an accepted completion so Undo restores the text the person was typing.
+            replace(all, withAttributedText: rich)
+        } else {
+            textStorage.setAttributedString(rich)
+        }
+        selectedRange = offsets.displayRange(for: caret)
+        typingAttributes = attributes
+        return offsets
+    }
+
+    override func copy(_ sender: Any?) {
+        let range = selectedRange
+        guard range.location != NSNotFound, range.length > 0, NSMaxRange(range) <= textStorage.length else { return }
+        let selection = textStorage.attributedSubstring(from: range)
+        let plain = PromptMentionDocument(storage: selection, copying: true).source
+        LocalClipboard.copy(plain)
+    }
+
     var completionKeys: [String] = []
     var completionCommand: ((String) -> Void)?
     var commandHint: String?
@@ -329,7 +399,8 @@ final class LocalPromptView: LocalTextView {
         completionCommand?(command.modifierFlags.contains(.command) ? "submit" : input)
     }
     override func cut(_ sender: Any?) {
-        guard isEditable, cutSelectedTextLocally() else { return }
+        guard isEditable, let range = selectedTextRange, !range.isEmpty else { return }
+        copy(sender); replace(range, withText: "")
         delegate?.textViewDidChange?(self)
     }
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {

@@ -27,6 +27,7 @@
 锁屏可预览，决定重验。私有审批用通用提示，密钥仅本机。[通知](../../docs/IOS-NOTIFICATIONS.md)
 
 - `LatchScreens` 仅模拟器：场景与 `-LatchLive 1` 软件密钥限 `Screens/`、`LATCH_SCREENS`；`ios-app.e2e.ts`、`check:boundaries` 核对。
+- @：文件须点选；待办只选一个收件人。
 - ＋只插入或复用 Slash；组词不执行，保留动作不转发，迟到预览丢弃。
 - 创建助手凭有效回执，畸形保原请求；离页重试不导航。工作电脑按 hostId、agentId 打开，草稿不跨机。
 - 即将的定时归「动态」；电脑、唤醒与通知归「运行设置」。
