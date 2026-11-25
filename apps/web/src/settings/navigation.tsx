@@ -145,8 +145,12 @@ function PhoneLevels({ levels, section }: { levels: SettingsLevel[]; section: st
     if (before !== undefined) {
       const opener = openers.current.get(before)
       openers.current.delete(before)
-      if (opener?.isConnected) opener.focus({ preventScroll: true })
-      else if (topKey !== undefined) backs.current.get(topKey)?.focus({ preventScroll: true })
+      // The parent unlocks the section after it receives the new depth. Focus it once that render commits.
+      const frame = requestAnimationFrame(() => {
+        const target = opener?.isConnected ? opener : topKey === undefined ? null : backs.current.get(topKey)
+        target?.focus({ preventScroll: true })
+      })
+      return () => cancelAnimationFrame(frame)
     }
   }, [topKey])
 

@@ -53,6 +53,7 @@ type CatalogEntry = z.infer<typeof sourceEntry> | z.infer<typeof bundleEntry>
 type ManifestName = z.infer<typeof rootManifest>
 type Manifest = Omit<PluginPackageManifest, 'config'> & { config?: Record<string, unknown> }
 type CheckedBundle = ReturnType<typeof checkedPluginBundle>
+type ReadableFiles = Pick<ExternalPluginFiles, 'read'>
 
 const noPackage = () =>
   new AppError(
@@ -178,7 +179,7 @@ function fileContent(path: string, bytes: Buffer): string {
   return textContent(text)
 }
 
-async function requiredFile(files: ExternalPluginFiles, path: string, limit: number): Promise<Buffer> {
+async function requiredFile(files: ReadableFiles, path: string, limit: number): Promise<Buffer> {
   if (!safeSourcePath(path)) throw invalidContent()
   const bytes = await files.read(path, limit)
   if (!bytes) throw noPackage()
@@ -195,7 +196,7 @@ async function rootDeclaration(files: ExternalPluginFiles): Promise<LoadedDeclar
 }
 
 async function catalogDeclaration(
-  files: ExternalPluginFiles,
+  files: ReadableFiles,
   entry: z.infer<typeof sourceEntry>,
   budget: number,
 ): Promise<LoadedDeclaration & { bytes: number }> {
@@ -210,7 +211,7 @@ async function catalogDeclaration(
   return { ...loaded, bytes: bytes.length }
 }
 
-async function collectFiles(files: ExternalPluginFiles, manifest: Manifest, paths: string[], folder = ''): Promise<CheckedBundle> {
+async function collectFiles(files: ReadableFiles, manifest: Manifest, paths: string[], folder = ''): Promise<CheckedBundle> {
   if (paths.length > MAX_FILES) throw externalLimit()
   if (!unique(paths)) throw invalidContent()
   const contents: Array<{ path: string; content: string }> = []
@@ -287,6 +288,29 @@ export async function listExternalPlugins(source: PluginExternalSource, options:
   return packages
 }
 
+async function readCatalogEntry(files: ReadableFiles, entry: CatalogEntry): Promise<CheckedBundle> {
+  if ('bundle' in entry) {
+    const bytes = await requiredFile(files, entry.bundle, PLUGIN_PACKAGE_BYTES)
+    if (sha256Hex(bytes) !== entry.sha256) throw new AppError(409, 'plugin-external-integrity', '目录里的插件下载内容与 SHA-256 摘要不符。')
+    const loaded = checkedSourceBundle(encodedJson(bytes))
+    if (loaded.bundle.manifest.id !== entry.id || loaded.bundle.manifest.version !== entry.version) throw invalidContent()
+    return loaded
+  }
+  const loaded = await catalogDeclaration(files, entry, PLUGIN_PACKAGE_BYTES)
+  return loaded.packed ?? collectFiles(files, loaded.manifest, entry.files, entry.folder)
+}
+
+/** Read the selected source packages from one catalog and file tree pinned to the same commit. */
+export async function readCatalogFolders(files: ReadableFiles, folders: ReadonlyMap<string, string>): Promise<CheckedBundle[]> {
+  const entries = parseCatalog(await requiredFile(files, CATALOG, MAX_CATALOG))
+  const official = Array.from(folders, ([id, folder]) => {
+    const entry = entries.find(item => item.id === id)
+    if (!entry || !('folder' in entry) || entry.folder !== folder) throw invalidContent()
+    return entry
+  })
+  return Promise.all(official.map(entry => readCatalogEntry(files, entry)))
+}
+
 export async function readExternalPlugin(
   source: PluginExternalSource,
   path: string,
@@ -301,16 +325,7 @@ export async function readExternalPlugin(
   if (catalog) {
     const entry = parseCatalog(catalog).find(candidate => packagePath(candidate) === path)
     if (!entry) throw noPackage()
-    if ('bundle' in entry) {
-      const bytes = await requiredFile(files, entry.bundle, PLUGIN_PACKAGE_BYTES)
-      if (sha256Hex(bytes) !== entry.sha256)
-        throw new AppError(409, 'plugin-external-integrity', '目录里的插件下载内容与 SHA-256 摘要不符。')
-      const loaded = checkedSourceBundle(encodedJson(bytes))
-      if (loaded.bundle.manifest.id !== entry.id || loaded.bundle.manifest.version !== entry.version) throw invalidContent()
-      return loaded
-    }
-    const loaded = await catalogDeclaration(files, entry, PLUGIN_PACKAGE_BYTES)
-    return loaded.packed ?? collectFiles(files, loaded.manifest, entry.files, entry.folder)
+    return readCatalogEntry(files, entry)
   }
   if (path !== '') throw noPackage()
   const loaded = await rootDeclaration(files)

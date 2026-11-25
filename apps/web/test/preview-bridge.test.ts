@@ -4,7 +4,6 @@ import { createPreviewBridge, PREVIEW_TASKS } from '../src/plugin-pages/previewB
 import { appPhase, diagnosticLine, handBackText, phaseMarks } from '../src/settings/NewAppCard.tsx'
 import { joinDraft, handDraft, takeHandedDraft } from '../src/core/draftHandoff.ts'
 import { fallbackVersion } from '../src/plugin-pages/model.ts'
-import { reachLabel } from '../src/settings/PluginsSettings.tsx'
 
 const INFO = { sdk: '1.0.0', appProtocol: 1, theme: 'light' as const, offline: false, canRun: false, harnesses: [], preview: true as const }
 
@@ -173,14 +172,5 @@ describe('a new page version that will not open', () => {
     expect(fallbackVersion(drawn, { revision: 'c'.repeat(64) }, true)).toBeUndefined()
     expect(fallbackVersion(drawn, { revision: drawn.revision }, false)).toBeUndefined()
     expect(fallbackVersion(null, { revision: 'c'.repeat(64) }, false)).toBeUndefined()
-  })
-})
-
-describe('the installed list', () => {
-  it('says what each package brings', () => {
-    expect(reachLabel({ pages: 1, capabilities: [] })).toBe('页面 · 侧栏入口')
-    expect(reachLabel({ capabilities: ['ui:notes'] })).toBe('面板 · 与页面同权')
-    expect(reachLabel({ pages: 1, capabilities: ['tool:x'] })).toBe('代码 · 在 Mac 上运行')
-    expect(reachLabel({ capabilities: ['skill:x'] })).toBeUndefined()
   })
 })

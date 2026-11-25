@@ -37,7 +37,7 @@ import { openItemPage, type WorkItemSessionTarget } from '../board/itemPage.ts'
 import { useProposalWrites } from '../board/proposals.ts'
 import { shortcutMatches, shortcutWorksOnPage, workbenchShortcut, type TerminalPaneAction } from '../workbenchShortcuts.ts'
 import { frameShortcutAllowed } from '../plugin-pages/model.ts'
-import { isMarketplaceLink, marketplaceAvailable, marketplaceUrl } from '../plugin-marketplace/route.ts'
+import { isMarketplaceLink, marketplaceAvailable, marketplaceUrl, type MarketplaceTab } from '../plugin-marketplace/route.ts'
 import { conversationShown } from '../composer/useArmed.ts'
 import {
   RIGHT_PANEL_DEFAULT,
@@ -190,7 +190,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     marketAccess.scopes.has('view')
     && canEditPluginPackages(snapshot, marketAccess)
     && (snapshot.catalog?.features?.pluginExternalSources === true || snapshot.catalog?.features?.pluginNpmRegistry === true)
-  const [marketplaceSource, setMarketplaceSource] = useState<'bundled' | 'add'>('bundled')
+  const [marketplaceSource, setMarketplaceSource] = useState<MarketplaceTab>('bundled')
   const [marketOrigin, setMarketOrigin] = useState<'settings' | 'settings-without-market' | null>(null)
   const [marketplaceVisit, setMarketplaceVisit] = useState<'open' | 'closed' | null>(() =>
     isMarketplaceLink(location.href) && canBrowseMarketplace ? 'open' : null,

@@ -27,7 +27,7 @@ import { PLUGIN_REACH_COPY } from '../core/securityCopy.ts'
 import { languageForPath } from '../preview/highlight-protocol.ts'
 import { IconTile, NoteLine, SettingsGroup, SettingsRow } from './common.tsx'
 import { PluginSourceField } from './PluginSourceField.tsx'
-import { PluginMutationDialog, reviewedPluginMutation, type PluginMutationTarget } from './PluginMutationReview.tsx'
+import { pluginEnabledBody, PluginMutationDialog, reviewedPluginMutation, type PluginMutationTarget } from './PluginMutationReview.tsx'
 import {
   addPluginSource,
   downloadPluginBundle,
@@ -389,7 +389,7 @@ export function usePluginAssets({
     if (enabled && record.appliedRevision) {
       review(record, 'enable', record.appliedRevision)
     } else if (!enabled) {
-      void perform({ path: route(record.id) + '/enabled', options: { method: 'POST', body: { requestId: newRequestId(), enabled } } })
+      void perform({ path: route(record.id) + '/enabled', options: { method: 'POST', body: pluginEnabledBody(false) } })
     }
   }
   const skillFiles = new Set(editor?.bundle.manifest.skills?.map(skill => skill.file) ?? [])

@@ -51,7 +51,6 @@ const COPY = defineCopy(
     returnToAgent: '交回 Agent',
     applyVersion: '应用新版本',
     rebuild: '重新构建',
-    pageDrafts: '页面草稿',
     appId: (id: string) => `新应用 ${id}`,
     allDiagnostics: (count: number) => `全部 ${formatNumber(count)} 条`,
     previewFailed: (message: string) => `预览没有打开：${message}`,
@@ -86,7 +85,6 @@ const COPY = defineCopy(
     returnToAgent: 'Hand back to Agent',
     applyVersion: 'Apply new version',
     rebuild: 'Rebuild',
-    pageDrafts: 'Page drafts',
     appId: (id: string) => `New app ${id}`,
     allDiagnostics: (count: number) => plural(count, { one: 'All {n} diagnostic', other: 'All {n} diagnostics' }),
     previewFailed: (message: string) => `Couldn’t open the preview. ${message}`,
@@ -431,39 +429,5 @@ export function AppDraftCard({
         />
       )}
     </section>
-  )
-}
-
-export function PageDrafts({
-  records,
-  snapshot,
-  onChanged,
-  onOpenSession,
-  onOpenApp,
-}: {
-  records: readonly PluginPackageSummary[]
-  snapshot: AppSnapshot
-  onChanged: () => void
-  onOpenSession?: (id: string) => void
-  onOpenApp?: (target: { pluginId: string; appId: string }) => void
-}) {
-  const drafts = records.filter(record => record.source && record.source.kind !== 'plugin')
-  if (drafts.length === 0) return null
-  return (
-    <div className="new-apps">
-      <div className="new-apps-head">
-        <h3>{COPY.pageDrafts}</h3>
-      </div>
-      {drafts.map(record => (
-        <AppDraftCard
-          key={record.id}
-          record={record}
-          snapshot={snapshot}
-          onChanged={onChanged}
-          {...(onOpenSession ? { onOpenSession } : {})}
-          {...(onOpenApp ? { onOpenApp } : {})}
-        />
-      ))}
-    </div>
   )
 }

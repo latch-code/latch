@@ -19,6 +19,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         demo: true,
         hostName: '工作电脑',
         presenceMode: 'manual',
+        pluginRegistryFetch: async () => new Response(null, { status: 503 }),
         sessionFolders: false,
       })
       let application: ElectronApplication | undefined

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import type {
   AppManifestEntry,
   PluginBuild,
+  PluginCatalogCheckResult,
   PluginCatalogPreview,
   PluginMarketplaceInstallation,
   PluginNpmPreview,
@@ -44,7 +45,8 @@ import type { DraftKind, ImportedDraft } from './app-import.ts'
 import { readNpmPlugin } from './plugin-npm.ts'
 import { npmPreviewSchema, npmRegistryChanged, npmRegistryUpdateSchema, npmRegistryUrl, npmStageSchema } from './npm-source.ts'
 import type { FetchLike } from './egress.ts'
-import { bundledPlugin, catalogUpdate, requireBundledPlugin } from './plugin-catalog.ts'
+import { catalogUpdate } from './plugin-catalog.ts'
+import { createOfficialCatalog } from './plugin-official-catalog.ts'
 import { pluginReviewSource, reviewPluginPackage } from './plugin-package-review.ts'
 import { externalPluginRoutes } from './plugin-external-routes.ts'
 
@@ -66,6 +68,7 @@ const applySchema = revisionSchema.extend(reviewFields),
   deleteSchema = z.strictObject({ requestId, baseRevision: hash, deleteData: z.boolean().optional() }),
   enabledSchema = z.strictObject({ requestId, enabled: z.boolean(), ...reviewFields })
 const catalogPreviewSchema = z.strictObject({ pluginId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/u) })
+const catalogCheckSchema = z.strictObject({ force: z.boolean().optional() })
 const catalogStageSchema = catalogPreviewSchema.extend({
   requestId,
   revision: hash,
@@ -187,13 +190,14 @@ const marketplaceInstalled = (
 
 export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
   const { assets, registry } = options
+  const officialCatalog = createOfficialCatalog(options.external)
   const installedIds = options.installedIds ?? new Set<string>()
   const namespace = (id: string) => {
     if (!installedIds.has(id) && registry.list().some(plugin => plugin.id === id))
       throw new AppError(409, 'plugin-package-id-in-use', '这个标识已由启动参数或内置插件占用，请换一个插件标识。')
   }
   function summary(record: PluginAssetDescriptor): PluginPackageSummary {
-    const catalog = bundledPlugin(record.id)
+    const catalog = officialCatalog.get(record.id)?.checked
     const info = installedIds.has(record.id) ? registry.list().find(plugin => plugin.id === record.id) : undefined
     const unavailableReason = options.held?.isHeld(record.id)
       ? '这个插件与更新后的 Latch 不兼容，已停用；资产仍保留，更新插件后可重新启用。'
@@ -498,18 +502,40 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
           json(res, { review: result })
           return true
         }
-        const catalogRoute = /^\/link\/api\/plugin-packages\/catalog\/(preview|stage)$/u.exec(path)
+        const catalogRoute = /^\/link\/api\/plugin-packages\/catalog\/(check|preview|stage)$/u.exec(path)
         if (catalogRoute) {
           if (method !== 'POST') throw new AppError(404, 'not-found', '接口不存在。')
+          if (catalogRoute[1] === 'check') {
+            const { force } = catalogCheckSchema.parse(await jsonBody(req))
+            const releases = await officialCatalog.checkAll(() => actor.authorize(), force)
+            actor.authorize()
+            const installed = new Map(assets.descriptors().map(record => [record.id, record]))
+            json(res, {
+              plugins: releases.map(({ checked, commit }) => {
+                const { id, version } = checked.bundle.manifest
+                const record = installed.get(id)
+                return {
+                  id,
+                  version,
+                  revision: checked.revision,
+                  ...(commit ? { commit } : {}),
+                  ...(record ? { updateStatus: catalogUpdate(checked, record) } : {}),
+                }
+              }),
+            } satisfies PluginCatalogCheckResult)
+            return true
+          }
           if (catalogRoute[1] === 'preview') {
             const { pluginId } = catalogPreviewSchema.parse(await jsonBody(req))
-            const checked = requireBundledPlugin(pluginId)
+            const release = officialCatalog.get(pluginId)
+            if (!release) throw new AppError(404, 'plugin-catalog-not-found', '官方目录没有这个插件。')
+            const { checked, commit } = release
             const record = assets.has(pluginId) ? assets.get(pluginId) : undefined
             if (!record) namespace(pluginId)
             const descriptor = record ? describePluginAsset(record) : undefined
             const status = descriptor ? catalogUpdate(checked, descriptor) : undefined
             const version = checked.bundle.manifest.version
-            const result = await review(checked, { kind: 'catalog', version }, record)
+            const result = await review(checked, { kind: 'catalog', version, ...(commit ? { commit } : {}) }, record)
             actor.authorize()
             json(res, {
               bundle: checked.bundle,
@@ -529,7 +555,12 @@ export function createPluginPackageRoutes<Caller>(options: Options<Caller>) {
             const previous = await assets.replayCatalog(input, actor)
             if (previous) return reply(previous, 201)
             namespace(input.pluginId)
-            await reply(await assets.stageCatalog(input, requireBundledPlugin(input.pluginId), actor), 201)
+            const release = officialCatalog.at(input.pluginId, input.revision)
+            if (!release) {
+              if (!officialCatalog.get(input.pluginId)) throw new AppError(404, 'plugin-catalog-not-found', '官方目录没有这个插件。')
+              throw new AppError(409, 'plugin-package-changed', '官方插件内容已变化，请重新预览。')
+            }
+            await reply(await assets.stageCatalog(input, release.checked, actor, release.commit), 201)
           })
           return true
         }

@@ -8602,7 +8602,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }),
         providers: usableProviders().map(providerSummary),
         unusableProviders: unusableProviders(),
-        uiPanels: registry.uiPanels(),
+        uiPanels: registry.uiPanels().map(panel =>
+          panel.id === 'context-insights:insights' && panel.context && panel.moduleHash
+            ? {
+                ...panel,
+                officialContext: assetPluginIds.has(panel.pluginId) && panel.moduleHash === pluginAssets.officialContextPanelHash(),
+              }
+            : panel,
+        ),
         ...(pages.length ? { workspacePages: pages } : {}),
         skills: registry.skills(),
         // Disabled workspaces are listed with their reason for settings; session pickers skip any entry marked unavailable.

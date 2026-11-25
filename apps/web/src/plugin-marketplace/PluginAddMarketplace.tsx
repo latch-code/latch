@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import {
   containsSecret,
   type PluginNpmPreview,
@@ -57,6 +57,8 @@ const COPY = defineCopy(
     retry: '重试',
     lookup: '查找',
     back: '返回查找',
+    backInstalled: '返回已安装',
+    switchRegistry: '切换 npm 源',
     loading: '正在读取插件版本…',
     downloaded: '已下载的 npm 插件',
     external: '从 GitHub 或文件夹添加的插件',
@@ -117,6 +119,8 @@ const COPY = defineCopy(
     retry: 'Retry',
     lookup: 'Find',
     back: 'Back to search',
+    backInstalled: 'Back to installed plugins',
+    switchRegistry: 'Switch npm registry',
     loading: 'Reading plugin release…',
     downloaded: 'Downloaded npm plugins',
     external: 'Plugins added from GitHub or a local folder',
@@ -237,6 +241,7 @@ function validStage(value: unknown): value is PluginNpmStage {
 
 export function usePluginAddMarketplace({
   active,
+  installedView = false,
   connected = true,
   editable,
   npmEnabled,
@@ -248,6 +253,7 @@ export function usePluginAddMarketplace({
   onReview,
 }: {
   active: boolean
+  installedView?: boolean
   connected?: boolean
   editable: boolean
   npmEnabled: boolean
@@ -289,6 +295,7 @@ export function usePluginAddMarketplace({
   const controlId = useId()
   const heading = useRef<HTMLHeadingElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const registryTrigger = useRef('configure')
   const external = usePluginExternalMarketplace({
     active,
     connected,
@@ -299,9 +306,27 @@ export function usePluginAddMarketplace({
   const view = configuring ? 'registry' : preview ? 'preview' : 'browse'
   const lastView = useRef(view)
   const previewRequest = useRef<AbortController | null>(null)
+  const previousInstalledView = useRef(installedView)
+  // A lookup belongs to its list. Pending writes keep their original Host and device receipt across both lists.
+  useLayoutEffect(() => {
+    if (previousInstalledView.current === installedView) return
+    previousInstalledView.current = installedView
+    previewRequest.current?.abort()
+    external.clear()
+    setPreview(null)
+    setLastLookup(null)
+    setLoading(false)
+    setLookupError('')
+    setStageError('')
+    setStagedId(null)
+    setReplacement(null)
+    setConfiguring(false)
+    lastView.current = 'browse'
+  })
   useEffect(() => {
     if (active && lastView.current !== view) {
-      const trigger = lastView.current === 'registry' ? 'configure' : lastLookup?.pluginId ? 'update-' + lastLookup.pluginId : 'find'
+      const trigger =
+        lastView.current === 'registry' ? registryTrigger.current : lastLookup?.pluginId ? 'update-' + lastLookup.pluginId : 'find'
       const target = view === 'browse' ? document.getElementById(controlId + '-' + trigger) : heading.current
       const focus = target ?? heading.current
       focus?.focus({ preventScroll: true })
@@ -324,8 +349,9 @@ export function usePluginAddMarketplace({
     }
   }, [])
 
+  const needsRegistry = npmEnabled && (!installedView || configuring || records.some(record => record.npm && record.appliedRevision))
   useEffect(() => {
-    if (!active || !editable || !npmEnabled || !connected) return
+    if (!active || !editable || !needsRegistry || !connected) return
     const abort = new AbortController()
     setRegistryError('')
     void api<RegistryState>(`${ROUTE}/registry`, { signal: abort.signal }).then(
@@ -343,7 +369,7 @@ export function usePluginAddMarketplace({
       },
     )
     return () => abort.abort()
-  }, [active, connected, editable, npmEnabled, sourceRetry])
+  }, [active, connected, editable, needsRegistry, sourceRetry])
 
   const configure = async (change: RegistryChange) => {
     const signal = writeSignal()
@@ -491,7 +517,7 @@ export function usePluginAddMarketplace({
     }
   }
 
-  if (!editable) return { sourceBusy: false, browsing: false, controls: null, content: null }
+  if (!editable) return { sourceBusy: false, browsing: true, controls: null, content: null, updateAction: () => null }
   const download = preview && review && release && release.registry === registry && (!installed || newerRelease) && (
     <Button
       variant={installed?.modified ? 'outline' : 'primary'}
@@ -521,13 +547,49 @@ export function usePluginAddMarketplace({
   )
 
   const browsing = !preview && !configuring && !external.found && !external.preview
-  const askRegistry = (value: string) => {
+  const savedId = stagedId ?? external.stagedId
+  const showSaved =
+    savedId
+    && (!installedView
+      || records.some(record => record.id === savedId && record.appliedRevision && record.appliedRevision !== record.revision))
+  const askRegistry = (value: string, trigger = 'configure') => {
+    registryTrigger.current = trigger
     setAddress(value)
     setSourceFailure('')
     setConfiguring(true)
   }
+  const updateAction = (record: PluginPackageSummary, disabled = false) => {
+    if (record.npm && npmEnabled) {
+      const { name, registry: origin } = record.npm
+      const current = registry === origin
+      const switchRegistry = installedView && registry !== undefined && !current
+      return (
+        <Button
+          id={controlId + '-update-' + record.id}
+          disabled={disabled || locked || (!current && !switchRegistry)}
+          onClick={() => (switchRegistry ? askRegistry(origin, 'update-' + record.id) : void lookup({ name, pluginId: record.id }))}>
+          {switchRegistry ? COPY.switchRegistry : COPY.checkUpdate}
+        </Button>
+      )
+    }
+    if (record.external && externalEnabled)
+      return (
+        <Button
+          id={controlId + '-external-update-' + record.id}
+          disabled={disabled || locked}
+          onClick={() => {
+            setStagedId(null)
+            setLookupError('')
+            setStageError('')
+            external.lookup({ pluginId: record.id })
+          }}>
+          {COPY.checkUpdate}
+        </Button>
+      )
+    return null
+  }
   const canFind = needle?.kind === 'npm' ? npmEnabled && !!registry : needle?.kind === 'external' && externalEnabled
-  const controls = browsing && (
+  const controls = !installedView && browsing && (
     <div className="plugin-market-npm-content plugin-market-npm-controls" inert={!connected || undefined}>
       <h2 className="sr-only" ref={heading} tabIndex={-1}>
         {COPY.find}
@@ -685,9 +747,9 @@ export function usePluginAddMarketplace({
           {externalEnabled && (
             <PluginExternalMarketplace
               external={external}
+              installedView={installedView}
               disabled={!connected || stageBusy}
               onManage={onManage}
-              onReview={onReview}
               browseFocus={() => {
                 const target =
                   external.lastLookup && 'pluginId' in external.lastLookup
@@ -700,8 +762,15 @@ export function usePluginAddMarketplace({
               }}
             />
           )}
-          {stagedId && (
-            <InlineNotice action={<Button onClick={() => onReview(stagedId)}>{COPY.review}</Button>}>{COPY.staged}</InlineNotice>
+          {installedView && needsRegistry && registryError && (
+            <InlineNotice tone="error" action={<Button onClick={() => setSourceRetry(current => current + 1)}>{COPY.retry}</Button>}>
+              {registryError}
+            </InlineNotice>
+          )}
+          {showSaved && (
+            <InlineNotice action={!installedView && <Button onClick={() => onReview(savedId)}>{COPY.review}</Button>}>
+              {COPY.staged}
+            </InlineNotice>
           )}
           {loading && <Loading label={COPY.loading} />}
           {lookupError && (
@@ -715,7 +784,7 @@ export function usePluginAddMarketplace({
             <>
               <header className="plugin-market-npm-preview">
                 <div className="plugin-market-detail-identity">
-                  <PluginMarketIcon id={release.name} size={24} framed />
+                  {!installedView && <PluginMarketIcon id={release.name} size={24} framed />}
                   <div>
                     <p className="plugin-market-meta">{COPY.preview}</p>
                     <h2 className="plugin-market-section-title" ref={heading} tabIndex={-1}>
@@ -729,12 +798,14 @@ export function usePluginAddMarketplace({
                   </div>
                 </div>
                 <Button variant="ghost" icon={ArrowLeft} disabled={stageBusy} onClick={() => setPreview(null)}>
-                  {COPY.back}
+                  {installedView ? COPY.backInstalled : COPY.back}
                 </Button>
               </header>
-              <div className="plugin-market-npm-cover">
-                <PluginFallbackCover id={release.name} />
-              </div>
+              {!installedView && (
+                <div className="plugin-market-npm-cover">
+                  <PluginFallbackCover id={release.name} />
+                </div>
+              )}
               <PluginRiskFacts
                 review={preview.value.review}
                 extra={
@@ -796,7 +867,7 @@ export function usePluginAddMarketplace({
               {COPY.unknown}
             </InlineNotice>
           )}
-          {browsing && npmRecords.length > 0 && (
+          {!installedView && browsing && npmRecords.length > 0 && (
             <SettingsGroup title={COPY.downloaded}>
               {npmRecords.map(record => {
                 const origin = record.npm!
@@ -817,7 +888,6 @@ export function usePluginAddMarketplace({
                   <SettingsRow
                     key={record.id}
                     className="marketplace-fact"
-                    leading={<PluginMarketIcon id={origin.name} size={16} framed />}
                     title={record.name}
                     description={
                       <>
@@ -839,12 +909,7 @@ export function usePluginAddMarketplace({
                         <Button disabled={stageBusy} onClick={() => onManage(record.id)}>
                           {COPY.reviewLocal}
                         </Button>
-                        <Button
-                          id={controlId + '-update-' + record.id}
-                          disabled={!current || locked}
-                          onClick={() => void lookup({ name: origin.name, pluginId: record.id })}>
-                          {COPY.checkUpdate}
-                        </Button>
+                        {updateAction(record)}
                       </div>
                     }
                   />
@@ -852,7 +917,7 @@ export function usePluginAddMarketplace({
               })}
             </SettingsGroup>
           )}
-          {browsing && externalRecords.length > 0 && (
+          {!installedView && browsing && externalRecords.length > 0 && (
             <SettingsGroup title={COPY.external}>
               {externalRecords.map(record => {
                 const origin = record.external
@@ -862,7 +927,6 @@ export function usePluginAddMarketplace({
                   <SettingsRow
                     key={record.id}
                     className="marketplace-fact"
-                    leading={<PluginMarketIcon id={record.id} size={16} framed />}
                     title={<VisibleText text={record.name} />}
                     description={
                       <>
@@ -878,17 +942,7 @@ export function usePluginAddMarketplace({
                         <Button disabled={locked} onClick={() => onManage(record.id)}>
                           {COPY.reviewLocal}
                         </Button>
-                        <Button
-                          id={controlId + '-external-update-' + record.id}
-                          disabled={locked}
-                          onClick={() => {
-                            setStagedId(null)
-                            setLookupError('')
-                            setStageError('')
-                            external.lookup({ pluginId: record.id })
-                          }}>
-                          {COPY.checkUpdate}
-                        </Button>
+                        {updateAction(record)}
                       </div>
                     }
                   />
@@ -910,5 +964,5 @@ export function usePluginAddMarketplace({
       )}
     </div>
   )
-  return { sourceBusy, browsing, controls, content }
+  return { sourceBusy, browsing, controls, content, updateAction }
 }

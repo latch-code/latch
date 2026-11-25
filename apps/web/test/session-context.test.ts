@@ -272,10 +272,14 @@ it('keeps older latest-request records and allows a session with no context meas
   })
 })
 
-it('shows Context plugin tool times starting at one second and keeps model request milliseconds', async () => {
+async function renderContextPlugin(context: SessionContext) {
   const { default: Panel }: { default: React.ComponentType<ui.ContextPluginPanelProps<SessionContext>> } = await import(
     new URL('../../../examples/context-insights/panel.mjs', import.meta.url).href
   )
+  return renderToStaticMarkup(React.createElement(Panel, { react: React, ui, locale: 'zh-CN', context, revealTurn() {}, revealTool() {} }))
+}
+
+it('shows Context plugin tool times starting at one second and keeps model request milliseconds', async () => {
   const turn = user('turn')
   const messages = [
     turn,
@@ -284,14 +288,26 @@ it('shows Context plugin tool times starting at one second and keeps model reque
     tool('longer', 'list_folders', { state: 'completed', startedAt: at, completedAt: '2026-11-24T00:00:02.500Z' }),
   ]
   const { context } = projectSessionContext({ harnessId: 'standard', messages, contextSteps: [step(1, turn.id)] })
-  const html = renderToStaticMarkup(
-    React.createElement(Panel, { react: React, ui, locale: 'zh-CN', context, revealTurn() {}, revealTool() {} }),
-  )
+  const html = await renderContextPlugin(context)
   expect(html).toContain('<dt>请求耗时</dt><dd>250 ms</dd>')
   expect(html).toContain('>1 次失败</span></small>')
   expect(html).not.toContain('999 ms')
   expect(html).toContain('单次最长实测 1 s</small>')
   expect(html).toContain('单次最长实测 2.5 s</small>')
+})
+
+it('keeps infrequent tools in the call distribution and surfaces their failures before expanding', async () => {
+  const groups = [
+    { name: 'read', calls: 8, failed: 0, longestMs: 0 },
+    { name: 'edit', calls: 5, failed: 0, longestMs: 0 },
+    { name: 'execute', calls: 4, failed: 0, longestMs: 0 },
+    { name: 'search', calls: 2, failed: 1, longestMs: 0 },
+    { name: 'other', calls: 1, failed: 0, longestMs: 0 },
+  ]
+  const html = await renderContextPlugin({ kind: 'harness', steps: [], windows: [], tools: { total: 20, failures: 1, groups } })
+  expect(html).toContain('其余 2 种工具 · 3 次 · 15%')
+  expect(html).toMatch(/15%<span[^>]*> · 1 次失败<\/span><\/summary>/u)
+  expect(html).toMatch(/>search<\/bdi><strong>2 次<\/strong><span[^>]*>10%<\/span>/u)
 })
 
 it('matches the bundled module bytes as well as the Context declaration and keeps the built-in tab key', () => {
@@ -305,7 +321,10 @@ it('matches the bundled module bytes as well as the Context declaration and keep
     context: true,
   }
   expect(isBundledContextPanel(panel, hash)).toBe(true)
+  expect(isBundledContextPanel({ ...panel, officialContext: false }, hash)).toBe(false)
   expect(isBundledContextPanel({ ...panel, moduleHash: 'b'.repeat(64) }, hash)).toBe(false)
+  expect(isBundledContextPanel({ ...panel, moduleHash: 'b'.repeat(64), officialContext: true }, hash)).toBe(true)
+  expect(isBundledContextPanel({ ...panel, pluginId: 'another-plugin', officialContext: true }, hash)).toBe(false)
   const { context: _context, ...ordinary } = panel
   expect(isBundledContextPanel(ordinary, hash)).toBe(false)
   expect(parsePanelMemory({ tabs: ['overview', 'context'], active: 'context' })).toEqual({

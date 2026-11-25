@@ -15,9 +15,15 @@ export type PanelKey = 'overview' | 'context' | 'changes' | 'files' | 'browser' 
 declare const __LATCH_CONTEXT_PANEL_HASH__: string
 const bundledContextHash = typeof __LATCH_CONTEXT_PANEL_HASH__ === 'string' ? __LATCH_CONTEXT_PANEL_HASH__ : ''
 
-/** Only the build's own Context module can use the existing Context tab and its remembered position. */
+/** The bundled hash also recognizes existing installations whose Host predates official catalog updates. */
 export function isBundledContextPanel(panel: UiPanelInfo, hash = bundledContextHash): boolean {
-  return !!hash && panel.id === 'context-insights:insights' && panel.context === true && panel.moduleHash === hash
+  return (
+    panel.pluginId === 'context-insights'
+    && panel.id === 'context-insights:insights'
+    && panel.context === true
+    && !!panel.moduleHash
+    && (panel.officialContext ?? panel.moduleHash === hash)
+  )
 }
 
 /** The open tabs in order and the one selected; absent from storage until the person first opens or closes one. */

@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useId, useState, type ReactNode } from 'react'
-import { ArrowLeftRight, BookOpen, Store, Upload, Wrench } from 'lucide-react'
+import { Upload } from 'lucide-react'
 import {
   PLUGIN_MARKETPLACE_PAGE,
   type AppSnapshot,
@@ -12,19 +12,19 @@ import {
 } from '@latch/protocol'
 import { api, errorMessage, inlineError } from '../core/api.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
-import { Button, EmptyState, InlineNotice, Switch, type IconComponent, PlusGlyph } from '@latch/ui'
-import { IconTile, Loading, NavRow, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
+import { Button, ChevronRightGlyph, EmptyState, Icon, InlineNotice, Switch, PlusGlyph } from '@latch/ui'
+import { Loading, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 import { NavigationContext, SettingsPages } from './navigation.tsx'
 import { packageState, PluginReachGroup, usePluginAssets } from './PluginAssetsSettings.tsx'
-import { canEditPluginPackages, needsPageBuild, packageReach, pluginReach, type PluginReach } from './pluginAssets.ts'
-import { AppDraftCard, PageDrafts } from './NewAppCard.tsx'
+import { canEditPluginPackages, needsPageBuild, packageReach, pluginInUseReason, pluginReach, type PluginReach } from './pluginAssets.ts'
+import { AppDraftCard } from './NewAppCard.tsx'
 import { CreatorPluginReview } from './CreatorPluginReview.tsx'
 import { isPluginPackageReview, PluginSourceText } from './PluginMutationReview.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { isAppleMobile } from '../plugin-marketplace/route.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { DiagnosticsDialog } from '../plugin-pages/AppsPage.tsx'
-import { currentLocale, defineCopy, formatNumber, plural, useLocale } from '../core/i18n.ts'
+import { currentLocale, defineCopy, formatNumber, useLocale } from '../core/i18n.ts'
 
 const COPY = defineCopy(
   {
@@ -32,12 +32,12 @@ const COPY = defineCopy(
     skills: '技能',
     connections: '连接',
     workbench: '工作台',
+    list: '插件',
+    details: '查看详情',
     browseMarketplace: '浏览插件市场',
     modelService: '模型服务',
     ui: '界面',
     data: '数据',
-    codeSurface: '代码 · 在 Mac 上运行',
-    panelSurface: '面板 · 与页面同权',
     pageSurface: '页面 · 侧栏入口',
     alwaysOn: '始终开启',
     on: '已开启',
@@ -47,7 +47,6 @@ const COPY = defineCopy(
     importFile: '导入文件…',
     newTool: '新建工具',
     finishChange: '请先完成当前的插件更改。',
-    needsAttention: '需要处理',
     settings: '设置',
     version: '版本',
     source: '来源',
@@ -69,7 +68,6 @@ const COPY = defineCopy(
     loading: '正在读取插件…',
     retry: '重试',
     empty: '这台 Mac 还没有可管理的插件',
-    activeSessions: (count: number) => `${formatNumber(count)} 个会话在用，结束后才能停用`,
     enable: (name: string) => `启用 ${name}`,
     rollBackTo: (version: string) => `回退到 ${version}`,
     editOnHost: (host: string) => `在 ${host} 上修改`,
@@ -79,12 +77,12 @@ const COPY = defineCopy(
     skills: 'Skills',
     connections: 'Connections',
     workbench: 'Workbench',
+    list: 'Plugins',
+    details: 'View details',
     browseMarketplace: 'Browse Plugin Marketplace',
     modelService: 'Model service',
     ui: 'UI',
     data: 'Data',
-    codeSurface: 'Code · Runs on the Mac',
-    panelSurface: 'Panel · Same permissions as the page',
     pageSurface: 'Page · Available in the sidebar',
     alwaysOn: 'Always on',
     on: 'On',
@@ -94,7 +92,6 @@ const COPY = defineCopy(
     importFile: 'Import file…',
     newTool: 'New tool',
     finishChange: 'Finish the current plugin change first.',
-    needsAttention: 'Needs attention',
     settings: 'Settings',
     version: 'Version',
     source: 'Source',
@@ -116,24 +113,12 @@ const COPY = defineCopy(
     loading: 'Loading plugins…',
     retry: 'Retry',
     empty: 'No plugins to manage on this Mac',
-    activeSessions: (count: number) =>
-      plural(count, {
-        one: 'End the {n} session using this plugin to turn it off',
-        other: 'End the {n} sessions using this plugin to turn it off',
-      }),
     enable: (name: string) => `Turn on ${name}`,
     rollBackTo: (version: string) => `Roll back to ${version}`,
     editOnHost: (host: string) => `Edit on ${host}`,
   },
 )
 
-type Shelf = 'tool' | 'skill' | 'connection' | 'workspace'
-const SHELVES: Array<{ id: Shelf; label: 'tools' | 'skills' | 'connections' | 'workbench'; icon: IconComponent }> = [
-  { id: 'workspace', label: 'workbench', icon: Store },
-  { id: 'tool', label: 'tools', icon: Wrench },
-  { id: 'skill', label: 'skills', icon: BookOpen },
-  { id: 'connection', label: 'connections', icon: ArrowLeftRight },
-]
 const CAPABILITY_LABELS: Partial<Record<string, 'modelService' | 'tools' | 'ui' | 'skills' | 'data' | 'connections' | 'workbench'>> = {
   provider: 'modelService',
   tool: 'tools',
@@ -145,7 +130,7 @@ const CAPABILITY_LABELS: Partial<Record<string, 'modelService' | 'tools' | 'ui' 
 }
 const kindsOf = (capabilities: readonly string[]) => capabilities.map(capability => capability.split(':')[0])
 
-const BUILTIN_NAMES: Readonly<Record<string, { name: string; englishName: string; description: string; englishDescription: string }>> = {
+const BUILTINS: Readonly<Record<string, { name: string; englishName: string; description: string; englishDescription: string }>> = {
   [PLUGIN_MARKETPLACE_PAGE.pluginId]: {
     name: '插件市场',
     englishName: 'Plugin Marketplace',
@@ -195,19 +180,9 @@ const BUILTIN_NAMES: Readonly<Record<string, { name: string; englishName: string
 }
 
 function builtInCopy(plugin: PluginInfo) {
-  if (currentLocale() !== 'en' || !(plugin.builtIn || plugin.managed === 'core') || !Object.hasOwn(BUILTIN_NAMES, plugin.id))
-    return undefined
-  const words = BUILTIN_NAMES[plugin.id]
+  if (currentLocale() !== 'en' || !(plugin.builtIn || plugin.managed === 'core') || !Object.hasOwn(BUILTINS, plugin.id)) return undefined
+  const words = BUILTINS[plugin.id]
   return words?.name === plugin.name ? words : undefined
-}
-
-/** The shelf a plugin stands on, named for what it does for the person; anything else with code is a tool. */
-export function shelfOf(capabilities: readonly string[]): Shelf {
-  const kinds = kindsOf(capabilities)
-  if (kinds.includes('workspace')) return 'workspace'
-  if (kinds.includes('transport')) return 'connection'
-  if (kinds.includes('skill') && !kinds.includes('tool') && !kinds.includes('ui')) return 'skill'
-  return 'tool'
 }
 
 function provides(capabilities: readonly string[]): string {
@@ -221,17 +196,7 @@ function provides(capabilities: readonly string[]): string {
     .join(' · ')
 }
 
-/** What a package brings and where it runs, in a few words: a page, a panel with the page's authority, or Mac code. */
-export function reachLabel(record: Pick<PluginPackageSummary, 'pages' | 'capabilities'>): string | undefined {
-  const kinds = kindsOf(record.capabilities)
-  if (['tool', 'harness', 'provider', 'transport'].some(kind => kinds.includes(kind))) return COPY.codeSurface
-  if (kinds.includes('ui')) return COPY.panelSurface
-  if ((record.pages ?? 0) > 0) return COPY.pageSurface
-  return undefined
-}
-
-/** One row of a shelf, whichever source it came from. */
-type Item = { key: string; name: string; state: string; attention: boolean; shelf: Shelf; reach?: string } & (
+type Item = { key: string; name: string; description: string; state: string; attention: boolean } & (
   | { kind: 'plugin'; plugin: PluginInfo }
   | { kind: 'package'; record: PluginPackageSummary; plugin?: PluginInfo }
 )
@@ -258,83 +223,72 @@ export function pluginItems(plugins: readonly PluginInfo[], records: readonly Pl
         record,
         ...(plugin ? { plugin } : {}),
         name: record.name,
+        description: record.description,
         state: packageState(record),
-        ...(reachLabel(record) ? { reach: reachLabel(record)! } : {}),
         attention: record.unavailableReason !== undefined,
-        shelf: shelfOf(record.capabilities),
       }
     }),
     ...plugins
       .filter(plugin => !owned.has(plugin.id) && !managedElsewhere(plugin))
-      .map((plugin): Item => ({
-        key: `plugin:${plugin.id}`,
-        kind: 'plugin',
-        plugin,
-        name: builtInCopy(plugin)?.englishName ?? plugin.name,
-        state: pluginState(plugin),
-        attention: false,
-        shelf: plugin.id === PLUGIN_MARKETPLACE_PAGE.pluginId && plugin.builtIn ? 'workspace' : shelfOf(plugin.capabilities),
-      })),
+      .map((plugin): Item => {
+        const words = builtInCopy(plugin)
+        return {
+          key: `plugin:${plugin.id}`,
+          kind: 'plugin',
+          plugin,
+          name: words?.englishName ?? plugin.name,
+          description: words && words.description === plugin.description ? words.englishDescription : plugin.description,
+          state: pluginState(plugin),
+          attention: false,
+        }
+      }),
   ]
 }
 
-/** The shelves with their rows: the section's list, and a row opens one plugin over it. */
-function Shelves({
-  items,
-  selected,
-  onSelect,
-  onNewTool,
-  locked,
-}: {
-  items: Item[]
-  selected: string | null
-  onSelect: (key: string) => void
-  onNewTool?: () => void
-  locked: boolean
-}) {
+function PluginCard({ item, onSelect, control }: { item: Item; onSelect: (key: string) => void; control: ReactNode }) {
+  const titleId = useId()
+  const record = item.kind === 'package' ? item.record : undefined
+  const enabled = record?.enabled ?? item.plugin?.enabled
+  const version =
+    record?.appliedRevision && record.revision !== record.appliedRevision
+      ? record.appliedVersion
+      : (record?.version ?? item.plugin?.version)
   return (
-    <div className="plugin-shelves">
-      {SHELVES.map(shelf => {
-        const members = items.filter(item => item.shelf === shelf.id)
-        const newTool = shelf.id === 'tool' ? onNewTool : undefined
-        if (members.length === 0 && !newTool) return null
-        return (
-          <section key={shelf.id} className="plugin-shelf" aria-label={COPY[shelf.label]}>
-            <header className="plugin-shelf-head">
-              <h3>{COPY[shelf.label]}</h3>
-              {newTool && (
-                <Button size="sm" variant="ghost" disabled={locked} onClick={newTool}>
-                  {COPY.newTool}
-                </Button>
-              )}
-            </header>
-            {members.map(item => (
-              <button
-                key={item.key}
-                type="button"
-                className="plugin-nav-row"
-                aria-current={selected === item.key || undefined}
-                onClick={() => {
-                  onSelect(item.key)
-                }}>
-                <IconTile icon={shelf.icon} />
-                <span className="plugin-nav-text">
-                  <span className="plugin-nav-name">{item.name}</span>
-                  <span className="plugin-nav-state" data-attention={item.attention ? '' : undefined}>
-                    {item.attention ? COPY.needsAttention : item.reach ? `${item.reach} · ${item.state}` : item.state}
-                  </span>
-                </span>
-              </button>
-            ))}
-          </section>
-        )
-      })}
-    </div>
+    <li className="plugin-setting-card">
+      <button
+        type="button"
+        className="plugin-nav-row"
+        aria-labelledby={titleId + ' ' + titleId + '-action'}
+        onClick={() => onSelect(item.key)}>
+        <span className="plugin-nav-heading">
+          <span className="plugin-nav-name" id={titleId}>
+            <VisibleText text={item.name} />
+          </span>
+          {version && (
+            <span className="plugin-nav-version">
+              <VisibleText text={'v' + version} />
+            </span>
+          )}
+        </span>
+        {item.description && (
+          <span className="plugin-nav-description">
+            <VisibleText text={item.description} />
+          </span>
+        )}
+        <span className="plugin-nav-link" id={titleId + '-action'}>
+          {COPY.details}
+          <Icon icon={ChevronRightGlyph} size={12} />
+        </span>
+      </button>
+      <div className="plugin-setting-footer">
+        <span className="plugin-nav-state" data-enabled={enabled || undefined} data-attention={item.attention || undefined}>
+          {item.state}
+        </span>
+        {control}
+      </div>
+    </li>
   )
 }
-
-/** Why a plugin's switch is locked while sessions run on it. */
-const inUseText = (sessions: number) => COPY.activeSessions(sessions)
 
 /**
  * One plugin: what it is, what it provides, where its code runs and which devices receive it.
@@ -347,8 +301,7 @@ function PluginDetail({
   onRetryReach,
   canEdit,
   status,
-  onToggle,
-  onSetPackage,
+  control,
   onEdit,
   onExport,
   pages = [],
@@ -365,8 +318,7 @@ function PluginDetail({
   canEdit: boolean
   /** A package change under way or with an unknown result. */
   status: ReactNode
-  onToggle: (plugin: PluginInfo) => void
-  onSetPackage: (record: PluginPackageSummary, enabled: boolean) => void
+  control: ReactNode
   onEdit: (record: PluginPackageSummary) => void
   onExport: (id: string) => Promise<void>
   /** The package's applied pages, from the snapshot. */
@@ -386,37 +338,22 @@ function PluginDetail({
   const hasDraft = record !== undefined && record.revision !== record.appliedRevision
   const appliedVersion = record?.appliedVersion ?? (record?.appliedRevision ? plugin?.version : undefined)
   const updateVersion = record?.catalogUpdate?.status === 'available' ? record.catalogUpdate.version : undefined
-  const builtIn = plugin && builtInCopy(plugin)
-  const description =
-    record?.description ?? (builtIn && plugin?.description === builtIn.description ? builtIn.englishDescription : plugin?.description)
   const capabilities = record?.capabilities ?? plugin?.capabilities ?? []
-  const reason = plugin?.enabled && plugin.activeRuns > 0 && plugin.managed === undefined ? inUseText(plugin.activeRuns) : undefined
-  // A package has its own switch once a revision is applied: taking it back should not need its editor.
-  const appliedPackage = record?.appliedRevision && canEdit ? record : undefined
-  const canSwitch = appliedPackage !== undefined || (plugin !== undefined && plugin.managed !== 'core' && !plugin.editable)
-  const control: ReactNode = canSwitch && (
-    <Switch
-      label={COPY.enable(item.name)}
-      checked={appliedPackage ? appliedPackage.enabled : plugin?.enabled === true}
-      disabled={busy || reason !== undefined}
-      title={reason}
-      onCheckedChange={enabled => {
-        if (appliedPackage) onSetPackage(appliedPackage, enabled)
-        else if (plugin) onToggle(plugin)
-      }}
-    />
-  )
   return (
     <>
       {!phone && <SectionHeading title={item.name} />}
-      {description && <p className="plugin-description">{description}</p>}
+      {item.description && (
+        <p className="plugin-description">
+          <VisibleText text={item.description} />
+        </p>
+      )}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       {exportError && <InlineNotice tone="error">{exportError}</InlineNotice>}
       {record?.unavailableReason && <InlineNotice tone="error">{record.unavailableReason}</InlineNotice>}
       {status}
       {creatorDraft}
       <SettingsGroup title={COPY.settings}>
-        {canSwitch ? <SettingsRow title={item.state} description={reason} trailing={control} /> : <SettingsRow title={item.state} />}
+        <SettingsRow title={item.state} description={control && pluginInUseReason(plugin)} trailing={control} />
         {appliedVersion && hasDraft && (
           <SettingsRow
             title={COPY.appliedVersion}
@@ -593,8 +530,8 @@ export function PluginsSettings({
       )
       onChanged()
     } catch (cause) {
-      setError(errorMessage(cause))
       await load()
+      setError(errorMessage(cause))
     } finally {
       setBusy(null)
     }
@@ -603,9 +540,7 @@ export function PluginsSettings({
   const visiblePlugins = isAppleMobile(navigator)
     ? (plugins ?? []).filter(plugin => !plugin.builtIn || plugin.id !== PLUGIN_MARKETPLACE_PAGE.pluginId)
     : (plugins ?? [])
-  const items = pluginItems(visiblePlugins, canEdit ? (assets.records ?? []) : []).toSorted(
-    (a, b) => SHELVES.findIndex(shelf => shelf.id === a.shelf) - SHELVES.findIndex(shelf => shelf.id === b.shelf),
-  )
+  const items = pluginItems(visiblePlugins, canEdit ? (assets.records ?? []) : [])
   const selected = items.find(item => item.key === chosen)
   const selectedRecord = selected?.kind === 'package' ? selected.record : undefined
   useEffect(() => {
@@ -640,15 +575,25 @@ export function PluginsSettings({
 
   const installBlocked = assets.locked ? COPY.finishChange : undefined
   const createBlocked = creatorBlockedReason ?? installBlocked
-  const shelves = (
-    <Shelves
-      items={items}
-      selected={selected?.key ?? null}
-      onSelect={setChosen}
-      locked={assets.locked}
-      {...(canEdit ? { onNewTool: assets.newTool } : {})}
-    />
-  )
+  const switchFor = (item: Item) => {
+    const plugin = item.plugin
+    const record = item.kind === 'package' ? item.record : undefined
+    if (record ? !canEdit || !record.appliedRevision : !access.admin || !plugin || plugin.managed === 'core' || plugin.editable)
+      return undefined
+    const reason = pluginInUseReason(plugin)
+    return (
+      <Switch
+        label={COPY.enable(item.name)}
+        checked={record?.enabled ?? plugin?.enabled === true}
+        disabled={busy !== null || assets.locked || reason !== undefined}
+        title={reason}
+        onCheckedChange={enabled => {
+          if (record) assets.setEnabled(record, enabled)
+          else if (plugin) void toggle(plugin)
+        }}
+      />
+    )
+  }
   const detail = selected && (
     <PluginDetail
       item={selected}
@@ -665,10 +610,7 @@ export function PluginsSettings({
         : {})}
       canEdit={canEdit}
       status={assets.pageStatus}
-      onToggle={plugin => {
-        void toggle(plugin)
-      }}
-      onSetPackage={assets.setEnabled}
+      control={switchFor(selected)}
       onEdit={assets.open}
       onExport={assets.exportBundle}
       pages={(snapshot.apps ?? []).filter(page => selected.kind === 'package' && page.pluginId === selected.record.id)}
@@ -742,15 +684,15 @@ export function PluginsSettings({
             {error && !selected && <InlineNotice tone="error">{error}</InlineNotice>}
             {assetsError}
             {!selected && assets.pageStatus}
-            {canEdit && (
+            {(canEdit || onMarketplace) && (
               <SettingsGroup bare>
                 <div className="plugin-asset-actions">
-                  {onAddPlugin && (
+                  {canEdit && onAddPlugin && (
                     <Button variant="primary" icon={PlusGlyph} disabled={assets.locked} onClick={onAddPlugin}>
                       {COPY.add}
                     </Button>
                   )}
-                  {onCreatePlugin && (
+                  {canEdit && onCreatePlugin && (
                     <Button
                       variant={onAddPlugin ? 'outline' : 'primary'}
                       disabled={assets.locked || !!createBlocked}
@@ -759,42 +701,39 @@ export function PluginsSettings({
                       {COPY.create}
                     </Button>
                   )}
-                  <Button icon={Upload} disabled={assets.locked} onClick={assets.importFile}>
-                    {COPY.importFile}
-                  </Button>
+                  {canEdit && (
+                    <Button icon={Upload} disabled={assets.locked} onClick={assets.importFile}>
+                      {COPY.importFile}
+                    </Button>
+                  )}
+                  {canEdit && (
+                    <Button variant="ghost" disabled={assets.locked} onClick={assets.newTool}>
+                      {COPY.newTool}
+                    </Button>
+                  )}
+                  {onMarketplace && (
+                    <Button variant="ghost" disabled={assets.locked} onClick={onMarketplace}>
+                      {COPY.browseMarketplace}
+                    </Button>
+                  )}
                 </div>
-                {onCreatePlugin && createBlocked && (
+                {canEdit && onCreatePlugin && createBlocked && (
                   <p className="settings-caption" id={reasonId}>
                     {createBlocked}
                   </p>
                 )}
               </SettingsGroup>
             )}
-            {onMarketplace && (
-              <SettingsGroup>
-                <NavRow
-                  leading={<IconTile icon={Store} />}
-                  title={COPY.browseMarketplace}
-                  disabled={assets.locked}
-                  onClick={onMarketplace}
-                />
-              </SettingsGroup>
-            )}
-            {canEdit && appPages && assets.records && !selected && (
-              <PageDrafts
-                records={assets.records}
-                snapshot={snapshot}
-                onChanged={() => {
-                  assets.reload()
-                  onChanged()
-                }}
-                {...(onOpenSession ? { onOpenSession } : {})}
-                {...(onOpenApp ? { onOpenApp } : {})}
-              />
-            )}
             {!canEdit && appPages && <p className="settings-empty">{COPY.editOnHost(computerName(snapshot.hostName))}</p>}
-            {(items.length > 0 || canEdit) && shelves}
-            {items.length === 0 && <EmptyState title={COPY.empty} />}
+            {items.length > 0 ? (
+              <ul className="plugin-setting-grid" role="list" aria-label={COPY.list}>
+                {items.map(item => (
+                  <PluginCard key={item.key} item={item} onSelect={setChosen} control={switchFor(item)} />
+                ))}
+              </ul>
+            ) : (
+              <EmptyState title={COPY.empty} />
+            )}
           </>
         }
         levels={

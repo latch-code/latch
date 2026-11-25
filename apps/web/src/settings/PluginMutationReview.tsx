@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { OFFICIAL_PLUGIN_CATALOG_REPOSITORY } from '@latch/protocol'
 import type { AppCapabilities, PluginExternalSource, PluginPackageReview } from '@latch/protocol'
 import { Button, Dialog, InlineNotice } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -13,6 +14,7 @@ const COPY = defineCopy(
     versionChange: '已应用版本 → 目标版本',
     source: '来源',
     catalog: '随 Latch 附带',
+    officialCatalog: 'Latch 官方插件目录',
     npm: 'npm 仓库',
     creator: '创作会话',
     local: '本地草稿或导入文件',
@@ -80,6 +82,7 @@ const COPY = defineCopy(
     versionChange: 'Applied version → target version',
     source: 'Source',
     catalog: 'Bundled with Latch',
+    officialCatalog: 'Latch official plugin catalog',
     npm: 'npm registry',
     creator: 'Creator chat',
     local: 'Local draft or imported file',
@@ -172,6 +175,16 @@ export function PluginSourceText({ source }: { source: PluginPackageReview['sour
       <Listing items={[...externalSourceLines(source.source, source.path), ...(source.modified ? [COPY.modified(source.version)] : [])]} />
     )
   }
+  if (source.kind === 'catalog' && source.commit) {
+    return (
+      <>
+        <Listing items={[COPY.officialCatalog, ...(source.modified ? [COPY.modified(source.version)] : [])]} />
+        <a href={`${OFFICIAL_PLUGIN_CATALOG_REPOSITORY}/commit/${source.commit}`} target="_blank" rel="noreferrer">
+          latch-code/plugin-market · <code>{source.commit.slice(0, 12)}</code>
+        </a>
+      </>
+    )
+  }
   return (
     <Listing
       items={
@@ -227,7 +240,10 @@ function validSource(value: unknown): boolean {
     case 'creator':
       return true
     case 'catalog':
-      return typeof value.version === 'string'
+      return (
+        typeof value.version === 'string'
+        && (value.commit === undefined || (typeof value.commit === 'string' && /^[0-9a-f]{40}$/u.test(value.commit)))
+      )
     case 'npm':
       return typeof value.version === 'string' && typeof value.name === 'string' && typeof value.registry === 'string'
     case 'external': {
@@ -451,6 +467,14 @@ const packagePath = (id: string) => `plugin-packages/${encodeURIComponent(id)}`
 
 export type InstalledPluginReview = PluginPackageReview & { installId: string }
 
+function reviewedBody(review: InstalledPluginReview) {
+  return { requestId: newRequestId(), baseAppliedRevision: review.baseAppliedRevision, reviewedInstallId: review.installId }
+}
+
+export function pluginEnabledBody(review: InstalledPluginReview | false) {
+  return review ? { ...reviewedBody(review), enabled: true as const } : { requestId: newRequestId(), enabled: false as const }
+}
+
 function isInstalledPluginReview(value: unknown, revision: string): value is InstalledPluginReview {
   return isPluginPackageReview(value, revision) && typeof value.installId === 'string' && /^[A-Za-z0-9_-]{22}$/u.test(value.installId)
 }
@@ -460,12 +484,7 @@ export function reviewedPluginMutation(target: PluginMutationTarget, review: Ins
     path: `${packagePath(target.id)}/${target.operation === 'enable' ? 'enabled' : target.operation}`,
     options: {
       method: 'POST',
-      body: {
-        requestId: newRequestId(),
-        baseAppliedRevision: review.baseAppliedRevision,
-        reviewedInstallId: review.installId,
-        ...(target.operation === 'enable' ? { enabled: true } : { revision: review.revision }),
-      },
+      body: target.operation === 'enable' ? pluginEnabledBody(review) : { ...reviewedBody(review), revision: review.revision },
     },
   }
 }

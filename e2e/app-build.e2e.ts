@@ -476,7 +476,11 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('page drafts on t
   it.each(scenarios)('$name', async ({ responsive, creator }) => {
     await mkdir(OUTPUT, { recursive: true })
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-app-build-'))
-    const testHost = await startTestHost({ hostName: '工作电脑', sessionFolders: true })
+    const testHost = await startTestHost({
+      hostName: '工作电脑',
+      sessionFolders: true,
+      pluginRegistryFetch: async () => new Response(null, { status: 503 }),
+    })
     const { host } = testHost
     let application: ElectronApplication | undefined
     try {
@@ -848,6 +852,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('page drafts on t
       await window.locator('.apps-page').waitFor({ state: 'detached' })
       settings = await openSettings(window)
       await openSection(settings, '插件')
+      await settings.locator('.plugin-nav-row', { hasText: TITLE }).click()
       await card.waitFor()
 
       // 开发中: a turn that breaks the page keeps the last preview and shows the diagnostics; 交回 Agent drafts them.
@@ -876,6 +881,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('page drafts on t
       await idle(owner, sessionId)
       settings = await openSettings(window)
       await openSection(settings, '插件')
+      await settings.locator('.plugin-nav-row', { hasText: TITLE }).click()
       const again = settings.locator('.new-app-card').filter({ hasText: id })
       await expect.poll(() => again.getAttribute('data-phase'), SLOW).toBe('preview')
       await again.getByRole('button', { name: '应用新版本' }).click()

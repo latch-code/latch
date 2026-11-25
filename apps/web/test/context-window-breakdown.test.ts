@@ -38,16 +38,15 @@ function context(used: number, size?: number, composition = breakdown) {
 }
 
 type RenderPanel = (value: SessionContext) => React.ReactElement | Promise<React.ReactElement>
+async function marketplacePanel(value: SessionContext, revealTurn: (ref: string) => void = () => {}) {
+  const modulePath = '../../../examples/context-insights/panel.mjs'
+  const { default: Panel }: { default: React.ComponentType<ui.ContextPluginPanelProps<SessionContext>> } = await import(modulePath)
+  return React.createElement(Panel, { react: React, ui, locale: 'zh-CN', context: value, revealTurn, revealTool() {} })
+}
+
 const entries: Array<{ name: string; panel: RenderPanel }> = [
   { name: 'built-in Context', panel: value => React.createElement(SessionContextPanel, { context: value }) },
-  {
-    name: 'marketplace Context',
-    async panel(value) {
-      const modulePath = '../../../examples/context-insights/panel.mjs'
-      const { default: Panel }: { default: React.ComponentType<ui.ContextPluginPanelProps<SessionContext>> } = await import(modulePath)
-      return React.createElement(Panel, { react: React, ui, locale: 'zh-CN', context: value, revealTurn() {}, revealTool() {} })
-    },
-  },
+  { name: 'marketplace Context', panel: marketplacePanel },
 ]
 
 const usedChart = '.context-window-used-parts'
@@ -79,21 +78,26 @@ function expectChart(chart: Element, total: number, readings: ReadonlyArray<read
   }
 }
 
+async function withPanel<T>(element: React.ReactElement, inspect: (host: HTMLElement) => T) {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  try {
+    await React.act(() => root.render(element))
+    return inspect(host)
+  } finally {
+    await React.act(() => root.unmount())
+    vi.unstubAllGlobals()
+  }
+}
+
 describe.each(entries)('$name window breakdown', ({ panel }) => {
   async function render(value: SessionContext) {
-    const element = await panel(value)
-    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
-    const host = document.createElement('div')
-    const root = createRoot(host)
-    try {
-      await React.act(() => root.render(element))
+    return withPanel(await panel(value), host => {
       const composition = host.querySelector('.context-window-breakdown')
       expect(composition).not.toBeNull()
       return { composition: composition!.cloneNode(true) as Element, text: host.textContent }
-    } finally {
-      await React.act(() => root.unmount())
-      vi.unstubAllGlobals()
-    }
+    })
   }
 
   it('uses the three reported denominators and keeps deferred and provider tokens separate', async () => {
@@ -188,5 +192,72 @@ describe.each(entries)('$name window breakdown', ({ panel }) => {
     expect(composition.querySelector(bar)).toBeNull()
     expect(composition.textContent).toMatch(/工具结果\s*0 tokens/u)
     expect(composition.textContent).not.toMatch(/NaN|Infinity|%/u)
+  })
+})
+
+const emptyHarness = projectSessionContext({ harnessId: 'codex', messages: [] }).context
+
+it('shows one attributable window with exact remaining capacity and a direct jump to its turn', async () => {
+  const window = { used: 82385, size: 200000, at }
+  const turn = { ref: 'selected-turn', number: 7 }
+  const reveal = vi.fn()
+  const panel = await marketplacePanel({ ...emptyHarness, window, windows: [{ window, turn }] }, reveal)
+  await withPanel(panel, host => {
+    const overview = host.querySelector('.context-window-overview')!
+    expect(overview.querySelector('header')?.textContent).toContain('第 7 轮')
+    expect(overview.querySelector('[role=meter]')?.getAttribute('aria-valuenow')).toBe('82385')
+    expect(overview.textContent).toContain('82,385 / 200,000 tokens')
+    expect(overview.textContent).toContain('剩余容量117,615 tokens')
+    expect(host.querySelector('.context-window-history')).toBeNull()
+    overview.querySelector('button')!.click()
+    expect(reveal).toHaveBeenCalledWith(turn.ref)
+  })
+})
+
+it('retains the used reading without inventing remaining capacity when the limit is missing', async () => {
+  const panel = await marketplacePanel({ ...emptyHarness, window: { used: 3000, at } })
+  await withPanel(panel, host => {
+    const overview = host.querySelector('.context-window-overview')!
+    expect(overview.textContent).toContain('已用3,000 tokens')
+    expect(overview.textContent).toContain('窗口容量未报告')
+    expect(overview.textContent).not.toMatch(/剩余容量|第 1 轮/u)
+    expect(overview.querySelector('[role=meter]')).toBeNull()
+  })
+})
+
+it.each([
+  { size: 200000, includesReserve: true },
+  { size: 210000, includesReserve: false },
+])('labels the remaining capacity with a reserve only when the scoped breakdown reconciles ($size)', async ({ size, includesReserve }) => {
+  const window = { at, used: 24000, size, source: 'claude-sdk' as const }
+  const turn = { ref: 'measured', number: 1 }
+  const panel = await marketplacePanel({ ...emptyHarness, window, windows: [{ turn, window: { ...window, breakdown } }] })
+  await withPanel(panel, host => {
+    expect(host.querySelector('.context-window-amounts')?.textContent?.includes('含压缩预留')).toBe(includesReserve)
+  })
+})
+
+it('jumps to the largest reported increase without comparing readings across a gap', async () => {
+  const row = (number: number, used: number, delta?: number) => ({
+    turn: { ref: `turn-${number}`, number },
+    window: { at, used, size: 10000 },
+    ...(delta === undefined ? {} : { delta }),
+  })
+  const windows = [
+    row(1, 1000),
+    row(2, 1500, 500),
+    { turn: { ref: 'gap', number: 3 } },
+    row(4, 9000),
+    row(5, 8900, -100),
+    row(6, 9000, 100),
+  ]
+  const reveal = vi.fn()
+  const panel = await marketplacePanel({ ...emptyHarness, windows }, reveal)
+  await withPanel(panel, host => {
+    const growth = host.querySelector('.context-window-growth')!
+    expect(growth.textContent).toContain('第 2 轮对话 · +500 tokens')
+    expect(host.querySelector('.context-window-missing')?.textContent).toContain('第 3 轮未报告')
+    growth.querySelector('button')!.click()
+    expect(reveal).toHaveBeenCalledWith('turn-2')
   })
 })
