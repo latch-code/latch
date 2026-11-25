@@ -130,7 +130,7 @@ const CAPABILITY_LABELS: Partial<Record<string, 'modelService' | 'tools' | 'ui' 
 }
 const kindsOf = (capabilities: readonly string[]) => capabilities.map(capability => capability.split(':')[0])
 
-const BUILTINS: Readonly<Record<string, { name: string; englishName: string; description: string; englishDescription: string }>> = {
+const BUILTIN_NAMES: Readonly<Record<string, { name: string; englishName: string; description: string; englishDescription: string }>> = {
   [PLUGIN_MARKETPLACE_PAGE.pluginId]: {
     name: '插件市场',
     englishName: 'Plugin Marketplace',
@@ -180,8 +180,9 @@ const BUILTINS: Readonly<Record<string, { name: string; englishName: string; des
 }
 
 function builtInCopy(plugin: PluginInfo) {
-  if (currentLocale() !== 'en' || !(plugin.builtIn || plugin.managed === 'core') || !Object.hasOwn(BUILTINS, plugin.id)) return undefined
-  const words = BUILTINS[plugin.id]
+  if (currentLocale() !== 'en' || !(plugin.builtIn || plugin.managed === 'core') || !Object.hasOwn(BUILTIN_NAMES, plugin.id))
+    return undefined
+  const words = BUILTIN_NAMES[plugin.id]
   return words?.name === plugin.name ? words : undefined
 }
 

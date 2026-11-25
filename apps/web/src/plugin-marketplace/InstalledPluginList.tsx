@@ -14,7 +14,7 @@ const COPY = defineCopy(
     availableVersion: (version: string) => `可更新到 v${version}`,
     current: '已是最新',
     ahead: '已安装较新版本',
-    changed: '同一版本的来源内容已变更',
+    changed: '版本号相同，来源内容有改动',
     modified: '有本地改动',
     check: '检查更新',
     reviewDraft: '审阅草稿',
