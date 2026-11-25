@@ -71,6 +71,8 @@ describe('对话 or 看板 on this device', () => {
     })
     vi.resetModules()
     const preferences = await import('../src/preferences.ts')
+    expect(preferences.readPreferences().followUpDefault).toBe('steer')
+    preferences.setPreference('followUpDefault', 'queue')
     preferences.setPreference('workView', 'chat')
     vi.resetModules()
     const reloaded = await import('../src/preferences.ts')
@@ -78,6 +80,7 @@ describe('对话 or 看板 on this device', () => {
       workView: 'chat',
       theme: 'dark',
       sendKey: 'mod-enter',
+      followUpDefault: 'queue',
     })
     expect(JSON.parse(entries.get('latch.preferences')!)).not.toHaveProperty('workbenchLayout')
     expect([...entries.keys()]).toEqual(['latch.preferences'])

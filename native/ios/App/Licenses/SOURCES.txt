@@ -64,3 +64,23 @@ Native diagrams
 MermaidKit 2.10.2, https://github.com/2389-research/MermaidKit/tree/v2.10.2
 (commit 8556a1b80a1f624d35a4c6e13dcb7a5d427f65c3). Its Swift parser, layout and
 CoreGraphics renderer are included under the MIT License in LICENSE-MermaidKit.txt.
+
+Reply quote icon
+
+The quote icon uses the same Lucide paths as the desktop composer (lucide-react 1.61.0).
+
+ISC License
+
+Copyright (c) 2026 Lucide Icons and Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.

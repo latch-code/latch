@@ -254,6 +254,20 @@ export function allowsByKey(gate: Pick<ApprovalGate, 'kind'>, allow: Pick<Approv
   return allow.kind === 'allow_once' && (gate.kind === 'R1' || gate.kind === 'legacy')
 }
 
+export function isApprovalAllowKey(
+  event: Pick<globalThis.KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'isComposing' | 'keyCode' | 'repeat'>,
+): boolean {
+  return (
+    event.key === 'Enter'
+    && event.metaKey !== event.ctrlKey
+    && !event.altKey
+    && !event.shiftKey
+    && !event.isComposing
+    && event.keyCode !== 229
+    && !event.repeat
+  )
+}
+
 /**
  * The key caps on 拒绝 and 允许: each only while its key would do that now. ⌘⏎ allows an ordinary request of Latch 内置
  * (or an older Host's) from inside the card, never from a field, and never a high-risk request or an agent's ask; Esc
@@ -544,7 +558,7 @@ function ApprovalPanel({
     if (running || !armed || event.defaultPrevented) return
     if (!cardTakesKeys(card.current, event.target)) return
     if (!takesKeysAt(event.target)) return
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && shortcut && allow) {
+    if (shortcut && allow && isApprovalAllowKey(event.nativeEvent)) {
       event.preventDefault()
       choose(allow)
     }

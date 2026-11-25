@@ -72,7 +72,7 @@ describe('the 待办 page', () => {
     expect(read).toHaveBeenCalledWith('tasks/source')
     expect(fetchSpy).not.toHaveBeenCalled()
     expect(opened).toEqual(['target'])
-    expect(takeHandedDraft('target')).toBe('> 第一行\n>\n> 第二行')
+    expect(takeHandedDraft('target')).toBe('待办回复：\n> 第一行\n>\n> 第二行')
     expect(takeHandedDraft('source')).toBeUndefined()
   })
 

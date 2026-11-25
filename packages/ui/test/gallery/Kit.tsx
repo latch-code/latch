@@ -16,6 +16,7 @@ import {
   FoldHeader,
   IconButton,
   LiveChanges,
+  Menu,
   MenuPanel,
   PanelTabs,
   SegmentedControl,
@@ -69,6 +70,24 @@ function Actions() {
           <SplitButton size="xs" disabled menuDisabled menuLabel="更多 Git 操作" sections={GIT_MENU}>
             提交
           </SplitButton>
+        </Cell>
+      </Row>
+      <Row label="悬停菜单">
+        <Cell caption="聚焦或悬停预览">
+          <Menu
+            previewOnHover
+            label="发送方式"
+            trigger={props => <Button {...props}>发送方式</Button>}
+            sections={[
+              {
+                id: 'delivery',
+                items: [
+                  { id: 'queue', label: '排队发送', onSelect() {} },
+                  { id: 'now', label: '立即发送', onSelect() {} },
+                ],
+              },
+            ]}
+          />
         </Cell>
       </Row>
       <Row label="系统表单">

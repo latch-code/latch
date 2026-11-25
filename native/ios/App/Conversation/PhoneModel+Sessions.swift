@@ -148,7 +148,8 @@ extension PhoneModel {
         guard transportReady else { return false }
         if let target, target != sessionId { if let key = target { attachTrays[key, default: PhoneAttachTray()].note = PhoneAttachSend.movedWords }; return false }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty, text.count <= 16_000,
-              attachments.count <= PhoneAttachments.perMessage, attachments.isEmpty || (!steer && (!queue || canQueueAttachments)) else { return false }
+              attachments.count <= PhoneAttachments.perMessage,
+              attachments.isEmpty || ((!steer || detail["steerAttachments"].bool) && (!queue || canQueueAttachments)) else { return false }
         let current = generation, selected = sessionId, reading = contentGeneration
         do {
             guard canRun else { throw NativeFailure.forbidden }

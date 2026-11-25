@@ -167,7 +167,7 @@ export function ConversationView({
       members: leadTeam
         ? memberChoices(leadTeam, shell.snapshot.tasks).map(choice => ({
             ...choice,
-            media: <MemberTile harnessId={choice.harnessId} harnesses={catalog?.harnesses ?? []} size={16} />,
+            media: <MemberTile harnessId={choice.harnessId} harnesses={catalog?.harnesses ?? []} size={14} />,
           }))
         : undefined,
     }),
@@ -392,9 +392,17 @@ export function ConversationView({
                     || !current.messages.some(row => row.id === quote.messageId && row.role === 'assistant')
                   )
                     return
-                  submission.setDraft(previous => [previous.trimEnd(), writeReplyQuote(quote)].filter(Boolean).join('\n\n') + '\n\n')
+                  const append = (previous: string) => {
+                    const gap = !previous || previous.endsWith('\n\n') ? '' : previous.endsWith('\n') ? '\n' : '\n\n'
+                    return previous + gap + writeReplyQuote(quote) + '\n\n'
+                  }
+                  const input = composerRef.current
+                  if (input && !input.disabled) {
+                    const value = append(input.value)
+                    input.edit(value, { start: value.length, end: value.length })
+                  } else submission.setDraft(append)
                   document.getSelection()?.removeAllRanges()
-                  composerRef.current?.focus()
+                  input?.focus()
                 }}
               />
             )}

@@ -5,6 +5,8 @@ import { defineCopy } from '../core/i18n.ts'
 import { currentShell } from '../core/shell.ts'
 import { ShortcutCaps } from '../settings/ShortcutsSettings.tsx'
 import { shortcutRows } from '../workbenchShortcuts.ts'
+import { useCoarsePointer } from '../breakpoints.ts'
+import { usePreferences } from '../preferences.ts'
 
 const OVERLAY_COPY = defineCopy(
   { title: '快捷键', close: '关闭', settingsLink: '设置 › 快捷键', search: '搜索快捷键', none: '没有匹配的快捷键' },
@@ -36,9 +38,11 @@ export function ShortcutsOverlay({
   delegate?: boolean
 }) {
   useShortcutBindings()
+  const { followUpDefault, sendKey } = usePreferences()
+  const coarse = useCoarsePointer()
   const [query, setQuery] = useState('')
   const needle = query.trim().toLocaleLowerCase()
-  const rows = shortcutRows(currentShell() !== null, undefined, { spaces, delegate }).filter(row =>
+  const rows = shortcutRows(currentShell() !== null, undefined, { spaces, delegate, followUpDefault, sendKey, coarse }).filter(row =>
     `${row.label} ${row.keys}`.toLocaleLowerCase().includes(needle),
   )
   const half = Math.ceil(rows.length / 2)

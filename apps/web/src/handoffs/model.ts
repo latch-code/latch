@@ -1,3 +1,4 @@
+import { quotedExcerpt } from '../composer/quotedExcerpt.ts'
 import {
   HANDOFF_LIMITS,
   type AppSnapshot,
@@ -497,12 +498,7 @@ export function returnBody(
 
 /** The summary into the composer as quoted text, after what is already there. */
 export function quotedSummary(previous: string, summary: string): string {
-  const quote = summary
-    .trim()
-    .split('\n')
-    .map(line => (line ? `> ${line}` : '>'))
-    .join('\n')
-  return `${previous.trimEnd()}${previous.trim() ? '\n\n' : ''}${quote}\n\n`
+  return `${previous.trimEnd()}${previous.trim() ? '\n\n' : ''}${quotedExcerpt('handoff', summary)}\n\n`
 }
 
 /** One evidence row as its reader may see it. */

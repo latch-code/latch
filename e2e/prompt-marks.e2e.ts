@@ -200,14 +200,15 @@ it.each(['chromium', 'webkit'] as const)(
           expect(await promptValue(input)).toBe('请用  写一个页面')
           await input.press(`${mod}+z`)
           expect(await promptValue(input)).toBe(SKILLED)
-          // Typed after the chip and its space, words are text; typed against it, the token is text again.
+          // Prose belongs outside the selected skill, even when typed directly against it.
           await setPromptSelection(input, end + 1)
           await page.keyboard.type('先')
           expect(await promptValue(input)).toBe('请用 $lark-apps 先写一个页面')
           expect(await chips(input)).toEqual([['skill', 'lark-apps', '']])
           await setPromptSelection(input, end)
-          await page.keyboard.type('x')
-          expect(await chips(input)).toEqual([])
+          await page.keyboard.type('xy')
+          expect(await promptValue(input)).toBe('请用 $lark-apps xy 先写一个页面')
+          expect(await chips(input)).toEqual([['skill', 'lark-apps', '']])
 
           // A command first, two skills, Chinese over several lines.
           await input.fill(MIXED)

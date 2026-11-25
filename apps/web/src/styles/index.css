@@ -20,6 +20,7 @@
 @import './changes.css' layer(app);
 @import './delivery.css' layer(app);
 @import './composer.css' layer(app);
+@import './reference-excerpts.css' layer(app);
 @import './codex-team.css' layer(app);
 @import './teams.css' layer(app);
 @import './team-rounds.css' layer(app);

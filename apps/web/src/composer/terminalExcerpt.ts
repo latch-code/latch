@@ -7,13 +7,13 @@ export interface TerminalExcerpt {
   body: string
 }
 
-const heading = /^(终端 [\d,]+ · 最近报错|Terminal [\d,]+ · Latest error)(（较早的输出未包含）| \(earlier output omitted\))?$/u
+const heading = /^(终端 [\d,]+(?: · 最近报错)?|Terminal [\d,]+(?: · Latest error)?)(（较早的输出未包含）| \(earlier output omitted\))?$/u
 const opening = /^ {0,3}(`{3,}|~{3,})(.*)$/u
 const closing = /^ {0,3}(`{3,}|~{3,})[ \t]*$/u
 
 /** Recognize the terminal's complete excerpts, leaving ordinary code examples and incomplete edits as typed. */
 export function terminalExcerpts(text: string): TerminalExcerpt[] {
-  if (!text.includes(' · 最近报错') && !text.includes(' · Latest error')) return []
+  if (!text.includes('终端 ') && !text.includes('Terminal ')) return []
   const result: TerminalExcerpt[] = []
   const lines = text.split('\n')
   let fence = ''

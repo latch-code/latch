@@ -27,7 +27,15 @@ export interface TeamPage {
 
 export const TeamPageContext = createContext<TeamPage | undefined>(undefined)
 
-export function MemberTile({ harnessId, harnesses, size = 16 }: { harnessId: string; harnesses: readonly HarnessInfo[]; size?: 16 | 20 }) {
+export function MemberTile({
+  harnessId,
+  harnesses,
+  size = 16,
+}: {
+  harnessId: string
+  harnesses: readonly HarnessInfo[]
+  size?: 14 | 16 | 20
+}) {
   const harness = harnesses.find(item => item.id === harnessId)
   return harness ? <HarnessTile harness={harness} size={size} /> : <MarkTile mark={undefined} size={size} />
 }

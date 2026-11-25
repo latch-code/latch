@@ -148,6 +148,8 @@ describe('latest-error excerpts in a draft or sent message', () => {
   const fence = '```'
 
   it.each([
+    ['终端 1', ''],
+    ['Terminal 12', '（较早的输出未包含）'],
     [chinese, ''],
     [chinese, '（较早的输出未包含）'],
     [english, ''],

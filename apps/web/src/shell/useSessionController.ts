@@ -83,8 +83,8 @@ const COPY = defineCopy(
     creatorFork: '请先发送或退出当前的分叉草稿。',
     creatorFiles: '请先发送新会话草稿，或移除其中的附件和文件引用。',
     released: '已在 设置 › 设备 里释放，请移除后重新添加',
-    attachmentsInSteer: '追加的消息不能带附件或文件引用，本轮结束后再发送。',
-    attachmentsInQueue: '排队的消息不能带附件或文件引用，本轮结束后再发送。',
+    attachmentsAfterTurn: '请在本轮结束后发送这些附件。',
+    fileRefsAfterTurn: '请在本轮结束后发送项目文件引用。',
     delivered: '已送达',
     duplicate: '队列里同样文字的一条还在，在队列里发送或移除',
     reattach: '附件和文件引用需要重新添加',
@@ -129,8 +129,8 @@ const COPY = defineCopy(
     creatorPending: 'Return to the composer to resolve the pending message.',
     creatorFork: 'Send or exit the current fork draft first.',
     creatorFiles: 'Send your new chat draft or remove its attachments and file references first.',
-    attachmentsInSteer: 'A follow-up during a turn can’t include attachments or file references. Send it after the turn ends.',
-    attachmentsInQueue: 'A queued message can’t include attachments or file references. Send it after the turn ends.',
+    attachmentsAfterTurn: 'Send these attachments after the turn ends.',
+    fileRefsAfterTurn: 'Send project file references after the turn ends.',
     delivered: 'Delivered',
     duplicate: 'The same message is still queued. Send or remove it there.',
     reattach: 'Add attachments and file references again',
@@ -304,7 +304,7 @@ export function useSessionController({
   )
   const active = isActive(summary?.status)
   /** The running turn takes what is sent now; read from the open session, since it is agreed per run. */
-  const steer = active && current?.steer === true
+  const steer = active && current?.steer === true && !cancelling.has(current.summary.id)
   const harnessInfo = sessionHarness(catalog, summary)
   const harnessName = harnessInfo ? harnessLabel(harnessInfo) : (summary?.harnessId ?? snapshot.harness?.name ?? 'Latch')
 
@@ -509,6 +509,10 @@ export function useSessionController({
   const effectiveModel = submission.override ?? personalChatModel(snapshot, summary) ?? sessionModel(summary)
   const attachmentModel = selectedId === null ? choice.model : effectiveModel
   const connectionReported = harness.connection === 'offline' || harness.connection === 'reconnecting'
+  const canSteerDraft = (draft: string, hasAttachments: boolean) =>
+    steer && !submission.override && !draft.includes('[conversation-ref:') && (!hasAttachments || current?.steerAttachments === true)
+  const attachmentFollowUp = queueAttachments || canSteerDraft(submission.draft, true)
+  const heldFileRefs = fileMentions.some(ref => hasFileMention(submission.draft, ref))
   const sessionAttachments = useAttachments({
     connectionReported,
     // A Harness that just started, or was just tested, may take files now: read again without a reload.
@@ -522,10 +526,10 @@ export function useSessionController({
     },
     ...(selectedId ? { sessionId: selectedId } : {}),
     locked: submission.sending || submission.pending !== null,
-    ...(active && (!queueAttachments || fileMentions.some(ref => hasFileMention(submission.draft, ref)))
+    ...(active && (!attachmentFollowUp || heldFileRefs)
       ? {
-          heldBack: steer ? COPY.attachmentsInSteer : COPY.attachmentsInQueue,
-          heldRefs: fileMentions.some(ref => hasFileMention(submission.draft, ref)),
+          heldBack: heldFileRefs ? COPY.fileRefsAfterTurn : COPY.attachmentsAfterTurn,
+          heldRefs: heldFileRefs,
         }
       : {}),
   })
@@ -636,8 +640,8 @@ export function useSessionController({
       submission.setError(COPY.creatorUnavailable)
       return
     }
-    if (inputId !== null && active && ((!queueAttachments && attachmentDraft.items.length > 0) || mentionChoice.refs.length > 0)) {
-      submission.setError(steer ? COPY.attachmentsInSteer : COPY.attachmentsInQueue)
+    if (inputId !== null && active && ((!attachmentFollowUp && attachmentDraft.items.length > 0) || heldFileRefs)) {
+      submission.setError(heldFileRefs ? COPY.fileRefsAfterTurn : COPY.attachmentsAfterTurn)
       return
     }
     await settingsLanded()
@@ -646,7 +650,7 @@ export function useSessionController({
     const followUp =
       inputId === null || !active
         ? undefined
-        : steer && !queueForLater && !ids?.length && !submission.draft.includes('[conversation-ref:')
+        : !queueForLater && canSteerDraft(submission.draft, !!ids?.length)
           ? 'steer'
           : canQueue
             ? 'queue'
@@ -1901,6 +1905,7 @@ export function useSessionController({
     owner,
     canQueue,
     steer,
+    canSteerDraft,
     gateFor,
     canRetryApproval,
     checkApproval,

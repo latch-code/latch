@@ -242,8 +242,8 @@ describe('handoff states', () => {
 
   it('starts the summary from the last reply and quotes it into the draft', () => {
     expect(defaultSummary(messages)).toBe('免费。')
-    expect(quotedSummary('', '已接入\n\n缓存 24 小时')).toBe('> 已接入\n>\n> 缓存 24 小时\n\n')
-    expect(quotedSummary('先看这个', '已接入')).toBe('先看这个\n\n> 已接入\n\n')
+    expect(quotedSummary('', '已接入\n\n缓存 24 小时')).toBe('交回结果：\n> 已接入\n>\n> 缓存 24 小时\n\n')
+    expect(quotedSummary('先看这个', '已接入')).toBe('先看这个\n\n交回结果：\n> 已接入\n\n')
   })
 
   it('places each returned result after the last turn that began before it', () => {

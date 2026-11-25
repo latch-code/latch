@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { BookOpen, MessageSquare, Quote, Users } from 'lucide-react'
 import { CodeGlyph, Icon } from '@latch/ui'
 import { escapeSecurityText } from '@latch/protocol'
+import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { referenceIcon } from '../fileReference.ts'
 import { defineCopy } from '../core/i18n.ts'
 import type { PromptChip } from './prompt-tokens.ts'
@@ -12,15 +13,23 @@ const COPY = defineCopy(
 )
 
 /** What a chip says: a file by its name, the rest by the catalogue's name, never with its `$`, `/` or `@`. */
-export const chipLabel = (chip: PromptChip): string => (chip.kind === 'quote' ? COPY.quote : escapeSecurityText(chip.name))
+export const chipLabel = (chip: PromptChip): string =>
+  chip.kind === 'quote' ? escapeHiddenCharacters(chip.name).replace(/\r?\n/gu, ' ') : escapeSecurityText(chip.name)
 
 /** The chip's hover: a file's root and whole path; a member's task; a skill's or command's name and description. */
 export function chipTip(chip: PromptChip): string {
   if (chip.kind === 'file') return escapeSecurityText(`${chip.root}:${chip.path}`)
-  if (chip.kind === 'quote') return COPY.quote + '\n' + escapeSecurityText(chip.description ?? '')
+  if (chip.kind === 'quote') return COPY.quote + '\n' + escapeHiddenCharacters(chip.name)
   if (chip.kind === 'conversation') return COPY.conversation + ' · ' + escapeSecurityText(chip.name)
   const head = (chip.kind === 'skill' ? COPY.skill : chip.kind === 'member' ? COPY.member : COPY.command) + chip.name
   return chip.description ? `${escapeSecurityText(head)}\n${escapeSecurityText(chip.description)}` : escapeSecurityText(head)
+}
+
+/** Read references by their meaning; their serialized source IDs are for the Host. */
+export function chipSpokenText(chip: PromptChip, token: string): string {
+  if (chip.kind === 'quote') return chipTip(chip)
+  if (chip.kind === 'conversation') return chipLabel(chip)
+  return escapeSecurityText(token)
 }
 
 /** The 14px glyph before the label: the file's type, a book, a code glyph, or the member's Harness mark. */
@@ -46,9 +55,7 @@ export function PromptChipView({ chip, token }: { chip: PromptChip; token: strin
       <span className="prompt-chip-label" aria-hidden="true">
         {chipLabel(chip)}
       </span>
-      <span className="prompt-chip-token">
-        {chip.kind === 'conversation' || chip.kind === 'quote' ? chipLabel(chip) : escapeSecurityText(token)}
-      </span>
+      <span className="prompt-chip-token">{chipSpokenText(chip, token)}</span>
     </span>
   )
 }

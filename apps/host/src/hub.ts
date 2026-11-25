@@ -5,6 +5,7 @@ import { pairRoute, PROVIDER_WIRES, readSessionSkills } from '@latch/protocol'
 import { setTimeout as delay } from 'node:timers/promises'
 import type {
   Approval,
+  AttachmentRef,
   BoardPlace,
   BoardPriority,
   HarnessInfo,
@@ -688,7 +689,16 @@ export class HarnessHub implements Bridge {
         : undefined
     const acp = member.trust.kind === 'acp'
     const standard = member.trust.kind === 'builtin' && member.driver.id === 'standard'
-    const { skills: reportedSkills, skillsTruncated, requestContext, contextSteps, contextEvents, usageReport, ...rest } = detail
+    const {
+      skills: reportedSkills,
+      skillsTruncated,
+      requestContext,
+      contextSteps,
+      contextEvents,
+      usageReport,
+      steerAttachments,
+      ...rest
+    } = detail
     const messages =
       fork || rebuilt || member.trust.kind === 'plugin'
         ? detail.messages.map((message, index) => {
@@ -716,6 +726,7 @@ export class HarnessHub implements Bridge {
     const skills = readSessionSkills(reportedSkills)
     return {
       ...rest,
+      ...(detail.steer && steerAttachments && member.bridge.steerWithAttachments ? { steerAttachments: true as const } : {}),
       ...(standard && requestContext ? { requestContext } : {}),
       ...(standard && contextSteps ? { contextSteps } : {}),
       ...(acp && contextEvents ? { contextEvents } : {}),
@@ -1247,28 +1258,36 @@ export class HarnessHub implements Bridge {
     }
   }
 
-  supportsQueuedSteer(sessionId: string): boolean {
-    return typeof this.owner(sessionId)?.bridge?.steerQueued === 'function'
+  supportsQueuedSteer(sessionId: string, withAttachments: boolean): boolean {
+    const bridge = this.owner(sessionId)?.bridge
+    return typeof (withAttachments ? bridge?.steerWithAttachments : bridge?.steerQueued) === 'function'
   }
 
-  /** Adds text to the running turn. A queued item can target only the run the person saw. */
+  /** Adds input to the running turn. A queued item can target only the run the person saw. */
   async steer(
     sessionId: string,
     prompt: string,
     requestId: string,
     beforeSteer?: (runId: string) => ((couldBeInjected: boolean) => void) | undefined,
-    queued?: QueuedSteerOptions,
+    options?: QueuedSteerOptions | Pick<QueuedSteerOptions, 'authorize'>,
+    attachments?: AttachmentRef[],
   ): Promise<SteerOutcome> {
     const member = await this.route(sessionId)
     const bridge = member.bridge
-    if (queued ? !bridge.steerQueued : !bridge.steer) return 'prompt-required'
+    const queued = options && 'runId' in options ? options : undefined
+    const send = attachments?.length
+      ? bridge.steerWithAttachments?.bind(bridge, sessionId, prompt, requestId, attachments, options)
+      : queued
+        ? bridge.steerQueued?.bind(bridge, sessionId, prompt, requestId, queued)
+        : bridge.steer?.bind(bridge, sessionId, prompt, requestId)
+    if (!send) return 'prompt-required'
     const outcome = await this.accept(member, () =>
       withHarnessPromptSource({ method: 'steer', sessionId, requestId, text: prompt, ...(beforeSteer ? { beforeSteer } : {}) }, () => {
         this.options.assertAgentWorksHere?.(this.agentOf(sessionId)?.customAgentId)
-        return queued ? bridge.steerQueued!(sessionId, prompt, requestId, queued) : bridge.steer!(sessionId, prompt, requestId)
+        return send()
       }),
     )
-    if (queued && outcome !== 'injected' && outcome !== 'prompt-required')
+    if (outcome !== 'injected' && outcome !== 'prompt-required')
       throw new AppError(409, 'steer-unknown', 'Harness 未确认追加结果，请核对会话记录。')
     return outcome
   }

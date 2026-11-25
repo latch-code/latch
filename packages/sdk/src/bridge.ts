@@ -365,6 +365,18 @@ export interface Bridge {
   /** As steer, targeting only the named run. A run that ended or stopped taking input leaves the item queued. */
   steerQueued?(sessionId: string, prompt: string, requestId: string, options: QueuedSteerOptions): Promise<SteerOutcome>
   /**
+   * As steer (or steerQueued when options names a run), delivering all attachments with the prompt. Recheck
+   * options.authorize after preparing attachments, immediately before delivery. Report
+   * TaskDetail.steerAttachments while available. Replays return the original outcome even after the turn ends.
+   */
+  steerWithAttachments?(
+    sessionId: string,
+    prompt: string,
+    requestId: string,
+    attachments: AttachmentRef[],
+    options?: QueuedSteerOptions | Pick<QueuedSteerOptions, 'authorize'>,
+  ): Promise<SteerOutcome>
+  /**
    * Optional. Delete a settled session's data; reject with 409 `task-running` while it runs. `original`: the person chose
    * to delete an imported session's original in the harness's own record too (`HarnessDriver.historyDelete`), and the
    * Host audited that choice first.

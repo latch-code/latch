@@ -1193,7 +1193,7 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。
 
 `catalog.features.queue` 表示 `POST /tasks/:id/prompt` 接受 `queue: true`：运行中返回 202 `{ queued: { id } }`，空闲且没有队列时立即发送。
 
-- **上限。** 每会话 5 项，每项 16,000 字符，Host 共 1000 项可见内容；设备绑定的回执每设备 10000 项、Host 共 100000 项，满时拒绝新增。已上传且目标支持的附件可随下一轮排队，Host 为原设备保留上传引用，派发时重新检查。项目文件引用与向当前轮次追加附件仍拒绝。
+- **上限。** 每会话 5 项，每项 16,000 字符，Host 共 1000 项可见内容；设备绑定的回执每设备 10000 项、Host 共 100000 项，满时拒绝新增。已上传且目标支持的附件可随下一轮排队，Host 为原设备保留上传引用，派发时重新检查。当前轮次声明能接收附件时，输入框与队列均可把整条消息追加到本轮。项目文件引用仍须在新一轮发送。
 - **修改。** `PATCH /tasks/:id/queue/:itemId { text }` 修改内容并更换实际派发的 requestId，原提交回执不变；`DELETE` 移除；`POST …/send` 显式继续首项。任何仍有 `run` 的设备都可移除，审计失败也放行。
 - **调序。** 声明 `catalog.features.queueControl` 的 Host 接受 `PUT /tasks/:id/queue { baseRevision, baseOrder, order }`。两份列表包含同一组可见项的 ID。Host 核对当前顺序与修订，再把完整新顺序写进 `queues.json`，下次自动派发也按此顺序取首项。初始修订为 0。另一设备已经排成目标顺序时直接成功，已改成其他顺序时返回 409 `queue-order`。正在发送或结果未知时不能调序。
 - **从队列追加。** `POST /tasks/:id/queue/:itemId/steer { runId, contentRevision }` 可以把任意可追加的项交给指定轮次。另一台设备已改过该项文字时，Host 拒绝旧版本，保留修改后的消息供人核对。Host 先写派发标识，复核原作者、编辑者和点击追加的设备，并由 Driver 在交付时核对轮次。Harness 确认接收后，该项移出队列，其他项保留顺序和暂停状态。轮次已结束或拒绝追加时，消息留在原位。结果未知时，只凭 Driver 已记录的消息确认送达，不能改走普通发送。已绑定特定模型或 Agent 上下文的消息仍等下一轮。

@@ -160,6 +160,15 @@ import UIKit
                 model.draftInserts["ses_review"] = "请再看一下相关测试。"
                 model.stageReconnect()
             }
+        case "reply-quote-draft", "terminal-draft":
+            model.tab = .code; model.sessionId = "ses_review"; model.detail = conversation()
+            if name == "reply-quote-draft" {
+                model.detail = patched(model.detail) { detail in
+                    let sent = json(#"{"id":"m3","role":"user","text":"[引用回复 ses_review/m2@0]\n> 读完了。\n\n请继续核对。","createdAt":"{{-900}}"}"#)
+                    detail["messages"] = .array((detail["messages"]?.array ?? []) + [sent])
+                }
+            }
+            ReplyQuoteDraftFixture.stage(model, session: "ses_review", terminal: name == "terminal-draft")
         case "conversation-sending":
             model.tab = .code; model.sessionId = "ses_review"; model.detail = conversation()
             if let write = try? NativePendingWrite(method: .post, path: "/link/api/tasks/ses_review/prompt", fields: ["prompt": .string("再看一下发送回执")]) {
@@ -239,8 +248,11 @@ import UIKit
             }
             model.detail = patched(json(steerText)) { detail in
                 detail["summary"] = patched(detail["summary"]!) { $0["runId"] = .string("run_fixture") }
+                detail["steerAttachments"] = .bool(true)
                 detail["queue"] = .array(["检查粘贴后的焦点", "再看一下无障碍标签", "补上回归测试"].enumerated().map { index, text in
-                    .object(["id": .string("queue_\(index)"), "text": .string(text), "state": .string("waiting"), "canSteer": .bool(true)])
+                    var row: [String: NativeJSON] = ["id": .string("queue_\(index)"), "text": .string(text), "state": .string("waiting"), "canSteer": .bool(true)]
+                    if index < 2 { row["attachmentCount"] = .number(Double(2 - index)) }
+                    return .object(row)
                 })
             }
         case "clearing":

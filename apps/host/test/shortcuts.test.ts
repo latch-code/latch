@@ -11,6 +11,7 @@ import {
   SHORTCUT_ACTIONS,
   SHORTCUT_CLIENTS,
   SYSTEM_RESERVED,
+  effectiveShortcuts,
   shortcutRefusal,
   shortcutsIssues,
   type AppSnapshot,
@@ -70,6 +71,36 @@ describe('a shortcuts document', () => {
     for (const chord of [...SYSTEM_RESERVED, ...BROWSER_RESERVED, ...MENU_RESERVED, ...FIXED_SHORTCUTS.desktop.map(entry => entry.chord)])
       expect(shortcutRefusal('desktop', {}, 'usage', chord), chord).not.toEqual({ kind: 'invalid' })
   })
+
+  it('binds each delivery action independently and preserves editor shortcuts on both clients', () => {
+    for (const client of SHORTCUT_CLIENTS) {
+      const bindings = { 'send-now': 'Mod+Alt+Enter', 'queue-message': 'Mod+Shift+Enter' }
+      expect(effectiveShortcuts(client, {}).has('send-now')).toBe(false)
+      expect(effectiveShortcuts(client, {}).has('queue-message')).toBe(false)
+      expect(shortcutsIssues({ schema: 1, client, bindings })).toEqual([])
+      const active = effectiveShortcuts(client, bindings)
+      expect(active.get('send-now')).toBe('Mod+Alt+Enter')
+      expect(active.get('queue-message')).toBe('Mod+Shift+Enter')
+      expect(shortcutRefusal(client, bindings, 'send-now', 'Mod+Shift+Enter')).toEqual({ kind: 'conflict', action: 'queue-message' })
+      for (const action of ['send-now', 'queue-message'] as const) {
+        expect(shortcutRefusal(client, {}, action, 'Mod+Enter')).toEqual({ kind: 'fixed', label: '允许选中的请求' })
+        for (const chord of [
+          'Alt+Enter',
+          'Mod+KeyC',
+          'Mod+KeyX',
+          'Mod+KeyV',
+          'Mod+Shift+KeyV',
+          'Mod+KeyA',
+          'Mod+KeyZ',
+          'Mod+KeyY',
+          'Mod+Shift+KeyZ',
+          'Alt+Backspace',
+          'Mod+Shift+ArrowRight',
+        ])
+          expect(shortcutRefusal(client, {}, action, chord), chord).not.toBeNull()
+      }
+    }
+  })
 })
 
 describe('the shortcuts store', () => {
@@ -80,6 +111,26 @@ describe('the shortcuts store', () => {
   }
   const device = 'dev_AAAAAAAAAAAAAAAAAAAAAA'
   const other = 'dev_BBBBBBBBBBBBBBBBBBBBBB'
+
+  it('opens old bindings that already use Mod+Shift+Enter and persists new sends for a different device', async () => {
+    const { dir } = await open()
+    const old = desktop({ new: 'Mod+Shift+Enter' })
+    await writeFile(
+      join(dir, 'shortcuts.json'),
+      JSON.stringify({
+        version: 1,
+        devices: { [device]: { revision: 3, at: new Date().toISOString(), doc: old, receipts: [] } },
+      }),
+      { mode: 0o600 },
+    )
+    const store = await ShortcutsStore.open(dir)
+    expect(store.state(device)).toEqual({ revision: 3, doc: old })
+    const doc = browser({ 'send-now': 'Mod+Shift+Enter', 'queue-message': 'Mod+Alt+Enter' })
+    await store.write({ deviceId: other, requestId: randomUUID(), baseRevision: 0, change: { kind: 'apply', doc } })
+    const reopened = await ShortcutsStore.open(dir)
+    expect(reopened.state(device)).toEqual({ revision: 3, doc: old })
+    expect(reopened.state(other)).toEqual({ revision: 1, doc })
+  })
 
   it('keeps each device apart, saves a 0600 file, replays a request and refuses its ID for another change', async () => {
     const { dir, store } = await open()

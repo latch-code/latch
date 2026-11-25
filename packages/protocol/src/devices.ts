@@ -388,9 +388,9 @@ export const NOT_ACCEPTED_5XX: ReadonlySet<string> = new Set([
   'model-gateway-unavailable',
 ])
 
-/** A definite refusal: any 4xx but 408, or a 5xx whose code says nothing was accepted (`NOT_ACCEPTED_5XX`). */
+/** A definite refusal excludes timeouts and unconfirmed steers; an explicit pre-acceptance 5xx is definite too. */
 export function refusedBeforeAccepting(status: number, code: string | undefined): boolean {
-  if (status >= 400 && status < 500) return status !== 408
+  if (status >= 400 && status < 500) return status !== 408 && code !== 'steer-unknown'
   return status >= 500 && code !== undefined && NOT_ACCEPTED_5XX.has(code)
 }
 

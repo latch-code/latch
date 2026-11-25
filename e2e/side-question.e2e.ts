@@ -114,7 +114,8 @@ describe('/btw', () => {
 
       await panel.getByRole('button', { name: '插入到输入框', exact: true }).click()
       await panel.waitFor({ state: 'detached' })
-      expect(await promptValue(input)).toBe('> 旁支回答：这是 Latch 的测试项目。')
+      expect(await promptValue(input)).toBe('旁支回答：\n> 旁支回答：这是 Latch 的测试项目。')
+      expect(await input.locator('[data-source=side]').count()).toBe(1)
       await expect
         .poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => task.id === fork.id)?.archived)
         .toBe(true)

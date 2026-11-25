@@ -13,6 +13,7 @@ struct PhoneSettingsView: View {
     @State private var changingFaceID = false
     @AppStorage(PhoneComputerNotices.key) private var notifyOthers = false
     @AppStorage(PhoneQuestionReminders.enabledKey) private var questionReminders = true
+    @AppStorage(PhoneFollowUpDefault.key) private var followUpDefault = PhoneFollowUpDefault.steer
     @State private var changingNotices = false
     @State private var noticesRefused = false
     @State private var usage: UsageTab?
@@ -36,6 +37,12 @@ struct PhoneSettingsView: View {
                             Spacer()
                             Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(PhoneTheme.faint)
                         }
+                    }
+                }
+                Section("对话") {
+                    Picker("运行中默认发送方式", selection: $followUpDefault) {
+                        Text("立即发送").tag(PhoneFollowUpDefault.steer)
+                        Text("排队").tag(PhoneFollowUpDefault.queue)
                     }
                 }
                 Section {

@@ -335,7 +335,8 @@ it.each([
           expect(await overlay.locator('[data-keys="Alt 1 … Alt 9"] kbd').allTextContents()).toEqual(['Alt 1', 'Alt 9'])
           expect(await overlay.locator('[data-keys="Alt Shift 1 … Alt Shift 4"]').count()).toBe(1)
           expect(await overlay.locator('[data-keys="⌘1 … ⌘9"]').count()).toBe(0)
-          expect(await overlay.locator('.shortcuts-overlay-row').count()).toBe(28)
+          expect(await overlay.locator('.shortcuts-overlay-row').count()).toBe(30)
+          for (const label of ['立即发送', '排队发送']) expect(await overlay.getByText(label, { exact: true }).count()).toBe(1)
           // The views are named as the switch names them, and the switch has its own key.
           const viewKey = overlay.locator('.shortcuts-overlay-row', { hasText: '切换对话、看板' })
           expect(await viewKey.locator('kbd').allTextContents()).toEqual(['Alt Shift L'])

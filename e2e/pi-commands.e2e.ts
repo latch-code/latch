@@ -301,7 +301,7 @@ it.skipIf(process.env.LATCH_SLASH_LIVE !== '1' || !binary)(
           if (command.includes('skill:'))
             await page.screenshot({ path: `${output}/running-command-availability-390-dark.png`, animations: 'disabled' })
           await input.fill(command)
-          const append = page.getByRole('button', { name: '追加到本轮', exact: true })
+          const append = page.getByRole('button', { name: '立即发送', exact: true })
           await append.waitFor()
           const accepted = page.waitForResponse(
             response =>

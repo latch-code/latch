@@ -36,7 +36,7 @@ export async function openBridge(
   driver: HarnessDriver,
   paths: { dataDir: string; workspace: string; tmpRoot: string },
   cleanups: Cleanups,
-  host: Pick<HarnessHostOptions, 'toolGateway' | 'projects' | 'workspaces'> = {},
+  host: Pick<HarnessHostOptions, 'toolGateway' | 'projects' | 'workspaces' | 'readAttachment'> = {},
 ): Promise<Bridge> {
   const bridge = driver.create({
     ...host,

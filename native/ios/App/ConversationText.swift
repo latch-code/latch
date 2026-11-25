@@ -71,7 +71,10 @@ struct ConversationText: UIViewRepresentable {
             guard !words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, words.utf16.count <= 4000 else { return nil }
             let block = content.sourceText(in: NSRange(location: 0, length: content.length))
             let offset = content.sourceText(in: NSRange(location: 0, length: range.location)).utf16.count
-            let quote = UIAction(title: "引用这句话", image: UIImage(systemName: "quote.bubble")) { _ in citation.insert(words, block, offset) }
+            let quote = UIAction(title: "引用这句话", image: UIImage(systemName: "quote.bubble")) { [weak textView] _ in
+                citation.insert(words, block, offset)
+                if textView?.selectedRange == range { textView?.selectedTextRange = nil }
+            }
             return UIMenu(children: [quote] + suggestedActions)
         }
         var shown: String?
@@ -127,10 +130,15 @@ struct LocalTextEditor: UIViewRepresentable {
     var onCommand: ((String) -> Void)? = nil
     var suffixHint: String? = nil
     var onPasteImages: (@MainActor ([NSItemProvider]) async -> Void)? = nil
+    var referenceDraft: Binding<String>? = nil
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> LocalPromptView {
         let view = LocalPromptView(frame: .zero, textContainer: nil)
         view.isEditable = true; view.isSelectable = true; view.delegate = context.coordinator; view.pasteDelegate = context.coordinator
+        view.usesReferenceHistory = referenceDraft != nil
+        view.registerForTraitChanges([UITraitUserInterfaceStyle.self, UITraitPreferredContentSizeCategory.self]) { (view: LocalPromptView, _) in
+            view.setNeedsLayout()
+        }
         view.isScrollEnabled = maximumLines == nil
         view.backgroundColor = .clear; view.textColor = .label; view.font = Self.font
         view.textContainerInset = .zero; view.textContainer.lineFragmentPadding = 0
@@ -145,12 +153,13 @@ struct LocalTextEditor: UIViewRepresentable {
         context.coordinator.parent = self
         context.coordinator.applying = true
         defer { context.coordinator.applying = false }
+        view.usesReferenceHistory = referenceDraft != nil
         let coordinator = context.coordinator
         if view.isFirstResponder {
             // During a SwiftUI update the binding can still be a snapshot taken before UIKit's last edit.
             // Read the live binding after this render before replacing a focused editor's document or caret.
-            if !view.draft.source.utf8.elementsEqual(text.utf8) || selectionRequest?.wrappedValue != nil
-                || !mentionMarkers.isEmpty || view.hasMentionChips { coordinator.queueSync(view) }
+            if !view.draft.source.utf8.elementsEqual(text.utf8) || referenceDraft?.wrappedValue != coordinator.shownWire
+                || selectionRequest?.wrappedValue != nil || !mentionMarkers.isEmpty || view.hasMentionChips { coordinator.queueSync(view) }
         } else {
             coordinator.sync(view)
         }
@@ -206,6 +215,8 @@ struct LocalTextEditor: UIViewRepresentable {
         }
         var applying = false
         private var queued = false
+        private(set) var shownWire: String?
+        private var references: PhoneInputReferences?
         private var lastPublished: String
         init(_ parent: LocalTextEditor) { self.parent = parent; lastPublished = parent.text }
         func queueSync(_ view: LocalPromptView) {
@@ -229,8 +240,19 @@ struct LocalTextEditor: UIViewRepresentable {
             let request = parent.selectionRequest?.wrappedValue
             let changed = !native.utf8.elementsEqual(wanted.utf8)
             let completing = request?.text.utf8.elementsEqual(wanted.utf8) == true
-            if changed { lastPublished = wanted }
-            let offsets = view.displayDraft(wanted, chips: parent.mentionMarkers, document: document, changed: changed, completing: completing)
+            let offsets: PhoneMentionOffsets
+            if let wire = parent.referenceDraft?.wrappedValue {
+                if !wire.utf8.elementsEqual((shownWire ?? "").utf8) || shownWire == nil {
+                    // A completed picker edit is reversible. A different draft cannot reuse this session's undo history.
+                    if completing, let previous = shownWire {
+                        registerUndo(in: view, from: wire, to: previous, caret: document.offsets.sourceRange(for: before))
+                    } else { view.undoManager?.removeAllActions() }
+                }
+                offsets = install(wire, in: view, selection: !changed ? document.offsets.sourceRange(for: before) : nil)
+            } else {
+                if changed { lastPublished = wanted }
+                offsets = view.displayDraft(wanted, chips: parent.mentionMarkers, document: document, changed: changed, completing: completing)
+            }
             if let request, view.markedTextRange == nil {
                 let count = wanted.utf16.count
                 if request.text.utf8.elementsEqual(wanted.utf8), request.range.location <= count,
@@ -249,7 +271,86 @@ struct LocalTextEditor: UIViewRepresentable {
         }
         func textViewDidChange(_ textView: UITextView) {
             guard !applying, let view = textView as? LocalPromptView else { return }
-            lastPublished = view.draft.source; parent.text = lastPublished; readSelection(view)
+            let draft = view.draft
+            if let binding = parent.referenceDraft, let shownWire {
+                guard binding.wrappedValue.utf8.elementsEqual(shownWire.utf8) else { sync(view); return }
+                let selected = draft.offsets.sourceRange(for: view.selectedRange)
+                let wire = view.sourceText(draft: draft)
+                binding.wrappedValue = wire
+                guard binding.wrappedValue.utf8.elementsEqual(wire.utf8) else { sync(view); return }
+                if view.markedTextRange != nil {
+                    let document = PhoneInputReferences(wire, collapseQuotes: true)
+                    self.shownWire = wire; references = document; lastPublished = document.display
+                } else { install(wire, in: view, selection: selected) }
+            } else { lastPublished = draft.source; parent.text = lastPublished }
+            readSelection(view)
+        }
+        func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            guard let view = textView as? LocalPromptView, let binding = parent.referenceDraft, let shownWire else { return true }
+            guard binding.wrappedValue.utf8.elementsEqual(shownWire.utf8) else { sync(view); return false }
+            return view.replaceAtoms?(range, text) != true
+        }
+        func textView(_ textView: UITextView, editMenuForTextIn range: NSRange, suggestedActions: [UIMenuElement]) -> UIMenu? {
+            guard let view = textView as? LocalPromptView, let references,
+                  let quote = references.quotes.first(where: { $0.isTerminalBlock && $0.range == view.draft.offsets.sourceRange(for: range) }) else { return nil }
+            let remove = UIAction(title: "移除终端引用", image: UIImage(systemName: "xmark")) { [weak view] _ in
+                view?.removeTerminal?(quote)
+            }
+            return UIMenu(children: [remove] + suggestedActions)
+        }
+        private func registerUndo(in view: LocalPromptView, from old: String, to new: String, caret: NSRange) {
+            view.undoManager?.registerUndo(withTarget: self) { [weak view] coordinator in
+                guard let view else { return }
+                coordinator.replaceSource(in: view, from: old, to: new, caret: caret)
+            }
+        }
+        /** UIKit's plain-text undo for a deletion may return only an object character. Keep the wire for this edit. */
+        private func replaceSource(in view: LocalPromptView, from old: String, to new: String, caret: NSRange) {
+            guard let binding = parent.referenceDraft, binding.wrappedValue.utf8.elementsEqual(old.utf8) else { return }
+            registerUndo(in: view, from: new, to: old, caret: view.draft.offsets.sourceRange(for: view.selectedRange))
+            binding.wrappedValue = new
+            guard binding.wrappedValue.utf8.elementsEqual(new.utf8) else { sync(view); return }
+            install(new, in: view, selection: caret)
+            readSelection(view)
+        }
+        /** Text commands and mention search use the quote-collapsed draft; UIKit also collapses each selected @ marker. */
+        @discardableResult private func install(_ wire: String, in view: LocalPromptView, selection: NSRange?) -> PhoneMentionOffsets {
+            let document = PhoneInputReferences(wire, collapseQuotes: true)
+            let old = applying
+            applying = true; defer { applying = old }
+            references = document; shownWire = wire; lastPublished = document.display
+            view.canCopySource = { [weak self] in
+                guard let self, let binding = parent.referenceDraft, let shownWire else { return false }
+                return binding.wrappedValue.utf8.elementsEqual(shownWire.utf8)
+            }
+            view.replaceAtoms = { [weak self, weak view] range, text in
+                guard let self, let view, view.isEditable, !view.settingMarkedText, view.markedTextRange == nil,
+                      view.undoManager?.isUndoing != true, view.undoManager?.isRedoing != true,
+                      let wire = self.shownWire, let current = self.references else { return false }
+                let offsets = view.draft.offsets, sourceRange = offsets.sourceRange(for: range)
+                let crossesChip = current.quotes.contains { NSIntersectionRange(sourceRange, $0.range).length > 0 }
+                    || offsets.ranges.contains { NSIntersectionRange(sourceRange, $0).length > 0 }
+                guard crossesChip, let next = current.replacing(sourceRange, with: text) else { return false }
+                replaceSource(in: view, from: wire, to: next, caret: NSRange(location: sourceRange.location + text.utf16.count, length: 0))
+                return true
+            }
+            view.removeTerminal = { [weak self, weak view] quote in
+                guard let self, let view, view.isEditable, view.markedTextRange == nil, let wire = self.shownWire, let current = self.references,
+                      current.quotes.contains(where: { $0.range == quote.range && $0.wire == quote.wire && $0.isTerminalBlock }),
+                      let next = current.replacing(quote.range, with: "") else { return }
+                let selected = view.draft.offsets.sourceRange(for: view.selectedRange)
+                func after(_ offset: Int) -> Int { offset > quote.range.location ? offset - 1 : offset }
+                let start = after(selected.location)
+                replaceSource(in: view, from: wire, to: next, caret: NSRange(location: start, length: after(NSMaxRange(selected)) - start))
+            }
+            let draft = view.draft
+            let offsets = view.displayDraft(document.display, chips: parent.mentionMarkers, document: draft,
+                changed: !document.display.utf8.elementsEqual(draft.source.utf8), completing: false)
+            view.displaySources(document, offsets: offsets)
+            let count = document.display.utf16.count, start = min(selection?.location ?? count, count)
+            let caret = offsets.displayRange(for: NSRange(location: start, length: min(selection?.length ?? 0, count - start)))
+            if view.selectedRange != caret { view.selectedRange = caret }
+            return offsets
         }
         func textViewDidChangeSelection(_ textView: UITextView) { readSelection(textView) }
         func readSelection(_ textView: UITextView) {
@@ -286,17 +387,135 @@ class LocalTextView: UITextView {
     }
 }
 
+private extension PhoneInputReferences.Quote {
+    var isTerminalBlock: Bool { kind == .hook || kind == .terminal }
+}
+
+private final class PromptSourceAttachment: NSTextAttachment {
+    let source: PhoneInputReferences.Quote
+    @MainActor init(_ quote: PhoneInputReferences.Quote, font: UIFont, width: CGFloat, traits: UITraitCollection) {
+        source = quote
+        super.init(data: nil, ofType: nil)
+        let color = UIColor.link.resolvedColor(with: traits)
+        let readable = PhoneConversation.visible(quote.text)
+        if quote.isTerminalBlock {
+            let preview = Self.terminalImage(title: PhoneConversation.visible(quote.title), body: readable, width: width, font: font, traits: traits)
+            image = preview
+            bounds = CGRect(origin: CGPoint(x: 0, y: font.descender), size: preview.size)
+            accessibilityLabel = PhoneConversation.visible(quote.title) + "\n" + readable
+            return
+        }
+        if quote.kind == .reply {
+            let chip = Self.replyImage(readable, font: font, width: width, traits: traits)
+            image = chip
+            bounds = CGRect(x: 0, y: font.descender - 2 * font.pointSize / 16, width: chip.size.width, height: chip.size.height)
+            accessibilityLabel = readable
+            return
+        }
+        let glyph = quote.kind == .conversation ? "bubble.left.and.bubble.right" : "arrowshape.turn.up.left"
+        let label = readable.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ") as NSString
+        let textFont = UIFont.systemFont(ofSize: font.pointSize * 0.88, weight: .medium)
+        let format = NSMutableParagraphStyle(); format.lineBreakMode = .byTruncatingTail
+        let attributes: [NSAttributedString.Key: Any] = [.font: textFont, .foregroundColor: color, .paragraphStyle: format]
+        let inset = ceil(font.pointSize * 0.3), side = ceil(textFont.pointSize), gap = ceil(inset / 1.5)
+        let height = ceil(textFont.lineHeight + 2)
+        let size = CGSize(width: min(max(1, width), ceil(label.size(withAttributes: attributes).width) + inset * 2 + side + gap), height: height)
+        image = UIGraphicsImageRenderer(size: size).image { _ in
+            color.withAlphaComponent(0.12).setFill()
+            UIBezierPath(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: inset).fill()
+            let symbol = UIImage(systemName: glyph, withConfiguration: UIImage.SymbolConfiguration(pointSize: side, weight: .medium))
+            symbol?.withTintColor(color, renderingMode: .alwaysOriginal)
+                .draw(in: CGRect(x: inset, y: (height - side) / 2, width: side, height: side))
+            let x = inset + side + gap
+            label.draw(with: CGRect(x: x, y: (height - textFont.lineHeight) / 2, width: max(0, size.width - x - inset), height: textFont.lineHeight),
+                       options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attributes, context: nil)
+        }
+        bounds = CGRect(x: 0, y: font.descender, width: size.width, height: height)
+        accessibilityLabel = readable
+    }
+    /** Match the desktop .prompt-chip. Gutters live in the image so selection and deletion still cover one character. */
+    @MainActor private static func replyImage(_ text: String, font: UIFont, width: CGFloat, traits: UITraitCollection) -> UIImage {
+        let scale = font.pointSize / 16
+        let label = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ") as NSString
+        let style = NSMutableParagraphStyle(); style.lineBreakMode = .byTruncatingTail
+        let ink = PhoneTheme.contentPathInk.resolvedColor(with: traits)
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ink, .paragraphStyle: style]
+        let iconSide = 14 * scale, leading = 4 * scale, gap = 4 * scale, trailing = 6 * scale
+        let gutter = min(4 * scale, max(0, width - 1) / 2)
+        let labelWidth = min(ceil(label.size(withAttributes: attributes).width), 28 * ("0" as NSString).size(withAttributes: attributes).width)
+        let chipWidth = min(leading + iconSide + gap + labelWidth + trailing, max(1, width - 2 * gutter))
+        let chip = CGRect(x: gutter, y: 2 * scale, width: chipWidth, height: max(font.lineHeight, 20 * scale))
+        let size = CGSize(width: chipWidth + 2 * gutter, height: chip.height + 2 * chip.minY)
+        return UIGraphicsImageRenderer(size: size).image { _ in
+            PhoneTheme.contentChipWash.resolvedColor(with: traits).setFill()
+            UIBezierPath(roundedRect: chip, cornerRadius: 6 * scale).fill()
+            let icon = CGRect(x: chip.minX + leading, y: chip.midY - iconSide / 2 + scale, width: iconSide, height: iconSide)
+            UIImage(named: "ReplyQuote")?.withTintColor(ink, renderingMode: .alwaysOriginal).draw(in: icon)
+            let x = icon.maxX + gap
+            label.draw(with: CGRect(x: x, y: chip.midY - font.lineHeight / 2, width: max(0, chip.maxX - trailing - x), height: font.lineHeight),
+                       options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attributes, context: nil)
+        }
+    }
+    @MainActor private static func terminalImage(title: String, body: String, width: CGFloat, font: UIFont, traits: UITraitCollection) -> UIImage {
+        let mono = UIFont.monospacedSystemFont(ofSize: font.pointSize * 0.82, weight: .regular)
+        let heading = UIFont.systemFont(ofSize: mono.pointSize, weight: .semibold)
+        let pad = max(5, ceil(mono.pointSize / 2)), headerHeight = max(30, ceil(heading.lineHeight + pad))
+        let line = ceil(mono.lineHeight)
+        let textWidth = max(1, width - pad * 2)
+        let ink = UIColor.label.resolvedColor(with: traits), secondary = UIColor.secondaryLabel.resolvedColor(with: traits)
+        let format = NSMutableParagraphStyle(); format.lineBreakMode = .byTruncatingTail
+        let headerStyle: [NSAttributedString.Key: Any] = [.font: heading, .foregroundColor: secondary, .paragraphStyle: format]
+        let style: [NSAttributedString.Key: Any] = [.font: mono, .foregroundColor: ink]
+        let measured = (body as NSString).boundingRect(with: CGSize(width: textWidth, height: line * 3), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: style, context: nil)
+        let height = max(line, min(line * 3, ceil(measured.height)))
+        let size = CGSize(width: max(1, width), height: headerHeight + height + pad)
+        return UIGraphicsImageRenderer(size: size).image { _ in
+            UIColor.secondarySystemFill.resolvedColor(with: traits).setFill()
+            UIBezierPath(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: pad).fill()
+            let icon = UIImage(systemName: "terminal", withConfiguration: UIImage.SymbolConfiguration(pointSize: heading.pointSize))
+            let h = heading.pointSize, x = pad + h + pad
+            icon?.withTintColor(secondary, renderingMode: .alwaysOriginal).draw(in: CGRect(x: pad, y: (headerHeight - h) / 2, width: h, height: h))
+            (title as NSString).draw(in: CGRect(x: x, y: (headerHeight - heading.lineHeight) / 2, width: max(0, width - x - 44), height: heading.lineHeight), withAttributes: headerStyle)
+            (body as NSString).draw(with: CGRect(x: pad, y: headerHeight, width: textWidth, height: height),
+                                    options: [.usesLineFragmentOrigin, .usesFontLeading, .truncatesLastVisibleLine], attributes: style, context: nil)
+        }
+    }
+    required init?(coder: NSCoder) { nil }
+}
+
 final class LocalPromptView: LocalTextView {
-    // The UIKit convenience initializer can bypass initialization of Swift subclass storage.
+    // UITextView's Objective-C convenience initializer may bypass Swift subclass storage initialization.
+    // Its designated initializer with a nil text container uses TextKit 2 on our supported iOS versions.
+    private var readyForLayout = false
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
+        readyForLayout = true
     }
-    required init?(coder: NSCoder) { super.init(coder: coder) }
+    required init?(coder: NSCoder) { nil }
+    private let referenceHistory = UndoManager()
+    var usesReferenceHistory = false {
+        didSet { if oldValue && !usesReferenceHistory { referenceHistory.removeAllActions(); references = nil } }
+    }
+    override var undoManager: UndoManager? { usesReferenceHistory ? referenceHistory : super.undoManager }
+    private(set) var settingMarkedText = false
+    override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
+        settingMarkedText = true; defer { settingMarkedText = false }
+        super.setMarkedText(markedText, selectedRange: selectedRange)
+    }
+    var canCopySource: (() -> Bool)?
+    var replaceAtoms: ((NSRange, String) -> Bool)?
+    var removeTerminal: ((PhoneInputReferences.Quote) -> Void)?
+    private var terminalButtons: [Int: (wire: String, button: UIButton)] = [:]
+    private var references: PhoneInputReferences?
+    private var renderedWidth: CGFloat = 0
+    private var renderedFont: UIFont?
+    private var renderedStyle: UIUserInterfaceStyle?
+    private var marking = false
 
     var draft: PromptMentionDocument { PromptMentionDocument(storage: textStorage) }
     private(set) var hasMentionChips = false
     override var accessibilityValue: String? {
-        get { hasMentionChips ? draft.source : super.accessibilityValue }
+        get { usesReferenceHistory && canCopySource?() == false ? nil : hasMentionChips || references?.quotes.isEmpty == false ? readableText(in: NSRange(location: 0, length: textStorage.length)) : super.accessibilityValue }
         set { super.accessibilityValue = newValue }
     }
     private var shownChips: [PromptMentionChip] = []
@@ -330,7 +549,7 @@ final class LocalPromptView: LocalTextView {
         let oldSelection = selectedRange.location == NSNotFound ? NSRange(location: 0, length: 0) : selectedRange
         let caret = changed ? NSRange(location: source.utf16.count, length: 0) : document.offsets.sourceRange(for: oldSelection)
         shownChips = visuals; hasMentionChips = !matches.isEmpty; chipWidth = width; chipStyle = style; chipFont = font
-        if isFirstResponder, completing || (!changed && projectionChanged),
+        if !usesReferenceHistory, isFirstResponder, completing || (!changed && projectionChanged),
            let all = textRange(from: beginningOfDocument, to: endOfDocument) {
             // Use a native edit for an accepted completion so Undo restores the text the person was typing.
             replace(all, withAttributedText: rich)
@@ -342,14 +561,66 @@ final class LocalPromptView: LocalTextView {
         return offsets
     }
 
-    override func copy(_ sender: Any?) {
-        let range = selectedRange
-        guard range.location != NSNotFound, range.length > 0, NSMaxRange(range) <= textStorage.length else { return }
-        let selection = textStorage.attributedSubstring(from: range)
-        let plain = PromptMentionDocument(storage: selection, copying: true).source
-        LocalClipboard.copy(plain)
+    private var sourceOffsets = PhoneMentionOffsets(ranges: [])
+    func displaySources(_ document: PhoneInputReferences, offsets: PhoneMentionOffsets) {
+        guard markedTextRange == nil else { return }
+        let previous = references, oldOffsets = sourceOffsets
+        references = document; sourceOffsets = offsets
+        let expected = Set(document.quotes.map { offsets.displayRange(for: $0.range).location })
+        for quote in previous?.quotes ?? [] {
+            let at = oldOffsets.displayRange(for: quote.range).location
+            if at < textStorage.length, !expected.contains(at), textStorage.attribute(.attachment, at: at, effectiveRange: nil) is PromptSourceAttachment {
+                textStorage.removeAttribute(.attachment, range: NSRange(location: at, length: 1))
+            }
+        }
+        drawReferences(force: false)
     }
-
+    /** Re-expand mention chips before translating the live positions of the remaining source attachments. */
+    private func sources(in storage: NSAttributedString, offsets: PhoneMentionOffsets) -> [PhoneInputReferences.Quote] {
+        var result: [PhoneInputReferences.Quote] = []
+        storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            if let source = value as? PromptSourceAttachment { result.append(source.source.at(offsets.sourceRange(for: range))) }
+        }
+        return result
+    }
+    func sourceText(draft: PromptMentionDocument) -> String {
+        PhoneInputReferences.wireText(draft.source, quotes: sources(in: textStorage, offsets: draft.offsets))
+    }
+    func readableText(in range: NSRange) -> String? {
+        guard range.location != NSNotFound, NSMaxRange(range) <= textStorage.length else { return nil }
+        let selection = textStorage.attributedSubstring(from: range)
+        let document = PromptMentionDocument(storage: selection, copying: true)
+        let result = NSMutableString(string: document.source)
+        for quote in sources(in: selection, offsets: document.offsets).reversed() where quote.range.length == 1 {
+            result.replaceCharacters(in: quote.range, with: quote.text)
+        }
+        return result as String
+    }
+    private func drawReferences(force: Bool) {
+        guard !marking, let references, markedTextRange == nil else { return }
+        let textFont = font ?? UIFont.preferredFont(forTextStyle: .body)
+        let width = max(1, bounds.width - textContainerInset.left - textContainerInset.right - textContainer.lineFragmentPadding * 2)
+        let changed = width != renderedWidth || textFont != renderedFont || renderedStyle != traitCollection.userInterfaceStyle
+        if force && !changed { return }
+        marking = true; defer { marking = false }
+        renderedWidth = width; renderedFont = textFont; renderedStyle = traitCollection.userInterfaceStyle
+        for quote in references.quotes {
+            let at = sourceOffsets.displayRange(for: quote.range)
+            guard at.length == 1, at.location < textStorage.length, (textStorage.string as NSString).character(at: at.location) == 0xfffc else { continue }
+            let existing = textStorage.attribute(.attachment, at: at.location, effectiveRange: nil) as? PromptSourceAttachment
+            if changed || existing?.source.wire != quote.wire {
+                let attachment = PromptSourceAttachment(quote, font: textFont, width: width, traits: traitCollection)
+                textStorage.addAttribute(.attachment, value: attachment, range: at)
+            }
+        }
+        if typingAttributes[.attachment] != nil {
+            typingAttributes.removeValue(forKey: .attachment)
+        }
+    }
+    override func copy(_ sender: Any?) {
+        guard canCopySource?() != false, selectedRange.length > 0, let value = readableText(in: selectedRange) else { return }
+        LocalClipboard.copy(value)
+    }
     var completionKeys: [String] = []
     var completionCommand: ((String) -> Void)?
     var commandHint: String?
@@ -372,6 +643,9 @@ final class LocalPromptView: LocalTextView {
     private var hintLabel: UILabel?
     override func layoutSubviews() {
         super.layoutSubviews()
+        guard readyForLayout else { return }
+        drawReferences(force: true)
+        layoutTerminalButtons()
         guard let commandHint, markedTextRange == nil, let range = selectedTextRange, range.isEmpty else { hintLabel?.isHidden = true; return }
         let label: UILabel
         if let hintLabel { label = hintLabel }
@@ -384,11 +658,42 @@ final class LocalPromptView: LocalTextView {
         label.text = commandHint; label.font = font; label.isHidden = width < 12
         label.frame = CGRect(x: caret.maxX + 4, y: caret.minY, width: width, height: caret.height)
     }
+    /** The attachment stays one text character. The close target is a native control in the same scroll coordinates. */
+    private func layoutTerminalButtons() {
+        let visible = usesReferenceHistory && isEditable && markedTextRange == nil ? references?.quotes.filter(\.isTerminalBlock) ?? [] : []
+        var leftover = terminalButtons
+        for quote in visible {
+            let offset = sourceOffsets.displayRange(for: quote.range).location
+            guard offset < textStorage.length, let attachment = textStorage.attribute(.attachment, at: offset, effectiveRange: nil) as? PromptSourceAttachment,
+                  attachment.source.wire == quote.wire,
+                  let start = position(from: beginningOfDocument, offset: offset), let end = position(from: start, offset: 1),
+                  let range = textRange(from: start, to: end) else { continue }
+            let rect = firstRect(for: range)
+            guard !rect.isNull, rect.width > 0, rect.height > 0 else { continue }
+            let previous = leftover.removeValue(forKey: offset)
+            let button: UIButton
+            if let previous, previous.wire == quote.wire { button = previous.button }
+            else {
+                previous?.button.removeFromSuperview()
+                button = UIButton(type: .system)
+                button.setImage(UIImage(systemName: "xmark", withConfiguration: UIImage.SymbolConfiguration(textStyle: .caption1)), for: .normal)
+                button.accessibilityLabel = "移除终端引用"
+                button.accessibilityIdentifier = "remove-terminal-reference"
+                button.tintColor = .secondaryLabel
+                button.accessibilityHint = PhoneConversation.visible(quote.title)
+                button.addAction(UIAction { [weak self] _ in self?.removeTerminal?(quote) }, for: .touchUpInside)
+                addSubview(button)
+                terminalButtons[offset] = (quote.wire, button)
+            }
+            button.frame = CGRect(x: rect.minX + attachment.bounds.width - 44, y: rect.minY, width: 44, height: min(44, rect.height)).integral
+        }
+        for (offset, item) in leftover { item.button.removeFromSuperview(); terminalButtons.removeValue(forKey: offset) }
+    }
     override var keyCommands: [UIKeyCommand]? {
         guard isFirstResponder, window != nil, markedTextRange == nil, completionCommand != nil else { return super.keyCommands }
         let own = completionKeys.map { key in
-            let command = UIKeyCommand(input: key == "submit" ? "\r" : key,
-                modifierFlags: key == "submit" ? .command : [], action: #selector(runCompletion(_:)))
+            let modifiers: UIKeyModifierFlags = key == "submit" ? .command : key == "alternateSubmit" ? [.command, .shift] : []
+            let command = UIKeyCommand(input: modifiers.isEmpty ? key : "\r", modifierFlags: modifiers, action: #selector(runCompletion(_:)))
             command.wantsPriorityOverSystemBehavior = true
             return command
         }
@@ -396,12 +701,26 @@ final class LocalPromptView: LocalTextView {
     }
     @objc private func runCompletion(_ command: UIKeyCommand) {
         guard isFirstResponder, window != nil, markedTextRange == nil, let input = command.input else { return }
-        completionCommand?(command.modifierFlags.contains(.command) ? "submit" : input)
+        let key = command.modifierFlags == [.command, .shift] ? "alternateSubmit" : command.modifierFlags == .command ? "submit" : input
+        guard completionKeys.contains(key) else { return }
+        completionCommand?(key)
     }
     override func cut(_ sender: Any?) {
-        guard isEditable, let range = selectedTextRange, !range.isEmpty else { return }
-        copy(sender); replace(range, withText: "")
+        guard isEditable, canCopySource?() != false, let range = selectedTextRange, !range.isEmpty else { return }
+        copy(sender)
+        if usesReferenceHistory { deleteBackward(); return }
+        replace(range, withText: "")
         delegate?.textViewDidChange?(self)
+    }
+    override func deleteBackward() {
+        if usesReferenceHistory, let replaceAtoms {
+            var range = selectedRange
+            if range.length == 0, range.location > 0, range.location <= textStorage.length {
+                range = NSRange(location: range.location - 1, length: 1)
+            }
+            if range.length > 0, replaceAtoms(range, "") { return }
+        }
+        super.deleteBackward()
     }
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         if action == #selector(paste(_:)) { return isEditable }

@@ -29,6 +29,9 @@ enum PhoneTheme {
     static let green = dynamic(0x15803D, 0x4ADE80)
     /** Links in a reply: blue words, as the web's --accent-ink. */
     static let accentInk = uiDynamic(0x1D52C4, 0x6B9BFA)
+    /** Reply references use the desktop --content-path-ink and --content-chip-wash pair. */
+    static let contentPathInk = uiDynamic(0x1D52C4, 0x80AAFB)
+    static let contentChipWash = uiDynamic(0x2461E0, 0x6B9BFA, alpha: (0.05, 0.09))
     /** Inline code's chip, the web's --content-code-tint. */
     static let codeTint = uiDynamic(0xE2E5E8, 0x2C3135)
     /** Code colours by role, the web's --syn-* tokens. */

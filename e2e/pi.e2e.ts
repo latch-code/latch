@@ -280,7 +280,7 @@ describe('pi over its own RPC mode', () => {
     await allowCommand(page, 'npm run build')
     await expect.poll(async () => (await latest()).messages.some(message => message.role === 'tool')).toBe(true)
     await composer(page).fill('also update the README')
-    await page.getByRole('button', { name: '追加到本轮', exact: true }).click()
+    await page.getByRole('button', { name: '立即发送', exact: true }).click()
     await reply(page, 'echo: also update the README').waitFor({ timeout: 20_000 })
     await expect.poll(async () => (await latest()).summary.status).toBe('idle')
     const steered = await latest()

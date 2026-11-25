@@ -841,7 +841,9 @@ async function handle(method, params) {
             }
           : {
               agentInfo: { name: 'Fake ACP', ...(version === 'none' ? {} : { version }) },
-              ...(caps.has('steer') ? { _meta: { steering: { supported: true } } } : {}),
+              ...(caps.has('steer')
+                ? { _meta: { steering: { supported: true, ...(caps.has('steerAttachments') ? { attachments: true } : {}) } } }
+                : {}),
             }),
       }
     case 'session/new': {

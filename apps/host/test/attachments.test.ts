@@ -252,13 +252,14 @@ describe('private attachment store', () => {
   it('lets go at startup only of week-old drafts a listed session proves unused, and keeps every one it cannot prove', async () => {
     const path = await directory(),
       store = await AttachmentStore.open(path)
-    const add = async (text: string, sessionId?: string) => {
+    const add = async (text: string, sessionId?: string, steer = false) => {
       const ref = await store.add(input(text))
-      await store.claim('device-a', [ref.id], randomUUID(), sessionId)
+      await store.claim('device-a', [ref.id], randomUUID(), sessionId, steer)
       return ref
     }
     const abandoned = await add('given up', 'task-listed'),
       named = await add('named by a message', 'task-listed'),
+      steered = await add('no agent acknowledgment', 'task-listed', true),
       harnessOff = await add('Harness disabled', 'task-of-disabled-harness'),
       listFailed = await add('Harness failed to list', 'task-of-failed-harness'),
       unknown = await add('unknown session', 'task-unknown'),
@@ -273,10 +274,13 @@ describe('private attachment store', () => {
     await later.pruneAbandonedClaims(listed)
     expect(later.get(abandoned.id)).toBeUndefined()
     expect(() => later.refs('device-a', [abandoned.id], 'task-listed', randomUUID())).toThrow('附件已过期')
-    for (const kept of [named, harnessOff, listFailed, unknown, start]) {
+    for (const kept of [named, steered, harnessOff, listFailed, unknown, start]) {
       expect(later.get(kept.id)).toBeDefined()
       expect((await later.read(kept)).text?.length).toBeGreaterThan(0)
     }
+    await expect(later.remove(steered.id, 'device-a')).rejects.toMatchObject({ code: 'attachment-in-use' })
+    const requestId = later.reserved('device-a').find(entry => entry.id === steered.id)!.requestId
+    expect(await later.releaseReserved('device-a', new Map([[steered.id, requestId]]), () => false)).toMatchObject({ count: 1 })
   })
   it('lets go of the drafts reserved for a session when that session is deleted', async () => {
     const path = await directory(),

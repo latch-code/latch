@@ -63,7 +63,7 @@ export function needsInput(hint: string | undefined): boolean {
 
 export function useSlashCommands({
   draft,
-  caret = draft.length,
+  caret,
   commands = [],
   skills = [],
   skillsTruncated = false,
@@ -82,7 +82,7 @@ export function useSlashCommands({
   historyScope,
 }: {
   draft: string
-  caret?: number
+  caret: number | null
   commands?: readonly SessionCommand[]
   skillsTruncated?: boolean
   templates?: readonly PromptTemplate[]
@@ -99,7 +99,7 @@ export function useSlashCommands({
   const id = useId()
   const [dismissed, setDismissed] = useState<string | null>(null)
   const [selection, setSelection] = useState({ word: '', optionId: '' })
-  const token = slashToken(draft, caret)
+  const token = caret === null ? undefined : slashToken(draft, caret)
   const word = token ? draft.slice(0, token.end) : ''
   useEffect(() => {
     setDismissed(previous => (previous === word ? previous : null))

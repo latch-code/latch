@@ -213,13 +213,50 @@
   background: var(--sunken);
 }
 .prompt-editor .terminal-excerpt-heading {
-  --prompt-line-padding: var(--sp-6) var(--sp-12) var(--sp-2);
+  position: relative;
+  --prompt-line-padding: var(--sp-6) 40px var(--sp-6) var(--sp-12);
+  min-height: 32px;
   border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
   border-radius: var(--r-8) var(--r-8) 0 0;
-  color: var(--muted);
+  background: var(--raised);
+  color: var(--ink-2);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 500;
+}
+.terminal-excerpt-remove {
+  position: absolute;
+  inset-inline-end: var(--sp-4);
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.terminal-excerpt-remove:is(:hover, :focus-visible) {
+  background: var(--sunken);
+  color: var(--ink);
+}
+.cm-content[aria-disabled='true'] .terminal-excerpt-remove {
+  display: none;
+}
+@media (pointer: coarse) {
+  .prompt-editor .terminal-excerpt-heading {
+    min-height: 44px;
+    --prompt-line-padding: var(--sp-12) 52px var(--sp-12) var(--sp-12);
+  }
+  .terminal-excerpt-remove {
+    width: 44px;
+    height: 44px;
+  }
 }
 .terminal-excerpt-icon {
   display: inline-flex;
@@ -236,6 +273,9 @@
   line-height: var(--lh-code);
   overflow-wrap: anywhere;
 }
+.terminal-excerpt-heading + .terminal-excerpt-body {
+  padding-top: var(--sp-6);
+}
 .prompt-editor .terminal-excerpt-detail {
   color: var(--muted);
 }
@@ -246,7 +286,7 @@
 }
 /*
  * A token the Harness will read as one (a file chosen with @, a skill, a command, a member) is a chip, in the input and
- * in a sent message alike: the glyph, then the name, both centred on the chip, a little lower than the line, with room
+ * in a sent message alike: the glyph, then the name, both centred on the chip, with room
  * of its own on both sides so it never touches the text or the next chip. Each kind has its own ink: a file is link
  * blue (it opens), a skill violet, a member and a command the text's own ink on a neutral wash, a member's colour
  * coming from its Harness's mark. Never the primary fill; a long name ends in an ellipsis and the whole of it is in the
@@ -311,10 +351,6 @@
 .prompt-chip-label {
   user-select: none;
 }
-/*
- * The glyph sits 1px under the chip's middle: the eye centres on a name's lowercase and CJK body, which is lower than its
- * line box, and on the box's middle the glyph read as riding high (measured on the drawn ink at 15px).
- */
 .prompt-chip-icon {
   display: inline-flex;
   flex: none;
@@ -322,7 +358,6 @@
   justify-content: center;
   width: 14px;
   height: 14px;
-  translate: 0 1px;
 }
 /* A member's Harness mark keeps its brand colours, drawn at the glyphs' 14px. */
 .prompt-chip-icon > * {
@@ -330,12 +365,14 @@
   max-height: 14px;
 }
 .prompt-chip-icon :is(svg, img) {
+  display: block;
   width: 14px;
   height: 14px;
 }
-/* Centred on the chip as the glyph is: on its baseline the name sat 2px under the glyph's middle. */
+/* The label supplies the inline-flex baseline shared with the surrounding text. Its line box fills the chip. */
 .prompt-chip-label {
-  align-self: center;
+  align-self: baseline;
+  line-height: calc(1lh - 4px);
   min-width: 0;
   max-width: 28ch;
   overflow: hidden;

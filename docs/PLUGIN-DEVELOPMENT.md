@@ -526,6 +526,7 @@ ACP 的 `ToolGatewayCallContext.runId` 由 Driver 在收到工具调用时取自
 | `start` / `close` | 关闭时等待执行、取消与资源清理 |
 | `listTasks` / `detail` | 返回产品 DTO：稳定的消息 ID 与真实状态，不把 Harness 私有类型传给客户端。`detail()` 是可独立渲染的当前状态，不是增量 |
 | `createTask` / `prompt` | 按 `requestId` 持久化去重，并把它原样写入用户消息；不支持的模式报错，不把 chat 当 agent。L3 Driver 的 `createTask` 另收到 `expectedLaunchHash`。带 `title` 时（分叉、换 Harness 继续、定时运行）用它作会话的第一个标题，不从 `prompt` 取：分叉的 `prompt` 以 Host 写的原会话记录开头；`title` 不计入请求的去重。`PromptOptions.queuedAt` 保留在实际接纳的用户消息上 |
+| `steerWithAttachments?(sessionId, prompt, requestId, attachments, options?)` | 轮次能接收附件时报告 `TaskDetail.steerAttachments: true`。按普通输入交付全部附件，允许正文为空。准备附件后调用 `options?.authorize()`，带 `runId` 时遵守排队追加的轮次与回执约定。用户消息保存附件引用。 |
 | `steerQueued?(sessionId, prompt, requestId, options)` | 只向 `options.runId` 所指的运行追加。实际交付前调用 `options.authorize()` 并核对运行身份，目标已结束时回答 `prompt-required`。确认接收才返回 `injected`，用户消息保留 `requestId`、`steered` 与 `options.queuedAt`。未知结果的重试不得再次投递。只实现 `steer` 的 Driver 仍可接收输入框直接追加的消息。 |
 | `cancel` | 等实际执行结算才返回，后端只回「已收到」不够。带 `runId` 时只在它仍是当前运行时取消，并在开始取消的同一步核对（之间没有 `await`）；没有可取消的运行或 `runId` 不符返回 `false` |
 | `cancelSubagent?` | 配合 `Subagent.stoppable`：停止一个子 Agent 当前的工作，会话的这一轮继续；发出停止就返回 `true`，那一行写 `stopping` 直到它报告结果 |

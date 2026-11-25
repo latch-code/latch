@@ -116,6 +116,19 @@ describe('the prompt editor', () => {
     expect(view.contentDOM.querySelector('.terminal-excerpt')).toBeNull()
   })
 
+  it('removes only the chosen terminal block after preceding edits and restores it with one undo', () => {
+    const excerpt = '终端 1\n```text\nfirst output\n```\n'
+    const { view, input, key } = mount(excerpt + '说明\n' + excerpt + '结尾')
+    act(() => view.dispatch({ changes: { from: 0, insert: '前言\n' } }))
+    const before = input().value
+    const buttons = view.contentDOM.querySelectorAll<HTMLButtonElement>('button.terminal-excerpt-remove')
+    expect(buttons).toHaveLength(2)
+    act(() => buttons[1]!.click())
+    expect(input().value).toBe('前言\n' + excerpt + '说明\n结尾')
+    key('z', mod)
+    expect(input().value).toBe(before)
+  })
+
   it('holds the draft as its document and draws every kind of token as a chip, in Chinese and over lines', () => {
     const text = '/compact 看看 @src 和 @default:src/vitest.browser.config.ts\n请 @输出-1 @输出-4 用 $lark-apps 检查\n\n结尾 $lark-apps。'
     const { view, input, chips } = mount(text)
@@ -163,6 +176,135 @@ describe('the prompt editor', () => {
     expect(state.draft).toBe('请用  写')
   })
 
+  it('keeps new words outside an applied chip even before its trailing space', () => {
+    const onCaret = vi.fn()
+    const { view, chips, input, key } = mount('前言 @输出-4 后文', { onCaret })
+    const type = (text: string) => act(() => view.dispatch(view.state.replaceSelection(text), { userEvent: 'input.type' }))
+    act(() => input().setSelectionRange(8, 8))
+    expect(onCaret).toHaveBeenLastCalledWith(null, '前言 @输出-4 后文')
+    type('1')
+    type('1')
+    expect(input().value).toBe('前言 @输出-4 11 后文')
+    expect(input().selectionStart).toBe(11)
+    expect(chips()).toEqual([['member', '输出四']])
+    act(() => input().setSelectionRange(3, 3))
+    type('左')
+    expect(input().value).toBe('前言 左 @输出-4 11 后文')
+    key('z', mod)
+    expect(input().value).toBe('前言 @输出-4 11 后文')
+  })
+
+  it.each([
+    ['@输出-4', '1', 'member'],
+    ['/compact', 'ly', 'command'],
+    ['$lark-apps', '-next', 'skill'],
+  ])('lets a typed exact %s extend until it is committed', (short, tail, kind) => {
+    const longer = short + tail
+    const defs = {
+      ...catalogue,
+      ...(kind === 'member' ? { members: [...catalogue.members!, { token: longer, name: longer, title: longer }] } : {}),
+      ...(kind === 'command' ? { commands: [...catalogue.commands!, { name: longer.slice(1) }] } : {}),
+      ...(kind === 'skill' ? { skills: [...catalogue.skills!, { invocation: longer, name: longer.slice(1) }] } : {}),
+    }
+    const { view, chips, input } = mount('', { catalogue: defs })
+    const type = (value: string) => act(() => view.dispatch(view.state.replaceSelection(value), { userEvent: 'input.type' }))
+    type(short)
+    expect(chips()).toEqual([])
+    type(tail)
+    expect(input().value).toBe(longer)
+    expect(chips()).toEqual([])
+    type(' ')
+    expect(chips().map(chip => chip[0])).toEqual([kind])
+  })
+
+  it('keeps an applied member committed when backspacing over its following words and separator', () => {
+    const { view, chips, input, key } = mount('@输出-4 ')
+    act(() => view.dispatch(view.state.replaceSelection('@下'), { userEvent: 'input.type' }))
+    for (let i = 0; i < 3; i++) key('Backspace')
+    expect(input().value).toBe('@输出-4')
+    expect(chips()).toEqual([['member', '输出四']])
+  })
+
+  it('treats pasted tokens as committed and keeps an older chip when a pending query is deleted in one edit', () => {
+    const { view, chips, input } = mount('')
+    act(() => input().insertText('@输出-4'))
+    expect(chips()).toEqual([['member', '输出四']])
+    act(() => view.dispatch(view.state.replaceSelection(' @下'), { userEvent: 'input.type' }))
+    act(() => view.dispatch({ changes: { from: 5, to: 8 }, selection: { anchor: 5 }, userEvent: 'delete.backward' }))
+    expect(input().value).toBe('@输出-4')
+    expect(chips()).toEqual([['member', '输出四']])
+  })
+
+  it('publishes a completion caret only outside a committed chip, a selection and a quoted source', () => {
+    const source = '[引用回复 s/m@0]\n> 回复\n\n终端 1\n```text\n@查询 /a\n```'
+    const onCaret = vi.fn()
+    const { input } = mount(source, { onCaret })
+    expect(onCaret).toHaveBeenLastCalledWith(null, source)
+    act(() => input().setSelectionRange(0, 0))
+    expect(onCaret).toHaveBeenLastCalledWith(0, source)
+    act(() => input().setSelectionRange(0, 3))
+    expect(onCaret).toHaveBeenLastCalledWith(null, source)
+    const afterQuery = source.indexOf(' /a')
+    act(() => input().setSelectionRange(afterQuery, afterQuery))
+    expect(onCaret).toHaveBeenLastCalledWith(null, source)
+  })
+
+  it('keeps a multiline reply quote in one chip and removes its wire text in one edit from either side', () => {
+    const prefix = '前文\n\n'
+    const wire = '[引用回复 session/message@4]\n> 原句 $lark-apps\n> 第二行 @输出-1\n\n'
+    const suffix = '我想问'
+    const { view, input, chips, key } = mount(prefix + wire + suffix)
+    const label = '原句 $lark-apps 第二行 @输出-1'
+    expect(chips()).toEqual([['quote', label]])
+    expect(view.contentDOM.textContent).not.toMatch(/引用回复|> 原句/u)
+    expect(view.contentDOM.querySelector('.prompt-chip')?.getAttribute('title')).toContain('原句 $lark-apps\n第二行 @输出-1')
+    expect(view.contentDOM.querySelector('.prompt-chip-token')?.textContent).toBe('引用原句\n原句 $lark-apps\n第二行 @输出-1')
+    act(() => input().setSelectionRange(prefix.length + wire.length, prefix.length + wire.length))
+    key('Backspace')
+    expect(input().value).toBe(prefix + suffix)
+    key('z', mod)
+    expect(input().value).toBe(prefix + wire + suffix)
+    expect(chips()).toEqual([['quote', label]])
+    act(() => input().setSelectionRange(prefix.length, prefix.length))
+    key('Delete')
+    expect(input().value).toBe(prefix + suffix)
+  })
+
+  it('keeps typing on either side of a restored quote outside its original words', () => {
+    const wire = '[引用回复 session/message@4]\n> 原句'
+    const { view, input, chips, key } = mount(wire)
+    const type = (value: string) => act(() => view.dispatch(view.state.replaceSelection(value), { userEvent: 'input.type' }))
+    type('后')
+    expect(input().value).toBe(wire + '\n\n后')
+    expect(chips()).toEqual([['quote', '原句']])
+    key('z', mod)
+    expect(input().value).toBe(wire)
+    act(() => input().setSelectionRange(0, 0))
+    type('前')
+    type('文')
+    expect(input().value).toBe('前文\n' + wire)
+    expect(chips()).toEqual([['quote', '原句']])
+  })
+
+  it('keeps the quoted passage intact when deleting a legacy line break or pasting more quoted prose beside it', () => {
+    const prefix = '前文\n'
+    const wire = '[引用回复 session/message@4]\n> 原句'
+    const { view, input, chips, key } = mount(prefix + wire + '\n后文')
+    act(() => input().setSelectionRange(prefix.length, prefix.length))
+    key('Backspace')
+    expect(input().value).toBe(prefix + wire + '\n后文')
+    const end = prefix.length + wire.length
+    act(() => input().setSelectionRange(end, end))
+    key('Delete')
+    expect(input().value).toBe(prefix + wire + '\n\n后文')
+    key('z', mod)
+    expect(input().value).toBe(prefix + wire + '\n后文')
+    act(() => input().setSelectionRange(end, end))
+    act(() => view.dispatch(view.state.replaceSelection('\n> 另一项'), { userEvent: 'input.paste' }))
+    expect(input().value).toBe(prefix + wire + '\n\n\n> 另一项\n后文')
+    expect(chips()).toEqual([['quote', '原句']])
+  })
+
   it('applies a draft changed outside without making it a step of undo', () => {
     const { view, state, input, render } = mount('first')
     act(() => view.dispatch({ changes: { from: 5, insert: '!' }, userEvent: 'input.type' }))
@@ -201,6 +343,9 @@ describe('the prompt editor', () => {
     expect(state.draft).toBe('请 @输出-1 ')
     expect(input().selectionStart).toBe(8)
     expect(chips()).toEqual([['member', '输出一']])
+    // An explicit replacement can choose an item whose token starts with the old one.
+    act(() => input().edit('请 @输出-11 '))
+    expect(input().value).toBe('请 @输出-11 ')
   })
 
   it.each([{ metaKey: true }, { ctrlKey: true }, { metaKey: true, altKey: true, code: 'KeyV', key: '◊' }])(

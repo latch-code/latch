@@ -49,8 +49,9 @@ import UIKit
     static func matches(_ chips: [PromptMentionChip], in text: String) -> [Match] {
         guard !chips.isEmpty, text.contains("@") else { return [] }
         var candidates: [Match] = []
+        let materials = PhoneInputReferences.materialRanges(in: text)
         for chip in chips {
-            for range in PhoneFileMentionToken.ranges(marker: chip.marker, in: text) {
+            for range in PhoneFileMentionToken.ranges(marker: chip.marker, in: text, excluding: materials) {
                 candidates.append(Match(range: range, chip: chip))
             }
         }

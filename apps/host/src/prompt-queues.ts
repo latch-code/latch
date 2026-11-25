@@ -80,8 +80,25 @@ const recordSchema = z.strictObject({
 })
 const fileSchema = z.strictObject({ version: z.literal(1), items: z.array(recordSchema).max(MAX_RECEIPTS) })
 type Record = z.infer<typeof recordSchema>
-function receivedSteer(item: Record, detail: TaskDetail): boolean {
-  return detail.messages.some(message => message.role === 'user' && message.steered && message.requestId === item.sendRequestId)
+async function receivedSteer(item: Record, detail: TaskDetail, options: QueueOptions): Promise<boolean> {
+  const received = detail.messages.some(
+    message =>
+      message.role === 'user'
+      && message.steered
+      && message.requestId === item.sendRequestId
+      && (!item.attachmentIds
+        || (message.attachments?.length === item.attachmentIds.length
+          && item.attachmentIds.every((attachmentId, index) => message.attachments?.[index]?.id === attachmentId))),
+  )
+  if (!received || !item.attachmentIds) return received
+  if (!options.bindAttachments) return false
+  try {
+    await options.bindAttachments(item, item.sessionId, item.attachmentIds)
+    return true
+  } catch {
+    // Keep the upload claimed and retry publication from the same message.
+    return false
+  }
 }
 /**
  * Every new item must read back: the file is checked whole when the Host starts, so one item it would refuse there (too
@@ -107,13 +124,14 @@ export interface QueueOptions {
   check(actor: QueueActor, sessionId: string, model?: ModelRef, binding?: string): Promise<void>
   holdAttachments?(actor: QueueActor, sessionId: string, ids: string[], requestId: string, model?: ModelRef): Promise<void>
   releaseAttachments?(actor: QueueActor, sessionId: string, ids: string[], requestId: string): Promise<void>
+  bindAttachments?(actor: QueueActor, sessionId: string, ids: string[]): Promise<void>
   beforeEnqueue(actor: QueueActor, sessionId: string, itemId: string): Promise<void>
   /**
    * An item sent at once was refused before the session took it and deleted with its receipt: what was audited for it
    * (queued, sent) is marked as never committed.
    */
   dropped?(actor: QueueActor, sessionId: string, itemId: string): void
-  canSteer?(sessionId: string): boolean
+  canSteer?(sessionId: string, withAttachments: boolean): boolean
   steer?(
     actor: QueueActor,
     sessionId: string,
@@ -124,6 +142,8 @@ export interface QueueOptions {
       requestId: string
       runId: string
       queuedAt: string
+      attachmentIds?: string[]
+      attachmentRequestId?: string
       editor?: QueueActor
       coauthors?: readonly string[]
       authorize(): Promise<void>
@@ -199,7 +219,7 @@ export class PromptQueues {
       const detail = await options.detail(sessionId).catch(() => undefined)
       if (!detail) continue
       for (const item of pending)
-        if (receivedSteer(item, detail))
+        if (await receivedSteer(item, detail, options))
           entries.set(item.id, { ...item, state: 'sent', text: undefined, attachmentIds: undefined, reason: undefined })
     }
     const queue = new PromptQueues(options, entries)
@@ -258,7 +278,7 @@ export class PromptQueues {
     return count
   }
 
-  view(sessionId: string): PromptQueueItem[] {
+  view(sessionId: string, steerAttachments = false): PromptQueueItem[] {
     return this.items(sessionId).map(item => ({
       id: item.id,
       text: item.text!,
@@ -267,7 +287,7 @@ export class PromptQueues {
       state: item.state === 'sending' ? 'waiting' : item.state === 'uncertain' ? 'parked' : (item.state as PromptQueueItem['state']),
       ...(item.orderRevision !== undefined ? { orderRevision: item.orderRevision } : {}),
       ...(item.contentRevision !== undefined ? { contentRevision: item.contentRevision } : {}),
-      ...(this.canSteer(item) ? { canSteer: true as const } : {}),
+      ...(this.canSteer(item, steerAttachments) ? { canSteer: true as const } : {}),
       ...(item.state === 'sending'
         ? { reason: '正在发送', delivery: 'sending' as const }
         : item.state === 'uncertain'
@@ -536,16 +556,16 @@ export class PromptQueues {
     })
   }
 
-  private canSteer(item: Record): boolean {
+  private canSteer(item: Record, steerAttachments: boolean): boolean {
     return (
       (item.state === 'parked' || item.state === 'waiting')
-      && !item.attachmentIds
+      && (!item.attachmentIds || (steerAttachments && !!this.options.bindAttachments))
       && !item.teamRequest
       && !mentionsConversationReference(item.text ?? '')
       && !item.model
       && !item.binding
       && !!this.options.steer
-      && (this.options.canSteer?.(item.sessionId) ?? true)
+      && (this.options.canSteer?.(item.sessionId, !!item.attachmentIds) ?? true)
     )
   }
 
@@ -569,7 +589,7 @@ export class PromptQueues {
         if (item.steerRunId === runId && (await this.confirmSteer(item, detail))) return
         throw new AppError(409, 'steer-unknown', '追加结果未确认，请核对会话记录')
       }
-      if (!this.canSteer(item) || !this.options.steer || !detail.steer || detail.summary.runId !== runId)
+      if (!this.canSteer(item, !!detail.steerAttachments) || !this.options.steer || !detail.steer || detail.summary.runId !== runId)
         throw new AppError(409, 'queue-steer-unavailable', '该项目前不能追加到这一轮，请查看队列。')
 
       if (!(await this.checkWriters(item))) throw new AppError(409, 'queue-paused', '排队内容的原授权已变化，请重新查看。')
@@ -586,6 +606,7 @@ export class PromptQueues {
           itemId,
           text: item.text!,
           queuedAt: item.queuedAt,
+          ...(item.attachmentIds ? { attachmentIds: item.attachmentIds, attachmentRequestId: item.requestId } : {}),
           ...(item.editor ? { editor: item.editor } : {}),
           ...(item.coauthors ? { coauthors: item.coauthors } : {}),
           authorize: async () => {
@@ -594,8 +615,9 @@ export class PromptQueues {
             await authorize()
           },
         })
+        if (outcome === 'injected' && item.attachmentIds) await this.options.bindAttachments!(item, sessionId, item.attachmentIds)
       } catch (error) {
-        if (error instanceof AppError && error.code !== 'steer-unknown' && refusedBeforeAccepting(error.status, error.code)) {
+        if (error instanceof AppError && refusedBeforeAccepting(error.status, error.code)) {
           await this.save(item)
           throw error
         }
@@ -612,7 +634,7 @@ export class PromptQueues {
   }
 
   private async confirmSteer(item: Record, detail: TaskDetail): Promise<boolean> {
-    if (!receivedSteer(item, detail)) {
+    if (!(await receivedSteer(item, detail, this.options))) {
       // The lock is ours again. A surviving sending record means its final write did not settle.
       if (item.state === 'sending') await this.patch(item, { state: 'uncertain' })
       return false

@@ -4,10 +4,12 @@ import type { AttachmentDraftController } from '../hooks/useAttachments.ts'
 import type { MenuSection } from '../components/overlays.tsx'
 import { AttachmentButton, AttachmentDrafts, pasteAttachments, dropAttachments } from './AttachmentDrafts.tsx'
 import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
-import { CornerDownRight, ListPlus, Slash } from 'lucide-react'
+import { ListPlus, Slash } from 'lucide-react'
 import type { PromptTemplate, SessionCommand, SessionSkill } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
-import type { SendKey } from '../preferences.ts'
+import type { FollowUpDefault, SendKey } from '../preferences.ts'
+import { clientKind, useShortcutBindings } from '../core/shortcutBindings.ts'
+import { followUpKeyLabels, followUpShortcuts, primarySendKeys, shortcutChordMatches } from '../workbenchShortcuts.ts'
 import { escapeIsLeftover } from '../escapeGrace.ts'
 import { SlashCommands, useSlashCommands, type SlashAction } from './SlashCommands.tsx'
 import { latchActionOf } from './latchActions.ts'
@@ -28,6 +30,9 @@ import {
   LockGlyph,
   SendGlyph,
   DrawerStack,
+  Kbd,
+  Menu,
+  type MenuTriggerProps,
 } from '@latch/ui'
 
 const COPY = defineCopy(
@@ -38,12 +43,12 @@ const COPY = defineCopy(
     sendAfterTurn: '本轮完成后发送',
     insertCommand: '插入命令',
     cancelSend: '取消发送',
-    steerHint: '加到正在运行的这一轮',
-    steerLabel: '追加到本轮',
-    steer: '追加',
+    steerHint: '追加到正在运行的这一轮',
+    sendNow: '立即发送',
     queue: '排队',
     queueSend: '排队发送',
-    queueNext: '排到下一轮',
+    deliveryMenu: '选择发送方式',
+    unassigned: '未设置',
     runAction: '运行动作',
     send: '发送',
     otherPending: '另一个会话有消息未确认送达',
@@ -77,11 +82,11 @@ const COPY = defineCopy(
     insertCommand: 'Insert command',
     cancelSend: 'Cancel send',
     steerHint: 'Add to the running turn',
-    steerLabel: 'Add to this turn',
-    steer: 'Add',
+    sendNow: 'Send now',
     queue: 'Queue',
     queueSend: 'Queue message',
-    queueNext: 'Queue for a later turn',
+    deliveryMenu: 'Choose how to send',
+    unassigned: 'Not set',
     runAction: 'Run action',
     send: 'Send',
     otherPending: 'Another session has an unconfirmed message',
@@ -136,14 +141,12 @@ export interface ConfigUnknownState {
   onAbandon?: () => void
 }
 
-const isMac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
-
 /**
  * The message input, on the new-session page and docked under a conversation, with its drawers joined above the card
  * and the status line as its last row. It starts one line high. The input stays editable while a run is active so the next message can be drafted; a Host that supports queues
  * accepts the next input for later. Its ring turns line-strong with focus inside, never blue. The send slot is a neutral
  * ink key, never blue: an arrow (a soft fill while there is nothing to send, still focusable with its reason as its
- * tooltip), 追加 while a run that takes more text is active and there is text, 排队 while another run is, or the stop
+ * tooltip), the chosen delivery action while a run can take the draft, or the stop
  * circle, which is never red and steps back while an
  * approval waits. A device that may only watch sees a dashed, sunken frame with a lock and the reason instead of the
  * input; the drawers and the stop button stay.
@@ -180,6 +183,7 @@ export function Composer({
   blockReason,
   onSubmit,
   onQueue,
+  followUpDefault = 'steer',
   sendKey,
   coarse,
   controls,
@@ -210,7 +214,7 @@ export function Composer({
   lastPrompt,
 }: {
   queueable?: boolean
-  /** The running turn takes more text: what is written goes into it, and the slot says 追加 instead of 排队. */
+  /** The running turn can take this draft immediately. */
   steerable?: boolean
   queueTray?: ReactNode
   fileMentions?: FileMentionChoice
@@ -270,6 +274,7 @@ export function Composer({
   blockReason?: string
   onSubmit: () => void
   onQueue?: () => void
+  followUpDefault?: FollowUpDefault
   sendKey: SendKey
   coarse: boolean
   /**
@@ -319,7 +324,8 @@ export function Composer({
 }) {
   const box = useRef<HTMLDivElement>(null)
   const commandAnchor = useRef<HTMLFormElement>(null)
-  const [slashCaret, setSlashCaret] = useState<{ draft: string; at: number }>()
+  const [completion, setCompletion] = useState<{ draft: string; at: number | null }>()
+  const completionCaret = completion?.draft === draft ? completion.at : null
   const [slashSendRevision, refreshSlashSend] = useState(0)
   const slashToSend = useRef<string | undefined>(undefined)
   const commandHead = /^([/／][^\s/／]+)([ \t]+)([\s\S]*)$/u.exec(draft)
@@ -336,7 +342,7 @@ export function Composer({
     if (input && !input.disabled) input.edit(value, selection)
     else onDraft(value)
   }
-  const mentions = useFileMentions(draft, editDraft, textareaRef, fileMentions, commandAnchor, members?.mention)
+  const mentions = useFileMentions(draft, completionCaret, editDraft, textareaRef, fileMentions, commandAnchor, members?.mention)
 
   const roundSending = members?.sending === true
   const locked = sending || roundSending || pending !== null || attachments?.preparing === true
@@ -368,11 +374,17 @@ export function Composer({
         : round
           ? canSend && round.ready
           : canSend && !empty && (!run || queueDraft))
+  const chooseDelivery = queueDraft && queueable && steerable && !!onQueue
+  const defaultQueue = !steerable || (chooseDelivery && followUpDefault === 'queue')
+  useShortcutBindings()
+  const desktop = clientKind() === 'desktop'
+  const chords = queueDraft && followUpShortcuts(followUpDefault, desktop)
   const submit = () => {
     if (answer) answer.onSubmit()
     else if (typedAction) {
       if (!actionBlock) localAction?.run?.(typedAction.argument)
-    } else onSubmit()
+    } else if (chooseDelivery && defaultQueue) onQueue()
+    else onSubmit()
   }
   useLayoutEffect(() => {
     const input = textareaRef.current
@@ -393,7 +405,7 @@ export function Composer({
   const escapeAt = useRef({ at: 0, run: run?.id })
   const slash = useSlashCommands({
     draft,
-    caret: slashCaret?.draft === draft ? slashCaret.at : draft.length,
+    caret: completionCaret,
     commands,
     skills,
     skillsTruncated,
@@ -410,7 +422,6 @@ export function Composer({
     enabled: !locked && readOnly === undefined && answer === undefined,
     onDraft: (value, selection) => {
       editDraft(value, selection)
-      if (selection) setSlashCaret({ draft: value, at: selection.end })
       textareaRef.current?.focus({ preventScroll: true })
     },
     onCommand: value => {
@@ -422,10 +433,10 @@ export function Composer({
   })
   /** The input's keys before its own: the menus, then the command's Backspace, Esc, ↑ and the send keys. */
   const keydown = (event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.getModifierState('AltGraph')) return
     if (slash.keydown(event)) return
     // Hidden while a submission is held: its keys are the input's again.
     if (!locked && readOnly === undefined && mentions.keydown(event)) return
-    if (event.isComposing || event.keyCode === 229) return
     const input = textareaRef.current
     // Backspace after a command and the space that follows it takes both, so the draft does not start with a space.
     if (
@@ -472,13 +483,33 @@ export function Composer({
       onDraft(lastPrompt)
       return
     }
-    if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return
+    if (variant === 'session' && chords && sendable && !slash.open && !mentions.open && !(event.metaKey && event.ctrlKey)) {
+      const stroke = {
+        key: event.key,
+        code: event.code,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+        typing: true,
+      }
+      const named = (['steer', 'queue'] as const).find(action => shortcutChordMatches(stroke, chords[action]))
+      if (named) {
+        if (!event.repeat) {
+          if (named === 'steer' && steerable) onSubmit()
+          if (named === 'queue' && queueable) onQueue?.()
+        }
+        event.preventDefault()
+        return
+      }
+    }
+    if (event.key !== 'Enter' || event.altKey || event.shiftKey || (event.metaKey && event.ctrlKey)) return
     const explicit = event.metaKey || event.ctrlKey
-    if (!explicit && (event.shiftKey || event.altKey || coarse || sendKey !== 'enter')) return
+    if (!explicit && (coarse || sendKey !== 'enter')) return
     event.preventDefault()
-    if (sendable) submit()
+    if (sendable && !event.repeat) submit()
   }
-  const shortcut = sendKey === 'enter' && !coarse ? 'Enter' : `${isMac() ? '⌘' : 'Ctrl'} Enter`
+  const shortcut = primarySendKeys(sendKey, coarse)
   const sendTip =
     actionBlock
     ?? blockReason
@@ -516,14 +547,10 @@ export function Composer({
       inputRef={textareaRef}
       value={draft}
       onChange={(value, caret) => {
-        mentions.setCaret(caret)
-        setSlashCaret({ draft: value, at: caret })
+        setCompletion({ draft: value, at: caret })
         onDraft(value)
       }}
-      onCaret={caret => {
-        mentions.setCaret(caret)
-        setSlashCaret({ draft, at: caret })
-      }}
+      onCaret={(at, value) => setCompletion({ draft: value, at })}
       catalogue={catalogue}
       refs={fileMentions?.refs}
       hint={argumentHint}
@@ -580,7 +607,6 @@ export function Composer({
         const value = before + insert + draft.slice(end)
         slash.reopen()
         editDraft(value, { start: start + insert.length, end: start + insert.length })
-        setSlashCaret({ draft: value, at: start + insert.length })
         input?.focus({ preventScroll: true })
       }}
     />
@@ -596,34 +622,17 @@ export function Composer({
         </Button>
       ) : run && !queueDraft && !answering && !choosing && !rounding ? (
         <StopButton run={run} stepBack={stepBack} />
-      ) : queueDraft && steerable ? (
-        <Tooltip content={sendTip ?? COPY.steerHint} shortcut={sendTip === undefined ? shortcut : undefined}>
-          <button
-            type="submit"
-            className="send-button queue-button"
-            aria-label={COPY.steerLabel}
-            aria-disabled={!sendable || undefined}
-            onClick={event => {
-              if (!sendable) event.preventDefault()
-            }}>
-            <CornerDownRight size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-            {COPY.steer}
-          </button>
-        </Tooltip>
-      ) : queueDraft ? (
-        <Tooltip content={sendTip ?? COPY.queue} shortcut={sendTip === undefined ? shortcut : undefined} describe={sendTip !== undefined}>
-          <button
-            type="submit"
-            className="send-button queue-button"
-            aria-label={COPY.queueSend}
-            aria-disabled={!sendable || undefined}
-            onClick={event => {
-              if (!sendable) event.preventDefault()
-            }}>
-            <ListPlus size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-            {COPY.queue}
-          </button>
-        </Tooltip>
+      ) : chords ? (
+        <FollowUpButton
+          defaultQueue={defaultQueue}
+          sendable={sendable}
+          coarse={coarse}
+          tip={sendTip}
+          shortcut={shortcut}
+          chords={chords}
+          desktop={desktop}
+          choices={chooseDelivery ? { queue: onQueue, steer: onSubmit } : undefined}
+        />
       ) : readOnly !== undefined ? null : (
         <Tooltip
           content={sendTip ?? (choosing ? COPY.runAction : rounding ? members!.sendLabel : COPY.send)}
@@ -651,23 +660,7 @@ export function Composer({
     </div>
   )
 
-  const queueNext = queueDraft && steerable && queueable ? onQueue : undefined
-  const add = attachments ? (
-    <AttachmentButton
-      controller={attachments}
-      disabled={locked}
-      sections={
-        queueNext
-          ? [
-              ...(attachmentMenu ?? []),
-              { id: 'queue', items: [{ id: 'queue', label: COPY.queueNext, disabled: !sendable, onSelect: queueNext }] },
-            ]
-          : attachmentMenu
-      }
-    />
-  ) : queueNext ? (
-    <IconButton icon={ListPlus} label={COPY.queueNext} disabled={!sendable} onClick={queueNext} />
-  ) : null
+  const add = attachments ? <AttachmentButton controller={attachments} disabled={locked} sections={attachmentMenu} /> : null
   const fields = (
     <>
       <RunBar run={run} />
@@ -801,6 +794,96 @@ export function Composer({
         </>
       )}
     </div>
+  )
+}
+
+function FollowUpButton({
+  defaultQueue,
+  sendable,
+  coarse,
+  tip,
+  shortcut,
+  chords,
+  desktop,
+  choices,
+}: {
+  defaultQueue: boolean
+  sendable: boolean
+  coarse: boolean
+  tip: string | undefined
+  shortcut: string
+  chords: ReturnType<typeof followUpShortcuts>
+  desktop: boolean
+  choices: { queue(): void; steer(): void } | undefined
+}) {
+  const Glyph = defaultQueue ? ListPlus : SendGlyph
+  const button = (menu?: MenuTriggerProps) => (
+    <button
+      {...menu}
+      type="submit"
+      className="send-button queue-button"
+      aria-label={defaultQueue ? COPY.queueSend : COPY.sendNow}
+      aria-keyshortcuts={menu ? 'ArrowDown' : undefined}
+      aria-disabled={!sendable || undefined}
+      onClick={event => {
+        if (!sendable) {
+          event.preventDefault()
+          return
+        }
+        if (!menu) return
+        const touch = 'pointerType' in event.nativeEvent ? event.nativeEvent.pointerType === 'touch' : coarse
+        if (event.detail !== 0 && touch) {
+          event.preventDefault()
+          menu.onClick()
+        } else if (menu['aria-expanded']) menu.onClick()
+      }}>
+      <Glyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
+      {defaultQueue ? COPY.queue : COPY.sendNow}
+    </button>
+  )
+  if (!choices || !sendable)
+    return (
+      <Tooltip content={tip ?? (defaultQueue ? COPY.sendAfterTurn : COPY.steerHint)} shortcut={sendable ? shortcut : undefined}>
+        {button()}
+      </Tooltip>
+    )
+  const keys = (action: FollowUpDefault) => {
+    const primary = action === (defaultQueue ? 'queue' : 'steer') ? shortcut : null
+    const labels = followUpKeyLabels(primary, chords[action], desktop)
+    return labels.length ? <Kbd>{labels.join(' / ')}</Kbd> : COPY.unassigned
+  }
+  return (
+    <Menu
+      previewOnHover
+      label={COPY.deliveryMenu}
+      side="top"
+      align="end"
+      size="sm"
+      trigger={button}
+      sections={[
+        {
+          id: 'delivery',
+          items: [
+            {
+              id: 'steer',
+              label: COPY.sendNow,
+              description: COPY.steerHint,
+              icon: SendGlyph,
+              meta: keys('steer'),
+              onSelect: choices.steer,
+            },
+            {
+              id: 'queue',
+              label: COPY.queueSend,
+              description: COPY.sendAfterTurn,
+              icon: ListPlus,
+              meta: keys('queue'),
+              onSelect: choices.queue,
+            },
+          ],
+        },
+      ]}
+    />
   )
 }
 

@@ -3,7 +3,7 @@ import { DEFAULT_SHORTCUTS, shortcutRefusal, type ShortcutsReceipt } from '@latc
 import { ApiError, NoAnswerError } from '../src/core/api.ts'
 import { ShortcutBindings, shortcutBindings } from '../src/core/shortcutBindings.ts'
 import { recordedChord, rebound } from '../src/settings/ShortcutsSettings.tsx'
-import { shortcutKeys, shortcutMatches, shortcutRows, workbenchShortcut } from '../src/workbenchShortcuts.ts'
+import { followUpShortcuts, shortcutKeys, shortcutMatches, shortcutRows, workbenchShortcut } from '../src/workbenchShortcuts.ts'
 
 const key = (code: string, extra = {}) => ({ code, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...extra })
 const identity = { hostId: 'host-1', deviceId: 'dev_AAAAAAAAAAAAAAAAAAAAAA' }
@@ -13,6 +13,23 @@ afterEach(() => {
 })
 
 describe('rebinding a shortcut', () => {
+  it('keeps send and queue on their named keys when the primary action changes', () => {
+    const bindings = vi.spyOn(shortcutBindings, 'bindings').mockReturnValue({})
+    expect(followUpShortcuts('queue', false)).toEqual({ queue: null, steer: 'Mod+Shift+Enter' })
+    bindings.mockReturnValue({ 'send-now': 'Mod+Alt+KeyG', 'queue-message': 'Mod+Shift+KeyM' })
+    const rows = (followUpDefault: 'queue' | 'steer') =>
+      shortcutRows(false, false, { followUpDefault })
+        .filter(row => row.id === 'send-now' || row.id === 'queue-message')
+        .map(row => row.keys)
+    expect(rows('queue')).toEqual(['Ctrl Alt G', 'Enter · Ctrl Shift M'])
+    expect(rows('steer')).toEqual(['Enter · Ctrl Alt G', 'Ctrl Shift M'])
+  })
+
+  it('preserves chords already assigned to other actions when choosing a secondary send shortcut', () => {
+    vi.spyOn(shortcutBindings, 'bindings').mockReturnValue({ palette: 'Mod+Shift+Enter', usage: 'Mod+Alt+Enter' })
+    expect(followUpShortcuts('steer', false)).toEqual({ steer: null, queue: 'Mod+Alt+Shift+Enter' })
+  })
+
   it('keeps the keys every client had before anyone rebinds one', () => {
     const before: Record<string, [string | null, string | null]> = {
       settings: ['⌘,', 'Alt ,'],

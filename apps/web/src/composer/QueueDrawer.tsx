@@ -1,8 +1,21 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { PromptQueueItem } from '@latch/protocol'
-import { ArrowDown, ArrowUp, CornerDownRight, GripVertical } from 'lucide-react'
-import { Button, Collapse, Dialog, Drawer, EditGlyph, IconButton, InlineNotice, Menu, MOTION, TextAreaField, TrashGlyph } from '@latch/ui'
+import { ArrowDown, ArrowUp, GripVertical } from 'lucide-react'
+import {
+  Button,
+  Collapse,
+  Dialog,
+  Drawer,
+  EditGlyph,
+  IconButton,
+  InlineNotice,
+  Menu,
+  MOTION,
+  SendGlyph,
+  TextAreaField,
+  TrashGlyph,
+} from '@latch/ui'
 import { api, inlineError } from '../core/api.ts'
 import { defineCopy, formatNumber } from '../core/i18n.ts'
 import { VisibleText, escapeHiddenCharacters } from '../components/VisibleText.tsx'
@@ -23,8 +36,8 @@ const COPY = defineCopy(
     notSent: (reason: string) => `未发送：${reason}`,
     changed: '权限或会话已变化',
     send: '发送',
-    steer: '追加到本轮',
-    add: '追加',
+    steerHint: '追加到正在运行的这一轮',
+    sendNow: '立即发送',
     order: '调整顺序',
     up: '上移',
     down: '下移',
@@ -46,8 +59,8 @@ const COPY = defineCopy(
     notSent: (reason: string) => `Unsent · ${reason}`,
     changed: 'Permissions or session changed',
     send: 'Send',
-    steer: 'Add to this turn',
-    add: 'Add',
+    steerHint: 'Add to the running turn',
+    sendNow: 'Send now',
     order: 'Reorder',
     up: 'Move up',
     down: 'Move down',
@@ -175,6 +188,7 @@ export function QueueDrawer({
   canRemove,
   queueControl,
   steerRunId,
+  steerAttachments,
   running,
   onRemovedUnknown,
   onChanged,
@@ -185,6 +199,7 @@ export function QueueDrawer({
   canRemove: boolean
   queueControl: boolean
   steerRunId?: string | undefined
+  steerAttachments?: boolean | undefined
   running: boolean
   onRemovedUnknown(message: string): void
   onChanged(): Promise<void>
@@ -254,7 +269,13 @@ export function QueueDrawer({
             arrive={opening > 0}
             render={(item, index) => {
               const itemPath = `${queuePath}/${encodeURIComponent(item.id)}`
-              const canSteer = queueControl && !!steerRunId && item.canSteer && !item.delivery && item.state !== 'dropped'
+              const canSteer =
+                queueControl
+                && !!steerRunId
+                && item.canSteer
+                && (!item.attachmentCount || steerAttachments)
+                && !item.delivery
+                && item.state !== 'dropped'
               const canResume = !running && index === 0 && item.state === 'parked' && item.delivery !== 'steer-unknown'
               const neighbors = [
                 { target: items[index - 1], label: COPY.up, icon: ArrowUp },
@@ -332,8 +353,8 @@ export function QueueDrawer({
                       <Button
                         size="xs"
                         variant={canSteer ? 'ghost' : 'primary'}
-                        icon={canSteer ? CornerDownRight : undefined}
-                        aria-label={canSteer ? COPY.steer : COPY.send}
+                        icon={canSteer ? SendGlyph : undefined}
+                        tooltip={canSteer ? COPY.steerHint : undefined}
                         loading={busy === itemPath}
                         disabled={busy !== null}
                         onClick={() => {
@@ -346,7 +367,7 @@ export function QueueDrawer({
                               : api(itemPath + '/send', { method: 'POST' }),
                           )
                         }}>
-                        {canSteer ? COPY.add : COPY.send}
+                        {canSteer ? COPY.sendNow : COPY.send}
                       </Button>
                     )}
                     {canSend && item.state !== 'dropped' && !item.delivery && (

@@ -333,6 +333,44 @@ describe('persistent Host prompt queues', () => {
     expect(options.send).not.toHaveBeenCalled()
   })
 
+  it('keeps held attachments queued on a text-only turn and settles a lost attachment steer only with matching files', async () => {
+    const { queue, detail, options } = await fixture()
+    const ids = ['A'.repeat(22), 'B'.repeat(22)]
+    const body = { ...input(''), attachmentIds: ids }
+    options.holdAttachments = vi.fn(async () => {})
+    options.bindAttachments = vi.fn(async () => {})
+    options.steer = vi.fn(async () => {
+      throw new AppError(409, 'steer-unknown', 'Lost reply')
+    })
+    detail.steer = true
+    await queue.submit(actor, 'task', body)
+    const [item] = queue.view('task')
+    expect(item?.canSteer).toBeUndefined()
+    const send = () => queue.steer('task', item!.id, { runId: 'run-1', contentRevision: 0 }, actor, async () => {})
+    await expect(send()).rejects.toMatchObject({ code: 'queue-steer-unavailable' })
+    detail.steerAttachments = true
+    await expect(send()).rejects.toMatchObject({ code: 'steer-unknown' })
+    expect(queue.holdsUpload(actor.deviceId, body.requestId)).toBe(true)
+    const delivery = vi.mocked(options.steer).mock.calls[0]![2]
+    expect(delivery).toMatchObject({ attachmentRequestId: body.requestId, attachmentIds: ids })
+    const message: TaskDetail['messages'][number] = {
+      id: 'steer',
+      role: 'user',
+      text: '',
+      requestId: delivery.requestId,
+      steered: true,
+      createdAt: '',
+    }
+    detail.messages.push(message)
+    await expect(send()).rejects.toMatchObject({ code: 'steer-unknown' })
+    expect(options.bindAttachments).not.toHaveBeenCalled()
+    message.attachments = ids.map(id => ({ id, kind: 'text', name: 'note.txt', mime: 'text/plain', size: 2, sha256: 'c'.repeat(64) }))
+    await send()
+    expect(options.bindAttachments).toHaveBeenCalledWith(expect.objectContaining(actor), 'task', ids)
+    expect(queue.holdsUpload(actor.deviceId, body.requestId)).toBe(false)
+    expect(options.steer).toHaveBeenCalledOnce()
+  })
+
   it('keeps an unknown steer out of fresh turns across restart and settles only from its own user message', async () => {
     const { queue, detail, options } = await fixture()
     options.steer = vi.fn(async () => {

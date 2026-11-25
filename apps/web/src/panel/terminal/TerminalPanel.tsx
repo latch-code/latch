@@ -430,7 +430,7 @@ export function TerminalPanel({
         return
       }
       const excerpt = draftText(errorOnly ? COPY.errorLabel(tabName(tab)) : tabName(tab), extract)
-      usableCompose.current(errorOnly ? excerpt + '\n' : excerpt)
+      usableCompose.current(excerpt + '\n')
       if (extract.mayContainSecret) setNotice({ tone: 'warn', text: COPY.possibleSecret })
     } catch (cause) {
       setNotice({ tone: 'error', text: errorMessage(cause) })

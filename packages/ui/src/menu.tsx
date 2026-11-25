@@ -728,6 +728,7 @@ export function Menu({
   size = 'xs',
   selection = false,
   frosted = false,
+  previewOnHover = false,
   className,
   ...placement
 }: Omit<PanelProps, 'onChoose' | 'onDismiss' | 'open' | 'panelRef'>
@@ -740,11 +741,63 @@ export function Menu({
     size?: LayerSize
     /** A floating menu may use the device's surface preference. Phone sheets remain solid. */
     frosted?: boolean
+    /** An action button can show its alternatives on hover or keyboard focus without taking focus from the editor. */
+    previewOnHover?: boolean
     title?: string
   }) {
-  const phone = useMediaQuery(PHONE_QUERY)
+  const phone = useMediaQuery(previewOnHover ? `${PHONE_QUERY} and (hover: none)` : PHONE_QUERY)
   const panel = useRef<HTMLDivElement>(null)
   const { trigger: triggerRef, layer, open, setOpen, close, openFrom } = useLayer(placement)
+  const preview = useRef(false)
+  useEffect(() => {
+    const button = triggerRef.current
+    const menu = layer.current
+    if (!previewOnHover || phone || !button || !menu) return undefined
+    let timer: ReturnType<typeof setTimeout>
+    const stay = () => clearTimeout(timer)
+    const show = () => {
+      stay()
+      if (open || button.getAttribute('aria-disabled') === 'true') return
+      preview.current = true
+      setOpen(true)
+    }
+    const enter = (event: PointerEvent) => {
+      if (event.pointerType === 'mouse') show()
+    }
+    const focus = () => {
+      if (button.matches(':focus-visible')) show()
+    }
+    const leave = () => {
+      stay()
+      // Allow the pointer to cross the gap between the trigger and its menu.
+      timer = setTimeout(() => {
+        if (preview.current && !button.matches(':focus-visible') && !menu.contains(document.activeElement)) setOpen(false)
+      }, 160)
+    }
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (!open || !preview.current || event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setOpen(false)
+    }
+    button.addEventListener('pointerenter', enter)
+    button.addEventListener('pointerleave', leave)
+    button.addEventListener('focus', focus)
+    button.addEventListener('blur', leave)
+    menu.addEventListener('pointerenter', stay)
+    menu.addEventListener('pointerleave', leave)
+    document.addEventListener('keydown', escape, true)
+    return () => {
+      stay()
+      button.removeEventListener('pointerenter', enter)
+      button.removeEventListener('pointerleave', leave)
+      button.removeEventListener('focus', focus)
+      button.removeEventListener('blur', leave)
+      menu.removeEventListener('pointerenter', stay)
+      menu.removeEventListener('pointerleave', leave)
+      document.removeEventListener('keydown', escape, true)
+    }
+  }, [previewOnHover, phone, open, setOpen, triggerRef, layer])
   // Without a trigger, a hidden mark where the menu is written lets `context` find its row the same way.
   const mark = useRef<HTMLSpanElement>(null)
   useContextGesture(
@@ -754,7 +807,8 @@ export function Menu({
   )
   // In a sheet too: its items are out of the Tab order, so the sheet itself does not move focus onto them.
   useEffect(() => {
-    if (open) focusInto(panel.current)
+    if (!open) preview.current = false
+    else if (!preview.current) focusInto(panel.current)
   }, [open])
   const choose = (item: MenuItem) => {
     close(!phone)
@@ -787,12 +841,15 @@ export function Menu({
       {trigger?.({
         ref: triggerRef,
         onClick: () => {
+          preview.current = false
           setOpen(!open)
         },
         onKeyDown: event => {
-          if (event.key === 'ArrowDown' && !open) {
+          if (event.key === 'ArrowDown' && (!open || preview.current)) {
             event.preventDefault()
-            setOpen(true)
+            preview.current = false
+            if (open) focusInto(panel.current)
+            else setOpen(true)
           }
         },
         'aria-haspopup': phone ? 'dialog' : 'menu',

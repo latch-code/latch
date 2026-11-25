@@ -6,12 +6,14 @@ import { clientKind, shortcutBindings, useShortcutBindings, type Bindings } from
 import { capsText, isRebindable, shortcutCaps, shortcutRows } from '../workbenchShortcuts.ts'
 import { SettingsGroup, SettingsRow } from './common.tsx'
 import { defineCopy } from '../core/i18n.ts'
+import { useCoarsePointer } from '../breakpoints.ts'
+import { usePreferences } from '../preferences.ts'
 
 const COPY = defineCopy(
   {
     search: '搜索快捷键',
     fixed: '固定',
-    fixedDetail: '范围、终端窗格、允许请求、撤销归档与输入框里的按键不能改',
+    fixedDetail: '范围、终端窗格、允许请求、撤销归档和部分输入框按键固定',
     record: '按下新的组合键',
     noMatch: '没有匹配的快捷键',
     unknown: '结果未知',
@@ -24,7 +26,7 @@ const COPY = defineCopy(
   {
     search: 'Search shortcuts',
     fixed: 'Fixed',
-    fixedDetail: 'Shortcuts for scopes, terminal panes, allowing requests, undoing archive, and the input field are fixed.',
+    fixedDetail: 'Scope, terminal pane, approval, archive undo, and some composer shortcuts are fixed.',
     record: 'Press a new key combination',
     noMatch: 'No matching shortcuts',
     unknown: 'Outcome unknown',
@@ -87,8 +89,10 @@ export function ShortcutsSettings({
   const [refusal, setRefusal] = useState<{ action: ShortcutAction; text: string } | null>(null)
   const desktop = currentShell() !== null
   const bindings = shortcutBindings.bindings()
+  const { followUpDefault, sendKey } = usePreferences()
+  const coarse = useCoarsePointer()
   const needle = query.trim().toLocaleLowerCase()
-  const rows = shortcutRows(desktop, undefined, { spaces, delegate }).filter(row =>
+  const rows = shortcutRows(desktop, undefined, { spaces, delegate, followUpDefault, sendKey, coarse }).filter(row =>
     `${row.label} ${row.keys}`.toLocaleLowerCase().includes(needle),
   )
   const busy = view.pending !== undefined

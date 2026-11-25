@@ -29,6 +29,7 @@ public struct PhoneFileMentionToken: Equatable, Sendable {
             let unit = body.character(at: start)
             if phonePromptWhitespace(unit) { return nil }
             if unit == 64 {
+                if PhoneInputReferences.materialRanges(in: text).contains(where: { NSLocationInRange(start, $0) }) { return nil }
                 let query = body.substring(with: NSRange(location: start + 1, length: end - start - 1))
                 if start > 0, !phonePromptWhitespace(body.character(at: start - 1)) {
                     var prefix = start
@@ -76,10 +77,10 @@ public struct PhoneFileMentionToken: Equatable, Sendable {
 
     /** Only a standalone marker with the Host's exact path spelling retains its file. */
     public static func contains(root: String, path: String, in text: String) -> Bool {
-        !ranges(marker: marker(root: root, path: path), in: text).isEmpty
+        !ranges(marker: marker(root: root, path: path), in: text, excluding: PhoneInputReferences.materialRanges(in: text)).isEmpty
     }
 
-    public static func ranges(marker: String, in text: String) -> [NSRange] {
+    public static func ranges(marker: String, in text: String, excluding materials: [NSRange] = []) -> [NSRange] {
         guard !marker.isEmpty else { return [] }
         let body = text as NSString
         var ranges = [NSRange]()
@@ -89,7 +90,8 @@ public struct PhoneFileMentionToken: Equatable, Sendable {
             guard match.location != NSNotFound else { break }
             let end = NSMaxRange(match)
             if (match.location == 0 || phonePromptWhitespace(body.character(at: match.location - 1))),
-               (end == body.length || phonePromptWhitespace(body.character(at: end))) { ranges.append(match) }
+               (end == body.length || phonePromptWhitespace(body.character(at: end))),
+               !materials.contains(where: { NSIntersectionRange($0, match).length > 0 }) { ranges.append(match) }
             start = match.location + 1
         }
         return ranges

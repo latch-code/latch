@@ -33,10 +33,17 @@ export const SHORTCUT_ACTIONS = [
   'next',
   'next-approval',
   'compose',
+  'send-now',
+  'queue-message',
   'usage',
   'shortcuts',
 ] as const
 export type ShortcutAction = (typeof SHORTCUT_ACTIONS)[number]
+
+/** Available on both clients, only inside the prompt editor, and initially unbound. */
+export function isComposerShortcut(action: string): action is 'send-now' | 'queue-message' {
+  return action === 'send-now' || action === 'queue-message'
+}
 
 /**
  * A chord: optional `Mod` (⌘ on a Mac, Ctrl elsewhere; either key matches), `Alt` and `Shift`, in that order, then one
@@ -94,7 +101,7 @@ export function formatChord({ mod, alt, shift, code }: ParsedChord): ShortcutCho
   return `${mod ? 'Mod+' : ''}${alt ? 'Alt+' : ''}${shift ? 'Shift+' : ''}${code}`
 }
 
-/** Today's keys of each action, by kind of client; null where that client has no such action. */
+/** Default keys by client. A null composer shortcut may be bound; other null actions are unavailable. */
 export const DEFAULT_SHORTCUTS: Readonly<Record<ShortcutAction, Readonly<Record<ShortcutClient, ShortcutChord | null>>>> = {
   settings: { desktop: 'Mod+Comma', browser: 'Alt+Comma' },
   new: { desktop: 'Mod+KeyN', browser: 'Alt+KeyN' },
@@ -117,6 +124,8 @@ export const DEFAULT_SHORTCUTS: Readonly<Record<ShortcutAction, Readonly<Record<
   next: { desktop: 'Mod+Shift+BracketRight', browser: 'Alt+BracketRight' },
   'next-approval': { desktop: 'Mod+Alt+KeyA', browser: 'Alt+Shift+KeyA' },
   compose: { desktop: 'Mod+KeyL', browser: 'Alt+KeyL' },
+  'send-now': { desktop: null, browser: null },
+  'queue-message': { desktop: null, browser: null },
   usage: { desktop: 'Mod+Shift+KeyU', browser: 'Alt+Shift+KeyU' },
   shortcuts: { desktop: 'Mod+Slash', browser: 'Alt+Slash' },
 }
@@ -144,6 +153,8 @@ export const SHORTCUT_ACTION_LABELS: Readonly<Record<ShortcutAction, string>> = 
   next: '下一个会话',
   'next-approval': '下一个等你处理的请求',
   compose: '聚焦输入框',
+  'send-now': '立即发送',
+  'queue-message': '排队发送',
   usage: '额度与用量',
   shortcuts: '快捷键',
 }
@@ -268,6 +279,25 @@ export const MENU_RESERVED: readonly ShortcutChord[] = [
   'Mod+KeyW',
 ]
 
+// Sending from the editor must leave its newline, clipboard, history, selection and deletion keys available.
+// Mod can match Ctrl even on a Mac, where the editor also implements the standard Emacs-style editing keys.
+const COMPOSER_EDITING_KEYS = new Set([
+  'Alt+Enter',
+  'Alt+KeyU',
+  'Alt+KeyV',
+  'Alt+Backspace',
+  'Mod+Backspace',
+  'Mod+Alt+KeyH',
+  'Mod+Shift+KeyV',
+  'Mod+Alt+Shift+KeyV',
+  'Mod+Shift+KeyZ',
+  'Mod+Shift+KeyU',
+  ...['A', 'B', 'C', 'D', 'E', 'F', 'H', 'K', 'N', 'O', 'P', 'T', 'U', 'V', 'X', 'Y', 'Z'].map(key => `Mod+Key${key}`),
+  ...['A', 'B', 'E', 'F', 'N', 'P'].map(key => `Mod+Shift+Key${key}`),
+  ...['Mod+', 'Mod+Shift+'].flatMap(prefix => ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].map(key => prefix + key)),
+  ...['Alt+', 'Alt+Shift+'].flatMap(prefix => ['ArrowLeft', 'ArrowRight'].map(key => prefix + key)),
+])
+
 export type ShortcutsDocument = {
   schema: typeof SHORTCUTS_SCHEMA
   client: ShortcutClient
@@ -312,8 +342,9 @@ export function effectiveShortcuts(
   const result = new Map<ShortcutAction, ShortcutChord>()
   for (const action of SHORTCUT_ACTIONS) {
     const own = DEFAULT_SHORTCUTS[action][client]
-    if (own === null) continue
-    result.set(action, bindings[action] ?? own)
+    if (own === null && !isComposerShortcut(action)) continue
+    const chord = bindings[action] ?? own
+    if (chord !== null) result.set(action, chord)
   }
   return result
 }
@@ -332,11 +363,12 @@ export function shortcutRefusal(
   const parsed = parseChord(chord)
   if (!parsed || formatChord(parsed) !== chord) return { kind: 'invalid' }
   const own = DEFAULT_SHORTCUTS[action][client]
-  if (own === null) return { kind: 'unavailable' }
+  if (own === null && !isComposerShortcut(action)) return { kind: 'unavailable' }
   for (const [other, keys] of effectiveShortcuts(client, bindings))
     if (other !== action && keys === chord) return { kind: 'conflict', action: other }
   const fixed = FIXED_SHORTCUTS[client].find(entry => entry.chord === chord)
   if (fixed) return { kind: 'fixed', label: fixed.label }
+  if (isComposerShortcut(action) && COMPOSER_EDITING_KEYS.has(chord)) return { kind: 'fixed', label: '输入框文字编辑' }
   if (chord === own) return null
   if (SYSTEM_RESERVED.includes(chord)) return { kind: 'system' }
   if (client === 'browser' && BROWSER_RESERVED.includes(chord)) return { kind: 'browser' }

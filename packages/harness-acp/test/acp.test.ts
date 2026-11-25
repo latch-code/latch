@@ -6181,7 +6181,59 @@ describe('reading what a Harness offers without a turn, and model IDs a person t
 })
 
 describe('ACP steering', () => {
-  it('keeps an unrecognized queued-steer reply unknown on retry', async () => {
+  it('rechecks direct image delivery after reading it and keeps an unreadable acknowledgment unknown', async () => {
+    const image = {
+      id: 'abcdefghijklmnopqrstuv',
+      name: 'image.png',
+      kind: 'image',
+      mime: 'image/png',
+      size: 3,
+      sha256: 'a'.repeat(64),
+    } as const
+    const events: string[] = []
+    const fixture = await setup(
+      { FAKE_ACP_CAPS: 'steer,steerAttachments,images' },
+      {},
+      {},
+      {
+        readAttachment: async () => {
+          events.push('read')
+          return { type: 'image', data: 'cG5n', mimeType: 'image/png' }
+        },
+      },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'steerable', requestId: rid() })
+    await until(bridge, sessionId, state => state.steerAttachments === true)
+    const requestId = rid()
+    const request = vi.spyOn(AcpWire.prototype, 'request').mockResolvedValueOnce({ outcome: 'unrecognized' })
+    try {
+      await expect(
+        bridge.steerWithAttachments!(sessionId, '', requestId, [image], {
+          authorize: async () => {
+            events.push('denied')
+            throw new AppError(403, 'scope-required', '没有运行权限')
+          },
+        }),
+      ).rejects.toMatchObject({ code: 'scope-required' })
+      expect(request).not.toHaveBeenCalled()
+      const options = {
+        authorize: async () => {
+          events.push('allowed')
+        },
+      }
+      for (let attempt = 0; attempt < 2; attempt++)
+        await expect(bridge.steerWithAttachments!(sessionId, '', requestId, [image], options)).rejects.toMatchObject({
+          code: 'steer-unknown',
+        })
+      expect(request).toHaveBeenCalledTimes(1)
+      expect(events).toEqual(['read', 'denied', 'read', 'allowed'])
+    } finally {
+      request.mockRestore()
+    }
+  })
+
+  it.each(['direct', 'queued'])('keeps an unrecognized %s steer reply unknown on retry', async mode => {
     const bridge = await (await setup({ FAKE_ACP_CAPS: 'steer' })).open()
     const { sessionId } = await bridge.createTask({ prompt: 'steerable', requestId: rid() })
     const detail = await until(bridge, sessionId, state => state.steer === true)
@@ -6189,8 +6241,9 @@ describe('ACP steering', () => {
     try {
       const requestId = rid()
       const options = { runId: detail.summary.runId!, queuedAt: new Date().toISOString(), authorize: async () => {} }
-      for (let attempt = 0; attempt < 2; attempt++)
-        await expect(bridge.steerQueued!(sessionId, 'queued text', requestId, options)).rejects.toMatchObject({ code: 'steer-unknown' })
+      const steer = () =>
+        mode === 'queued' ? bridge.steerQueued!(sessionId, 'more', requestId, options) : bridge.steer!(sessionId, 'more', requestId)
+      for (let attempt = 0; attempt < 2; attempt++) await expect(steer()).rejects.toMatchObject({ code: 'steer-unknown' })
       expect(request).toHaveBeenCalledTimes(1)
     } finally {
       request.mockRestore()
@@ -6249,6 +6302,17 @@ describe('ACP steering', () => {
     const { sessionId } = await bridge.createTask({ prompt: 'steerable', requestId: rid() })
     const running = await until(bridge, sessionId, detail => detail.liveText === 'working')
     expect(running.steer).toBe(true)
+    expect(running.steerAttachments).toBeUndefined()
+    const image = {
+      id: 'abcdefghijklmnopqrstuv',
+      name: 'image.png',
+      kind: 'image',
+      mime: 'image/png',
+      size: 4,
+      sha256: 'a'.repeat(64),
+    } as const
+    expect(await bridge.steerWithAttachments!(sessionId, '', rid(), [image])).toBe('prompt-required')
+    expect(received(await fixture.log(), '_session/steering')).toHaveLength(0)
     const requestId = rid()
     expect(await bridge.steer!(sessionId, 'look at b.txt too', requestId)).toBe('injected')
     const detail = await settled(bridge, sessionId)
@@ -6312,6 +6376,9 @@ describe('ACP steering', () => {
     expect(detail.messages.filter(message => message.steered)).toEqual([])
     // The stop is told that text was added this turn, since nobody knows whether the agent read it.
     expect(systemText(detail)).toContain('可能没有读到')
+    await bridge.close()
+    const reopened = await fixture.open()
+    await expect(reopened.prompt(sessionId, 'more', requestId)).rejects.toMatchObject({ code: 'steer-unknown' })
   })
 
   it('does not warn on a stop when the agent went on after what was added', async () => {

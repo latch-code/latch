@@ -143,10 +143,22 @@ struct UserBubble: View {
                         }.buttonStyle(.plain).accessibilityValue(unfolded ? "已展开" : "已折叠")
                         if unfolded { ConversationText(text: PhoneConversation.visible(fold.context), monospaced: true, size: 14) }
                     }
-                    if !text.isEmpty || fold != nil { ConversationText(text: PhoneInputReferences(text).display) }
-                    if text.contains("[引用回复 ") {
-                        ForEach(PhoneReplyQuote.parse(text).filter { $0.session == model.sessionId }) { quote in
-                            Button("查看引用原文") { original = quote }.font(PhoneTheme.caption)
+                    if !text.isEmpty || fold != nil {
+                        ForEach(Array(PhoneInputReferences.messageParts(text).enumerated()), id: \.offset) { entry in
+                            switch entry.element {
+                            case .text(let words):
+                                ConversationText(text: words)
+                            case .reply(let quote):
+                                VStack(alignment: .leading, spacing: 4) {
+                                    ConversationText(text: PhoneConversation.visible(quote.text))
+                                    if quote.session == model.sessionId {
+                                        Button { original = quote } label: { Text("查看引用原文").underline() }
+                                            .font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2)
+                                    }
+                                }
+                                .padding(.leading, 10)
+                                .overlay(alignment: .leading) { Rectangle().fill(PhoneTheme.lineStrong).frame(width: 2) }
+                            }
                         }
                     }
                     if !chips.isEmpty {
