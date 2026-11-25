@@ -19,7 +19,7 @@
 - 插件目录只用 `@latch/sdk`、`@latch/protocol`、本目录与种类目录下的共用文件，不导入 Host 或其他插件目录；只有 `standard` 用 `@latch/core`（`.oxlintrc.json`）。
 - 数据面板调用与返回前核对会话当前读取权限（`test/ui-panels.test.ts`）。
 - `latchCodeRoot()` 固定；自动避开，显式可选，写入仍 R2。
-- 同项目的变更与启动串行、跨项目不等，撤销和收紧仍可并行；旧会话保留冻结目录（`test/project-regressions.test.ts`）。
+- 项目内变更与启动串行，跨项目及撤销收紧可并行。会话冻结目录；项目摘要复核当前成员与文件权限。
 - 确认只经 `PresenceService`，无设备签名批准。开发固定 CDHash，发布固定身份与审计，缺一须离线重新固定，运行前核验子进程（ARCHITECTURE）。
 - 终端与助手工作电脑配置限 `host.sock`、`run`、`all`；终端复核目录身份，环境用 `terminalEnvironment`。
 - 助手改绑后凭原设备、请求 ID、请求体哈希核对已接收的发送或追加，缺证据保留未确认。

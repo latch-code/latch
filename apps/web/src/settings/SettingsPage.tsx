@@ -291,7 +291,6 @@ export function SettingsPage({
   snapshot,
   access: given,
   section: chosen = null,
-  initialProjectId,
   initialPluginId,
   initialPluginBundle,
   onMarketplace,
@@ -309,7 +308,6 @@ export function SettingsPage({
   access?: DeviceAccess
   /** The chosen section; absent, a wide window shows the first and a phone shows the list. */
   section?: SettingsSection | null
-  initialProjectId?: string
   initialPluginId?: string | undefined
   initialPluginBundle?: PluginPackageBundle | undefined
   onMarketplace?: () => void
@@ -575,7 +573,6 @@ export function SettingsPage({
                           snapshot={snapshot}
                           access={access}
                           onChanged={onChanged}
-                          initialProjectId={initialProjectId}
                           {...(access.scopes.has('view') && onOpenSession ? { onOpenSession } : {})}
                         />
                       )}

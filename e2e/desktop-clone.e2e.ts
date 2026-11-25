@@ -10,7 +10,7 @@ import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { writeHostState } from '@latch/host/host-state'
 import { startTestHost } from './helpers/host.ts'
-import { openSection, openSettings } from './helpers/layout.ts'
+import { closeSettings, openSection, openSettings, tooltipText } from './helpers/layout.ts'
 
 const OUT = 'test-results/desktop-clone'
 
@@ -61,14 +61,16 @@ async function servedRepositories(root: string) {
 }
 
 describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')('克隆 in the desktop app', () => {
-  it('clones page → main → the open panel → the Host → progress → a project, and a cancel removes its folder', async () => {
+  it('clones into a project, removes a cancelled clone and adds a source folder from the project menu', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-electron-clone-')))
     const served = await servedRepositories(root)
     const parent = join(root, 'projects')
+    const docs = join(root, 'docs')
     await mkdir(parent)
+    await mkdir(docs)
     const testHost = await startTestHost({
       demo: true,
-      uiDir: resolve('dist/web'),
+      hostName: '项目验收电脑',
       gitDelivery: {
         home: served.home,
         hostEnv: { HOME: served.home, USER: 'tester', PATH: '/usr/bin:/bin', TMPDIR: root },
@@ -111,15 +113,19 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
       // The open panel answers with the folder chosen; main is recorded instead of showing it, and the window counts as
       // focused (the test runner keeps it in the background).
-      await application.evaluate(({ BrowserWindow, dialog }, chosen) => {
-        const panels: unknown[] = []
-        Object.assign(globalThis, { clonePanels: panels })
-        dialog.showOpenDialog = async (...args: unknown[]) => {
-          panels.push(args.at(-1))
-          return { canceled: false, filePaths: [chosen] }
-        }
-        BrowserWindow.prototype.isFocused = () => true
-      }, parent)
+      await application.evaluate(
+        ({ BrowserWindow, dialog }, folders) => {
+          const panels: unknown[] = []
+          Object.assign(globalThis, { clonePanels: panels })
+          dialog.showOpenDialog = async (...args: unknown[]) => {
+            const options = args.at(-1) as { buttonLabel: string }
+            panels.push(options)
+            return { canceled: false, filePaths: [options.buttonLabel === '添加' ? folders.docs : folders.parent] }
+          }
+          BrowserWindow.prototype.isFocused = () => true
+        },
+        { parent, docs },
+      )
 
       const settings = await openSettings(page)
       await openSection(settings, '项目')
@@ -166,6 +172,42 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(host.security.audit.lastOf('git.clone.result')).toMatchObject({
         detail: { outcome: 'cancelled', code: 'clone-cancelled', removed: true },
       })
+
+      await closeSettings(settings)
+      const group = page.getByRole('region', { name: 'widgets', exact: true })
+      if (!(await group.isVisible())) await page.getByRole('button', { name: '打开会话列表', exact: true }).click()
+      await group.getByRole('button', { name: 'widgets 的项目操作', exact: true }).click()
+      const editItem = page.getByRole('menuitem', { name: '编辑项目…', exact: true })
+      await editItem.waitFor()
+      expect(await page.getByRole('menuitem').allTextContents()).toEqual(['新会话', '编辑项目…'])
+      await page.screenshot({ path: join(OUT, 'project-menu.png'), animations: 'disabled' })
+      await editItem.click()
+      const editor = page.getByRole('dialog', { name: '编辑项目', exact: true })
+      const folders = editor.getByRole('list', { name: '源文件夹', exact: true }).getByRole('listitem')
+      await folders.first().getByText('widgets', { exact: true }).waitFor()
+      await editor.getByRole('button', { name: '添加文件夹…', exact: true }).click()
+      await folders.nth(1).getByText('docs', { exact: true }).waitFor()
+      expect(await application.evaluate(() => Reflect.get(globalThis, 'clonePanels').at(-1))).toMatchObject({
+        title: '添加文件夹到「widgets」',
+        properties: ['openDirectory', 'createDirectory', 'multiSelections'],
+      })
+      await page.screenshot({ path: join(OUT, 'project-edit-added.png'), animations: 'disabled' })
+      await editor.getByRole('textbox', { name: '项目名称', exact: true }).fill('discarded rename')
+      await editor.getByRole('button', { name: '取消', exact: true }).click()
+      await group.getByRole('button', { name: '在 widgets 中新建会话', exact: true }).click()
+      await page.getByRole('button', { name: '项目摘要：widgets', exact: true }).click()
+      const summary = page.getByRole('dialog', { name: '项目摘要：widgets', exact: true })
+      const locations = summary.getByRole('listitem')
+      await locations.first().locator('.project-summary-branch').getByText('main', { exact: true }).waitFor()
+      const ordinary = locations.nth(1)
+      const name = ordinary.locator('.project-summary-location')
+      expect((await name.innerText()).trim()).toBe('docs')
+      expect(await ordinary.locator('.project-summary-branch, .latch-glyph-branch, details').count()).toBe(0)
+      const rowHeight = await ordinary.evaluate(row => row.clientHeight)
+      expect(await tooltipText(page, name)).toBe(await realpath(docs))
+      expect(await ordinary.evaluate(row => row.clientHeight)).toBe(rowHeight)
+      expect(await summary.getByRole('button', { name: '添加文件夹…', exact: true }).count()).toBe(0)
+      await page.screenshot({ path: join(OUT, 'project-summary-added.png'), animations: 'disabled' })
     } finally {
       await application?.close()
       await testHost.close()

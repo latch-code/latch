@@ -408,6 +408,8 @@ MermaidKit 由 Xcode 的 Package.resolved 精确锁定，只链接到 App 和模
 
 项目是一个名称加 1–8 个有序的文件夹（`settings.json` 的 `workspaces`，最多 100 个），可带一个中性图标。
 
+项目摘要列出当前的文件夹。能读项目文件的设备打开摘要时，Host 只为这个项目核对各目录与 Git 的 HEAD；分离时给出短提交号，目录或元数据无法核实时省略分支。读取后复查项目成员和设备权限。会话继续使用创建时确定的目录。
+
 - 第一个文件夹是主文件夹：新会话在其中启动，也是 ACP 的 `cwd`。
 - 每个文件夹有项目内唯一、只由 Host 分配一次的标识（`^[a-z0-9][a-z0-9-]{0,31}$`，由文件夹名折叠为 ASCII，重名加 `-2`、`-3`），调整顺序与重新选择都不改变它；界面只显示文件夹名。
 - 保存的路径是去掉别名前缀后的真实路径。未指定名称时从主文件夹名取前 80 个 UTF-16 码元，不拆开字符。
@@ -1017,6 +1019,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `POST /search` | `view` | 见「会话搜索与批处理」 |
 | `GET /prompts`；`PUT`/`DELETE /prompts/:id` | 读 `view`；写 `admin` | 见「提示模板」 |
 | `GET /workspaces/:id/branches`、`POST …/branches/switch` | 列表 `view`，切换 `run`；都要数据范围 `files` | 项目文件夹的本地分支与切换（见「Git 与工作树」） |
+| `GET /workspaces/:id/folder-branches` | `view` 与数据范围 `files` 或 `all` | 项目当前各文件夹的分支，按项目中的顺序返回 |
 | `GET /tasks/:id/worktree`、`POST …/remove`、`GET /workspaces/:id/worktree`、`/workspaces/:id/worktrees…` | `run`；清单与移除另需数据范围 `files`，私有会话的工作树只给 `all` | 工作树（见「Git 与工作树」） |
 
 **按领域分出的路由**

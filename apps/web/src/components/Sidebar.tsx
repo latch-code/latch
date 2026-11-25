@@ -272,7 +272,6 @@ function SessionGroupView({
   onNewIn,
   onNewWithoutProject,
   onEditProject,
-  onProjectsChanged,
   menu,
   others = [],
 }: ProjectNavigationActions & {
@@ -316,7 +315,6 @@ function SessionGroupView({
           count={count}
           onNew={workspaceId && onNewIn ? () => onNewIn(workspaceId) : undefined}
           onEditProject={onEditProject}
-          onProjectsChanged={onProjectsChanged}
         />
       ) : (
         <ShelfHead
@@ -397,7 +395,6 @@ export function Sidebar({
   onSearch,
   onCreateProject,
   onEditProject,
-  onProjectsChanged,
   onSettings,
   hostProblem,
   newActive = false,
@@ -504,7 +501,6 @@ export function Sidebar({
             onNewIn={onNewIn}
             onNewWithoutProject={onNewWithoutProject}
             onEditProject={onEditProject}
-            onProjectsChanged={onProjectsChanged}
             onCreateProject={onCreateProject}
             connection={connection}
             sessionMenu={sessionMenu}
@@ -547,7 +543,6 @@ function CodeList({
   onNewIn,
   onNewWithoutProject,
   onEditProject,
-  onProjectsChanged,
   onCreateProject,
   connection,
   sessionMenu,
@@ -660,7 +655,6 @@ function CodeList({
               menu={sessionMenu}
               {...(group.id === 'waiting' ? { others } : {})}
               onEditProject={onEditProject}
-              onProjectsChanged={onProjectsChanged}
             />
           </Fragment>
         ))

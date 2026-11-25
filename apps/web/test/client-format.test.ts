@@ -18,12 +18,15 @@ import {
   tokenLines,
   tokenText,
 } from '../src/format.ts'
+import { projectFolderLabels } from '../src/projects.tsx'
 
 /** A width in characters, for fitting text the way a monospaced line would. */
 const chars = (value: string) => value.length
 
 /** A local time in 2026, seven seconds past the minute. */
 const localTime = (month: number, day: number, hours: number, minutes: number) => new Date(2026, month, day, hours, minutes, 7).getTime()
+
+const folderLabels = (...paths: string[]) => projectFolderLabels(paths.map((path, index) => ({ id: String(index), path })))
 
 describe('client formatting', () => {
   const now = new Date(2026, 9, 23, 15, 0)
@@ -115,6 +118,23 @@ describe('client formatting', () => {
     expect(middleFit('/private/var/folders/latch-app', 8, chars)).toBeUndefined()
     expect(basename('/work/app/')).toBe('app')
     expect(basename('C:\\work\\docs')).toBe('docs')
+  })
+
+  it('adds only the parent names needed to distinguish project folders, and preserves roots', () => {
+    expect(folderLabels('/work/api/', '/work/docs')).toEqual(['api', 'docs'])
+    expect(folderLabels('/work/frontend/src', '/work/backend/src', '/work/tools/backend/src')).toEqual([
+      'frontend/src',
+      'work/backend/src',
+      'tools/backend/src',
+    ])
+    expect(folderLabels('/team/src', '/archive/team/src')).toEqual(['/team/src', 'archive/team/src'])
+    expect(folderLabels('C:\\work\\api', 'D:\\work\\api', '/', 'E:\\', '\\\\host\\share\\')).toEqual([
+      'C:\\work\\api',
+      'D:\\work\\api',
+      '/',
+      'E:\\',
+      '\\\\host\\share\\',
+    ])
   })
 
   it('renders tool arguments as entries and empty objects as no arguments', () => {

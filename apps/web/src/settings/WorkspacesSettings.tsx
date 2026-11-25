@@ -256,13 +256,11 @@ export function WorkspacesSettings({
   snapshot,
   access,
   onChanged,
-  initialProjectId,
   onOpenSession,
 }: {
   snapshot: AppSnapshot
   access: Pick<DeviceAccess, 'admin'>
   onChanged: () => void
-  initialProjectId?: string
   onOpenSession?: (id: string) => void
 }) {
   const owner = access.admin
@@ -274,7 +272,7 @@ export function WorkspacesSettings({
   const [removing, setRemoving] = useState<WorkspaceInfo | null>(null)
   const [renaming, setRenaming] = useState<WorkspaceInfo | null>(null)
   const [picking, setPicking] = useState(false)
-  const [editing, setEditing] = useState<string | null>(initialProjectId ?? null)
+  const [editing, setEditing] = useState<string | null>(null)
   const [refused, setRefused] = useState<Extract<FolderResult, { status: 'added' }> | null>(null)
   const [drag, setDrag] = useState<'none' | 'over' | 'files'>('none')
   const depth = useRef(0)

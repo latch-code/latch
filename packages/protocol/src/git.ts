@@ -20,6 +20,11 @@ export interface BranchListing {
   more?: number
 }
 
+/** Current project membership and each folder's verified branch label, including a detached HEAD's short commit. */
+export interface ProjectFolderBranches {
+  folders: Array<{ id: string; path: string; branch?: string }>
+}
+
 /** `POST /workspaces/:id/branches/switch` answered: the folder is now on `branch`. */
 export interface BranchSwitchResult {
   branch: string

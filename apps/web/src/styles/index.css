@@ -29,6 +29,7 @@
 @import './phone-new-session.css' layer(app);
 @import './phone-review.css' layer(app);
 @import './overlays.css' layer(app);
+@import './project.css' layer(app);
 @import './settings.css' layer(app);
 @import './plugin-marketplace.css' layer(app);
 @import './customization.css' layer(app);

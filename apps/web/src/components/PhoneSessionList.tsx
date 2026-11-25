@@ -277,7 +277,6 @@ function PhoneGroup({
   onSelect,
   onNewIn,
   onEditProject,
-  onProjectsChanged,
   onHold,
   reviews,
   onReview,
@@ -316,7 +315,6 @@ function PhoneGroup({
           project={group.project}
           onNew={workspaceId && onNewIn ? () => onNewIn(workspaceId) : undefined}
           onEditProject={onEditProject}
-          onProjectsChanged={onProjectsChanged}
         />
       ) : (
         <div className="phone-group-head">
@@ -408,7 +406,6 @@ export function PhoneSessionList({
   onMarketplace,
   onNewIn,
   onEditProject,
-  onProjectsChanged,
   sessionMenu,
   now,
   banners,
@@ -566,7 +563,6 @@ export function PhoneSessionList({
                   toggleFold(teamFoldKey(leadId))
                 }}
                 onEditProject={onEditProject}
-                onProjectsChanged={onProjectsChanged}
               />
             ))
           )}

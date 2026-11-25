@@ -29,7 +29,17 @@ import { currentShell, revealLabel, type FolderResult, type ShellFolders } from 
 import { basename, relativeTime, statusLabels } from '../format.ts'
 import { DELETION_COPY } from '../deletionCopy.ts'
 import { recentProjectSessions } from '../sessions.ts'
-import { folderAccessText, PROJECT_ICONS, ProjectIcon, projectFolders, projectName, projectSessionCount } from '../projects.tsx'
+import {
+  folderAccessText,
+  folderInUse,
+  projectInUse,
+  PROJECT_EDIT_COPY,
+  PROJECT_ICONS,
+  ProjectIcon,
+  projectFolders,
+  projectName,
+  projectSessionCount,
+} from '../projects.tsx'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ConfirmDialog, PromptDialog } from '../components/overlays.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -41,15 +51,12 @@ import { defineCopy, formatNumber, plural, useLocale } from '../core/i18n.ts'
 
 const COPY = defineCopy(
   {
-    systemDialog: '另一个系统对话框还没结束，请稍后再试。',
-    folderActionFailed: '没有完成文件夹操作，请同步项目后重试。',
     foldersOnly: '只能拖入文件夹。',
     retry: '重试原操作',
     details: '基本信息',
     name: '名称',
     rename: '重命名…',
     icon: '图标',
-    projectIcon: '项目图标',
     folder: '文件夹',
     defaultModel: '默认模型',
     defaultModelHint: '这个项目的新会话用',
@@ -60,13 +67,8 @@ const COPY = defineCopy(
     empty: '还没有可访问的会话',
     restoreFolders: '恢复或重新选择之前不能新建会话',
     ok: '知道了',
-    folderLimit: '每个项目最多 8 个文件夹',
-    addFolder: '添加文件夹…',
     modelScope: '读到的内容会发给模型服务',
     modelScopeDetail: 'Latch 内置可以读取这些文件夹中的文件，并把读到的内容发给模型服务；写入前会询问你。',
-    needsFolder: '项目至少要有一个文件夹',
-    folderInUse: '有正在运行或等待批准的会话使用它',
-    main: '主文件夹',
     folderNotFound: '找不到这个文件夹，请同步项目后重试。',
     copyPath: '复制路径',
     makeMain: '设为主文件夹',
@@ -77,13 +79,10 @@ const COPY = defineCopy(
     removeFolder: '从项目中移除…',
     restart: '重新启动 Latch 后，可以在这里添加和重新选择文件夹。',
     harnessFolders: '各 Harness 使用的文件夹',
-    remove: '移除项目',
-    projectInUse: '有会话正在项目中运行，请先结束',
     removeAction: '移除项目…',
     copied: '已复制路径',
     copyFailed: '复制失败',
     renameProject: '重命名项目',
-    removeConfirm: '移除',
     moved: (name: string, position: number) => `${name} 已移到第 ${formatNumber(position)} 位${position === 1 ? '，现在是主文件夹' : ''}`,
     sessions: (count: number) => `${formatNumber(count)} 个会话`,
     openSession: (name: string) => `打开会话：${name}`,
@@ -95,19 +94,14 @@ const COPY = defineCopy(
     reorder: (name: string) => `调整 ${name} 的顺序`,
     folderActions: (name: string) => `${name} 的更多操作`,
     editOnHost: (name: string) => `添加项目和添加文件夹要在 ${name} 上的 Latch 里完成。`,
-    confirmProject: (name: string) => `移除项目「${name}」？`,
-    confirmFolder: (name: string) => `从项目中移除「${name}」？`,
   },
   {
-    systemDialog: 'Another system dialog is still open. Try again shortly.',
-    folderActionFailed: 'The folder action didn’t finish. Sync the project and try again.',
     foldersOnly: 'Only folders can be dropped.',
     retry: 'Retry original action',
     details: 'Details',
     name: 'Name',
     rename: 'Rename…',
     icon: 'Icon',
-    projectIcon: 'Project icon',
     folder: 'Folder',
     defaultModel: 'Default model',
     defaultModelHint: 'Applies to new sessions in this project',
@@ -118,14 +112,9 @@ const COPY = defineCopy(
     empty: 'No sessions you can open',
     restoreFolders: 'Restore or reselect to start new sessions',
     ok: 'OK',
-    folderLimit: 'Up to 8 folders per project',
-    addFolder: 'Add folder…',
     modelScope: 'What it reads goes to the model service',
     modelScopeDetail:
       'Latch built-in can read files in these folders and sends what it reads to the model service. It asks you before writing.',
-    needsFolder: 'A project needs at least one folder',
-    folderInUse: 'A running session or one waiting for approval uses it',
-    main: 'Main folder',
     folderNotFound: 'Folder not found. Sync the project and try again.',
     copyPath: 'Copy path',
     makeMain: 'Make main folder',
@@ -136,13 +125,10 @@ const COPY = defineCopy(
     removeFolder: 'Remove from project…',
     restart: 'Restart Latch to add and reselect folders here.',
     harnessFolders: 'Folders each Harness uses',
-    remove: 'Remove project',
-    projectInUse: 'End the running session in this project first.',
     removeAction: 'Remove project…',
     copied: 'Path copied',
     copyFailed: 'Couldn’t copy',
     renameProject: 'Rename project',
-    removeConfirm: 'Remove',
     moved: (name: string, position: number) =>
       position === 1 ? `${name} is now the main folder` : `Moved ${name} to position ${formatNumber(position)}`,
     sessions: (count: number) => plural(count, { one: '{n} session', other: '{n} sessions' }),
@@ -155,22 +141,11 @@ const COPY = defineCopy(
     reorder: (name: string) => `Reorder ${name}`,
     folderActions: (name: string) => `More actions for ${name}`,
     editOnHost: (name: string) => `Add projects and folders in Latch on ${name}.`,
-    confirmProject: (name: string) => `Remove the project “${name}”?`,
-    confirmFolder: (name: string) => `Remove “${name}” from the project?`,
   },
 )
 
 /** 「不设」 in the project's 默认模型: the Harness's own default stands. */
 const NO_MODEL = '~none'
-
-function folderInUse(project: WorkspaceInfo, folder: WorkspaceFolder, snapshot: AppSnapshot): boolean {
-  return snapshot.tasks.some(
-    task =>
-      (task.status === 'running' || task.status === 'waiting-approval')
-      && (task.workspaceId === project.id || task.workspaceId === undefined)
-      && (task.folders?.some(item => item.path === folder.path) || task.cwd === folder.path),
-  )
-}
 
 export function ProjectEditor({
   project,
@@ -207,9 +182,7 @@ export function ProjectEditor({
   const label = revealLabel(currentShell()?.platform)
   const endpoint = `workspaces/${encodeURIComponent(project.id)}`
   const recent = recentProjectSessions(project.id, snapshot.tasks, snapshot.catalog?.workspaces ?? [project])
-  const active = snapshot.tasks.some(
-    task => (task.status === 'running' || task.status === 'waiting-approval') && task.workspaceId === project.id,
-  )
+  const active = projectInUse(project, snapshot)
 
   const execute = async (operation: () => Promise<unknown>) => {
     if (busy) return
@@ -229,8 +202,8 @@ export function ProjectEditor({
   }
   const nativeResult = async (result: FolderResult) => {
     if (result.status === 'added') setRefused(result.refused.length ? result : null)
-    else if (result.status === 'busy') setError(COPY.systemDialog)
-    else if (result.status === 'failed') setError(describeFailure(0, result.code, { fallback: COPY.folderActionFailed }))
+    else if (result.status === 'busy') setError(PROJECT_EDIT_COPY.systemDialog)
+    else if (result.status === 'failed') setError(describeFailure(0, result.code, { fallback: PROJECT_EDIT_COPY.folderActionFailed }))
   }
   const pick = (replace?: string) => {
     if (shell) void execute(async () => nativeResult(await shell.pick(project.id, replace)))
@@ -304,7 +277,7 @@ export function ProjectEditor({
           trailing={
             owner ? (
               <ValuePicker
-                label={COPY.projectIcon}
+                label={PROJECT_EDIT_COPY.projectIcon}
                 value={project.glyph ?? 'folder'}
                 disabled={busy}
                 groups={[
@@ -421,9 +394,9 @@ export function ProjectEditor({
               icon={FolderPlus}
               loading={busy}
               disabled={folders.length >= 8}
-              tooltip={folders.length >= 8 ? COPY.folderLimit : undefined}
+              tooltip={folders.length >= 8 ? PROJECT_EDIT_COPY.folderLimit : undefined}
               onClick={() => pick()}>
-              {COPY.addFolder}
+              {PROJECT_EDIT_COPY.addFolder}
             </Button>
           ) : undefined
         }
@@ -445,7 +418,7 @@ export function ProjectEditor({
           {folders.map((folder, index) => {
             const base = basename(folder.path)
             const inUse = folderInUse(project, folder, snapshot)
-            const removeReason = folders.length === 1 ? COPY.needsFolder : inUse ? COPY.folderInUse : undefined
+            const removeReason = folders.length === 1 ? PROJECT_EDIT_COPY.needsFolder : inUse ? PROJECT_EDIT_COPY.folderInUse : undefined
             return (
               <div
                 className="project-folder"
@@ -489,7 +462,7 @@ export function ProjectEditor({
                   title={
                     <span className="settings-row-name">
                       <VisibleText text={base} />
-                      {index === 0 && <Badge>{COPY.main}</Badge>}
+                      {index === 0 && <Badge>{PROJECT_EDIT_COPY.main}</Badge>}
                     </span>
                   }
                   dim={folder.unavailable !== undefined}
@@ -579,7 +552,7 @@ export function ProjectEditor({
                                           id: 'replace',
                                           label: COPY.reselect,
                                           icon: FolderOpenGlyph,
-                                          disabledReason: busy ? COPY.saving : inUse ? COPY.folderInUse : undefined,
+                                          disabledReason: busy ? COPY.saving : inUse ? PROJECT_EDIT_COPY.folderInUse : undefined,
                                           onSelect: () => pick(folder.id),
                                         },
                                       ]
@@ -635,12 +608,12 @@ export function ProjectEditor({
       {owner && (
         <SettingsGroup>
           <SettingsRow
-            title={COPY.remove}
+            title={PROJECT_EDIT_COPY.remove}
             trailing={
               <Button
                 variant="danger"
                 disabled={busy || active}
-                tooltip={active ? COPY.projectInUse : undefined}
+                tooltip={active ? PROJECT_EDIT_COPY.projectInUse : undefined}
                 onClick={() => setRemoving('project')}>
                 {COPY.removeAction}
               </Button>
@@ -669,11 +642,11 @@ export function ProjectEditor({
         <ConfirmDialog
           title={
             removing === 'project'
-              ? COPY.confirmProject(escapeSecurityText(name))
-              : COPY.confirmFolder(escapeSecurityText(basename(removing.path)))
+              ? PROJECT_EDIT_COPY.confirmProject(escapeSecurityText(name))
+              : PROJECT_EDIT_COPY.confirmFolder(escapeSecurityText(basename(removing.path)))
           }
           message={removing === 'project' ? DELETION_COPY.projectRemoval : DELETION_COPY.folderRemoval}
-          confirmLabel={removing === 'project' ? COPY.remove : COPY.removeConfirm}
+          confirmLabel={removing === 'project' ? PROJECT_EDIT_COPY.remove : PROJECT_EDIT_COPY.removeConfirm}
           danger
           onClose={() => setRemoving(null)}
           onConfirm={async () => {

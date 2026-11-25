@@ -1,6 +1,7 @@
 import { SHELL_COPY } from './copy.ts'
 import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import { ArrowLeft, Store } from 'lucide-react'
+import type { ReactNode } from 'react'
 import {
   Count,
   ChevronLeftGlyph,
@@ -44,7 +45,7 @@ const COPY = defineCopy(
  * and its strip keeps this end clear. Over 看板 it holds the computer and the sidebar foot's 设置, 额度与用量 and
  * 检查更新. On the desktop app the row moves the window, except over its controls.
  */
-export function TitleBar({ shell }: { shell: ShellState }) {
+export function TitleBar({ shell, draftSummary }: { shell: ShellState; draftSummary?: ReactNode }) {
   useShortcutBindings()
   const {
     titlebar,
@@ -196,6 +197,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
         </div>
       )}
       <div className="titlebar-views">
+        {draftSummary}
         <WorkbenchPanes shell={shell} />
         {/* The 对话 | 看板 switch is the shell's, drawn over this reserved end in both views. */}
         <span className="view-switch-space" aria-hidden="true" />

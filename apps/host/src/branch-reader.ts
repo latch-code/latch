@@ -2,7 +2,7 @@ import { constants, type BigIntStats } from 'node:fs'
 import { lstat, open, realpath, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { escapeSecurityText, type TaskSummary } from '@latch/protocol'
-import { redactSecrets } from '@latch/core/node-kit'
+import { redactKnownSecrets } from '@latch/core/node-kit'
 
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0
 const same = (a: BigIntStats, b: BigIntStats) => a.dev === b.dev && a.ino === b.ino
@@ -12,6 +12,8 @@ const inside = (root: string, path: string) => {
   return child === '' || (child !== '..' && !child.startsWith('..' + sep) && !isAbsolute(child))
 }
 type Identity = { path: string; info: BigIntStats; owned: boolean }
+/** A registered project folder must still be at its saved real path. */
+type BranchReadOptions = { requireRealPath?: true }
 
 /** A work tree whose Git metadata passed the checks below. */
 export interface GitLayout {
@@ -27,7 +29,7 @@ export interface GitLayout {
  * Locates the Git metadata of a work tree rooted at `cwd`, by reading files only. It never invokes Git, follows refs or
  * reads the index/config/hooks. Undefined for any layout but the three `gitdir` names.
  */
-export async function readGitLayout(cwd: string): Promise<GitLayout | undefined> {
+export async function readGitLayout(cwd: string, options?: BranchReadOptions): Promise<GitLayout | undefined> {
   if (constants.O_NOFOLLOW === undefined) return
   if (!isAbsolute(cwd) || Buffer.byteLength(cwd) > 4096 || /[\u0000-\u001f\u007f]/u.test(cwd)) return
   const checks: Identity[] = []
@@ -63,6 +65,7 @@ export async function readGitLayout(cwd: string): Promise<GitLayout | undefined>
   }
   try {
     const root = await realpath(cwd)
+    if (options?.requireRealPath && root !== cwd) return
     await directory(root)
     const pointer = join(root, '.git'),
       info = await lstat(pointer, { bigint: true })
@@ -105,6 +108,7 @@ export async function readGitLayout(cwd: string): Promise<GitLayout | undefined>
       if (check.owned && ((current.mode & 0o022n) !== 0n || current.uid !== check.info.uid)) return
     }
     if (!same(checks[0]!.info, await stat(cwd, { bigint: true }))) return
+    if (options?.requireRealPath && (await realpath(cwd)) !== root) return
     return { root, gitdir, head: symbolic ? { branch: symbolic[1]! } : { detached: detached![1]!.toLowerCase() } }
   } catch {
     return undefined
@@ -112,11 +116,11 @@ export async function readGitLayout(cwd: string): Promise<GitLayout | undefined>
 }
 
 /** The branch label of a work tree rooted at `cwd`, or 「分离于 3f2a1c9」 for a detached HEAD; see `readGitLayout`. */
-export async function readGitBranch(cwd: string): Promise<string | undefined> {
-  const layout = await readGitLayout(cwd)
+export async function readGitBranch(cwd: string, options?: BranchReadOptions): Promise<string | undefined> {
+  const layout = await readGitLayout(cwd, options)
   if (!layout) return
   const branch = 'branch' in layout.head ? layout.head.branch : `分离于 ${layout.head.detached.slice(0, 7)}`
-  if (branch.length > 256 || redactSecrets(branch) !== branch) return
+  if (branch.length > 256 || redactKnownSecrets(branch) !== branch) return
   return escapeSecurityText(branch)
 }
 
