@@ -637,11 +637,11 @@ export const ToolCard = memo(
               )}
               <span className="process-fill" />
               <span className="process-end">
+                {message && <ToolTime message={message} frozen={frozen} />}
                 <StatusGlyph className="tool-card-icon" running={running} state={shown}>
                   {glyph}
                 </StatusGlyph>
                 {stateSlot}
-                {message && <ToolTime message={message} frozen={frozen} />}
               </span>
             </button>
             {/* The folded tail repeats the output the opened body holds whole, so find and readers take it from there. */}
