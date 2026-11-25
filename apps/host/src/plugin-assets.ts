@@ -44,10 +44,19 @@ const bundleSchema = z.custom<PluginPackageBundle>(value => {
     return false
   }
 })
-const catalogOriginSchema = z.strictObject({ revision: hash, version: releaseVersionSchema })
+const catalogCommit = z
+  .string()
+  .regex(/^[a-f0-9]{40}$/u)
+  .optional()
+const catalogOriginSchema = z.strictObject({ revision: hash, version: releaseVersionSchema, commit: catalogCommit })
 const originSchema = z.union([
   z.strictObject({ kind: z.enum(['local', 'creator']) }),
-  z.strictObject({ kind: z.literal('catalog'), version: releaseVersionSchema, modified: z.literal(true).optional() }),
+  z.strictObject({
+    kind: z.literal('catalog'),
+    version: releaseVersionSchema,
+    commit: catalogCommit,
+    modified: z.literal(true).optional(),
+  }),
   npmReleaseSchema.extend({ kind: z.literal('npm'), modified: z.literal(true).optional() }),
   externalReviewSourceSchema,
 ])
@@ -235,6 +244,7 @@ export class PluginAssets {
   private tail: Promise<unknown> = Promise.resolve()
   private pending?: Pending
   private importedBytes = 0
+  private readonly contextPanelHashes = new WeakMap<PluginPackageBundle, string>()
   private constructor(
     readonly directory: string,
     private state: State,
@@ -336,6 +346,22 @@ export class PluginAssets {
   descriptors(): PluginAssetDescriptor[] {
     this.certain()
     return this.state.packages.map(describePluginAsset)
+  }
+  officialContextPanelHash(): string | undefined {
+    if (this.pending) return undefined
+    const record = this.state.packages.find(item => item.id === 'context-insights')
+    if (!record?.enabled || !record.appliedBundle || !record.appliedRevision) return undefined
+    const source = pluginReviewSource(record, record.appliedRevision)
+    if (source.kind !== 'catalog' || source.modified) return undefined
+    const bundle = record.appliedBundle
+    const cached = this.contextPanelHashes.get(bundle)
+    if (cached) return cached
+    const panel = bundle.manifest.panels?.find(item => item.id === 'insights' && item.context)
+    const file = panel && bundle.files.find(item => item.path === panel.entry)
+    if (!file) return undefined
+    const digest = sha256Hex(file.content)
+    this.contextPanelHashes.set(bundle, digest)
+    return digest
   }
   has(id: string): boolean {
     return this.state.packages.some(record => record.id === id)
@@ -574,6 +600,7 @@ export class PluginAssets {
     input: PluginCatalogStage,
     candidate: ReturnType<typeof checkedPluginBundle>,
     actor: PluginAssetActor,
+    commit?: string,
   ): Promise<PluginAssetMutation> {
     const { bundle, revision, executionHash } = candidate
     const id = input.pluginId
@@ -581,7 +608,7 @@ export class PluginAssets {
       throw new AppError(409, 'plugin-package-changed', '随附插件内容已变化，请重新预览。')
     return this.change(id, 'catalog-stage', input.requestId, catalogPayload(input), actor, state => {
       const existing = state.packages.find(record => record.id === id)
-      const catalog = { revision, version: bundle.manifest.version }
+      const catalog = { revision, version: bundle.manifest.version, ...(commit ? { commit } : {}) }
       if (input.update) {
         if (!existing || existing.revision !== input.update.baseRevision || installIdOf(existing) !== input.update.installId)
           throw new AppError(409, 'plugin-package-changed', '插件草稿或安装记录已变化，请重新预览。')

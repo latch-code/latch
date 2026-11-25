@@ -56,7 +56,11 @@ sources:
 
 创作会话完成后，输入区会在探测到产物时提供审阅入口；会话「改动」也能打开同一个草稿详情。导入只保存文件；用户可以先检查技能正文、逐个审阅源码和声明，再点应用。可信代码沿用执行摘要和本机确认。再改一轮可从来源会话更新同一插件；新的源码修订独立于正在使用的版本。页面构建失败可把诊断放回原创作会话的输入框。见[页面草稿](APP-PAGES.md#草稿构建与预览)。
 
-插件市场可以按任务、名称或贡献搜索。每个条目给出使用位置、适用的 Agent、来源和执行权限。在本机审阅后可把精选包暂存为草稿。Host 只从随自身构建附带的目录取文件。采用这个来源的记录可检查新版本，Host 核对安装身份、当前草稿与发行修订，并要求更新版的 SemVer 严格高于已下载和已应用的版本。下载或更新只写草稿；已应用版本继续运行。旧版中无来源记录的插件、从其他来源取得的同名包和改过的本机草稿都保留，可打开已有资产管理。对工作台随版本附带的公开目录，浏览不需要 Host 管理操作。桌面和官网市场都从 `examples/latch.catalog.json` 选择包内文件，源码按文本读取。官网的 `/plugins/` 和 `/zh/plugins/` 提供下载，`/plugins/catalog.json` 保留原有下载索引。同一批包生成 `/plugins/latch.catalog.json` 作为安装清单，使用相对包路径与 SHA-256。这个摘要核对下载字节，Host 应用时另行校验规范化包、修订和能力。
+插件市场可以按任务、名称或贡献搜索。每个条目给出使用位置、适用的 Agent、来源和执行权限。在本机审阅后可把精选包暂存为草稿。
+
+四个官方包的更新源为 `https://github.com/latch-code/plugin-market` 的 `main`。本机管理端打开官方目录时，Host 经出站策略读取公开 Git HTTPS 的 `info/refs`，取得 `refs/heads/main` 的提交 SHA。Host 从 `codeload.github.com` 读取该提交的限量归档，核对归档记录的提交和文件条目，再从 `raw.githubusercontent.com` 按同一提交读取声明和文件，逐个与归档中的文件摘要比对。检查官方目录无需个人 GitHub 凭据，也不占用 GitHub REST API 的匿名请求配额。成功结果在这次 Host 运行期间缓存五分钟，手动「检查更新」会重新查询分支。首次检查失败时可使用随附副本，后续失败保留上次核对的目录。
+
+已有的随附安装继续使用原安装身份。采用这个来源的记录可检查新版本，Host 核对安装身份、当前草稿与发行修订，并要求更新版的 SemVer 严格高于已下载和已应用的版本。下载或更新只写草稿；已应用版本继续运行。旧版中无来源记录的插件、从其他来源取得的同名包和改过的本机草稿都保留，可打开已有资产管理。对工作台随版本附带的公开目录，浏览不需要 Host 管理操作。桌面的随附副本和官网市场从 `examples/latch.catalog.json` 选择包内文件，源码按文本读取。官网的 `/plugins/` 和 `/zh/plugins/` 提供下载，`/plugins/catalog.json` 保留原有下载索引。同一批包生成 `/plugins/latch.catalog.json` 作为安装清单，使用相对包路径与 SHA-256。这个摘要核对下载字节，Host 应用时另行校验规范化包、修订和能力。
 
 **分享与收录。** 从保存后的插件详情导出 `.latch-plugin.json`，接收者在 Mac 的「设置 › 插件 › 导入文件…」审阅并应用。导出包含保存的声明和文件，不包含运行数据或本机批准。加入随发行版提供的精选目录时，将可运行的示例包、准确的中英说明和许可提交给仓库维护者审阅，同时在市场文件列表中列出允许分发的普通文件。构建发布时拒绝符号链接和硬链接。新版本须更新版本号，并验证从市场导入到首次使用。第三方插件通过下文的外部来源由管理员手动添加和更新。
 
@@ -65,6 +69,8 @@ sources:
 市场由随 Latch 提供的 `latch-workspace:marketplace` 插件注册。Host 启用插件后，在目录的 `workspacePages` 中发布插件标识、页面标识和接口版本。停用插件时撤回该声明。工作台只挂载随当前客户端发行、与声明匹配的页面。桌面侧栏可在浏览市场期间继续导航。iPhone 和 iPad 工作台不挂载市场。
 
 市场使用既有的插件管理 API。Host 对每次查询来源、下载、审阅和应用按各自的权限要求核对调用方。这项桌面贡献未扩展第三方声明可申请的权限；格式 2 的插件应用页继续通过已批准的能力和 `via` 桥工作。详见[插件页面](APP-PAGES.md)。
+
+「已安装」读取本机管理端的插件包清单，以 `appliedRevision` 判断插件是否安装过。更新沿用保存的来源，本地编辑或导入且没有发行来源的插件可直接进入设置管理。待应用草稿与已安装版本在同一张卡片上分别列出，重新启用时审阅已应用的修订。
 
 ### 从 npm 仓库下载
 
@@ -90,7 +96,7 @@ Host 只访问已确认地址下的包版本元数据和 `.tgz`，拒绝重定�
 
 ### 从 GitHub 或本机添加插件
 
-从本机桌面端的插件市场或插件设置打开「添加插件」，可以输入 GitHub 仓库的 HTTPS 地址、这台 Mac 的绝对路径或以 `~/` 开头的路径。GitHub 默认取仓库的默认分支，也接受带 `/tree/<分支或标签>` 的仓库地址。Host 匿名读取固定提交的文件及其 Git 对象摘要，经出站策略访问 `api.github.com` 与 `raw.githubusercontent.com`，拒绝重定向。私有仓库可从人在本机已经检出的目录添加。
+从本机桌面端的插件市场或插件设置打开「添加插件」，可以输入 GitHub 仓库的 HTTPS 地址、这台 Mac 的绝对路径或以 `~/` 开头的路径。通过「添加插件」输入 GitHub 地址时，默认取仓库的默认分支，也接受带 `/tree/<分支或标签>` 的仓库地址。Host 经出站策略调用 `api.github.com` 的公开 REST 接口查提交与文件树，从 `raw.githubusercontent.com` 读取固定提交的文件并核对 Git 对象摘要。此入口匿名访问，拒绝重定向。私有仓库可从人在本机已经检出的目录添加。
 
 目录根有 `latch.catalog.json` 时，可以在列表逐个选择并审阅插件。清单用 `formatVersion: 1` 和至多 64 条 `plugins`，每项的 `id` 必须和插件声明一致。同一清单可混用源码目录和导出件：
 
@@ -174,7 +180,8 @@ Host 声明可选能力 `catalog.features.pluginPackages`。资产是 `{ manifes
 | `POST /plugin-packages/:id/rollback` | `{ requestId, revision }` 重新应用最近 5 个应用过的快照之一；桌面确认绑定 `baseAppliedRevision` 和 `reviewedInstallId` |
 | `DELETE /plugin-packages/:id` | `{ requestId, baseRevision, deleteData? }` 撤下并移除；`deleteData: true` 才删页面数据 |
 | `POST /plugin-packages/import`、`GET …/session-draft`、`POST`/`GET …/:id/build`、`GET …/:id/builds/:bundleHash.js`、`POST …/:id/dev` | 页面草稿的导入、构建、预览产物与开发中，见 [APP-PAGES.md](APP-PAGES.md#草稿构建与预览) |
-| `POST /plugin-packages/catalog/preview` | 凭 `{ pluginId }` 读 Host 随附的包、审阅及现有草稿的版本状态 |
+| `POST /plugin-packages/catalog/check` | `{}` 使用近期核对结果，`{ force: true }` 重新查 GitHub；返回四个官方包的版本、修订、可用时的提交号及本机安装状态 |
+| `POST /plugin-packages/catalog/preview` | 凭 `{ pluginId }` 读当前已核对的官方包或随附副本、审阅及现有草稿的版本状态 |
 | `POST /plugin-packages/catalog/stage` | 凭 `{ requestId, pluginId, revision, update? }` 暂存精确发行内容；同源更新还核对 `update: { installId, baseRevision }` |
 | `GET` / `PUT /plugin-packages/npm/registry` | 读取 `{ registry, revision }` 或凭 `{ registry, baseRegistry, baseRevision, requestId }` 更新。`null` 停用，新增或换源经 `policy.change` 确认；每次切换写入新修订，选回旧地址也不接受过期的请求 |
 | `POST /plugin-packages/npm/preview` | `{ name, version?, pluginId? }` 返回精确来源 `release`、`revision`、资产内容、审阅和已有安装信息，省略 `version` 使用 `latest` |
@@ -189,6 +196,7 @@ Host 声明可选能力 `catalog.features.pluginPackages`。资产是 `{ manifes
 
 - `revision` 是规范化完整资产的 SHA-256；`appliedRevision` 才是实际发布的内容。状态为 `draft`、`applied` 或 `update-available`；保存草稿不改变正在运行的版本。
 - `enabled`、`trusted` 与 `capabilities` 分别是当前是否运行、当前草稿的执行内容是否已批准、实际注册的能力。
+- 「设置 › 插件」按插件标识合并资产摘要与已注册插件，同一个插件只显示一次。列表展示简介和当前状态，详情列出它提供的能力。
 - 启动、应用与重新启用时，完整的 `appliedRevision` 交给注册表作为持久修订（见「执行修订」）。只改技能文字不需要新的代码批准，但应用后修订改变，已保存的执行授权要重新确认。
 - 审批去重用的 `executionHash` 不代替执行授权里的完整修订。
 
@@ -285,7 +293,7 @@ context.registerSkill({ id: 'review', name: '发布检查', description: '逐项
 - `context.kind` 区分 Standard 请求记录与外部 Harness。Standard 的请求可带 `toolContributions`，分别列出本次输入里最大的工具结果和本次首次观测纳入的最大结果，每组最多 5 条。条目给出 UTF-8 字节数和纳入类型。能唯一对应原始工具行时，附上固定名称或工具类别和临时 `toolRef`。
 - `window` 与 `windows` 保留报告过的窗口占用、容量与来源。Claude 的完整组成和上一响应的用量各自保留，并归属原来的采样时刻。相邻两轮的来源、容量和上下文区段都可比较时，`windows` 才给出已用 token 的 `delta`。`events` 记录显式清空和观测到的压缩，未知数据留空。
 - `revealTurn(ref)` 定位统计中的用户回合，`revealTool(ref)` 展开必要的折叠并定位统计中的具体工具行。同一面板显示期间，仍在统计中的目标保留引用。面板关闭、会话切换、停用或卸载时引用失效。两种引用各自绑定目标类型。接口只提供有限统计、固定标签、回合序号和临时引用，模块仍以工作台的可信代码运行。
-- 随 Latch 的「上下文」面板使用原来的「上下文」页签与记忆。工作台核对随本版本附带的模块摘要后才使用该插件视图。插件停用或卸载时，同一页签使用内置视图。
+- 随 Latch 的「上下文」面板使用原来的「上下文」页签与记忆。面板从同一份窗口报告计算已用比例和剩余 tokens，用可比轮次的正 `delta` 找出增长最多的一轮。工作台核对随附模块摘要，或使用 Host 已核对的官方模块。Host 只标记与已应用的原版官方包来源和模块摘要一致的「上下文」面板。插件停用或卸载时，同一页签使用内置视图。
 
 **数据面板。** `registerUiPanel({ id, title, description?, harnessIds?, listed?, render })`：
 
@@ -293,7 +301,7 @@ context.registerSkill({ id: 'review', name: '发布检查', description: '逐项
 - `listed: false` 不出现在页签里，只作数据入口；这不是访问限制。
 - 读取 `GET /link/api/tasks/:id/ui-panels/:panelId`：设备须有 `view`，私有会话还须有 `all` 数据范围。Host 在运行回调之前和返回结果之前各核对一次。取消是协作式的，回调真实结算后才释放租约。插件异常只向页面返回通用错误（502 `ui-panel-failed`）。
 
-**尚未实现：** 桌面远程目录订阅与自动更新、按项目选择插件、通用的跨插件服务依赖、时间线渲染扩展。它们需要各自的生命周期与消费方契约。
+**尚未实现：** 订阅其他远程插件目录、按项目选择插件、通用的跨插件服务依赖、时间线渲染扩展。它们需要各自的生命周期与消费方契约。
 
 ## 连接载体
 

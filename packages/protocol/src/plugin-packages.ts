@@ -81,6 +81,12 @@ export interface PluginMarketplaceInstallation {
 
 export type PluginCatalogUpdateStatus = 'available' | 'current' | 'older' | 'local-changes' | 'different-source' | 'same-version-changed'
 
+export const OFFICIAL_PLUGIN_CATALOG_REPOSITORY = 'https://github.com/latch-code/plugin-market'
+
+export interface PluginCatalogCheckResult {
+  plugins: Array<{ id: string; version: string; revision: string; commit?: string; updateStatus?: PluginCatalogUpdateStatus }>
+}
+
 export interface PluginCatalogPreview {
   bundle: PluginPackageBundle
   review: PluginPackageReview
@@ -144,7 +150,7 @@ export interface PluginExternalStage {
 
 export type PluginPackageReviewSource =
   | { kind: 'local' | 'creator' }
-  | { kind: 'catalog'; version: string; modified?: true }
+  | { kind: 'catalog'; version: string; commit?: string; modified?: true }
   | ({ kind: 'npm'; modified?: true } & PluginNpmRelease)
   | ({ kind: 'external'; modified?: true } & PluginExternalRelease)
 
@@ -223,8 +229,8 @@ export interface PluginPackageSummary {
   source?: { sessionId: string; dev: boolean; kind?: 'plugin' }
   /** Where the last staged npm release came from, even if the draft was edited or an earlier release was applied. */
   npm?: PluginNpmRelease & { revision: string }
-  /** The most recent exact release from the directory embedded in this Host build. */
-  catalog?: { revision: string; version: string }
+  /** Official release last staged from the Host's bundled copy or a verified GitHub commit. */
+  catalog?: { revision: string; version: string; commit?: string }
   /** The last staged GitHub or local release; later edits keep its original provenance. */
   external?: PluginExternalRelease & { revision: string }
   catalogUpdate?: { version: string; status: PluginCatalogUpdateStatus }

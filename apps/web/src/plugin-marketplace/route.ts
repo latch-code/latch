@@ -1,5 +1,7 @@
 import { PLUGIN_MARKETPLACE_PAGE, type CurrentDevice, type HostCatalog } from '@latch/protocol'
 
+export type MarketplaceTab = 'bundled' | 'installed' | 'add'
+
 /** The desktop-style Safari UA on iPad identifies as Mac, with a multi-touch pointer. */
 export function isAppleMobile({
   userAgent,

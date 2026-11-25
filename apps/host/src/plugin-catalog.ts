@@ -22,12 +22,8 @@ function catalog(): Map<string, CatalogBundle> {
 }
 let releases: Map<string, CatalogBundle> | undefined
 
-export function bundledPlugin(id: string): CatalogBundle | undefined {
-  return (releases ??= catalog()).get(id)
-}
-
 export function requireBundledPlugin(id: string): CatalogBundle {
-  const release = bundledPlugin(id)
+  const release = (releases ??= catalog()).get(id)
   if (!release) throw new AppError(404, 'plugin-catalog-not-found', '随附目录没有这个插件。')
   return release
 }

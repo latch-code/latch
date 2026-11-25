@@ -6,7 +6,11 @@ import { join, resolve } from 'node:path'
 import { gzipSync } from 'node:zlib'
 import {
   createPluginPackageTemplate,
+  OFFICIAL_PLUGIN_CATALOG_REPOSITORY,
   PLUGIN_MARKETPLACE_PAGE,
+  type AppSnapshot,
+  type Message,
+  type PluginCatalogPreview,
   type PluginPackageBundle,
   type PluginPackageDetail,
   type TaskDetail,
@@ -14,9 +18,10 @@ import {
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { writeHostState } from '@latch/host/host-state'
-import { describe, expect, it } from 'vitest'
+import { FAKE_ACP_AGENT, officialGithubResponse, type TestDevice } from '@latch/testkit'
+import { describe, expect, it, vi } from 'vitest'
 import { jumpToLargestResult, openContextPanel, reviewPlugin, reviewSession, selectFourthRequest } from './helpers/context.ts'
-import { startTestHost } from './helpers/host.ts'
+import { startTestHost, type TestHost } from './helpers/host.ts'
 import {
   backToSection,
   closeSettings,
@@ -31,6 +36,7 @@ import {
 import { promptValue } from './helpers/prompt.ts'
 
 const OUTPUT = 'test-results/plugin-registry'
+const installedTabName = /^已安装(?:（\d+）)?$/u
 const REGISTRY = 'https://registry.example.test/npm/'
 const NAME = '@example/handoff'
 const ID = 'registry-handoff'
@@ -40,9 +46,48 @@ const CHECKLIST = { name: '@example/checklist', id: 'registry-checklist', title:
 const CHECKLIST_METADATA = REGISTRY + CHECKLIST.name.replace('/', '%2f') + '/'
 const CONTEXT_ID = 'context-insights'
 const CONTEXT_TITLE = '上下文'
-const CONTEXT_VERSION = '1.1.0'
+const CONTEXT_VERSION = '1.2.0'
 const METADATA = REGISTRY + NAME.replace('/', '%2f') + '/'
 const LATEST = METADATA + 'latest'
+const officialRefs = OFFICIAL_PLUGIN_CATALOG_REPOSITORY + '.git/info/refs?service=git-upload-pack'
+
+async function singleWindowSession(host: TestHost, owner: TestDevice) {
+  await owner.confirmedJson('agents', {
+    body: { id: 'window-fixture', name: '窗口验收', command: process.execPath, args: [FAKE_ACP_AGENT] },
+  })
+  const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+    body: { requestId: randomUUID(), harnessId: 'window-fixture', prompt: 'window-report 238761 1048576' },
+  })
+  await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status, { timeout: 15_000 }).toBe('idle')
+  // The fake Harness reports the window. Reconstruct a long tool history at the same detail boundary used by HTTP and SSE.
+  const tools: Message[] = []
+  const start = Date.UTC(2026, 10, 24, 6)
+  for (const [kind, calls, longest] of [
+    ['read', 34, 0],
+    ['execute', 19, 539_000],
+    ['edit', 15, 2900],
+    ['other', 4, 1500],
+  ] as const) {
+    for (let index = 0; index < calls; index++)
+      tools.push({
+        id: `report-${kind}-${index}`,
+        role: 'tool',
+        tool: { kind },
+        state: kind === 'execute' && index === 0 ? 'failed' : 'completed',
+        startedAt: new Date(start).toISOString(),
+        completedAt: new Date(start + (index === 0 ? longest : 100)).toISOString(),
+        text: '',
+      })
+  }
+  const read = host.host.bridge.detail.bind(host.host.bridge)
+  vi.spyOn(host.host.bridge, 'detail').mockImplementation(async id => {
+    const detail = await read(id)
+    if (id !== sessionId) return detail
+    const [prompt, ...reply] = detail.messages
+    return { ...detail, messages: [prompt!, ...tools, ...reply] }
+  })
+  return sessionId
+}
 
 async function launchDesktop(host: Awaited<ReturnType<typeof startTestHost>>): Promise<ElectronApplication> {
   await writeHostState(host.dataDir, {
@@ -68,6 +113,37 @@ async function launchDesktop(host: Awaited<ReturnType<typeof startTestHost>>): P
       Object.entries(desktopShellEnvironment(process.env)).filter((entry): entry is [string, string] => entry[1] !== undefined),
     ),
   })
+}
+
+/** Commit-pinned GitHub API and raw file responses for the public repositories served by the fixture. */
+function githubRepositoryResponse(url: URL, repo: string, commit: string, tree: string, files: Map<string, string>): Response {
+  const prefix = `/repos/${repo}`
+  const ref = { sha: commit, commit: { tree: { sha: tree } } }
+  if (url.origin === 'https://api.github.com') {
+    if (url.pathname === prefix + '/commits') return Response.json([ref])
+    if (url.pathname === prefix + '/commits/main') return Response.json(ref)
+    if (url.pathname === prefix + '/git/commits/' + commit) return Response.json({ sha: commit, tree: { sha: tree } })
+    if (url.pathname === prefix + '/git/trees/' + tree) {
+      const directories = new Set<string>()
+      const blobs = [...files].map(([path, content]) => {
+        const parts = path.split('/')
+        for (let depth = 1; depth < parts.length; depth++) directories.add(parts.slice(0, depth).join('/'))
+        const size = Buffer.byteLength(content)
+        return { path, size, mode: '100644', type: 'blob', sha: createHash('sha1').update(`blob ${size}\0${content}`).digest('hex') }
+      })
+      return Response.json({
+        sha: tree,
+        truncated: false,
+        tree: [...Array.from(directories, path => ({ path, type: 'tree', mode: '040000', sha: tree })), ...blobs],
+      })
+    }
+  }
+  const rawPrefix = `/${repo}/${commit}/`
+  if (url.origin === 'https://raw.githubusercontent.com' && url.pathname.startsWith(rawPrefix)) {
+    const content = files.get(url.pathname.slice(rawPrefix.length))
+    if (content !== undefined) return new Response(content)
+  }
+  return new Response(null, { status: 404 })
 }
 
 async function npmRelease(root: string, version: string, instructions: string, plugin = HANDOFF) {
@@ -205,6 +281,120 @@ async function scrollBelowControls(results: Locator, controls: Locator[]) {
 }
 
 describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')('desktop plugin marketplace', () => {
+  it('shows one settings card per plugin and keeps its details separate from the enable switch', async () => {
+    const host = await startTestHost({ sessionFolders: true, pluginRegistryFetch: async () => new Response(null, { status: 503 }) })
+    let application: ElectronApplication | undefined
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      for (const pluginId of [CONTEXT_ID, 'shift-handoff', 'release-review']) {
+        const { review } = await owner.json<PluginCatalogPreview>('plugin-packages/catalog/preview', { body: { pluginId } })
+        const body = { revision: review.revision, requestId: randomUUID() }
+        await owner.json('plugin-packages/catalog/stage', { body: { ...body, pluginId } })
+        if (pluginId === CONTEXT_ID)
+          await owner.confirmedJson(`plugin-packages/${pluginId}/apply`, { body: { revision: review.revision, requestId: randomUUID() } })
+      }
+      application = await launchDesktop(host)
+      const page = await application.firstWindow()
+      await page.getByRole('button', { name: '继续', exact: true }).click()
+      await page.locator('.app-shell[data-connection="connected"]').waitFor()
+      const settings = await openSettings(page)
+      await openSection(settings, '插件')
+      await settings.getByRole('button', { name: '创建插件…', exact: true }).waitFor()
+      const list = settings.getByRole('list', { name: '插件', exact: true })
+      const cards = list.getByRole('listitem')
+      const card = (name: string) => cards.filter({ has: page.getByText(name, { exact: true }) })
+      const panel = card(CONTEXT_TITLE)
+      const draft = card('交接清单')
+      const core = card('向你提问')
+      await panel.waitFor()
+      expect(await card('发布清单面板').count()).toBe(1)
+      expect(
+        await settings
+          .locator('.settings-subpage')
+          .getByRole('heading', { name: /^(工作台|会话面板|技能|工具)$/u })
+          .count(),
+      ).toBe(0)
+      await settings.getByRole('button', { name: '新建工具', exact: true }).waitFor()
+      expect(await list.getByRole('button', { name: '新建工具', exact: true }).count()).toBe(0)
+      await draft.getByText('草稿', { exact: true }).waitFor()
+      expect(await draft.getByRole('switch').count()).toBe(0)
+      await core.getByText('始终开启', { exact: true }).waitFor()
+      expect(await core.getByRole('switch').count()).toBe(0)
+      const toggle = panel.getByRole('switch', { name: '启用 上下文', exact: true })
+      const record = async () => (await owner.json<{ package: PluginPackageDetail }>(`plugin-packages/${CONTEXT_ID}`)).package
+      const description = panel.getByText((await record()).description, { exact: true })
+      const details = panel.locator('.plugin-nav-row')
+      const viewDetails = panel.getByText('查看详情', { exact: true })
+      await page.mouse.move(1, 1)
+      await description.waitFor()
+      await viewDetails.waitFor()
+      expect(await viewDetails.evaluate(element => element.checkVisibility({ opacityProperty: true, visibilityProperty: true }))).toBe(true)
+      await toggle.click()
+      await expect.poll(record).toMatchObject({ enabled: false, appliedVersion: CONTEXT_VERSION })
+      await expect.poll(() => toggle.isChecked()).toBe(false)
+      expect(await viewDetails.isVisible()).toBe(true)
+      expect(await settings.getByRole('button', { name: '编辑…', exact: true }).count()).toBe(0)
+      await toggle.click()
+      const review = page.getByRole('dialog', { name: '审阅并启用插件', exact: true })
+      await review.waitFor()
+      expect((await record()).enabled).toBe(false)
+      await review.getByRole('button', { name: '确认启用', exact: true }).click()
+      await expect.poll(record).toMatchObject({ enabled: true, appliedVersion: CONTEXT_VERSION })
+      await viewDetails.click()
+      await settings.getByRole('button', { name: '编辑…', exact: true }).waitFor()
+      await backToSection(settings)
+      await mkdir(OUTPUT, { recursive: true })
+      for (const [width, theme] of [
+        [1440, 'light'],
+        [1440, 'dark'],
+        [820, 'dark'],
+        [390, 'dark'],
+        [320, 'dark'],
+      ] as const) {
+        await application.evaluate(({ BrowserWindow }, width) => {
+          const window = BrowserWindow.getAllWindows()[0]!
+          window.setMinimumSize(320, 560)
+          window.setContentSize(width, width < 820 ? 844 : 960)
+        }, width)
+        await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+        await expect.poll(() => page.evaluate(() => innerWidth)).toBe(width)
+        await settleShell(page)
+        await noHorizontalOverflow(page, settings)
+        await description.waitFor()
+        await reachable(viewDetails)
+        await reachable(details)
+        await reachable(toggle)
+        if (width === 1440 || width === 320) {
+          const [first, second] = await Promise.all([cards.nth(0).boundingBox(), cards.nth(1).boundingBox()])
+          if (width === 1440) {
+            expect(Math.abs(first!.y - second!.y)).toBeLessThan(1)
+            expect(second!.x).toBeGreaterThan(first!.x)
+          } else {
+            expect(Math.abs(first!.x - second!.x)).toBeLessThan(1)
+            expect(second!.y).toBeGreaterThan(first!.y)
+          }
+        }
+        await settings.getByRole('button', { name: '添加插件…', exact: true }).scrollIntoViewIfNeeded()
+        await page.mouse.move(1, 1)
+        await settings.screenshot({ path: `${OUTPUT}/settings-cards-${width}-${theme}.png`, animations: 'disabled', scale: 'css' })
+      }
+      await details.focus()
+      await page.keyboard.press('Tab')
+      await expect.poll(() => toggle.evaluate(element => element === document.activeElement)).toBe(true)
+      await page.keyboard.press('Shift+Tab')
+      await expect.poll(() => details.evaluate(element => element === document.activeElement)).toBe(true)
+      await page.keyboard.press('Enter')
+      await settings.getByRole('button', { name: '编辑…', exact: true }).waitFor()
+      await backToSection(settings)
+      await expect
+        .poll(() => page.evaluate(() => [document.activeElement?.tagName, document.activeElement?.getAttribute('aria-labelledby')]))
+        .toEqual(['BUTTON', await details.getAttribute('aria-labelledby')])
+    } finally {
+      await application?.close()
+      await host.close()
+    }
+  })
+
   it('adds from GitHub and a local catalog without npm and recovers an update receipt through settings', async () => {
     const repository = 'https://github.com/example/guide-plugins'
     const githubId = 'team-review'
@@ -231,35 +421,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       pluginRegistryFetch: async (input, request) => {
         expect(request).toMatchObject({ method: 'GET', redirect: 'manual', credentials: 'omit' })
         expect(new Headers(request.headers).has('authorization')).toBe(false)
-        const { hostname, pathname } = new URL(input)
-        sourceRequests.push(pathname)
-        const api = '/repos/example/guide-plugins'
-        if (hostname === 'api.github.com') {
-          if (pathname === api + '/commits') return Response.json([{ sha: commit, commit: { tree: { sha: tree } } }])
-          if (pathname === api + '/git/commits/' + commit) return Response.json({ sha: commit, tree: { sha: tree } })
-          if (pathname === api + '/git/trees/' + tree) {
-            return Response.json({
-              sha: tree,
-              truncated: false,
-              tree: [...sourceFiles].map(([path, content]) => {
-                const size = Buffer.byteLength(content)
-                return {
-                  path,
-                  size,
-                  mode: '100644',
-                  type: 'blob',
-                  sha: createHash('sha1').update(`blob ${size}\0${content}`).digest('hex'),
-                }
-              }),
-            })
-          }
-        }
-        if (hostname === 'raw.githubusercontent.com') {
-          const prefix = '/example/guide-plugins/' + commit + '/'
-          const file = pathname.startsWith(prefix) && sourceFiles.get(pathname.slice(prefix.length))
-          if (typeof file === 'string') return new Response(file)
-        }
-        return new Response(null, { status: 404 })
+        const url = new URL(input)
+        if (!url.pathname.includes('/example/guide-plugins/')) return new Response(null, { status: 404 })
+        sourceRequests.push(url.pathname)
+        return githubRepositoryResponse(url, 'example/guide-plugins', commit, tree, sourceFiles)
       },
     })
     let application: ElectronApplication | undefined
@@ -452,6 +617,20 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await panel.waitFor()
       await review.waitFor()
       await resize(1440, 'light')
+      const localDraft = await record()
+      await owner.confirmedJson(`plugin-packages/${id}/apply`, { body: { revision: localDraft.revision, requestId: randomUUID() } })
+      await market.getByRole('tab', { name: installedTabName }).click()
+      const installed = market.getByRole('tabpanel', { name: installedTabName })
+      const installedLocal = installed.getByRole('listitem').filter({ hasText: title })
+      await installedLocal.getByText('已安装 v2.0.0', { exact: true }).waitFor()
+      expect(await installed.getByText(githubTitle, { exact: true }).count()).toBe(0)
+      await writePackage(id, title, '2.1.0')
+      const lookup = page.waitForRequest(request => new URL(request.url()).pathname.endsWith('/plugin-packages/external/find'))
+      await installedLocal.getByRole('button', { name: '检查更新', exact: true }).click()
+      expect((await lookup).postDataJSON()).toEqual({ pluginId: id })
+      await installed.getByRole('button', { name: '保存更新草稿', exact: true }).click()
+      await installedLocal.getByRole('button', { name: '审阅草稿', exact: true }).waitFor()
+      expect(await record()).toMatchObject({ version: '2.1.0', appliedVersion: '2.0.0' })
       await openSettings(page)
       await openSection(settings, '插件')
       await settings.locator('.plugin-nav-row', { hasText: '插件市场' }).click()
@@ -476,7 +655,11 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
   })
 
   it('applies the context panel from its market listing and falls back in the same tab when disabled or removed', async () => {
-    const host = await startTestHost({ hostName: '工作电脑', plugins: [reviewPlugin] })
+    const host = await startTestHost({
+      hostName: '工作电脑',
+      plugins: [reviewPlugin],
+      pluginRegistryFetch: async () => new Response(null, { status: 503 }),
+    })
     let application: ElectronApplication | undefined
     try {
       const desktop = await launchDesktop(host)
@@ -496,12 +679,13 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await resize(1280, 900)
       await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
       const owner = await host.enroll({ listener: 'unix' })
+      const report = await singleWindowSession(host, owner)
       const session = await reviewSession(host, owner)
       const sessionId = session.summary.id
       const path = `plugin-packages/${CONTEXT_ID}`
       const installed = async () => (await owner.json<{ package: PluginPackageDetail }>(path)).package
-      const openContext = async () => {
-        await openSession(page, sessionId)
+      const openContext = async (id = sessionId) => {
+        await openSession(page, id)
         const toggle = page.getByRole('button', { name: '侧边面板', exact: true })
         if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click()
         await openPanelTab(page, CONTEXT_TITLE)
@@ -647,6 +831,56 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await plugin.waitFor({ state: 'hidden' })
       await page.screenshot({ path: `${OUTPUT}/context-tool-jump-installed-390-dark.png`, animations: 'disabled', scale: 'css' })
       await resize(1280, 900)
+      await openContext(report)
+      const meter = plugin.getByRole('meter', { name: '上下文窗口', exact: true })
+      await meter.waitFor()
+      expect(await meter.getAttribute('aria-valuetext')).toBe('238,761 / 1,048,576 tokens · 22.77%')
+      const percentage = (await plugin.getByText('22.77%', { exact: true }).boundingBox())!
+      const usedLabel = (await plugin.getByText('已用', { exact: true }).boundingBox())!
+      expect(usedLabel.x - (percentage.x + percentage.width)).toBeLessThanOrEqual(16)
+      await plugin.getByText('809,815 tokens', { exact: true }).waitFor()
+      expect(await plugin.getByRole('heading', { name: '逐轮窗口占用', exact: true }).count()).toBe(0)
+      const activity = plugin.locator('.context-tool-activity')
+      await activity.getByText(/共 72 次.*1 次失败/u).waitFor()
+      const tools = activity.getByRole('listitem')
+      expect(await tools.count()).toBe(4)
+      for (const [name, calls, share] of [
+        ['read', '34 次', '47.2%'],
+        ['execute', '19 次', '26.4%'],
+        ['edit', '15 次', '20.8%'],
+        ['other', '4 次', '5.6%'],
+      ]) {
+        const row = tools.filter({ has: page.getByText(name, { exact: true }) })
+        await row.getByText(calls, { exact: true }).waitFor()
+        await row.getByText(share, { exact: true }).waitFor()
+      }
+      const execution = tools.filter({ hasText: 'execute' })
+      expect(await execution.innerText()).toContain('1 次失败')
+      expect(await execution.innerText()).toContain('8m 59s')
+      for (const [width, height] of [
+        [1280, 900],
+        [768, 900],
+        [390, 844],
+      ] as const) {
+        await resize(width, height)
+        await settleShell(page)
+        await openContextPanel(page, plugin)
+        for (const theme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme: theme })
+          await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).colorScheme)).toBe(theme)
+          await noHorizontalOverflow(page, plugin)
+          await page.mouse.move(4, 4)
+          await plugin.screenshot({
+            path: `${OUTPUT}/context-window-installed-${width}-${theme}.png`,
+            animations: 'disabled',
+            scale: 'css',
+          })
+        }
+      }
+      await plugin.getByRole('button', { name: '查看第 1 轮对话', exact: true }).click()
+      await plugin.waitFor({ state: 'hidden' })
+      await page.locator('.transcript .user-bubble').getByText('window-report 238761 1048576', { exact: true }).waitFor()
+      await resize(1280, 900)
       await openContext()
 
       const settings = page.locator('.settings-page')
@@ -698,6 +932,153 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
     }
   })
 
+  it('retries an official check from Installed and applies the reviewed GitHub update', async () => {
+    const files = new Map<string, string>()
+    const commit = 'a6'.repeat(20)
+    const remoteVersion = '1.2.1'
+    let reachableGitHub = false
+    let checks = 0
+    const fetched = new Set<string>()
+    const host = await startTestHost({
+      pluginRegistryFetch: async (url, init) => {
+        expect(init).toMatchObject({ method: 'GET', redirect: 'manual', credentials: 'omit' })
+        expect(new Headers(init.headers).has('authorization')).toBe(false)
+        fetched.add(new URL(url).hostname)
+        if (url === officialRefs) {
+          checks++
+          if (!reachableGitHub) return new Response(null, { status: 429, headers: { 'retry-after': '1' } })
+        }
+        return officialGithubResponse(url, commit, files)
+      },
+    })
+    let application: ElectronApplication | undefined
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const ids = ['shift-handoff', 'release-review', 'release-check', CONTEXT_ID]
+      const catalog = []
+      for (const pluginId of ids) {
+        const { bundle, review } = await owner.json<PluginCatalogPreview>('plugin-packages/catalog/preview', { body: { pluginId } })
+        const folder = `plugins/${pluginId}`
+        const manifest = pluginId === 'release-check' ? 'latch-app.json' : 'latch-plugin.json'
+        catalog.push({ id: pluginId, folder, manifest, files: bundle.files.map(file => file.path) })
+        if (pluginId !== 'release-check')
+          await owner.json('plugin-packages/catalog/stage', { body: { pluginId, revision: review.revision, requestId: randomUUID() } })
+        if (pluginId === 'shift-handoff' || pluginId === CONTEXT_ID)
+          await owner.confirmedJson(`plugin-packages/${pluginId}/apply`, { body: { revision: review.revision, requestId: randomUUID() } })
+        if (pluginId === 'shift-handoff')
+          await owner.json(`plugin-packages/${pluginId}/enabled`, { body: { enabled: false, requestId: randomUUID() } })
+        if (pluginId === CONTEXT_ID) {
+          bundle.manifest.version = remoteVersion
+          bundle.files[0]!.content += '\n// Updated official release.\n'
+        }
+        files.set(`${folder}/${manifest}`, JSON.stringify(bundle.manifest))
+        for (const file of bundle.files) files.set(`${folder}/${file.path}`, file.content)
+      }
+      files.set('latch.catalog.json', JSON.stringify({ formatVersion: 1, plugins: catalog }))
+      application = await launchDesktop(host)
+      const page = await application.firstWindow()
+      await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setContentSize(1600, 900))
+      await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+      await page.getByRole('button', { name: '继续', exact: true }).click()
+      await page.locator('.app-shell[data-connection="connected"]').waitFor()
+      await page.locator('#session-navigation').getByRole('button', { name: '插件市场', exact: true }).click()
+      const market = page.getByRole('region', { name: '插件市场', exact: true })
+      const card = market.locator('.plugin-market-card').filter({ has: page.getByRole('button', { name: CONTEXT_TITLE, exact: true }) })
+      await expect.poll(() => checks).toBe(1)
+      await card.getByText(`已安装 v${CONTEXT_VERSION}`, { exact: true }).waitFor()
+      const check = market.getByRole('button', { name: '检查更新', exact: true })
+      await expect.poll(() => check.isEnabled()).toBe(true)
+      await market.getByText(/GitHub 暂时限制匿名读取/u).waitFor()
+      await market.screenshot({ path: `${OUTPUT}/official-check-retry.png`, animations: 'disabled', scale: 'css' })
+      await market.getByRole('tab', { name: installedTabName }).click()
+      const inventory = market.getByRole('tabpanel', { name: installedTabName })
+      const cards = inventory.getByRole('list')
+      const context = cards.getByRole('listitem').filter({ has: page.getByRole('heading', { name: CONTEXT_TITLE, exact: true }) })
+      const disabled = cards.getByRole('listitem').filter({ has: page.getByRole('heading', { name: '交接清单', exact: true }) })
+      await reachable(disabled.getByRole('button', { name: '管理', exact: true }))
+      expect(await cards.count()).toBe(1)
+      expect(await cards.getByRole('listitem').count()).toBe(2)
+      await market.getByRole('tab', { name: '已安装（2）', exact: true }).waitFor()
+      expect(await inventory.getByRole('heading', { name: '官方插件', exact: true }).count()).toBe(0)
+      await context.getByText(/窗口/u).waitFor()
+      expect(await disabled.getByRole('switch').isChecked()).toBe(false)
+      const toggle = context.getByRole('switch')
+      expect(await toggle.isChecked()).toBe(true)
+      expect(await inventory.getByText('发布清单面板', { exact: true }).count()).toBe(0)
+      expect(await inventory.locator('.plugin-market-preview, .plugin-market-icon, .plugin-market-inline-icon, img').count()).toBe(0)
+      await reachable(disabled.getByRole('button', { name: '检查更新', exact: true }))
+      const retry = context.getByRole('button', { name: '检查更新', exact: true })
+      const update = context.getByRole('button', { name: '审阅更新', exact: true })
+      await retry.click()
+      await context.getByText(/GitHub 暂时限制匿名读取/u).waitFor()
+      expect(await disabled.getByText(/GitHub 暂时限制匿名读取/u).count()).toBe(0)
+      reachableGitHub = true
+      await retry.click()
+      await context.getByText(`可更新到 v${remoteVersion}`, { exact: true }).waitFor()
+      expect(await inventory.getByText(/个官方插件可更新/u).count()).toBe(0)
+      expect(checks).toBe(3)
+      await market.getByRole('tab', { name: 'Latch 官方', exact: true }).click()
+      await card.getByText(`可更新到 v${remoteVersion}`, { exact: true }).waitFor()
+      await market.screenshot({ path: `${OUTPUT}/official-update-available.png`, animations: 'disabled', scale: 'css' })
+      await card.getByRole('button', { name: CONTEXT_TITLE, exact: true }).click()
+      const dialog = page.getByRole('dialog', { name: CONTEXT_TITLE })
+      await dialog.getByRole('button', { name: '检查更新', exact: true }).click()
+      await expect.poll(() => checks).toBe(4)
+      await dialog.getByRole('button', { name: '取消', exact: true }).click()
+      await market.getByRole('tab', { name: installedTabName }).click()
+      const desktop = application
+      for (const [width, theme] of [
+        [1440, 'light'],
+        [1440, 'dark'],
+        [820, 'dark'],
+        [390, 'dark'],
+        [320, 'dark'],
+      ] as const) {
+        await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+        await desktop.evaluate(({ BrowserWindow }, width) => {
+          const window = BrowserWindow.getAllWindows()[0]!
+          window.setMinimumSize(320, 560)
+          window.setContentSize(width, width >= 820 ? 900 : 844)
+        }, width)
+        await expect.poll(() => page.evaluate(() => innerWidth)).toBe(width)
+        await settleShell(page)
+        await noHorizontalOverflow(page, inventory)
+        await reachable(retry)
+        await reachable(update)
+        await reachable(toggle)
+        await reachable(context.getByRole('button', { name: '管理', exact: true }))
+        const [first, second] = await Promise.all([disabled.boundingBox(), context.boundingBox()])
+        if (width >= 1440) expect(Math.abs(first!.y - second!.y)).toBeLessThan(1)
+        if (width <= 390) expect(Math.abs(first!.x - second!.x)).toBeLessThan(1)
+        await page.mouse.move(2, 2)
+        await market.screenshot({ path: `${OUTPUT}/installed-update-${width}-${theme}.png`, animations: 'disabled', scale: 'css' })
+      }
+      const record = async () => (await owner.json<{ package: PluginPackageDetail }>(`plugin-packages/${CONTEXT_ID}`)).package
+      await toggle.click()
+      await expect.poll(record).toMatchObject({ enabled: false, appliedVersion: CONTEXT_VERSION })
+      await expect.poll(() => toggle.isChecked()).toBe(false)
+      expect(await cards.getByRole('listitem').count()).toBe(2)
+      await toggle.click()
+      await page.getByRole('dialog', { name: '审阅并启用插件', exact: true }).getByRole('button', { name: '确认启用', exact: true }).click()
+      await expect.poll(record).toMatchObject({ enabled: true, appliedVersion: CONTEXT_VERSION })
+      await expect.poll(() => toggle.isChecked()).toBe(true)
+      await update.click()
+      await dialog.getByRole('button', { name: '审阅更新', exact: true }).click()
+      await expect.poll(record).toMatchObject({ catalog: { version: remoteVersion, commit }, appliedVersion: CONTEXT_VERSION })
+      await dialog.getByRole('button', { name: '应用', exact: true }).click()
+      await expect.poll(record).toMatchObject({ appliedVersion: remoteVersion, enabled: true })
+      await dialog.getByRole('button', { name: '完成', exact: true }).click()
+      await context.getByText(`已安装 v${remoteVersion}`, { exact: true }).waitFor()
+      expect(await update.count()).toBe(0)
+      const { catalog: live } = await owner.json<AppSnapshot>('snapshot')
+      expect(live?.uiPanels?.find(panel => panel.id === 'context-insights:insights')?.officialContext).toBe(true)
+      expect(fetched).toEqual(new Set(['github.com', 'codeload.github.com', 'raw.githubusercontent.com']))
+    } finally {
+      await application?.close()
+      await host.close()
+    }
+  })
+
   it('browses independently and changes an npm plugin only when its downloaded draft is applied', async () => {
     const v1 = '先核对交接日期。'
     const v2 = '先核对交接日期，再确认下一步。'
@@ -709,6 +1090,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       hostName: '工作电脑',
       sessionFolders: true,
       pluginRegistryFetch: async url => {
+        if (url === officialRefs) return new Response(null, { status: 503 })
         requests.push(url)
         if (url === CHECKLIST_METADATA + 'latest' || url === CHECKLIST_METADATA + checklist.metadata.version)
           return Response.json(checklist.metadata)
@@ -772,9 +1154,11 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(await open.evaluate(element => element.previousElementSibling?.textContent?.trim())).toBe('定时任务')
       const market = page.getByRole('region', { name: '插件市场', exact: true })
       const sources = market.getByRole('tablist', { name: '插件来源', exact: true })
-      const bundled = sources.getByRole('tab', { name: '随 Latch 附带', exact: true })
+      const bundled = sources.getByRole('tab', { name: 'Latch 官方', exact: true })
+      const installedTab = sources.getByRole('tab', { name: installedTabName })
       const npm = sources.getByRole('tab', { name: '添加插件', exact: true })
-      const bundledPanel = market.getByRole('tabpanel', { name: '随 Latch 附带', exact: true })
+      const bundledPanel = market.getByRole('tabpanel', { name: 'Latch 官方', exact: true })
+      const installedPanel = market.getByRole('tabpanel', { name: installedTabName })
       const npmPanel = market.getByRole('tabpanel', { name: '添加插件', exact: true })
       await open.click()
       await expect.poll(() => new URL(page.url()).searchParams.get('page')).toBe('marketplace')
@@ -949,7 +1333,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await capture('bundled-scrolled-390-dark')
       await bundled.focus()
       await page.keyboard.press('ArrowRight')
-      await npmPanel.waitFor()
+      await installedPanel.waitFor()
       await page.keyboard.press('ArrowLeft')
       await bundledPanel.waitFor()
       await expect.poll(() => scroll.evaluate(element => element.scrollTop)).toBe(offset)
@@ -976,6 +1360,11 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await capture('bundled-filtered-1440-light')
       await bundled.focus()
       await page.keyboard.press('ArrowRight')
+      await installedPanel.waitFor()
+      expect(await installedTab.getAttribute('aria-controls')).toBe(await installedPanel.getAttribute('id'))
+      expect(await installedTab.evaluate(element => element === document.activeElement)).toBe(true)
+      await installedPanel.getByText('还没有已安装的插件', { exact: true }).waitFor()
+      await page.keyboard.press('ArrowRight')
       await npmPanel.waitFor()
       expect(await create.count()).toBe(0)
       expect(await npm.getAttribute('aria-selected')).toBe('true')
@@ -985,6 +1374,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(await npm.getAttribute('aria-controls')).toBe(await npmPanel.getAttribute('id'))
       expect(await npm.evaluate(element => element === document.activeElement)).toBe(true)
       await bundledPanel.waitFor({ state: 'hidden' })
+      await page.keyboard.press('ArrowLeft')
+      await installedPanel.waitFor()
       await page.keyboard.press('ArrowLeft')
       await bundledPanel.waitFor()
       await create.waitFor()
@@ -1197,7 +1588,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(await open.getAttribute('aria-current')).toBe('page')
       if ((await npm.getAttribute('aria-selected')) !== 'true') await npm.click()
       await reachable(retryStage)
-      expect(await fallbackIcon(downloadedRow(TITLE))).toEqual(firstIcon)
+      expect(await downloadedRow(TITLE).locator('.plugin-market-icon').count()).toBe(0)
       await page.screenshot({ path: `${OUTPUT}/npm-retry-1440-dark.png`, animations: 'disabled', scale: 'css' })
       await retryStage.click()
       await review.waitFor()
@@ -1223,9 +1614,16 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       latest = '3.0.0'
       await market.waitFor()
       expect(await npm.getAttribute('aria-selected')).toBe('true')
-      await market.getByRole('button', { name: '检查更新', exact: true }).click()
-      await market.getByRole('button', { name: '导出本地草稿', exact: true }).waitFor()
-      const replace = market.getByRole('button', { name: '替换本地草稿', exact: true })
+      await installedTab.click()
+      const installedHandoff = installedPanel.getByRole('listitem').filter({ hasText: TITLE })
+      await installedHandoff.getByRole('button', { name: '检查更新', exact: true }).click()
+      await installedPanel.getByRole('button', { name: '导出本地草稿', exact: true }).waitFor()
+      const backToInstalled = installedPanel.getByRole('button', { name: '返回已安装', exact: true })
+      await backToInstalled.click()
+      const checkInstalled = installedHandoff.getByRole('button', { name: '检查更新', exact: true })
+      await expect.poll(() => checkInstalled.evaluate(button => button === document.activeElement)).toBe(true)
+      await checkInstalled.click()
+      const replace = installedPanel.getByRole('button', { name: '替换本地草稿', exact: true })
       const confirmation = page.getByRole('dialog', { name: '替换本地草稿', exact: true })
       await replace.click()
       const confirm = confirmation.getByRole('button', { name: '确认替换草稿', exact: true })
@@ -1237,7 +1635,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect((await installed()).revision).toBe(edited.revision)
       await replace.click()
       await confirm.click()
-      await review.waitFor()
+      await installedHandoff.getByRole('button', { name: '审阅草稿', exact: true }).waitFor()
       expect(await installed()).toMatchObject({
         state: 'update-available',
         enabled: true,
@@ -1288,9 +1686,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await fallback.screenshot({ path: `${OUTPUT}/npm-checklist-cover-1440-dark.png`, animations: 'disabled', scale: 'css' })
       await download.click()
       const checklistRow = downloadedRow(CHECKLIST.title)
-      expect(await fallbackIcon(checklistRow)).toEqual(checklistIcon)
-      expect(await fallbackIcon(downloadedRow(TITLE))).toEqual(firstIcon)
-      await capture('npm-downloaded-artwork-1440-dark')
+      await reachable(checklistRow.getByRole('button', { name: '检查更新', exact: true }))
+      expect(await checklistRow.locator('.plugin-market-icon').count()).toBe(0)
+      await capture('npm-downloaded-1440-dark')
       await resize(390, 560)
       const npmResults = npmPanel.getByRole('region', { name: '添加插件结果', exact: true })
       await scrollBelowControls(npmResults, [sources, name])
@@ -1301,8 +1699,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
       await market.waitFor()
       if ((await npm.getAttribute('aria-selected')) !== 'true') await npm.click()
-      expect(await fallbackIcon(checklistRow)).toEqual(checklistIcon)
-      expect(await fallbackIcon(downloadedRow(TITLE))).toEqual(firstIcon)
+      for (const row of [checklistRow, downloadedRow(TITLE)]) {
+        await reachable(row.getByRole('button', { name: '检查更新', exact: true }))
+        expect(await row.locator('.plugin-market-icon').count()).toBe(0)
+      }
     } finally {
       await application?.close()
       await host.close()

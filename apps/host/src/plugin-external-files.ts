@@ -33,6 +33,7 @@ export interface ExternalReaderOptions {
   home?: string
   protectedPaths?: readonly string[]
   check?: () => void
+  signal?: AbortSignal
 }
 
 export interface ExternalPluginFiles {
@@ -46,7 +47,8 @@ export const invalidContent = () => new AppError(400, 'plugin-external-content-i
 export const externalLimit = () => new AppError(413, 'plugin-external-limit', '来源里的目录或插件超过了可读取的大小或数量。')
 const prohibitedPath = () => new AppError(403, 'plugin-external-path', '来源中有受保护的路径或链接。请选择正常的插件目录和文件。')
 const sourceChanged = () => new AppError(409, 'plugin-external-changed', '来源文件在读取时变化了，请重新预览。')
-const githubInvalid = () => new AppError(502, 'plugin-external-github-invalid', 'GitHub 返回的提交、文件树或文件内容无法核对。')
+const githubUnreachable = () => new AppError(502, 'plugin-external-github-unreachable', '暂时无法连接 GitHub，请稍后重试。')
+export const githubInvalid = () => new AppError(502, 'plugin-external-github-invalid', 'GitHub 返回的提交、文件树或文件内容无法核对。')
 
 export function safeSourcePath(path: string): boolean {
   const parts = path.split('/')
@@ -85,9 +87,9 @@ export function sourceJson(bytes: Buffer, invalid: () => AppError = invalidConte
   }
 }
 
-function githubRequest(options: ExternalReaderOptions) {
-  const signal = AbortSignal.timeout(25_000)
-  return async (url: string, limit: number, raw = false): Promise<Buffer> => {
+export function githubRequest(options: ExternalReaderOptions) {
+  const signal = options.signal ?? AbortSignal.timeout(25_000)
+  return async (url: string, limit: number, accept = 'application/vnd.github+json'): Promise<Buffer> => {
     options.check?.()
     let response: Response
     try {
@@ -96,16 +98,17 @@ function githubRequest(options: ExternalReaderOptions) {
         redirect: 'manual',
         credentials: 'omit',
         signal,
-        headers: { accept: raw ? 'application/octet-stream' : 'application/vnd.github+json', 'user-agent': 'Latch' },
+        headers: { accept, 'user-agent': 'Latch' },
       })
     } catch (error) {
       if (error instanceof EgressDenied || (error instanceof Error && error.cause instanceof EgressDenied))
         throw new AppError(403, 'egress-denied', 'Host 的出站策略拒绝访问 GitHub。')
-      throw new AppError(502, 'plugin-external-github-unreachable', '暂时无法连接 GitHub，请检查网络后重试。')
+      throw githubUnreachable()
     }
     if (response.status !== 200 || !response.body || Number(response.headers.get('content-length')) > limit) {
       await response.body?.cancel().catch(() => {})
       const { status, headers } = response
+      if (status >= 500 && status < 600) throw githubUnreachable()
       if (status === 429 || (status === 403 && (headers.get('x-ratelimit-remaining') === '0' || headers.has('retry-after'))))
         throw new AppError(429, 'plugin-external-github-rate-limit', 'GitHub 暂时限制了匿名读取。请稍后重试，或选用本机目录。')
       if (status === 404 || status === 401 || status === 403)
@@ -124,7 +127,7 @@ function githubRequest(options: ExternalReaderOptions) {
       for (;;) {
         options.check?.()
         const part = await reader.read().catch(() => {
-          throw githubInvalid()
+          throw signal.aborted ? githubUnreachable() : githubInvalid()
         })
         if (part.done) break
         size += part.value.length
@@ -174,6 +177,10 @@ async function githubTree(repo: string, commit: string, get: GithubRequest) {
   return entries
 }
 
+export function gitBlobId(bytes: Buffer): string {
+  return createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')
+}
+
 export async function githubPluginFiles(
   source: { repository: string; commit: string },
   options: ExternalReaderOptions,
@@ -194,8 +201,12 @@ export async function githubPluginFiles(
       if (!file) return undefined
       if (file.type !== 'blob' || (file.mode !== '100644' && file.mode !== '100755') || file.size === undefined) throw prohibitedPath()
       if (file.size > limit) throw externalLimit()
-      const bytes = await get(`${RAW}${repo}/${source.commit}/${pathParts.map(encodeURIComponent).join('/')}`, file.size, true)
-      const hash = createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')
+      const bytes = await get(
+        `${RAW}${repo}/${source.commit}/${pathParts.map(encodeURIComponent).join('/')}`,
+        file.size,
+        'application/octet-stream',
+      )
+      const hash = gitBlobId(bytes)
       if (bytes.length !== file.size || hash !== file.sha) throw githubInvalid()
       return bytes
     },

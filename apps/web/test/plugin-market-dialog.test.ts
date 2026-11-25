@@ -1,16 +1,18 @@
 // @vitest-environment happy-dom
-import { act, createElement } from 'react'
+import { act, createElement, Fragment } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import {
   createPluginPackageTemplate,
   type AppSnapshot,
+  type PluginCatalogCheckResult,
   type PluginCatalogPreview,
   type PluginPackageDetail,
   type PluginPackageReview,
   type PluginPackageSummary,
 } from '@latch/protocol'
 import { PluginMarketplace } from '../src/plugin-marketplace/PluginMarketplace.tsx'
+import { useInstalledPluginSwitch } from '../src/plugin-marketplace/InstalledPluginSwitch.tsx'
 
 const catalogManifests = {
   'shift-handoff': { name: 'Shift handoff', version: '1.0.0' },
@@ -64,13 +66,18 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-const render = (props: { snapshot: AppSnapshot; access: Parameters<typeof PluginMarketplace>[0]['access']; onManage?: () => void }) =>
+const render = (props: {
+  snapshot: AppSnapshot
+  access: Parameters<typeof PluginMarketplace>[0]['access']
+  source?: Parameters<typeof PluginMarketplace>[0]['source']
+  onManage?: (id: string) => void
+}) =>
   act(async () =>
     root.render(
       createElement(PluginMarketplace, {
         open: true,
         showBundled: true,
-        source: 'bundled',
+        source: props.source ?? 'bundled',
         onSourceChange: vi.fn(),
         onManage: props.onManage ?? vi.fn(),
         snapshot: props.snapshot,
@@ -84,6 +91,92 @@ const card = (title: string) =>
 const dialog = () => element.querySelector<HTMLDialogElement>('dialog.plugin-market-dialog')!
 const enabled = (button: HTMLButtonElement) => button.getAttribute('aria-disabled') !== 'true'
 const settle = () => act(async () => await new Promise(resolve => setTimeout(resolve, 0)))
+const admin = (hostId: string) => {
+  const device = { id: 'owner', dataScope: 'all' } as AppSnapshot['device']
+  return {
+    snapshot: { revision: 0, device, host: { hostId }, catalog: { features: { pluginPackages: true } } } as AppSnapshot,
+    access: { legacy: false, local: true, admin: true, scopes: new Set(['view', 'admin'] as const), device },
+  }
+}
+function checkedCatalog(version: string): PluginCatalogCheckResult {
+  return {
+    plugins: Object.keys(catalogManifests).map(pluginId => ({
+      id: pluginId,
+      version,
+      revision,
+      commit: 'a'.repeat(40),
+      ...(pluginId === id ? { updateStatus: 'available' as const } : {}),
+    })),
+  }
+}
+
+it('locks an in-use installed switch, retries its original write, and enables only the reviewed applied revision', async () => {
+  const requests: unknown[] = []
+  const onChanged = vi.fn()
+  let uncertain = true
+  let activeRuns = 1
+  let state = true
+  const fetch = vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith('/plugins')) return Response.json({ plugins: [{ id, enabled: state, activeRuns }] })
+    if (url.includes('/review?')) {
+      expect(new URL(url, 'http://latch.invalid').searchParams.get('revision')).toBe(revision)
+      return Response.json({ review: { ...review, baseAppliedRevision: revision, installId } })
+    }
+    if (!url.endsWith('/enabled')) throw new Error('unexpected route')
+    const body = JSON.parse(String(init.body))
+    requests.push(body)
+    if (uncertain) return Response.json({ error: 'plugin-package-write-unknown' }, { status: 503 })
+    state = body.enabled
+    return Response.json({ package: { id, enabled: state } })
+  })
+  vi.stubGlobal('fetch', fetch)
+  function Card({ storageKey, editable, snapshotRevision }: { storageKey: string; editable: boolean; snapshotRevision: number }) {
+    const controls = useInstalledPluginSwitch({
+      active: true,
+      editable,
+      connected: true,
+      storageKey,
+      revision: snapshotRevision,
+      onChanged,
+    })
+    const record = { ...summary, revision: 'a'.repeat(64), appliedRevision: revision, enabled: state }
+    return createElement(Fragment, null, controls.control(record, '交接'), controls.feedback)
+  }
+  const draw = (storageKey: string, editable: boolean, snapshotRevision = 0) =>
+    act(async () => root.render(createElement(Card, { storageKey, editable, snapshotRevision })))
+  const toggle = () => element.querySelector<HTMLButtonElement>('[role="switch"]')!
+  const retry = () => buttons(element, '重试同一请求')
+  await draw('switch-test', true)
+  expect(enabled(toggle())).toBe(false)
+  await act(async () => toggle().click())
+  expect(requests).toEqual([])
+  activeRuns = 0
+  await draw('switch-test', true, 1)
+  await act(async () => toggle().click())
+  expect(requests).toHaveLength(1)
+  expect(requests[0]).toMatchObject({ enabled: false, requestId: expect.any(String) })
+  expect(toggle().getAttribute('aria-checked')).toBe('true')
+  expect(retry()).toHaveLength(1)
+  await draw('switch-test', false)
+  expect(retry()).toHaveLength(0)
+  expect(enabled(toggle())).toBe(false)
+  await draw('other-device', true)
+  expect(retry()).toHaveLength(0)
+  uncertain = false
+  await draw('switch-test', true)
+  await act(async () => retry()[0].click())
+  expect(requests[1]).toEqual(requests[0])
+  expect(retry()).toHaveLength(0)
+  expect(toggle().getAttribute('aria-checked')).toBe('false')
+  await act(async () => toggle().click())
+  expect(requests).toHaveLength(2)
+  const approve = buttons(element, '确认启用')[0]
+  expect(enabled(approve)).toBe(true)
+  await act(async () => approve.click())
+  expect(requests[2]).toMatchObject({ enabled: true, reviewedInstallId: installId, baseAppliedRevision: revision })
+  expect(toggle().getAttribute('aria-checked')).toBe('true')
+  expect(onChanged).toHaveBeenCalledTimes(2)
+})
 
 it('opens a bundled plugin in a dialog without install actions or package reads on a view-only device', async () => {
   const fetch = vi.fn(async () => new Response(null, { status: 404 }))
@@ -102,6 +195,7 @@ it('opens a bundled plugin in a dialog without install actions or package reads 
   expect(dialog().textContent).toContain('请在这台 Mac 的 Latch 桌面端安装插件。')
   expect(buttons(dialog(), '审阅并安装')).toHaveLength(0)
   expect(buttons(dialog(), '应用')).toHaveLength(0)
+  expect(buttons(element, '检查更新')).toHaveLength(0)
   // The list stays underneath, with its cards' versions free of the old prefix.
   expect(element.querySelector('.plugin-market-gallery')).not.toBeNull()
   expect(element.textContent).not.toContain('随附 v')
@@ -109,6 +203,180 @@ it('opens a bundled plugin in a dialog without install actions or package reads 
   expect(dialog().open).toBe(false)
   expect(fetch).not.toHaveBeenCalled()
 })
+
+it('manages an applied package with no release source by its local identity and hides it when access is revoked', async () => {
+  const owner = admin('inventory')
+  const { catalog: _catalog, ...local } = summary
+  const record = { ...local, name: '本机自建交接', description: '自定义交接流程', state: 'applied', appliedRevision: revision }
+  const official = { ...summary, id: 'context-insights', appliedRevision: revision }
+  const fetch = vi.fn(async (url: string) =>
+    url.endsWith('/plugin-packages') ? Response.json({ packages: [record, official] }) : Response.json(checkedCatalog('2.0.0')),
+  )
+  vi.stubGlobal('fetch', fetch)
+  const onManage = vi.fn()
+  await render({ ...owner, source: 'installed', onManage })
+  await settle()
+  const panel = element.querySelector('[role="tabpanel"]:not([hidden])')!
+  const cards = [...panel.querySelectorAll('li')]
+  expect(cards).toHaveLength(2)
+  expect(cards[0]!.parentElement).toBe(cards[1]!.parentElement)
+  const custom = cards.find(card => card.textContent?.includes(record.name))!
+  expect(custom.textContent).toContain(record.description)
+  expect(custom.textContent).toContain(record.version)
+  expect(buttons(custom, '检查更新')).toHaveLength(0)
+  expect(buttons(custom, '审阅更新')).toHaveLength(0)
+  await act(async () => buttons(custom, '管理')[0]!.click())
+  expect(onManage).toHaveBeenCalledExactlyOnceWith(record.id)
+
+  fetch.mockClear()
+  await render({ ...owner, source: 'installed', access: { ...owner.access, admin: false, scopes: new Set(['view']) } })
+  expect(element.textContent).not.toContain(record.name)
+  expect([...element.querySelectorAll('[role="tab"]')].some(tab => tab.textContent === '已安装')).toBe(false)
+  expect(fetch).not.toHaveBeenCalled()
+})
+
+it('keeps the bundled review after a failed check, then refreshes all four cards and the open update dialog on a manual retry', async () => {
+  const version = '2.0.0'
+  const newBundle = { ...bundle, manifest: { ...bundle.manifest, version, description: '官方新版本的说明' } }
+  const remoteRevision = '8'.repeat(64)
+  const commit = 'a'.repeat(40)
+  const checked = checkedCatalog(version)
+  checked.plugins.find(plugin => plugin.id === id)!.revision = remoteRevision
+  const current = { ...summary, state: 'applied' as const, enabled: true, appliedVersion: summary.version, appliedRevision: revision }
+  const requests: Array<{ force?: true }> = []
+  const stage = vi.fn()
+  let release!: () => void
+  const held = new Promise<void>(done => {
+    release = done
+  })
+  let online = false
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/catalog/check')) {
+      requests.push(JSON.parse(String(init?.body)) as { force?: true })
+      if (requests.length === 1)
+        return Response.json({ error: 'plugin-external-github-rate-limit', message: 'untrusted details' }, { status: 429 })
+      await held
+      online = true
+      return Response.json(checked)
+    }
+    if (url.endsWith('/plugin-packages')) {
+      return Response.json({
+        packages: [
+          { ...current, catalogUpdate: { version: online ? version : summary.version, status: online ? 'available' : 'current' } },
+        ],
+      })
+    }
+    if (url.endsWith('/catalog/preview')) {
+      return Response.json({
+        bundle: online ? newBundle : bundle,
+        review: online ? { ...review, revision: remoteRevision, version, source: { kind: 'catalog', version, commit } } : review,
+        installed: { id, installId, revision, version: summary.version, modified: false },
+        updateAvailable: online,
+        updateStatus: online ? 'available' : 'current',
+      } satisfies PluginCatalogPreview)
+    }
+    if (url.endsWith('/catalog/stage')) {
+      stage(JSON.parse(String(init?.body)) as unknown)
+      return Response.json({ package: { ...current, version, revision: remoteRevision } })
+    }
+    return new Response(null, { status: 404 })
+  })
+  await render(admin('fixture'))
+  await settle()
+  expect(requests).toEqual([{}])
+  expect(element.textContent).toContain('未能检查官方目录')
+  expect(element.textContent).toContain('GitHub 暂时限制匿名读取')
+  expect(element.textContent).not.toContain('untrusted details')
+  expect(element.textContent).not.toContain('没有可用更新')
+  await act(async () => card('交接清单').click())
+  expect(dialog().textContent).toContain('已安装 v1.0.0')
+  expect(dialog().textContent).not.toContain('已保存此随附版本')
+  expect(dialog().textContent).toContain('运行权限与风险')
+  await act(async () => buttons(dialog(), '检查更新')[0]!.click())
+  expect(requests).toEqual([{}, { force: true }])
+  expect(dialog().textContent).toContain('正在检查官方插件目录')
+  await act(async () => release())
+  await settle()
+  for (const metadata of element.querySelectorAll('.plugin-market-card .plugin-market-versions'))
+    expect(metadata.textContent).toContain('v2.0.0')
+  expect(dialog().textContent).toContain('可更新到 v2.0.0')
+  expect(dialog().textContent).toContain('官方新版本的说明')
+  expect(dialog().querySelector('a[href*="/tree/"]')?.getAttribute('href')).toBe(
+    `https://github.com/latch-code/plugin-market/tree/${commit}/plugins/${id}`,
+  )
+  expect(dialog().querySelector('a[href*="/commit/"]')?.getAttribute('href')).toBe(
+    `https://github.com/latch-code/plugin-market/commit/${commit}`,
+  )
+  expect(stage).not.toHaveBeenCalled()
+  await act(async () => buttons(dialog(), '审阅更新')[0]!.click())
+  expect(stage).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ pluginId: id, revision: remoteRevision, update: { installId, baseRevision: revision } }),
+  )
+})
+
+it('discards a late catalog from another Host, including a response that arrives after abort', async () => {
+  let finish!: (value: Response) => void
+  let count = 0
+  vi.stubGlobal('fetch', async (url: string) => {
+    if (url.endsWith('/catalog/check')) {
+      count++
+      if (count === 1)
+        return new Promise<Response>(resolve => {
+          finish = resolve
+        })
+      return Response.json(checkedCatalog('2.0.0'))
+    }
+    return Response.json({ packages: [] })
+  })
+  await render(admin('first'))
+  await render(admin('second'))
+  await act(async () => finish(Response.json(checkedCatalog('9.0.0'))))
+  await settle()
+  const gallery = element.querySelector('.plugin-market-gallery')!
+  expect(gallery.textContent).toContain('v2.0.0')
+  expect(gallery.textContent).not.toContain('v9.0.0')
+  expect(count).toBe(2)
+})
+
+it.each([true, false])(
+  'keeps the installed version and the official draft distinct after a successful check (applied: %s)',
+  async applied => {
+    const version = '2.0.0'
+    const previous = '6'.repeat(64)
+    const result = checkedCatalog(version)
+    result.plugins.find(plugin => plugin.id === id)!.updateStatus = 'current'
+    const record: PluginPackageSummary = {
+      ...summary,
+      version,
+      catalog: { version, revision },
+      catalogUpdate: { version, status: 'current' },
+      appliedVersion: applied ? version : '1.0.0',
+      appliedRevision: applied ? revision : previous,
+      state: applied ? 'applied' : 'update-available',
+    }
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (url.endsWith('/catalog/check')) return Response.json(result)
+      if (url.endsWith('/plugin-packages')) return Response.json({ packages: [record] })
+      if (url.endsWith('/catalog/preview'))
+        return Response.json({
+          bundle: { ...bundle, manifest: { ...bundle.manifest, version } },
+          review: { ...review, version, source: { kind: 'catalog', version, commit: 'a'.repeat(40) } },
+          installed: { id, revision, installId, version, modified: false },
+          updateStatus: 'current',
+          updateAvailable: false,
+        } satisfies PluginCatalogPreview)
+      return new Response(null, { status: 404 })
+    })
+    await render(admin('fixture'))
+    await settle()
+    await act(async () => card('交接清单').click())
+    expect(dialog().textContent).toContain(applied ? '已安装 v2.0.0' : '已安装 v1.0.0')
+    expect(dialog().textContent).toContain(applied ? '没有可用更新' : '草稿 v2.0.0')
+    expect(buttons(dialog(), '审阅更新')).toHaveLength(0)
+    expect(buttons(dialog(), '审阅草稿')).toHaveLength(applied ? 0 : 1)
+    expect(dialog().textContent?.includes('没有可用更新')).toBe(applied)
+  },
+)
 
 it('saves a draft, shows the files and the Host review before Apply, and applies the reviewed revision in the dialog', async () => {
   const detail: PluginPackageDetail = { ...summary, bundle, review }

@@ -34,11 +34,11 @@ const COPY = defineCopy(
     identity: '插件标识',
     savedVersion: '已保存草稿版本',
     back: '返回查找',
+    backInstalled: '返回已安装',
     backToList: '返回插件列表',
     install: '保存为草稿',
     stageUpdate: '保存更新草稿',
-    stageHint: '草稿需要在插件设置中审阅并应用后才会使用。',
-    review: '审阅草稿',
+    stageHint: '审阅并应用草稿后才会使用新版本。',
     manage: '查看已有插件',
     retry: '重试',
     loading: '正在读取插件…',
@@ -60,11 +60,11 @@ const COPY = defineCopy(
     identity: 'Plugin ID',
     savedVersion: 'Saved draft version',
     back: 'Back to search',
+    backInstalled: 'Back to installed plugins',
     backToList: 'Back to plugin list',
     install: 'Save as draft',
     stageUpdate: 'Save update draft',
-    stageHint: 'Review and apply the draft in plugin settings to start using it.',
-    review: 'Review draft',
+    stageHint: 'Review and apply the draft to start using the new version.',
     manage: 'View local plugin',
     retry: 'Retry',
     loading: 'Reading plugins…',
@@ -275,18 +275,18 @@ export function usePluginExternalMarketplace({
 
 export function PluginExternalMarketplace({
   external,
+  installedView,
   disabled,
   onManage,
-  onReview,
   browseFocus,
 }: {
   external: ReturnType<typeof usePluginExternalMarketplace>
+  installedView: boolean
   disabled: boolean
   onManage: (id: string) => void
-  onReview: (id: string) => void
   browseFocus: () => void
 }) {
-  const { found, preview, loading, busy, error, pending, stagedId } = external
+  const { found, preview, loading, busy, error, pending } = external
   const heading = useRef<HTMLHeadingElement>(null)
   const listId = useId()
   const selected = useRef<string | null>(null)
@@ -302,7 +302,6 @@ export function PluginExternalMarketplace({
   const canStage = preview && (!installed || preview.updateAvailable === true)
   return (
     <>
-      {stagedId && <InlineNotice action={<Button onClick={() => onReview(stagedId)}>{COPY.review}</Button>}>{COPY.stageHint}</InlineNotice>}
       {loading && <Loading label={COPY.loading} />}
       {error && (
         <InlineNotice
@@ -332,7 +331,7 @@ export function PluginExternalMarketplace({
         <>
           <header className="plugin-market-npm-preview">
             <div className="plugin-market-detail-identity">
-              <PluginMarketIcon id={preview.entry.id} size={24} framed />
+              {!installedView && <PluginMarketIcon id={preview.entry.id} size={24} framed />}
               <div>
                 <h2 className="plugin-market-section-title" ref={heading} tabIndex={-1}>
                   <VisibleText text={preview.bundle.manifest.name} />
@@ -352,7 +351,7 @@ export function PluginExternalMarketplace({
                 external.back()
                 if (!found) browseFocus()
               }}>
-              {found ? COPY.backToList : COPY.back}
+              {found ? COPY.backToList : installedView ? COPY.backInstalled : COPY.back}
             </Button>
           </header>
           <PluginRiskFacts
@@ -399,7 +398,7 @@ export function PluginExternalMarketplace({
                   external.clear()
                   browseFocus()
                 }}>
-                {COPY.back}
+                {installedView ? COPY.backInstalled : COPY.back}
               </Button>
             </header>
             <SettingsGroup>

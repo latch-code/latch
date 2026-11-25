@@ -29,7 +29,7 @@
 - `src/paths.ts`、`host-state.ts`、`env.ts` 只用可擦除语法（`tsconfig.strip.json`），供 Vite 与 Vitest 配置直接加载。
 - 附件字节只进私有存储，消息与 SSE 只存引用；上传逐块复查设备，下载句柄绑定设备（`test/attachment-routes.test.ts`）。
 - 文件树/搜索限 `files`、`all`；macOS 仅经 `latch-files` 描述符。索引不存权限，预览绑定 Harness/根身份/版本，晚回复查设备与正文窗口（ARCHITECTURE）。
-- 创作绑定 Host 目录。暂存限本机 `admin`、`all`。来源、修订与租约见 PLUGIN-DEVELOPMENT。市场随插件启停。
+- 创作绑 Host 目录。官方查 Git HTTPS；查源、暂存限本机 `admin`、`all`。市场随插件启停（PLUGIN-DEVELOPMENT）。
 - 准备及配置回执见 ARCHITECTURE。外观写入需基版与回执，替换前复核权限，目录同步未确认复用原请求（CUSTOMIZATION）。
 - 插件连接仅随原生入口启用；远程 review/正文窗口与真实关闭见 [STREAMING](../../docs/STREAMING.md#原生客户端的流)。
 - 家只由分配器建并验身份，空时重建，经 `latch-home` 删；默认项走 startConfig。后台按实际等级核上限，手动运行不授后台权。

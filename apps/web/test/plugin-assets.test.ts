@@ -22,7 +22,7 @@ import {
   pluginReach,
   typedManifest,
 } from '../src/settings/pluginAssets.ts'
-import { pluginItems, shelfOf } from '../src/settings/PluginsSettings.tsx'
+import { pluginItems } from '../src/settings/PluginsSettings.tsx'
 import { usePluginAssets } from '../src/settings/PluginAssetsSettings.tsx'
 import { usePluginAddMarketplace } from '../src/plugin-marketplace/PluginAddMarketplace.tsx'
 import { PluginMarketplace } from '../src/plugin-marketplace/PluginMarketplace.tsx'
@@ -180,16 +180,7 @@ describe('where a plugin runs', () => {
   })
 })
 
-describe('plugin shelves', () => {
-  it('stands a plugin on the shelf named for what it does', () => {
-    expect(shelfOf(['tool:read'])).toBe('tool')
-    expect(shelfOf(['ui:panel', 'skill:x'])).toBe('tool')
-    expect(shelfOf(['skill:x'])).toBe('skill')
-    expect(shelfOf(['provider:openai'])).toBe('tool')
-    expect(shelfOf(['harness:acp'])).toBe('tool')
-    expect(shelfOf(['transport:relay'])).toBe('connection')
-  })
-
+describe('plugin inventory', () => {
   it('leaves services and Harnesses to their own pages, but not a package of the person', () => {
     const plugin = { id: 'x', name: 'x', version: '1', description: '', enabled: true, activeRuns: 0 }
     const listed = pluginItems(
@@ -205,8 +196,16 @@ describe('plugin shelves', () => {
     expect(listed.map(item => item.key)).toEqual(['plugin:ask', 'plugin:own'])
   })
 
-  it('lists a package once, with its own state, and a loaded plugin it owns not again', () => {
-    const plugin = { id: 'mine', name: 'mine', version: '1', description: '', enabled: true, activeRuns: 0, capabilities: ['skill:x'] }
+  it('lists a multi-contribution package once, with its saved state, alongside other plugins', () => {
+    const plugin = {
+      id: 'mine',
+      name: 'mine',
+      version: '1',
+      description: '',
+      enabled: true,
+      activeRuns: 0,
+      capabilities: ['tool:read', 'skill:x', 'ui:overview'],
+    }
     const other = { ...plugin, id: 'core', name: 'core', capabilities: ['tool:read'], managed: 'core' as const }
     const record = {
       id: 'mine',
@@ -216,7 +215,7 @@ describe('plugin shelves', () => {
       revision: 'r',
       enabled: true,
       trusted: false,
-      capabilities: ['skill:x'],
+      capabilities: ['tool:read', 'skill:x', 'ui:overview'],
       state: 'applied' as const,
     }
     expect(pluginItems([plugin, other], [record]).map(item => [item.key, item.name, item.state])).toEqual([
@@ -333,6 +332,67 @@ it('separates locally installed plugins sharing a bundled ID from confirmed bund
   } finally {
     act(() => root.unmount())
     element.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('cancels a download-list lookup when opening Installed and lets the same plugin be checked there', async () => {
+  const registry = 'https://registry.example.test/npm/'
+  const record: PluginPackageSummary = {
+    id: 'local-plugin',
+    name: 'Local plugin',
+    version: '1.0.0',
+    description: '',
+    revision: 'a'.repeat(64),
+    appliedRevision: 'a'.repeat(64),
+    enabled: true,
+    trusted: true,
+    capabilities: [],
+    state: 'applied',
+    npm: { name: '@example/plugin', registry, version: '1.0.0', revision: 'a'.repeat(64), integrity: 'sha512-' + 'A'.repeat(86) + '==' },
+  }
+  const reads: { request: RequestInit; finish: (response: Response) => void }[] = []
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('fetch', (url: string, init: RequestInit) => {
+    if (url.endsWith('/registry')) return Promise.resolve(Response.json({ registry, revision: 'b'.repeat(64) }))
+    return new Promise<Response>(finish => {
+      reads.push({ request: init, finish })
+    })
+  })
+  const element = document.createElement('div')
+  const root = createRoot(element)
+  const noop = vi.fn()
+  function Market({ installedView }: { installedView: boolean }) {
+    const add = usePluginAddMarketplace({
+      active: true,
+      editable: true,
+      npmEnabled: true,
+      externalEnabled: false,
+      installedView,
+      storageKey: 'npm-tab-switch',
+      records: [record],
+      onStage: noop,
+      onReview: noop,
+      onManage: noop,
+    })
+    return createElement(Fragment, null, installedView && add.browsing && add.updateAction(record), add.content)
+  }
+  const render = (installedView: boolean) => act(async () => root.render(createElement(Market, { installedView })))
+  const check = () => [...element.querySelectorAll('button')].find(button => button.textContent === '检查更新')!
+  try {
+    await render(false)
+    await act(async () => check().click())
+    expect(reads).toHaveLength(1)
+    await render(true)
+    expect(reads[0].request.signal?.aborted).toBe(true)
+    await act(async () => reads[0].finish(Response.json({ error: 'old-preview' }, { status: 400 })))
+    expect(element.querySelector('[role="alert"]')).toBeNull()
+    await act(async () => check().click())
+    expect(JSON.parse(String(reads[1].request.body))).toEqual({ name: '@example/plugin', pluginId: record.id })
+    await act(async () => reads[1].finish(Response.json({ error: 'new-preview' }, { status: 400 })))
+    expect(element.textContent).toContain('重试')
+  } finally {
+    act(() => root.unmount())
     vi.unstubAllGlobals()
   }
 })

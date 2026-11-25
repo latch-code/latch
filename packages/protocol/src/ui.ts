@@ -21,6 +21,8 @@ export interface UiPanelInfo {
   moduleHash?: string
   /** A React module that receives the session context projection. */
   context?: true
+  /** The Host matched the running module to the applied, unmodified official Context release. */
+  officialContext?: boolean
 }
 
 export interface ContextPanelTurn {

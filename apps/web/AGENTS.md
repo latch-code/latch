@@ -20,8 +20,8 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 - `src/core/` 仅导入本目录、`react` 与 `@latch/protocol`；禁用布局组件（lint）。
 - 正文滚动仅 `useReadingPosition` 写，消息和工具行用 `data-message-id`。刻度列独立滚动，定位（含待办回合）走 `reveal`。见 `test/reading-position.test.ts`。缓存见 STREAMING。
 - 文件预览只经授权句柄，项目预览不伪造会话；文件树懒加载。产物和改动默认收起。不透明文档框与可信插件分开，见 `src/preview/AGENTS.md`。
-- 插件面板随会话清理，可信代码无隔离，`compose` 只追加草稿。创建插件直达创造模式，草稿与目录独立，重试保留模式。
-- 市场随插件启停，iOS 隐藏，保留侧栏与原页。列表独立滚动。草稿限本机完整管理，更新按来源与修订审阅，未知写按 Host、设备保留。
+- 面板随会话清理，可信代码无隔离，`compose` 只追加草稿。创建直达创造模式，草稿独立于目录，重试保留模式。
+- 市场随插件启停，iOS 隐藏，留侧栏原页，列表独滚。已安装按应用修订。查源暂存限本机完整管理；审阅绑来源与修订，未知写绑 Host、设备。
 - 安全错误文案按码取自 `src/core/securityCopy.ts`。
 - `permissions.ts` 只是展示，Host 再查；事件流用 `eventStream.ts`（fetch），不用 `EventSource`。
 - 本机按 `isLocalListener`；回环浏览器算远程。缺邀请或用掉后重领（ARCHITECTURE）。
@@ -36,7 +36,7 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 - 电脑菜单按来源识别当前电脑，经 `computers.switchTo` 切换。
 - Agent 资料的「动态」含即将的定时，电脑、唤醒、通知和 MCP 在「运行设置」（DESIGN）。
 
-Host 计量，引用限本会话。仅消息淡入，脚本用 `motionAllowed`。
+Host 计量，窗口增量同口径，引用限本会话。仅消息淡入，脚本用 `motionAllowed`。
 
 设置留草稿与授权读回，准备沿用原号；终端折叠保活，报错保留原文，暂存留回执。ProfileLayer 跨断点保留实例、草稿、焦点与未知写，撤权卸载。
 

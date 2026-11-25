@@ -8,13 +8,12 @@ import { redactKnownSecrets } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
 import { EgressDenied, type FetchLike } from './egress.ts'
 import { isPrerelease, NPM_MIRROR_CDN, NPM_MIRROR_REGISTRY, npmReleaseSchema } from './npm-source.ts'
+import { tarEntries, tarPath } from './plugin-tar.ts'
 import { PLUGIN_PACKAGE_BYTES, checkedPluginBundle, containsPluginSourceSecret } from './plugin-package-bundle.ts'
 
 const ARCHIVE_BYTES = PLUGIN_PACKAGE_BYTES + 1024 * 1024
 const METADATA_BYTES = 1024 * 1024
 const MANIFEST_BYTES = 64 * 1024
-const BLOCK = 512
-const ZERO_BLOCK = Buffer.alloc(BLOCK)
 const unzip = promisify(gunzip)
 const versionDocument = z.object({ name: z.string(), version: z.string(), dist: z.object({ tarball: z.string(), integrity: z.string() }) })
 const identityDocument = versionDocument.pick({ name: true, version: true })
@@ -115,65 +114,25 @@ async function downloadArchive(
   return get(fetch, cdn.url.href, 'application/octet-stream', signal)
 }
 
-function field(header: Buffer, start: number, end: number): string {
-  const bytes = header.subarray(start, end)
-  const nul = bytes.indexOf(0)
-  if (nul !== -1 && bytes.subarray(nul).some(byte => byte !== 0)) throw invalidArchive()
-  try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(nul === -1 ? bytes : bytes.subarray(0, nul))
-  } catch {
-    throw invalidArchive()
-  }
-}
-
 function extractPackage(tar: Buffer): { identity: Buffer; bundle: Buffer } {
-  if (tar.length % BLOCK !== 0) throw invalidArchive()
   const entries = new Map<string, boolean>()
   let identity: Buffer | undefined, bundle: Buffer | undefined
-  for (let offset = 0; offset + BLOCK <= tar.length;) {
-    const header = tar.subarray(offset, offset + BLOCK)
-    if (header.equals(ZERO_BLOCK)) {
-      if (!identity || !bundle || tar.length - offset < 2 * BLOCK || tar.subarray(offset).some(byte => byte !== 0)) throw invalidArchive()
-      for (const path of entries.keys()) {
-        for (let slash = path.indexOf('/'); slash !== -1; slash = path.indexOf('/', slash + 1))
-          if (entries.get(path.slice(0, slash)) === false) throw invalidArchive()
-      }
-      return { identity, bundle }
-    }
-    const sizeField = field(header, 124, 136).trim()
-    const storedChecksum = header.toString('ascii', 148, 156).replace(/\0/g, '').trim()
-    const checksum = header.reduce((sum, byte, index) => sum + (index >= 148 && index < 156 ? 32 : byte), 0)
-    if (
-      !/^[0-7]+$/u.test(sizeField)
-      || !/^[0-7]+$/u.test(storedChecksum)
-      || parseInt(storedChecksum, 8) !== checksum
-      || header.toString('ascii', 257, 262) !== 'ustar'
-    )
-      throw invalidArchive()
-    const size = parseInt(sizeField, 8)
-    const start = offset + BLOCK
-    offset = start + Math.ceil(size / BLOCK) * BLOCK
-    if (offset > tar.length || entries.size >= 256) throw invalidArchive()
-    const type = header[156]
-    const directory = type === 53
-    if ((!directory && type !== 0 && type !== 48) || (directory && size !== 0)) throw invalidArchive()
-    const prefix = field(header, 345, 500)
-    const name = field(header, 0, 100)
-    const pathname = `${prefix ? `${prefix}/` : ''}${name}`
-    const path = directory ? pathname.replace(/\/$/u, '') : pathname
+  for (const { name, type, bytes } of tarEntries(tar, 256, invalidArchive)) {
+    const directory = type === '5'
+    if ((!directory && type !== '\0' && type !== '0') || (directory && bytes.length !== 0)) throw invalidArchive()
+    const path = tarPath(name, directory, invalidArchive)
     const key = path.normalize('NFC').toLowerCase()
-    if (
-      ((path !== 'package' || !directory) && !path.startsWith('package/'))
-      || /[\\\p{Cc}]/u.test(path)
-      || path.split('/').some(part => !part || part === '.' || part === '..')
-      || entries.has(key)
-    )
-      throw invalidArchive()
+    if (((path !== 'package' || !directory) && !path.startsWith('package/')) || entries.has(key)) throw invalidArchive()
     entries.set(key, directory)
-    if (path === 'package/package.json' && !directory && size <= MANIFEST_BYTES) identity = tar.subarray(start, start + size)
-    if (path === 'package/latch-plugin.json' && !directory && size <= PLUGIN_PACKAGE_BYTES) bundle = tar.subarray(start, start + size)
+    if (path === 'package/package.json' && !directory && bytes.length <= MANIFEST_BYTES) identity = bytes
+    if (path === 'package/latch-plugin.json' && !directory && bytes.length <= PLUGIN_PACKAGE_BYTES) bundle = bytes
   }
-  throw invalidArchive()
+  if (!identity || !bundle) throw invalidArchive()
+  for (const path of entries.keys()) {
+    for (let slash = path.indexOf('/'); slash !== -1; slash = path.indexOf('/', slash + 1))
+      if (entries.get(path.slice(0, slash)) === false) throw invalidArchive()
+  }
+  return { identity, bundle }
 }
 
 export async function readNpmPlugin(

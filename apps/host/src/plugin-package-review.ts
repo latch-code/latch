@@ -16,6 +16,7 @@ export function pluginReviewSource(record: RecordSource, revision: string, draft
     return {
       kind: 'catalog',
       version: record.catalog.version,
+      ...(record.catalog.commit ? { commit: record.catalog.commit } : {}),
       ...(record.catalog.revision === revision ? {} : { modified: true }),
     }
   if (record.npm && (draft || record.npm.revision === revision)) {

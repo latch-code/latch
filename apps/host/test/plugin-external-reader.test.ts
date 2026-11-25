@@ -313,17 +313,18 @@ describe('GitHub plugin sources', () => {
     ).rejects.toMatchObject({ code: 'egress-denied' })
   })
 
-  it('distinguishes an unreadable repository from GitHub rate limiting', async () => {
+  it('distinguishes a GitHub outage, an unreadable repository and rate limiting', async () => {
     const { options } = github()
-    for (const [remaining, code] of [
-      ['19', 'plugin-external-github-unavailable'],
-      ['0', 'plugin-external-github-rate-limit'],
-    ]) {
+    for (const [status, remaining, code] of [
+      [503, '19', 'plugin-external-github-unreachable'],
+      [403, '19', 'plugin-external-github-unavailable'],
+      [403, '0', 'plugin-external-github-rate-limit'],
+    ] as const) {
       const headers = { 'x-ratelimit-remaining': remaining }
       await expect(
         findExternalPluginSource(repositoryUrl, {
           ...options,
-          fetch: async () => new Response(null, { status: 403, headers }),
+          fetch: async () => new Response(null, { status, headers }),
         }),
       ).rejects.toMatchObject({ code })
     }

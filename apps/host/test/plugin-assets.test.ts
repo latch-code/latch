@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, open, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createPluginPackageTemplate, type PluginCatalogStage, type PluginNpmStage, type PluginPackageBundle } from '@latch/protocol'
 import { PluginRegistry } from '@latch/core'
@@ -36,8 +36,37 @@ async function fixture(
   return { path, store, actor }
 }
 const rid = () => randomUUID()
-it('updates only the same unmodified bundled release at a newer SemVer and stages without reapplying', async () => {
+it('identifies only the applied official Context module while drafts and local edits change', async () => {
   const { store, actor } = await fixture()
+  const id = 'context-insights'
+  const manifest = {
+    formatVersion: 1 as const,
+    id,
+    name: '上下文',
+    version: '1.2.0',
+    description: '',
+    panels: [{ id: 'insights', title: '上下文', entry: 'panel.mjs', context: true as const }],
+  }
+  const candidate = (content: string) => checkedPluginBundle({ manifest, files: [{ path: 'panel.mjs', content }] })
+  const official = candidate('export default () => null')
+  const edited = candidate('export default () => "edited"')
+  const digest = createHash('sha256').update(official.bundle.files[0]!.content).digest('hex')
+  await store.stageCatalog({ pluginId: id, revision: official.revision, requestId: rid() }, official, actor, 'a'.repeat(40))
+  expect(store.officialContextPanelHash()).toBeUndefined()
+  const apply = async (release: typeof official) => {
+    await store.trust(id, release.executionHash!, rid(), actor)
+    await store.apply(id, release.revision, rid(), actor, async (_, commit) => commit())
+  }
+  await apply(official)
+  expect(store.officialContextPanelHash()).toBe(digest)
+  await store.save(edited.bundle, rid(), actor, official.revision)
+  expect(store.officialContextPanelHash()).toBe(digest)
+  await apply(edited)
+  expect(store.officialContextPanelHash()).toBeUndefined()
+})
+
+it('updates only the same unmodified bundled release at a newer SemVer and stages without reapplying', async () => {
+  const { path, store, actor } = await fixture()
   const id = 'catalog-example'
   const candidate = (version: string, text: string) => {
     const bundle = createPluginPackageTemplate('skill', id)
@@ -64,16 +93,24 @@ it('updates only the same unmodified bundled release at a newer SemVer and stage
   ).rejects.toMatchObject({ code: 'plugin-package-changed' })
 
   const request = { pluginId: id, revision: two.revision, requestId: rid(), update }
-  await store.stageCatalog(request, two, actor)
+  const commit = 'b'.repeat(40)
+  await store.stageCatalog(request, two, actor, commit)
   expect((await store.replayCatalog(request, actor))?.replay).toBe(true)
   const saved = store.get(id)
   expect(saved).toMatchObject({
     revision: two.revision,
     appliedRevision: one.revision,
     enabled: true,
-    catalog: { version: '1.10.0', revision: two.revision },
+    catalog: { version: '1.10.0', revision: two.revision, commit },
   })
   expect(pluginReviewSource(saved, one.revision)).toEqual({ kind: 'catalog', version: '1.9.0' })
+  await store.apply(id, two.revision, rid(), actor, async (_, publish) => publish())
+  const restored = await PluginAssets.open(path, { audit: { append: async () => ({ seq: 1, hash: 'a'.repeat(64) }) } })
+  cleanups.push(() => restored.close())
+  const current = restored.get(id)
+  expect(current.appliedRevision).toBe(two.revision)
+  expect(pluginReviewSource(current, two.revision)).toEqual({ kind: 'catalog', version: '1.10.0', commit })
+  expect(pluginReviewSource(current, one.revision)).toEqual({ kind: 'catalog', version: '1.9.0' })
 
   const edited = candidate('1.10.0', 'Local edit')
   await store.save(edited.bundle, rid(), actor, two.revision)

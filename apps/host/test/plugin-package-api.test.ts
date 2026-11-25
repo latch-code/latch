@@ -9,15 +9,19 @@ import {
   type AppSnapshot,
   type CustomAgent,
   type PluginInfo,
+  type PluginCatalogCheckResult,
   type PluginCatalogPreview,
+  type PluginCatalogStage,
   type PluginPackageReview,
   type PluginPackageDetail,
+  type PluginPackageSummary,
   type ConfirmationTicket,
   type PluginPackageBundle,
   type TaskDetail,
 } from '@latch/protocol'
 import type { ModelMessage, ModelProvider } from '@latch/sdk'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import { officialCatalogFixture } from './helpers/official-catalog.ts'
 import type { TestDevice } from '@latch/testkit'
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -117,6 +121,7 @@ it('reviews and stages the exact bundled release, keeping other sources and neve
   expect((await viewer.request(`${route}/preview`, { body: { pluginId } })).status).toBe(403)
   expect((await viewer.request('plugin-packages/review', { body: { bundle: createPluginPackageTemplate('tool') } })).status).toBe(403)
   expect((await owner.request(`${route}/preview`, { body: { pluginId: 'not-in-the-catalog' } })).status).toBe(404)
+  expect((await owner.request(`${route}/stage`, { body: body('0'.repeat(64), 'not-in-the-catalog') })).status).toBe(404)
 
   const candidate = await preview(pluginId)
   expect(candidate.review).toMatchObject({
@@ -152,6 +157,53 @@ it('reviews and stages the exact bundled release, keeping other sources and neve
   const update = { installId: collision.installed!.installId, baseRevision: unrelated.revision }
   expect((await owner.request(`${route}/stage`, { body: { ...body(text.review.revision, unrelated.id), update } })).status).toBe(409)
   expect((await owner.json<{ package: PluginPackageDetail }>(`plugin-packages/${unrelated.id}`)).package).toEqual(unrelated)
+})
+
+it('checks the official catalog and updates an existing bundled installation through a reviewed draft', async () => {
+  const github = officialCatalogFixture()
+  const { host, owner } = await fixture({ pluginRegistryFetch: github.fetch })
+  const route = 'plugin-packages/catalog'
+  const pluginId = 'context-insights'
+  const preview = () => owner.json<PluginCatalogPreview>(`${route}/preview`, { body: { pluginId } })
+  const stage = (body: PluginCatalogStage) => owner.json<{ package: PluginPackageDetail }>(`${route}/stage`, { body })
+  const read = async () => (await owner.json<{ package: PluginPackageDetail }>(`plugin-packages/${pluginId}`)).package
+  const local = await preview()
+  const installed = await stage({ pluginId, revision: local.review.revision, requestId: randomUUID() })
+  await granted(owner, host, installed.package)
+  const remote = await host.enroll({ listener: 'loopback-tcp' })
+  expect((await remote.request(`${route}/check`, { body: { force: true } })).status).toBe(403)
+  expect((await owner.request(`${route}/check`, { body: { repository: 'https://example.com' } })).status).toBe(400)
+  expect(github.fetch).not.toHaveBeenCalled()
+
+  const commit = github.publishContext('9.0.0', '\n// New panel.\n')
+  const check = () => owner.json<PluginCatalogCheckResult>(`${route}/check`, { body: { force: true } })
+  const result = await check()
+  expect(result.plugins).toHaveLength(4)
+  expect(result.plugins.find(item => item.id === pluginId)).toMatchObject({ commit, version: '9.0.0', updateStatus: 'available' })
+  const known = (await owner.json<{ packages: PluginPackageSummary[] }>('plugin-packages')).packages
+  expect(known.find(item => item.id === pluginId)?.catalogUpdate).toEqual({ version: '9.0.0', status: 'available' })
+  const candidate = await preview()
+  expect(candidate.review.source).toEqual({ kind: 'catalog', version: '9.0.0', commit })
+  expect(candidate.review.comparison).toMatchObject({ revision: local.review.revision, changedSource: false, changedExecution: true })
+  const input = {
+    pluginId,
+    revision: candidate.review.revision,
+    requestId: randomUUID(),
+    update: { installId: candidate.installed!.installId, baseRevision: local.review.revision },
+  }
+  const staged = (await stage(input)).package
+  expect(staged).toMatchObject({
+    catalog: { revision: input.revision, version: '9.0.0', commit },
+    appliedRevision: local.review.revision,
+    appliedVersion: local.review.version,
+    review: { source: candidate.review.source, confirmationRequired: true },
+  })
+  github.publishContext('9.1.0', '\n// Another panel.\n')
+  await check()
+  expect((await stage(input)).package.revision).toBe(input.revision)
+  const applied = await granted(owner, host, staged)
+  expect(applied.package.appliedRevision).toBe(input.revision)
+  expect((await read()).catalogUpdate).toEqual({ version: '9.1.0', status: 'available' })
 })
 
 it('projects actual contents and permission changes while rejecting stale reviewed activation', async () => {
