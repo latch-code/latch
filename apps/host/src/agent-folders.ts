@@ -45,6 +45,7 @@ const archiveSchema = z.strictObject({
   skipped: z.number().int().nonnegative(),
 })
 const removeSchema = z.strictObject({ removed: z.number().int().nonnegative() })
+const moveSchema = z.strictObject({ moved: z.literal(true) })
 const countSchema = z.strictObject({ entries: z.number().int().nonnegative(), bytes: z.number().int().nonnegative() })
 const failureSchema = z.strictObject({
   error: z.enum(['invalid-input', 'changed', 'unreadable', 'mount', 'busy', 'budget', 'mismatch', 'unwritable', 'too-large']),
@@ -72,6 +73,13 @@ export interface HomeHelperRequest {
   homeId: string
 }
 
+export interface GeneralHomeDestination {
+  root: string
+  rootId: string
+  parentId: string
+  name: string
+}
+
 /** `latch-home`: one process per operation, an empty environment, a hard deadline. */
 export class HomeHelper {
   private constructor(
@@ -96,6 +104,10 @@ export class HomeHelper {
   /** What a removal would count now, reading only. */
   count(request: HomeHelperRequest) {
     return this.run({ op: 'count', ...request, seconds: REMOVE_SECONDS }, countSchema)
+  }
+
+  moveGeneral(request: HomeHelperRequest, destination: GeneralHomeDestination) {
+    return this.run({ op: 'move-general', ...request, destination, seconds: REMOVE_SECONDS }, moveSchema)
   }
 
   private run<T>(

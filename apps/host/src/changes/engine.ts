@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto'
 import type { BigIntStats } from 'node:fs'
 import { constants } from 'node:fs'
-import { lstat, open, readdir, unlink, type FileHandle } from 'node:fs/promises'
+import { lstat, open, readdir, realpath, unlink, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   CHANGE_NOTE_PREFIX,
@@ -29,7 +29,7 @@ import {
 import { AppError, type ProjectFolder } from '@latch/sdk'
 import { canonicalJson } from '@latch/core/node-kit'
 import { excludeFromBackup } from '../backup.ts'
-import type { FileRoot } from '../files/resolve.ts'
+import type { FileRoot, ManagedHomeAccess } from '../files/resolve.ts'
 import { RUN_ID } from '../session-meta.ts'
 import { attributeChange, editsByFile, uncoveredEdits, type FolderSpellings } from './attribution.ts'
 import { capture, compare, sameState, stateOf } from './capture.ts'
@@ -109,6 +109,7 @@ export interface ChangesEngineOptions {
   dataDir: string
   /** Paths never recorded, read or written: the Host's guarded paths. */
   protectedPaths: readonly string[]
+  managedHome?: ManagedHomeAccess
   now?: () => number
   log?: (text: string) => void
   limits?: Partial<ChangeLimits>
@@ -529,7 +530,7 @@ export class ChangesEngine {
       const state = await this.session(project, session.id)
       await this.settleStale(project, state, turnId)
       if (state.turns.some(turn => turn.turnId === turnId)) return
-      const guard = await ProtectedIndex.of(this.options.protectedPaths)
+      const guard = await this.protectedIndex(session.id, session.folders)
       const roots = await realRoots(session.folders, guard)
       if (!roots.length) return
       const startedAt = this.now()
@@ -594,7 +595,7 @@ export class ChangesEngine {
       partial = turn.partial ?? false,
       notCovered: string[] = []
     if (start && state.turns.at(-1) === turn) {
-      const guard = await ProtectedIndex.of(this.options.protectedPaths)
+      const guard = await this.protectedIndex(state.id, start.folders)
       const end = await this.snapshot(project, await realRoots(start.folders, guard), guard, start)
       const compared = compare(start, end)
       changes = compared.changes
@@ -701,9 +702,19 @@ export class ChangesEngine {
 
   // ---- scopes ------------------------------------------------------------------------------------------------------
 
+  private async protectedIndex(sessionId: string, folders: readonly FileRoot[]): Promise<ProtectedIndex> {
+    const { protectedPaths, managedHome } = this.options
+    if (managedHome && folders.length === 1) {
+      const root = await realpath(folders[0].path).catch(() => undefined)
+      if (root && (await managedHome.permits(sessionId, root)))
+        return ProtectedIndex.of(protectedPaths, { root, protectedAncestor: managedHome.protectedAncestor })
+    }
+    return ProtectedIndex.of(protectedPaths)
+  }
+
   /** The work tree now against a record; `after` sides are read from disk. */
-  private async livePairs(record: Manifest): Promise<{ pairs: Pair[]; partial: boolean }> {
-    const guard = await ProtectedIndex.of(this.options.protectedPaths)
+  private async livePairs(sessionId: string, record: Manifest): Promise<{ pairs: Pair[]; partial: boolean }> {
+    const guard = await this.protectedIndex(sessionId, record.folders)
     const roots = await realRoots(record.folders, guard)
     const walk = await walkFolders(roots, guard, {
       entries: this.limits.walkEntries,
@@ -744,7 +755,7 @@ export class ChangesEngine {
 
   private async turnPairs(state: SessionState, turn: TurnRecord): Promise<{ pairs: Pair[]; partial: boolean }> {
     if (turn.state === 'running')
-      return state.head && state.turns.at(-1) === turn ? this.livePairs(state.head) : { pairs: [], partial: true }
+      return state.head && state.turns.at(-1) === turn ? this.livePairs(state.id, state.head) : { pairs: [], partial: true }
     const pairs = turn.changes.map((change): Pair => ({
       root: change.root,
       path: change.path,
@@ -780,7 +791,7 @@ export class ChangesEngine {
         )
     })
     if (state.head) {
-      const live = await this.livePairs(state.head)
+      const live = await this.livePairs(state.id, state.head)
       partial ||= live.partial
       // After a settled turn, what changed since is the person's; while a turn runs it is that turn's.
       const flag = state.turns.at(-1)?.state === 'settled' ? 'byUser' : undefined
@@ -851,7 +862,7 @@ export class ChangesEngine {
 
   private async gitScope(session: ChangesSession, scope: 'uncommitted' | 'base'): Promise<GitScope> {
     if (!this.git) return { pairs: [], repositories: new Map(), workIds: new Map(), notGit: [], partial: false, unavailable: 'git-missing' }
-    const roots = await realRoots(session.folders, await ProtectedIndex.of(this.options.protectedPaths))
+    const roots = await realRoots(session.folders, await this.protectedIndex(session.id, session.folders))
     return gitPairs(roots, scope, {
       reader: this.git,
       ids: this.blobIds,
@@ -1122,7 +1133,7 @@ export class ChangesEngine {
     if (!only && direction === 'redo' && !turn.undone) return { block: 'not-undone' }
     const changes = turn.changes.filter(change => !only || only.has(fileKey(change.root, change.path)))
     if (!changes.length) return { block: 'no-changes' }
-    const roots = await this.writableRoots(state, session, await ProtectedIndex.of(this.options.protectedPaths))
+    const roots = await this.writableRoots(state, session, await this.protectedIndex(session.id, session.folders))
     const steps: Step[] = [],
       notRestored: NotRestoredFile[] = []
     let skipped = 0
@@ -1198,7 +1209,8 @@ export class ChangesEngine {
     beforeWrite: BeforeWrite,
   ): Promise<{ restored: number; removed: number }> {
     await beforeWrite(plan)
-    const guard = await ProtectedIndex.of(this.options.protectedPaths)
+    const roots = [...new Map(steps.map(step => [step.root.path, step.root])).values()]
+    const guard = await this.protectedIndex(plan.sessionId, roots)
     let restored = 0,
       removed = 0
     for (const step of steps) {
@@ -1310,7 +1322,7 @@ export class ChangesEngine {
       }
     if (!history.size) return { block: 'no-changes' }
     const left = (entry: { turn: TurnRecord; change: Change }) => (entry.turn.undone ? entry.change.before : entry.change.after)
-    const roots = await this.writableRoots(state, session, await ProtectedIndex.of(this.options.protectedPaths))
+    const roots = await this.writableRoots(state, session, await this.protectedIndex(session.id, session.folders))
     const steps: Step[] = [],
       notRestored: NotRestoredFile[] = []
     let skipped = 0
@@ -1575,7 +1587,7 @@ export class ChangesEngine {
     )
     const blobs = await this.blobsFor({ ...git, pairs }, this.limits.discardBytes, this.limits.cloneLimit)
     const contents = new Contents({ blobs: oid => blobs.get(oid) }, this.limits.discardBytes)
-    const roots = await realRoots(session.folders, await ProtectedIndex.of(this.options.protectedPaths))
+    const roots = await realRoots(session.folders, await this.protectedIndex(session.id, session.folders))
     const steps: Step[] = [],
       notRestored: NotRestoredFile[] = []
     let skipped = 0

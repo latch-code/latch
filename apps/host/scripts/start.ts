@@ -22,7 +22,9 @@ import { openInDeviceHub, spawnSimctl, xcrunDevicectl, xcrunSimctl } from '../sr
 import { attachSimulatorHelper } from '../src/simulator-live.ts'
 import { settleDataHome } from '../src/data-home.ts'
 import { latchCodeRoot, resolveLatchPaths } from '../src/paths.ts'
+import { legacyDefaultPaths } from '../src/legacy-defaults.ts'
 import { presenceHelperPath } from '../src/presence.ts'
+import { buildHomeHelper } from './build-home.ts'
 import { buildPresenceHelper } from './presence-helper.ts'
 import { loadPluginPackage } from '../src/plugin-packages.ts'
 import { createShutdown } from './shutdown.ts'
@@ -224,6 +226,7 @@ async function main(): Promise<void> {
     plugins.push(await loadPluginPackage(path))
   }
   const codeRoot = latchCodeRoot()
+  const legacy = await legacyDefaultPaths(paths, homedir(), codeRoot, Boolean(latchEnv(env, 'WORKTREES_DIR')))
   if (!PACKAGED && process.platform === 'darwin' && !existsSync(presenceHelperPath(codeRoot)) && !presenceDisabled(paths.dataDir)) {
     const built = await buildPresenceHelper({ codeRoot, log: (text: string) => console.error(redactKnownSecrets(text)) })
     if (!built.built) console.error(redactKnownSecrets(built.message))
@@ -247,7 +250,14 @@ async function main(): Promise<void> {
   const server = await startServer({
     dataDir: paths.dataDir,
     workspaceRoot: paths.workspaceRoot,
+    ...(legacy.workspaceRoot ? { legacyWorkspaceRoot: legacy.workspaceRoot } : {}),
+    ...(legacy.worktreesDir ? { legacyWorktreesDir: legacy.worktreesDir } : {}),
     sessionFolders,
+    generalHomeMigration: process.platform === 'darwin',
+    ...(!PACKAGED && process.platform === 'darwin' ? { buildGeneralHomeHelper: () => buildHomeHelper(codeRoot) } : {}),
+    ...(process.platform === 'darwin' && paths.dataDirSource !== 'flag' && paths.dataDirSource !== 'env'
+      ? { generalHomeBase: join(homedir(), '.latch') }
+      : {}),
     detectPreset: detectPresetCommands,
     loginPrograms: resolveCommand,
     // DeepSeek Harness's DeepSeek balance, read with its own key from this home (cli-quota.ts).

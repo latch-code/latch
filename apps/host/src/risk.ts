@@ -13,6 +13,8 @@ export interface CallFolder {
   root?: string
   /** The folder overlaps Latch's code root, or its root cannot be resolved (the stricter answer). */
   codeRoot: boolean
+  /** Set only after the Host authenticates this session's exact managed home. */
+  managedHomeAncestor?: string
 }
 
 export interface StandardCallInput {
@@ -123,7 +125,7 @@ export function classifyStandardCall(input: StandardCallInput): { risk: RiskLeve
     const path = relativeTarget(input.args)
     if (typeof path !== 'string') return { risk: 'R2', reason: path.reason }
     if (folder.codeRoot || folder.root === undefined) return { risk: 'R2', reason: 'code-root' }
-    if (isProtectedWorkspacePath(path, folder.root)) return { risk: 'R2', reason: 'protected-path' }
+    if (isProtectedWorkspacePath(path, folder.root, folder.managedHomeAncestor)) return { risk: 'R2', reason: 'protected-path' }
     return { risk: 'R1' }
   }
   if (builtin && R0_TOOLS.includes(key)) return { risk: 'R0' }

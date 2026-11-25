@@ -1511,6 +1511,7 @@ class HarnessRuntime implements Bridge {
     try {
       return previewOf(
         await tool.preview(structuredClone(call.arguments), {
+          sessionId: run.sessionId,
           workspaceRoot: run.cwd,
           workspaceFolders: toolFolders(run),
           signal: run.controller.signal,

@@ -122,6 +122,8 @@ export interface MarkedWorktree {
 export interface WorktreeOptions {
   /** Where worktrees go; tests and temporary Hosts pass a directory of their own. */
   root: string
+  /** An earlier default with existing marked worktrees. Only the primary root receives new checkouts. */
+  legacyRoot?: string
   /** The Host data directory: a worktree is never made inside it. */
   dataDir: string
   /** Latch's own directories (its code, runtime and agent installs): a worktree is never made in or around them. */
@@ -408,6 +410,11 @@ export class Worktrees {
     this.git = binary ? new GitReader({ binary, timeoutMs: 30_000, ...(options.home ? { home: options.home } : {}) }) : undefined
   }
 
+  private roots(): string[] {
+    const { root, legacyRoot } = this.options
+    return legacyRoot && legacyRoot !== root && isAbsolute(legacyRoot) && resolve(legacyRoot) === legacyRoot ? [root, legacyRoot] : [root]
+  }
+
   /**
    * A worktree for one start request, from `start` (`source`'s HEAD by default); the same request gets the same one.
    * `held` says why the session that owns a worktree (and whether a private one ever did) keeps it from being reused
@@ -472,8 +479,13 @@ export class Worktrees {
 
   private async marked(path: string): Promise<{ layout: GitLayout; marker: z.infer<typeof markerSchema> } | undefined> {
     if (!isAbsolute(path) || resolve(path) !== path) return
-    const tail = relative(this.options.root, path).split(sep)
-    if (tail.length !== 2 || !BUCKET_NAME.test(tail[0]!) || !WORKTREE_NAME.test(tail[1]!)) return
+    if (
+      !this.roots().some(root => {
+        const tail = relative(root, path).split(sep)
+        return tail.length === 2 && BUCKET_NAME.test(tail[0]!) && WORKTREE_NAME.test(tail[1]!)
+      })
+    )
+      return
     try {
       await realDirectories(path)
       if ((await realpath(path)) !== path) return
@@ -618,13 +630,23 @@ export class Worktrees {
     requestId: string,
     held: ((sessionId: string | undefined, secret: boolean) => Promise<string | undefined>) | undefined,
   ): Promise<Worktree> {
-    const { source, common, root } = await this.prepare(sourcePath)
+    const { source, common } = await this.prepare(sourcePath)
     const unknown = () => refuse('worktree-reuse-unknown', '找不到这个项目里由 Latch 新建、标记有效的这个工作树，没有开始会话。')
     if (!WORKTREE_NAME.test(name)) throw unknown()
-    const path = join(root, bucketName(source.root), name)
-    const found = await this.marked(path)
-    if (!found || commonDirOf(found.layout) !== common) throw unknown()
+    const candidates = (
+      await Promise.all(
+        this.roots().map(async root => {
+          const path = join(root, bucketName(source.root), name)
+          const found = await this.marked(path)
+          return found && commonDirOf(found.layout) === common ? { path, ...found } : undefined
+        }),
+      )
+    ).filter(candidate => candidate !== undefined)
     const request = sha256Hex(requestId)
+    const found =
+      candidates.find(candidate => candidate.marker.request === request) ?? (candidates.length === 1 ? candidates[0] : undefined)
+    if (!found) throw unknown()
+    const { path } = found
     if (found.marker.request !== request) {
       if (this.unbound.has(path) || this.removing.has(path))
         throw refuse('worktree-reuse-busy', '这个工作树正被另一次开始或移除使用，没有开始会话。')
@@ -654,7 +676,7 @@ export class Worktrees {
   }
 
   /** The source folder's repository and its shared Git directory, without the checks only making a worktree needs. */
-  private async repository(sourcePath: string): Promise<{ git: GitReader; source: GitLayout; common: string; bucket: string }> {
+  private async repository(sourcePath: string): Promise<{ git: GitReader; source: GitLayout; common: string }> {
     const git = this.git
     if (!git) throw new AppError(409, 'worktree-no-git', '这台电脑上找不到 Git。安装 Git（或 Xcode 命令行工具）后再试。')
     const source = await readGitLayout(sourcePath)
@@ -662,12 +684,17 @@ export class Worktrees {
     if (!source || !common) throw refuse('worktree-not-repository', '这个文件夹不是 Git 仓库的顶层文件夹。')
     const root = this.options.root
     if (!isAbsolute(root) || resolve(root) !== root) throw refuse('worktree-location', '工作树的位置不是一个完整的路径。')
-    return { git, source, common, bucket: join(root, bucketName(source.root)) }
+    return { git, source, common }
   }
 
   /** Every worktree Latch made from this source folder's repository, found under the root by its marker. */
   async list(sourcePath: string): Promise<MarkedWorktree[]> {
-    const { common, bucket } = await this.repository(sourcePath)
+    const { common, source } = await this.repository(sourcePath)
+    const groups = await Promise.all(this.roots().map(root => this.listBucket(join(root, bucketName(source.root)), common)))
+    return groups.flat().sort((a, b) => b.name.localeCompare(a.name))
+  }
+
+  private async listBucket(bucket: string, common: string): Promise<MarkedWorktree[]> {
     let names: string[]
     try {
       await realDirectories(bucket)
@@ -676,7 +703,7 @@ export class Worktrees {
       return []
     }
     const listed: MarkedWorktree[] = []
-    for (const name of names.toSorted().toReversed()) {
+    for (const name of names) {
       if (!WORKTREE_NAME.test(name)) continue
       const path = join(bucket, name)
       const found = await this.marked(path)
@@ -1100,9 +1127,10 @@ export class Worktrees {
   }
 
   /** The worktree an earlier Host process made for this request, found by its marker. */
-  private async earlier(bucket: string, requestId: string): Promise<Worktree | undefined> {
+  private async earlier(bucket: string, common: string, requestId: string): Promise<Worktree | undefined> {
     let names: string[]
     try {
+      await realDirectories(bucket)
       names = await readdir(bucket)
     } catch {
       return undefined
@@ -1111,7 +1139,7 @@ export class Worktrees {
     for (const name of names) {
       if (!WORKTREE_NAME.test(name)) continue
       const found = await this.marked(join(bucket, name))
-      if (found?.marker.request !== request) continue
+      if (found?.marker.request !== request || commonDirOf(found.layout) !== common) continue
       const head = 'branch' in found.layout.head && BRANCH_NAME.test(found.layout.head.branch) ? found.layout.head.branch : undefined
       return found.marker.existingBranch
         ? { path: join(bucket, name), branch: head ?? `latch/${name}`, base: '', copied: 0, existingBranch: true }
@@ -1160,6 +1188,13 @@ export class Worktrees {
 
   private async make(sourcePath: string, requestId: string, start: Exclude<WorktreeStart, { from: 'reuse' }>): Promise<Worktree> {
     const { git, source, common, base: head, drivers: sourceDrivers, root, placed } = await this.prepare(sourcePath)
+    const repository = bucketName(source.root)
+    const buckets = this.roots().map(path => join(path, repository))
+    // A retry can belong to a previously allocated checkout even after its root or branch changed.
+    for (const bucket of buckets) {
+      const known = await this.earlier(bucket, common, requestId)
+      if (known) return known
+    }
     const { commit: base, existing } = await this.resolve(git, source, start, head)
     const config = (layout: GitLayout) => this.config(git, layout)
     try {
@@ -1178,17 +1213,13 @@ export class Worktrees {
       }
     }
 
-    const bucket = join(root, bucketName(source.root))
+    const bucket = join(root, repository)
     try {
       await mkdir(bucket, { mode: 0o700 })
     } catch (error) {
       if (codeOf(error) !== 'EEXIST') throw failed('新建工作树文件夹')
     }
     await realDirectories(bucket)
-    // A start retried after the Host restarted gets the worktree it already has.
-    const known = await this.earlier(bucket, requestId)
-    if (known) return known
-
     let path: string | undefined, branch: string | undefined
     for (let attempt = 0; attempt < ATTEMPTS && !path; attempt++) {
       const name = sessionFolderName(
@@ -1197,6 +1228,7 @@ export class Worktrees {
       )
       if (!WORKTREE_NAME.test(name)) throw failed('命名')
       if (await git.commit(source, `refs/heads/latch/${name}`)) continue
+      if (buckets.length > 1 && (await this.marked(join(buckets[1]!, name)))) continue
       try {
         // Without `recursive`: an entry of that name, whatever it is, is never reused.
         await mkdir(join(bucket, name), { mode: 0o755 })

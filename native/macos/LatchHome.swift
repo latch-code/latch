@@ -109,6 +109,33 @@ private func names(_ directory: Int32) throws -> [String] {
   return result.sorted()
 }
 
+private func absoluteParts(_ root: String) throws -> [Substring] {
+  let pieces = root.split(separator: "/", omittingEmptySubsequences: false)
+  guard root.hasPrefix("/"), root.utf8.count <= pathLimit,
+    root == "/" || pieces.dropFirst().allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
+    !root.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else { throw Failure.invalidInput }
+  return root == "/" ? [] : Array(pieces.dropFirst())
+}
+
+private struct MoveDestination {
+  let root: String
+  let rootId: Identity
+  let parentId: Identity
+  let name: String
+
+  init(_ data: Any?) throws {
+    guard let data = data as? [String: Any], Set(data.keys) == ["root", "rootId", "parentId", "name"],
+      let root = data["root"] as? String, let rootId = (data["rootId"] as? String).flatMap(Identity.init),
+      let parentId = (data["parentId"] as? String).flatMap(Identity.init), let name = data["name"] as? String,
+      name.range(of: #"^general(-[0-9a-f]{8})?$"#, options: .regularExpression) != nil else { throw Failure.invalidInput }
+    _ = try absoluteParts(root)
+    self.root = root
+    self.rootId = rootId
+    self.parentId = parentId
+    self.name = name
+  }
+}
+
 private struct Request {
   let operation: String
   let root: String
@@ -118,27 +145,37 @@ private struct Request {
   let homeId: Identity
   let top: String?
   let expect: (entries: Int, bytes: UInt64)?
+  let destination: MoveDestination?
   let deadline: ContinuousClock.Instant
 
   init(_ data: Data) throws {
     guard !data.isEmpty, data.count <= inputLimit,
       let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let operation = value["op"] as? String, ["archive", "remove", "count"].contains(operation),
+      let operation = value["op"] as? String, ["archive", "remove", "count", "move-general"].contains(operation),
       let root = value["root"] as? String, let rootId = (value["rootId"] as? String).flatMap(Identity.init),
       let helpersId = (value["helpersId"] as? String).flatMap(Identity.init),
       let name = value["name"] as? String, let homeId = (value["homeId"] as? String).flatMap(Identity.init),
       let seconds = value["seconds"] as? Int, seconds > 0, seconds <= 900 else { throw Failure.invalidInput }
     let common: Set<String> = ["op", "root", "rootId", "helpersId", "name", "homeId", "seconds"]
-    let allowed = operation == "archive" ? common.union(["top"]) : operation == "remove" ? common.union(["expect"]) : common
+    let allowed: Set<String>
+    switch operation {
+    case "archive": allowed = common.union(["top"])
+    case "remove": allowed = common.union(["expect"])
+    case "move-general": allowed = common.union(["destination"])
+    default: allowed = common
+    }
     guard Set(value.keys).isSubset(of: allowed) else { throw Failure.invalidInput }
     // The start directory as the Host resolved it: absolute, no `.` or `..`, nothing below it but `helpers/<name>`.
-    let pieces = root.split(separator: "/", omittingEmptySubsequences: false)
-    guard root.hasPrefix("/"), root.utf8.count <= pathLimit,
-      root == "/" || pieces.dropFirst().allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
-      !root.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else { throw Failure.invalidInput }
+    _ = try absoluteParts(root)
     // The home's own name shape: the owner's ID, alone or with a data directory's tag.
     guard name.range(of: #"^(general|agt_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(-[0-9a-f]{8})?$"#,
       options: .regularExpression) != nil else { throw Failure.invalidInput }
+    if operation == "move-general" {
+      guard name == "general" || name.hasPrefix("general-") else { throw Failure.invalidInput }
+      destination = try MoveDestination(value["destination"])
+    } else {
+      destination = nil
+    }
     if operation == "archive" {
       guard let top = value["top"] as? String, !top.isEmpty, top.utf8.count <= 128, top != ".", top != "..",
         !top.contains("/"), !top.contains("\\"),
@@ -204,6 +241,38 @@ private final class Home {
   }
 
   deinit { for fd in held.reversed() { Darwin.close(fd) } }
+}
+
+/** An exclusive rename of the verified directory; distinct files and mounts are left in place. */
+private func moveGeneral(_ request: Request) throws -> [String: Any] {
+  guard let destination = request.destination else { throw Failure.invalidInput }
+  let source = try Home(request)
+  // Keep every ancestor open and never follow a link while walking the destination.
+  let root = Darwin.open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+  guard root >= 0 else { throw Failure.unreadable }
+  var held = [root]
+  defer { for fd in held.reversed() { Darwin.close(fd) } }
+  for component in try absoluteParts(destination.root) {
+    let fd = openat(held.last!, String(component), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+    guard fd >= 0 else { throw Failure.changed }
+    held.append(fd)
+  }
+  let base = held.last!
+  let baseInfo = try metadata(base)
+  guard Identity(baseInfo) == destination.rootId, baseInfo.st_uid == getuid(), baseInfo.st_mode & 0o022 == 0,
+    let seen = try entry(base, "agent-homes"), kind(seen) == S_IFDIR, Identity(seen) == destination.parentId,
+    seen.st_uid == getuid(), seen.st_mode & 0o077 == 0 else { throw Failure.changed }
+  let target = try openDirectory(base, "agent-homes", seen)
+  held.append(target)
+  guard destination.parentId.device == source.device else { throw Failure.mount }
+  var totals = Totals()
+  try survey(source.home, device: source.device, depth: 0, limit: removeEntries, deadline: request.deadline, into: &totals)
+  guard let current = try entry(source.helpers, request.name), Identity(current) == source.identity else { throw Failure.changed }
+  guard renameatx_np(source.helpers, request.name, target, destination.name, UInt32(RENAME_EXCL)) == 0 else {
+    throw errno == EEXIST ? Failure.changed : Failure.unwritable
+  }
+  guard let moved = try entry(target, destination.name), Identity(moved) == source.identity else { throw Failure.changed }
+  return ["moved": true]
 }
 
 private struct Totals {
@@ -541,10 +610,11 @@ private func selfTest(_ scratch: String) throws {
   try make(root + "/outside")
   try make(root + "/outside/keep.txt", "keep")
   guard symlink(root + "/outside", home + "/link") == 0 else { throw Failure.unwritable }
+  let originalHomeId = try id(home)
   func request(_ operation: String, _ extra: [String: Any] = [:]) throws -> Request {
     var value: [String: Any] = [
       "op": operation, "root": root, "rootId": try id(root), "helpersId": try id(root + "/helpers"), "name": name,
-      "homeId": try id(home), "seconds": 30,
+      "homeId": originalHomeId, "seconds": 30,
     ]
     for (key, item) in extra { value[key] = item }
     return try Request(JSONSerialization.data(withJSONObject: value))
@@ -576,6 +646,27 @@ private func selfTest(_ scratch: String) throws {
   guard lstat(home, &gone) != 0, errno == ENOENT, FileManager.default.fileExists(atPath: root + "/outside/keep.txt") else {
     throw Failure.mismatch
   }
+  let oldGeneral = root + "/helpers/general"
+  let newParent = root + "/agent-homes"
+  let newGeneral = newParent + "/general"
+  try make(oldGeneral)
+  try make(oldGeneral + "/keep.txt", "keep")
+  try make(newParent)
+  try make(newGeneral)
+  let original = try id(oldGeneral)
+  let move = try request("move-general", [
+    "name": "general", "homeId": original,
+    "destination": ["root": root, "rootId": try id(root), "parentId": try id(newParent), "name": "general"],
+  ])
+  let occupied = try id(newGeneral)
+  do {
+    _ = try moveGeneral(move)
+    throw Failure.mismatch
+  } catch Failure.changed {}
+  guard try id(newGeneral) == occupied, rmdir(newGeneral) == 0 else { throw Failure.mismatch }
+  _ = try moveGeneral(move)
+  guard try id(newGeneral) == original, FileManager.default.fileExists(atPath: newGeneral + "/keep.txt"),
+    lstat(oldGeneral, &gone) != 0, errno == ENOENT else { throw Failure.mismatch }
 }
 
 // MARK: Main
@@ -625,6 +716,7 @@ private func failure(_ error: Error) -> Never {
       switch request.operation {
       case "archive": result = try archive(request, output: 3)
       case "remove": result = try remove(request)
+      case "move-general": result = try moveGeneral(request)
       default: result = try count(request)
       }
       reply(result, status: 0)

@@ -1,16 +1,18 @@
 // An Agent's home after something happened to it: the Host sets it up again only where nothing is there, moves the one
 // chat on only when its home lies under another start directory, and refuses everything else as it is.
 import { randomUUID } from 'node:crypto'
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
 import type { AgentHome, AppSnapshot, Automation, AutomationDetail, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
+import { buildHomeHelper } from '../scripts/build-home.ts'
+import { latchCodeRoot } from '../src/paths.ts'
 import type { LaunchTerminal, TerminalLaunch } from '../src/terminal/helper.ts'
-import { startTestHost, type TestHost } from './helpers/host.ts'
+import { startTestHost, type TestHost, type TestHostOptions } from './helpers/host.ts'
 
 const roots: string[] = []
 const hosts: TestHost[] = []
@@ -28,8 +30,22 @@ const plugin: HarnessPlugin = {
       id: 'agent-provider',
       name: 'fixture',
       model: 'fixture',
-      async *stream() {
-        yield { type: 'text', text: 'Answer' }
+      async *stream({ messages }) {
+        const last = messages.at(-1)
+        if (last?.role === 'user' && last.content === 'Write inside the managed home') {
+          yield {
+            type: 'tool-call',
+            call: { id: 'write-managed-home', name: 'write_file', arguments: { path: 'keep.txt', content: 'home note' } },
+          }
+          yield { type: 'finish', reason: 'tool-calls' }
+          return
+        }
+        if (last?.role === 'user' && last.content === 'Read inside the managed home') {
+          yield { type: 'tool-call', call: { id: 'read-managed-home', name: 'read_file', arguments: { path: 'keep.txt' } } }
+          yield { type: 'finish', reason: 'tool-calls' }
+          return
+        }
+        yield { type: 'text', text: last?.role === 'tool' ? last.content : 'Answer' }
         yield { type: 'finish', reason: 'stop' }
       },
     })
@@ -43,7 +59,12 @@ async function tempRoot() {
   return root
 }
 
-async function boot(root: string, workspace = 'workspace', dataDir = 'data') {
+async function boot(
+  root: string,
+  workspace = 'workspace',
+  dataDir = 'data',
+  migration: Pick<TestHostOptions, 'generalHomeMigration' | 'homeHelper'> = {},
+) {
   const launched: TerminalLaunch[] = []
   const launch: LaunchTerminal = (spec, onEvent) => {
     launched.push(spec)
@@ -71,6 +92,7 @@ async function boot(root: string, workspace = 'workspace', dataDir = 'data') {
     workspaceRoot: workspace.startsWith('/') ? workspace : join(root, workspace),
     plugins: [plugin],
     terminal: { launch, shell: { file: '/bin/sh', argv: ['sh'] } },
+    ...migration,
   }
   const host = await startTestHost(options)
   hosts.push(host)
@@ -108,8 +130,8 @@ async function auditActions(dataDir: string) {
 }
 
 /** 通用's chat after one exchange. */
-async function generalChat(root: string) {
-  const booted = await boot(root)
+async function generalChat(root: string, workspace?: string, dataDir?: string) {
+  const booted = await boot(root, workspace, dataDir)
   const owner = await booted.host.enroll({ listener: 'unix' })
   const request = as(booted.host, owner.credential)
   const started = await answer(
@@ -120,6 +142,137 @@ async function generalChat(root: string) {
   await settled(request, sessionId)
   return { ...booted, owner, request, sessionId, home: join(booted.options.workspaceRoot, 'helpers', 'general') }
 }
+
+describe.skipIf(process.platform !== 'darwin')("General's managed home on macOS", () => {
+  let codeRoot: string
+  let homeHelper: string | undefined
+  const dataDir = '.latch/host'
+  beforeAll(async () => {
+    codeRoot = await mkdtemp(join(tmpdir(), 'latch-home-migration-build-'))
+    const native = join(codeRoot, 'native', 'macos')
+    await mkdir(native, { recursive: true })
+    await copyFile(join(latchCodeRoot(), 'native', 'macos', 'LatchHome.swift'), join(native, 'LatchHome.swift'))
+    homeHelper = await buildHomeHelper(codeRoot)
+  }, 180_000)
+  afterAll(async () => {
+    if (codeRoot) await rm(codeRoot, { recursive: true, force: true })
+  })
+
+  test('moves the original folder and continues the same chat across startup workspace changes', async () => {
+    const root = await tempRoot()
+    const legacyDataDir = 'legacy-data'
+    const legacy = await generalChat(root, 'old-workspace', legacyDataDir)
+    const { sessionId } = legacy
+    await writeFile(join(legacy.home, 'keep.txt'), 'original file')
+    const original = await lstat(legacy.home, { bigint: true })
+    await stop(legacy.host)
+
+    const buildGeneralHomeHelper = vi.fn(async () => homeHelper)
+    const options = { generalHomeMigration: true, generalHomeBase: join(root, '.latch'), buildGeneralHomeHelper }
+    const migrated = await boot(root, 'new-workspace', legacyDataDir, options)
+    const home = join(root, '.latch', 'agent-homes', 'general')
+    const request = as(migrated.host, legacy.owner.credential)
+    expect(await (await request('custom-agents/general/home')).json()).toMatchObject({ available: true, state: 'ready', path: home })
+    expect(await lstat(home, { bigint: true })).toMatchObject({ dev: original.dev, ino: original.ino })
+    expect(await readFile(join(home, 'keep.txt'), 'utf8')).toBe('original file')
+    await expect(lstat(legacy.home)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(((await (await request('snapshot')).json()) as AppSnapshot).agentChats?.general).toEqual({ state: 'ready', sessionId })
+    expect(
+      await answer(await request(`tasks/${sessionId}/prompt`, 'POST', { prompt: 'after migration', requestId: randomUUID() })),
+    ).toEqual([200, { accepted: true }])
+    await settled(request, sessionId)
+    const detail = (await (await request(`tasks/${sessionId}`)).json()) as TaskDetail
+    expect(detail.summary.cwd).toBe(home)
+    expect(detail.messages.filter(message => message.role === 'user').map(message => message.text)).toEqual(['Hello', 'after migration'])
+    expect((await request(`tasks/${sessionId}/terminals`, 'POST', { cols: 80, rows: 24 })).status).toBe(201)
+    expect(migrated.launched.at(-1)?.cwd).toBe(home)
+    await stop(migrated.host)
+
+    const restarted = await boot(root, 'another-workspace', legacyDataDir, options)
+    const again = as(restarted.host, legacy.owner.credential)
+    expect(await answer(await again(`tasks/${sessionId}/prompt`, 'POST', { prompt: 'after restart', requestId: randomUUID() }))).toEqual([
+      200,
+      { accepted: true },
+    ])
+    expect(await readFile(join(home, 'keep.txt'), 'utf8')).toBe('original file')
+    expect(buildGeneralHomeHelper).toHaveBeenCalledTimes(1)
+  })
+
+  test('creates a managed home with the first message and allows only its scoped file access', async () => {
+    const root = await tempRoot()
+    const { host, options } = await boot(root, 'workspace', dataDir, { generalHomeMigration: true, homeHelper })
+    const owner = await host.enroll({ listener: 'unix' })
+    const request = as(host, owner.credential)
+    const home = join(root, '.latch', 'agent-homes', 'general')
+    const note = join(home, 'keep.txt')
+    const privateFile = join(options.dataDir, 'private.txt')
+    await writeFile(privateFile, 'Host-only file', { mode: 0o600 })
+    expect(await owner.json<AgentHome>('custom-agents/general/home')).toMatchObject({ available: false, state: 'pending', path: home })
+    await expect(lstat(home)).rejects.toMatchObject({ code: 'ENOENT' })
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { customAgentId: 'general', prompt: 'Write inside the managed home', requestId: randomUUID(), model },
+    })
+    await expect
+      .poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).approvals[0])
+      .toMatchObject({
+        toolName: 'write_file',
+        risk: 'R1',
+      })
+    const approval = (await owner.json<TaskDetail>(`tasks/${sessionId}`)).approvals[0]!
+    await expect(lstat(note)).rejects.toMatchObject({ code: 'ENOENT' })
+    await owner.json(`approvals/${approval.id}`, { method: 'POST', body: { decision: 'allow', requestId: randomUUID() } })
+    await settled(request, sessionId)
+    expect(await readFile(note, 'utf8')).toBe('home note')
+    await owner.json(`tasks/${sessionId}/prompt`, {
+      method: 'POST',
+      body: { prompt: 'Read inside the managed home', requestId: randomUUID() },
+    })
+    await settled(request, sessionId)
+    expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages.findLast(message => message.role === 'assistant')?.text).toContain(
+      'home note',
+    )
+
+    const { files } = await owner.json<{ files: Array<{ status: string; file?: { handle: string } }> }>(
+      `tasks/${sessionId}/files/resolve`,
+      { method: 'POST', body: { paths: ['keep.txt', privateFile] } },
+    )
+    expect(files[0]).toMatchObject({ status: 'ok', file: { handle: expect.any(String) } })
+    expect(await (await owner.request(`files/${files[0]!.file!.handle}`)).text()).toBe('home note')
+    expect(files[1]).toMatchObject({ status: 'outside' })
+    expect(files[1]).not.toHaveProperty('file')
+    expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.cwd).toBe(home)
+    expect(await owner.json<AgentHome>('custom-agents/general/home')).toMatchObject({ available: true, state: 'ready', path: home })
+    expect((await stat(home)).mode & 0o777).toBe(0o700)
+    await expect(lstat(join(options.workspaceRoot, 'helpers'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  test('leaves the original files and chat alone if the recorded home was replaced', async () => {
+    const root = await tempRoot()
+    const legacy = await generalChat(root, 'old-workspace', dataDir)
+    const saved = join(root, 'original-home')
+    await writeFile(join(legacy.home, 'keep.txt'), 'original file')
+    await rename(legacy.home, saved)
+    await mkdir(legacy.home, { mode: 0o700 })
+    await writeFile(join(legacy.home, 'keep.txt'), 'replacement file')
+    await stop(legacy.host)
+
+    const updated = await boot(root, 'new-workspace', dataDir, { generalHomeMigration: true, homeHelper })
+    const request = as(updated.host, legacy.owner.credential)
+    expect(await (await request('custom-agents/general/home')).json()).toMatchObject({
+      available: false,
+      state: 'refused',
+      path: legacy.home,
+    })
+    const sent = await answer(await request(`tasks/${legacy.sessionId}/prompt`, 'POST', { prompt: 'again', requestId: randomUUID() }))
+    expect(sent).toEqual([409, expect.objectContaining({ error: 'helper-home-unavailable' })])
+    const detail = (await (await request(`tasks/${legacy.sessionId}`)).json()) as TaskDetail
+    expect(detail.summary.cwd).toBe(legacy.home)
+    await expect(lstat(join(root, '.latch', 'agent-homes', 'general'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(join(saved, 'keep.txt'), 'utf8')).toBe('original file')
+    expect(await readFile(join(legacy.home, 'keep.txt'), 'utf8')).toBe('replacement file')
+  })
+})
 
 test('sets up a deleted home again on the next message, and the same chat continues there with its terminal', async () => {
   const root = await tempRoot()

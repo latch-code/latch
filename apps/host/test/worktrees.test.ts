@@ -6,6 +6,8 @@ import { basename, dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { sha256Hex } from '@latch/core/node-kit'
 import { findGit } from '../src/changes/git.ts'
+import { legacyDefaultPaths } from '../src/legacy-defaults.ts'
+import { SessionMetaStore } from '../src/session-meta.ts'
 import { WORKTREE_BRANCH, WORKTREE_NAME, Worktrees, type WorktreeOptions } from '../src/worktrees.ts'
 import { configHookGit } from './helpers/config-hooks.ts'
 
@@ -87,6 +89,38 @@ async function wrapper(base: string, match: string, body: string) {
 }
 
 describe.skipIf(!git)('worktrees', () => {
+  it('keeps an old default worktree root only for a recorded tree with its matching ownership marker', async () => {
+    const t = await setup()
+    const root = join(t.home, 'Latch', 'worktrees')
+    const old = t.service({ root, suffix: () => 'aaaa' })
+    const made = await old.create({ source: t.root, requestId: 'legacy-worktree' })
+    const meta = await SessionMetaStore.open(t.data)
+    await meta.update('session-1', () => ({ worktree: { path: made.path, branch: made.branch } }))
+    const paths = { dataDir: t.data, workspaceSource: 'default' as const }
+    expect(await legacyDefaultPaths(paths, t.home, t.root, false)).toEqual({})
+
+    await old.bind(made.path, 'legacy-worktree', 'session-1')
+    expect(await legacyDefaultPaths(paths, t.home, t.root, false)).toEqual({ worktreesDir: root })
+    expect(await legacyDefaultPaths(paths, t.home, t.root, true)).toEqual({})
+
+    const worktrees = t.service({ legacyRoot: root, suffix: () => 'bbbb' })
+    expect(await worktrees.sessionOf(made.path)).toBe('session-1')
+    expect(await worktrees.create({ source: t.root, requestId: 'legacy-worktree' })).toMatchObject({ path: made.path })
+    expect(existsSync(t.worktreeRoot)).toBe(false)
+    await worktrees.bind(made.path, 'legacy-worktree', 'session-1')
+    const fresh = await worktrees.create({ source: t.root, requestId: 'new-worktree' })
+    expect(dirname(dirname(fresh.path))).toBe(t.worktreeRoot)
+    expect(await worktrees.list(t.root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: made.path, sessionId: 'session-1' }),
+        expect.objectContaining({ path: fresh.path }),
+      ]),
+    )
+    await worktrees.remove(made.path, { audit: async () => {} })
+    expect(existsSync(made.path)).toBe(false)
+    expect(existsSync(fresh.path)).toBe(true)
+  })
+
   it('makes a worktree on a new latch/ branch from HEAD, outside the repository, leaving the source as it was', async () => {
     const t = await setup()
     await writeFile(join(t.root, 'a.txt'), 'uncommitted\n')

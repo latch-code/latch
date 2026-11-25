@@ -21,6 +21,12 @@ export interface FileRoot {
   path: string
 }
 
+/** The Host authenticates the session and the exact real directory before omitting this one protected ancestor. */
+export interface ManagedHomeAccess {
+  protectedAncestor: string
+  permits(sessionId: string, canonicalHome: string): Promise<boolean>
+}
+
 export interface FileReference {
   path: string
   line?: number
@@ -132,13 +138,17 @@ export function parseReference(input: string, home: string): FileReference | und
  * identity, so another spelling of the same directory is caught too.
  */
 export class ProtectedPaths {
-  constructor(private readonly paths: readonly string[]) {}
+  constructor(
+    private readonly paths: readonly string[],
+    private readonly managedHome?: { root: string; protectedPaths: readonly string[] },
+  ) {}
 
   async contains(target: string): Promise<boolean> {
-    if (this.paths.length === 0) return false
+    const paths = this.managedHome && isInsidePath(target, this.managedHome.root) ? this.managedHome.protectedPaths : this.paths
+    if (paths.length === 0) return false
     const ids = new Set<string>()
     const spelled = new Set<string>()
-    for (const path of this.paths) {
+    for (const path of paths) {
       spelled.add(await realpath(path).catch(() => resolve(path)))
       try {
         const info = await stat(path, { bigint: true })

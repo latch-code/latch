@@ -24,6 +24,8 @@ import {
   type WorkspaceGuardContext,
 } from '../src/paths.ts'
 import { readWorkspaceProjects } from '../../../scripts/boundaries.ts'
+import { legacyDefaultPaths } from '../src/legacy-defaults.ts'
+import { SessionFolders } from '../src/session-folders.ts'
 
 const run = promisify(execFile)
 const cleanups: string[] = []
@@ -67,7 +69,7 @@ describe('resolveLatchPaths', () => {
     expect(resolveLatchPaths({ env: {}, cwd: '/w', home: '/home/me', platform: 'linux', exists: none })).toMatchObject({
       dataDir: '/home/me/.local/share/latch/host',
       agentsDir: '/home/me/.local/share/latch/agents',
-      workspaceRoot: '/home/me/Latch/workspace',
+      workspaceRoot: '/home/me/Workspaces/Latch/workspace',
     })
     expect(
       resolveLatchPaths({ env: { XDG_DATA_HOME: '/xdg' }, cwd: '/w', home: '/home/me', platform: 'linux', exists: none }),
@@ -155,18 +157,21 @@ describe('resolveLatchPaths', () => {
     const legacy = resolveLatchPaths({ ...base, env: { LATCH_DATA_DIR: '/d' }, exists: path => path === '/d/workspace' })
     expect(legacy).toMatchObject({ workspaceRoot: '/d/workspace', workspaceSource: 'legacy-data' })
     expect(legacy.warnings).toEqual(['工作区位于数据目录内（/d/workspace）。迁出之前只能使用内置 Harness。'])
-    expect(resolveLatchPaths({ ...base, env: {} })).toMatchObject({ workspaceRoot: '/home/me/Latch/workspace', workspaceSource: 'default' })
+    expect(resolveLatchPaths({ ...base, env: {} })).toMatchObject({
+      workspaceRoot: '/home/me/Workspaces/Latch/workspace',
+      workspaceSource: 'default',
+    })
     expect(resolveLatchPaths({ ...base, env: { LATCH_AGENTS_DIR: '/agents' } }).agentsDir).toBe('/agents')
   })
 
   it('puts worktrees beside the start directory unless LATCH_WORKTREES_DIR names a place', () => {
     const base = { cwd: '/w', home: '/home/me', platform: 'linux' as const, exists: none }
-    expect(resolveLatchPaths({ ...base, env: {} }).worktreesDir).toBe('/home/me/Latch/worktrees')
+    expect(resolveLatchPaths({ ...base, env: {} }).worktreesDir).toBe('/home/me/Workspaces/Latch/worktrees')
     expect(resolveLatchPaths({ ...base, env: {}, workspace: '/tmp/run/start' }).worktreesDir).toBe('/tmp/run/worktrees')
     expect(resolveLatchPaths({ ...base, env: { LATCH_WORKTREES_DIR: 'trees' } }).worktreesDir).toBe('/w/trees')
   })
 
-  it("never picks a start directory inside Latch's code: a legacy workspace there gives way to ~/Latch/workspace", () => {
+  it('uses the new default when the legacy data workspace is inside Latch code', () => {
     const base = { home: '/home/me', platform: 'linux' as const, codeRoot: '/src/harness-link' }
     const inRepo = (path: string) => path.startsWith('/src/harness-link/.runtime')
     // The legacy ./.runtime data directory in the repository: it stays the data directory, the start directory moves.
@@ -174,15 +179,15 @@ describe('resolveLatchPaths', () => {
     expect(legacy).toMatchObject({
       dataDir: '/src/harness-link/.runtime',
       dataDirSource: 'legacy-runtime',
-      workspaceRoot: '/home/me/Latch/workspace',
+      workspaceRoot: '/home/me/Workspaces/Latch/workspace',
       workspaceSource: 'default',
     })
     expect(legacy.warnings[1]).toBe(
-      '数据目录内的旧工作区 /src/harness-link/.runtime/workspace 位于 Latch 程序目录中，不再作为默认文件夹；默认文件夹改为 /home/me/Latch/workspace。原目录中的文件没有移动。',
+      '数据目录内的旧工作区 /src/harness-link/.runtime/workspace 位于 Latch 程序目录中，不再作为默认文件夹；默认文件夹改为 /home/me/Workspaces/Latch/workspace。原目录中的文件没有移动。',
     )
     expect(
       resolveLatchPaths({ ...base, cwd: '/w', env: { LATCH_DATA_DIR: '/src/harness-link/.runtime' }, exists: inRepo }).workspaceRoot,
-    ).toBe('/home/me/Latch/workspace')
+    ).toBe('/home/me/Workspaces/Latch/workspace')
     // A directory the owner names is kept, wherever it is; a legacy workspace elsewhere is still used.
     expect(
       resolveLatchPaths({ ...base, cwd: '/w', env: {}, workspace: '/src/harness-link/.runtime/workspace', exists: inRepo }),
@@ -196,24 +201,55 @@ describe('resolveLatchPaths', () => {
     const home = temp()
     const codeRoot = join(home, 'checkout')
     mkdirSync(codeRoot)
-    const usualParent = join(home, 'Latch')
+    mkdirSync(join(home, 'Workspaces'))
+    const usualParent = join(home, 'Workspaces', 'Latch')
     const usual = join(usualParent, 'workspace')
-    const fallback = join(home, 'Latch Files', 'workspace')
+    const fallbackParent = join(home, 'Workspaces', 'Latch Files')
+    const fallback = join(fallbackParent, 'workspace')
     const base = { home, codeRoot, cwd: home, env: {}, legacyRuntime: false }
-    const checkout = process.platform === 'darwin' ? join(home, 'latch') : usualParent
+    const checkout = process.platform === 'darwin' ? join(home, 'Workspaces', 'latch') : usualParent
     expect(resolveLatchPaths({ ...base, codeRoot: checkout }).workspaceRoot).toBe(fallback)
     symlinkSync(codeRoot, usualParent, 'dir')
     // No workspace exists yet. Its parent already resolves into the program.
     expect(resolveLatchPaths(base)).toMatchObject({
       workspaceRoot: fallback,
       workspaceSource: 'default',
-      worktreesDir: join(home, 'Latch Files', 'worktrees'),
+      worktreesDir: join(fallbackParent, 'worktrees'),
     })
     expect(resolveLatchPaths({ ...base, workspace: usual })).toMatchObject({ workspaceRoot: usual, workspaceSource: 'flag' })
     expect(resolveLatchPaths({ ...base, env: { LATCH_WORKSPACE: usual } })).toMatchObject({ workspaceRoot: usual, workspaceSource: 'env' })
-    symlinkSync(codeRoot, join(home, 'Latch Files'), 'dir')
+    symlinkSync(codeRoot, fallbackParent, 'dir')
     // Data-only callers can still locate the Host. Starting it requires an explicit usable folder.
     expect(resolveLatchPaths(base)).toMatchObject({ dataDir: expect.any(String), workspaceError: expect.stringContaining('--workspace') })
+  })
+})
+
+describe('legacyDefaultPaths', () => {
+  it('retains an old automatic workspace only while an ordinary session folder still exists', async () => {
+    const home = temp()
+    const dataDir = join(home, 'data')
+    const root = join(home, 'Latch', 'workspace')
+    const codeRoot = join(home, 'repo')
+    for (const path of [dataDir, root, codeRoot]) mkdirSync(path, { recursive: true, mode: 0o700 })
+    const paths = { dataDir, workspaceSource: 'default' as const }
+    const allocator = new SessionFolders({
+      dataDir,
+      root,
+      canonicalRoot: await canonicalPath(root),
+      clock: Date.now,
+      now: Date.now,
+      log() {},
+    })
+    await allocator.helperHome('general', async () => {})
+    expect(await legacyDefaultPaths(paths, home, codeRoot, false)).toEqual({})
+
+    const ordinary = await allocator.allocate('legacy-code-request')
+    await allocator.starting('legacy-code-request')
+    expect(await legacyDefaultPaths(paths, home, codeRoot, false)).toEqual({ workspaceRoot: root })
+    expect(await legacyDefaultPaths({ ...paths, workspaceSource: 'flag' }, home, codeRoot, false)).toEqual({})
+
+    rmSync(ordinary.path, { recursive: true })
+    expect(await legacyDefaultPaths(paths, home, codeRoot, false)).toEqual({})
   })
 })
 

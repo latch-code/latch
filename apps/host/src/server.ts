@@ -14,6 +14,7 @@ import { CONSULT_AGENT, CONSULT_TOOLS, ConsultationTurns, LIST_AGENTS, consultDe
 import { CustomAgents, harnessFixed, rememberRequest, type AgentActor, type FirstChatStart } from './custom-agents.ts'
 import { DataExports } from './data-export.ts'
 import { AgentFolders, HomeHelper, archiveLabel } from './agent-folders.ts'
+import { withGeneralHomeSessions } from './agent-home-sessions.ts'
 import { AgentMentions } from './agent-mentions.ts'
 import { DataInventoryService } from './data-inventory.ts'
 import { Automations, automationSummary, type AutomationStartInput } from './automations.ts'
@@ -897,8 +898,17 @@ export interface ServerOptions {
   agentsDir?: string
   /** Where sessions' Git worktrees go; default beside the start directory (`LATCH_WORKTREES_DIR` replaces it). */
   worktreesDir?: string
+  /** Verified old automatic locations reserved for existing sessions and worktrees. */
+  legacyWorkspaceRoot?: string
+  legacyWorktreesDir?: string
   /** Tests: the `latch-home` binary; default `dist/native/latch-home`. */
   homeHelper?: string
+  /** Enable the macOS stable home and the startup migration, under the CLI's data directory lock. */
+  generalHomeMigration?: boolean
+  /** With an automatic data location, the CLI supplies ~/.latch even when upgrading the old in-repo data location. */
+  generalHomeBase?: string
+  /** Source launches build the native helper on demand if the migration needs to rename a directory. */
+  buildGeneralHomeHelper?: () => Promise<string | undefined>
   /** Dependency injection; default `createPresenceBackend(...)`. */
   presence?: PresenceBackend
   /** Process-local extra 'host:port' entries. */
@@ -1925,14 +1935,113 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       dataDir,
       root: workspaceRoot,
       canonicalRoot: canonicalWorkspace,
+      ...(options.legacyWorkspaceRoot
+        ? { legacyOrdinary: { root: options.legacyWorkspaceRoot, canonicalRoot: await canonicalPath(options.legacyWorkspaceRoot) } }
+        : {}),
       clock,
       now,
       ...(options.sessionFolderSuffix ? { suffix: options.sessionFolderSuffix } : {}),
       log,
     })
     await ownFolders.start()
+    const generalHomeRoot = options.generalHomeBase ?? dirname(realDataDir)
+    const generalHomeParent = join(generalHomeRoot, 'agent-homes')
+    const generalHomes = await (async () => {
+      if (!options.generalHomeMigration) return undefined
+      const generalHomeKey = await canonicalThroughAncestor(generalHomeParent)
+      const reserved = await Promise.all(
+        [realDataDir, realWorkspace, agentsDir, runtime.runtimeDir, worktreesDir].map(canonicalThroughAncestor),
+      )
+      if (
+        generalHomeKey === undefined
+        || reserved.some(path => path && (isInsidePath(path, generalHomeKey) || isInsidePath(generalHomeKey, path)))
+      )
+        return undefined
+      if (options.generalHomeBase)
+        await mkdir(generalHomeRoot, { mode: 0o700 }).catch(error => {
+          if (codeOf(error) !== 'EEXIST') throw error
+        })
+      return new SessionFolders({
+        dataDir,
+        root: generalHomeRoot,
+        canonicalRoot: await canonicalPath(generalHomeRoot),
+        managedGeneral: true,
+        clock,
+        now,
+        log,
+      })
+    })()
+    let generalMigrationBlocked = false
+    let legacyGeneralPath: string | undefined
+    if (generalHomes && (await generalHomes.needsGeneralMigration(ownFolders))) {
+      try {
+        let homeHelper: Promise<HomeHelper> | undefined
+        const moveHelper = () =>
+          (homeHelper ??= (async () => {
+            const path = options.homeHelper ?? (await options.buildGeneralHomeHelper?.())
+            const helper = await HomeHelper.open(path)
+            if (!helper.available) throw generalHomeUnavailable()
+            return helper
+          })())
+        await withGeneralHomeSessions(dataDir, sessions =>
+          generalHomes.migrateGeneral({
+            previous: ownFolders,
+            previousRoots: [
+              workspaceRoot,
+              join(realDataDir, 'workspace'),
+              join(home, 'Latch', 'workspace'),
+              join(home, 'Latch Files', 'workspace'),
+            ],
+            paths(name) {
+              const paths = sessions.paths(name)
+              legacyGeneralPath ??= paths[0]
+              return paths
+            },
+            moveSessions: sessions.move,
+            async beforeMove(needsNativeMove) {
+              if (needsNativeMove) await moveHelper()
+              await audit.append({
+                action: 'agent.home.assigned',
+                actor: { listener: 'host', via: 'startup' },
+                target: GENERAL_AGENT_ID,
+                detail: { homeHash: sha256Hex(canonicalJson('agent-homes/general')) },
+              })
+            },
+            moveDirectory: async (source, target) =>
+              (await moveHelper()).moveGeneral(
+                {
+                  root: source.root,
+                  rootId: source.ids.root,
+                  helpersId: source.ids.helpers,
+                  name: source.name,
+                  homeId: source.ids.home,
+                },
+                target,
+              ),
+          }),
+        )
+      } catch {
+        generalMigrationBlocked = true
+        log('通用的工作文件夹迁移尚未完成，原记录已保留。')
+      }
+    }
+
+    function generalHomeUnavailable() {
+      return new AppError(409, 'helper-home-unavailable', '通用的家无法确认，工作文件夹迁移尚未完成。请在这台 Mac 上检查。')
+    }
+
+    const helperAllocator = (owner: string) => (owner === GENERAL_AGENT_ID && generalHomes ? generalHomes : ownFolders)
+    const managedGeneralPath = (path: string) =>
+      generalHomes !== undefined && dirname(path) === generalHomeParent && homeBelongsTo(`helpers/${basename(path)}`, GENERAL_AGENT_ID)
+    const verifyHelperHome = (path: string) => (managedGeneralPath(path) ? generalHomes! : ownFolders).verify(path)
     const makeOwnFolders = options.sessionFolders === true
-    const worktrees = new Worktrees({ root: worktreesDir, dataDir: realDataDir, avoid: [codeRoot, runtime.runtimeDir, agentsDir], log })
+    const worktrees = new Worktrees({
+      root: worktreesDir,
+      ...(options.legacyWorktreesDir ? { legacyRoot: options.legacyWorktreesDir } : {}),
+      dataDir: realDataDir,
+      avoid: [codeRoot, runtime.runtimeDir, agentsDir],
+      log,
+    })
     const updateWindow = new UpdateWindow(now)
     /** Host writes that run the user's Git (delivery, pull request, worktree removal): the install waits for them. */
     const repositoryHolds = new RepositoryHolds({ closed: () => updateWindow.isCommitted })
@@ -1947,13 +2056,25 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       log,
     })
     const denyRead = await Promise.all(DENY_READ_HOME_PATHS.map(entry => realpath(join(home, entry)).catch(() => join(home, entry))))
+    const latchProtection = denyRead[DENY_READ_HOME_PATHS.indexOf('.latch')]
+    const generalProtection = latchProtection && isWithin(generalHomeParent, latchProtection) ? latchProtection : generalHomeParent
     const guardedPaths = [
       ...(await protectedDataPaths(realDataDir, realWorkspace)),
       runtime.runtimeDir,
       agentsDir,
       ...(tlsKeyPath ? [tlsKeyPath] : []),
       ...denyRead,
+      ...(generalHomes && generalProtection === generalHomeParent ? [generalHomeParent] : []),
     ]
+    const managedHome = generalHomes && {
+      protectedAncestor: generalProtection,
+      async permits(sessionId: string, canonicalHome: string) {
+        if (generalMigrationBlocked || !managedGeneralPath(canonicalHome)) return false
+        const task = await sessionTask(sessionId)
+        if (!task?.cwd || task.harnessId !== STANDARD || task.personal || homeOwnerOf(task) !== GENERAL_AGENT_ID) return false
+        return (await realpath(task.cwd).catch(() => undefined)) === canonicalHome && (await generalHomes.verify(task.cwd))
+      },
+    }
     // Files a conversation names outside its folders (files/outside.ts): agent CLIs' folders show media only; everything
     // else private stays refused, Latch's whole data and program folders included. Claude's folder holds its login.
     const cliHomes = await Promise.all(CLI_FILE_HOMES.map(entry => realpath(join(home, entry)).catch(() => join(home, entry))))
@@ -2427,7 +2548,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const { pendingQuestions: _untrustedCount, ...summary } = task
       return { ...summary, pendingQuestions: questions.view(task.id).length }
     }
-    const workspaceFiles = createWorkspacePlugin({ protectedPaths: guardedPaths })
+    const workspaceFiles = createWorkspacePlugin({ protectedPaths: guardedPaths, ...(managedHome ? { managedHome } : {}) })
     /** Latch's own optional plugins, as 设置 › 扩展 tells them from ones a developer added. */
     const builtInPlugins = new Set<string>()
     const workspacePages = new Set<BundledWorkspacePage>()
@@ -2696,6 +2817,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const fileReferences = await FileReferenceStore.open(dataDir)
     const fileTracking = createFileTrackingService({
       protectedPaths: guardedPaths,
+      ...(managedHome ? { managedHome } : {}),
       allowedRoot: async root => (await canonicalSet(usablePrimaries())).has(await canonicalPath(root.path)),
     })
     startupCleanup.push(() => fileTracking.close())
@@ -2763,6 +2885,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
       protectedPaths: guardedPaths,
       outsidePaths,
+      ...(managedHome ? { managedHome } : {}),
       home,
       now,
       audit,
@@ -3480,6 +3603,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       hub: harnessHub,
       board: boardDelivery,
       guardedPaths,
+      ...(managedHome ? { managedHome } : {}),
       sessionRoots,
       prFollowBasis: async (id, device) => {
         try {
@@ -4661,7 +4785,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           }
           if (own) {
             await assertHelperHome(own.path)
-            if (!(await ownFolders.verify(own.path))) throw workspaceChanged()
+            if (!(await verifyHelperHome(own.path))) throw workspaceChanged()
             authorize()
             return hub!.createTask({ ...task, ...started, cwd: own.path, sessionFolder: own.name })
           }
@@ -6035,8 +6159,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
 
-    async function callFolders(session: SessionScope): Promise<CallFolder[]> {
-      return Promise.all(scopeFolders(session, workspaceRoot).map(async folder => ({ id: folder.id, ...(await folderOf(folder.path)) })))
+    async function callFolders(session: SessionScope & { sessionId?: string }): Promise<CallFolder[]> {
+      return Promise.all(
+        scopeFolders(session, workspaceRoot).map(async folder => {
+          const canonical =
+            managedHome && session.sessionId && managedGeneralPath(folder.path)
+              ? await realpath(folder.path).catch(() => undefined)
+              : undefined
+          const allowed = canonical && (await managedHome!.permits(session.sessionId!, canonical))
+          const ancestor = basename(generalHomeRoot) === '.latch' ? generalHomeRoot : generalProtection
+          return { id: folder.id, ...(await folderOf(folder.path)), ...(allowed ? { managedHomeAncestor: ancestor } : {}) }
+        }),
+      )
     }
 
     async function classifyCall(
@@ -7786,6 +7920,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           .workspaces.filter(record => lastSeenUsable(record))
           .flatMap(record => record.folders.map(folder => folder.path)),
         ...ownFolders.paths(hub?.sessionFolders() ?? []),
+        ...(generalHomes?.paths([]) ?? []),
         ...(hub?.worktrees() ?? [])
           .filter(entry => !entry.removed && lastSeenUsable(savedProject(entry.workspaceId)))
           .map(entry => entry.path),
@@ -8156,7 +8291,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     /** Where a session's terminals open: its primary folder, while the session may still use it. */
-    async function terminalFolder(sessionId: string): Promise<{ path: string } | 'removed' | undefined> {
+    async function terminalFolder(sessionId: string): Promise<{ path: string; check?(opened: BigIntStats): void } | 'removed' | undefined> {
       const task = await sessionTask(sessionId)
       if (!task) return undefined
       if (task.personal) throw new AppError(409, 'terminal-personal-session', '这个会话来自已移除的 Agent，没有项目文件夹，不能打开终端')
@@ -8167,7 +8302,28 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (error instanceof AppError && error.status === 409) return 'removed'
         throw error
       }
-      return { path: sessionFolders(task, workspaceRoot)[0]! }
+      const path = sessionFolders(task, workspaceRoot)[0]!
+      if (!managedGeneralPath(path)) return { path }
+      const folder = await lstat(path, { bigint: true }).catch(() => undefined)
+      const parent = await lstat(dirname(path), { bigint: true }).catch(() => undefined)
+      if (!folder || !parent || !(await verifyHelperHome(path))) return 'removed'
+      const matches = (current: BigIntStats | undefined, reference: BigIntStats) =>
+        current?.isDirectory()
+        && current.dev === reference.dev
+        && current.ino === reference.ino
+        && current.uid === reference.uid
+        && (current.mode & 0o077n) === 0n
+      return {
+        path,
+        check(opened) {
+          if (
+            !matches(opened, folder)
+            || !matches(statSync(dirname(path), { bigint: true, throwIfNoEntry: false }), parent)
+            || realpathSync(path) !== path
+          )
+            throw generalHomeUnavailable()
+        },
+      }
     }
 
     async function terminalWorkspaceFolder(workspaceId: string): Promise<{ path: string; check(opened: BigIntStats): void }> {
@@ -8262,8 +8418,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     /** The Agent whose home a session may work in, by the Host's records: its Agent, or 通用 for a chat with it. */
-    const homeOwnerOf = (task: Pick<TaskSummary, 'agent' | 'generalChat'>) =>
-      task.agent?.customAgentId ?? (task.generalChat ? GENERAL_AGENT_ID : undefined)
+    const homeOwnerOf = (task: TaskSummary) => {
+      if (task.agent?.customAgentId) return task.agent.customAgentId
+      const recorded = hub?.sessionFolderOf(task.id)
+      if (task.generalChat || (task.automationId && recorded && homeBelongsTo(recorded, GENERAL_AGENT_ID))) return GENERAL_AGENT_ID
+      return undefined
+    }
 
     /** Whether a session works in an Agent's home (`helpers/<owner>`, or its tagged name), by the Host's own records. */
     function helperSession(task: TaskSummary): boolean {
@@ -8272,6 +8432,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // A driver's first turn can reach a tool before createTask has returned and the Host's folder marker is durable.
       return (
         hub!.sessionFolderOf(task.id)?.startsWith('helpers/') === true
+        || (owner === GENERAL_AGENT_ID && managedGeneralPath(task.cwd))
         || (owner !== undefined
           && (!task.workspaceId || task.workspaceId === 'default')
           && basename(dirname(task.cwd)) === 'helpers'
@@ -8303,6 +8464,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * old start directory on a volume that is not mounted counts as moved: the chat moves on, the old one stays to read.
      */
     async function homeMoved(cwd: string): Promise<boolean> {
+      if (managedGeneralPath(cwd)) return false
       const root = dirname(dirname(cwd))
       if (resolve(root) === resolve(workspaceRoot)) return false
       const real = await canonicalThroughAncestor(root)
@@ -8318,6 +8480,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     /** Whether `task`'s home is, by name and place, the one the allocator keeps for its Agent under this start directory. */
     async function currentHomeOf(task: TaskSummary): Promise<string | undefined> {
       const owner = homeOwnerOf(task)
+      if (owner === GENERAL_AGENT_ID && task.cwd && generalHomes)
+        return !generalMigrationBlocked && generalHomes.homeOf(owner).path === task.cwd ? owner : undefined
       if (!owner || !task.cwd || !(await underStartDirectory(task.cwd))) return undefined
       return ownFolders.homeOf(owner).name === `helpers/${basename(task.cwd)}` ? owner : undefined
     }
@@ -8329,12 +8493,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      */
     async function assertAgentHomeOf(task: TaskSummary, absentHome?: true): Promise<void> {
       const cwd = task.cwd!
+      if (homeOwnerOf(task) === GENERAL_AGENT_ID && generalMigrationBlocked) throw generalHomeUnavailable()
       if (await homeMoved(cwd)) throw new AppError(409, 'helper-home-moved', 'Agent 的家在另一个默认文件夹里，这个会话不能继续。')
       if (absentHome) {
         const owner = await currentHomeOf(task)
-        if (owner && (await ownFolders.helperState(owner)) === 'absent') return
+        if (owner && (await helperAllocator(owner).helperState(owner)) === 'absent') return
       }
-      if (!(await ownFolders.verify(cwd)))
+      if (!(await verifyHelperHome(cwd)))
         throw new AppError(409, 'helper-home-unavailable', 'Agent 的家无法确认，原文件已保留；请在这台 Mac 上检查工作文件夹。')
       await assertHelperHome(cwd)
     }
@@ -8380,6 +8545,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     /** Evaluated inside the settings write too: an allocation can finish while a folder picker or audit is awaiting. */
     function assertNoHelperProject(paths: readonly string[]): void {
+      if (generalHomes && paths.some(path => isInsidePath(path, generalHomeParent) || isInsidePath(generalHomeParent, path)))
+        throw new AppError(409, 'helper-home-overlap', '通用的家保留为它自己的工作位置，不能登记成项目。')
       for (const name of ownFolders.helperNames()) {
         const home = join(canonicalWorkspace, name)
         if (paths.some(path => isInsidePath(path, home) || isInsidePath(home, path)))
@@ -9916,9 +10083,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     /** The private home never becomes a public project. Its policy is checked both when allocated and on every new turn. */
     async function assertHelperHome(path: string): Promise<void> {
-      const root = await checkFolderCandidate(workspaceRoot, workspaceGuard, { added: true, readable: true })
-      if (!root.ok) throw root.error
-      const candidate = join(canonicalWorkspace, 'helpers', basename(path))
+      const managed = managedGeneralPath(path)
+      if (!managed) {
+        const root = await checkFolderCandidate(workspaceRoot, workspaceGuard, { added: true, readable: true })
+        if (!root.ok) throw root.error
+      }
+      const candidate = managed
+        ? join(await canonicalPath(generalHomeRoot), 'agent-homes', basename(path))
+        : join(canonicalWorkspace, 'helpers', basename(path))
+      if (
+        managed
+        && guardedPaths.some(root => root !== generalProtection && (isInsidePath(root, candidate) || isInsidePath(candidate, root)))
+      )
+        throw generalHomeUnavailable()
       for (const project of config.settings().workspaces) {
         for (const folder of project.folders) {
           const registered = await canonicalPath(folder.path).catch(() => folder.path)
@@ -9935,11 +10112,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * and if the record cannot be written nothing is made.
      */
     async function prepareHelperHome(owner: string, actor: { actor: AuditActor; authorize(): void }) {
+      if (owner === GENERAL_AGENT_ID && generalMigrationBlocked) throw generalHomeUnavailable()
       // A deleted Agent's home is never made again, whoever asks: its record may be gone, which would read as a first one.
       if (owner !== GENERAL_AGENT_ID && !customAgents.list().some(agent => agent.id === owner))
         throw new AppError(409, 'agent-deleted', '这个 Agent 已删除，可以查看旧聊天。')
       let made = false
-      const folder = await ownFolders.helperHome(
+      const folder = await helperAllocator(owner).helperHome(
         owner,
         async path => {
           actor.authorize()
@@ -9963,7 +10141,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       )
       await customAgents.recordHome(owner, folder.name, actor, made)
       actor.authorize()
-      if (!(await ownFolders.verify(folder.path))) throw workspaceChanged()
+      if (!(await verifyHelperHome(folder.path))) throw workspaceChanged()
       return folder
     }
 
@@ -9972,7 +10150,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const record = owner === GENERAL_AGENT_ID ? customAgents.general() : customAgents.get(owner)
 
       // Where the allocator keeps it under this start directory: the plain name or this data directory's tagged one.
-      const { path } = ownFolders.homeOf(owner)
+      const allocator = helperAllocator(owner)
+      const { path } = allocator.homeOf(owner)
       // Reads only: the next message sets up a home that is not there yet (`helperState`), never this view.
       const refused = {
         owner,
@@ -9981,11 +10160,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         state: 'refused' as const,
         reason: '工作位置无法确认，原文件已保留；请在这台 Mac 上检查',
       }
+      if (owner === GENERAL_AGENT_ID && generalMigrationBlocked) return { ...refused, path: legacyGeneralPath ?? path }
       try {
-        const state = await ownFolders.helperState(owner)
+        const state = await allocator.helperState(owner)
         if (state === 'absent') {
           // Before it is made: the path this Host will make, never another data directory's home under the plain name.
-          const planned = await ownFolders.plannedHome(owner)
+          const planned = await allocator.plannedHome(owner)
           return {
             owner,
             ...(planned ? { path: planned.path } : {}),
@@ -10306,6 +10486,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * healthy chat look moved, so this is no way around `agent-chat-retained`.
      */
     async function chatHomeMoved(owner: string, sessionId: string): Promise<boolean> {
+      if (owner === GENERAL_AGENT_ID && generalMigrationBlocked) return false
       const task = await sessionTask(sessionId)
       if (!task?.cwd || task.personal || !helperSession(task) || homeOwnerOf(task) !== owner) return false
       return homeMoved(task.cwd)
@@ -10416,7 +10597,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (!task?.cwd || task.personal || !helperSession(task) || (await homeMoved(task.cwd))) return
       const owner = await currentHomeOf(task)
       if (!owner || (owner !== GENERAL_AGENT_ID && !customAgents.list().some(agent => agent.id === owner))) return
-      if ((await ownFolders.helperState(owner)) !== 'absent') return
+      if ((await helperAllocator(owner).helperState(owner)) !== 'absent') return
       await precheckTurn(id, input)
       await prepareHelperHome(owner, agentAccess(caller, true))
     }
@@ -10719,7 +10900,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ? chosen.folders
             : [{ id: 'default', path: chosen.folders[0].path }]
           : [{ id: 'default', path: helperHome?.path ?? forkFolder ?? workspaceRoot }]
-        const fileRefs = await checkedFileMentions(input.fileRefs, mentionRoots, guardedPaths, home)
+        const managedStart =
+          helperHome && managedGeneralPath(helperHome.path) && harnessId === STANDARD
+            ? { root: helperHome.path, protectedAncestor: generalProtection }
+            : undefined
+        const fileRefs = await checkedFileMentions(input.fileRefs, mentionRoots, guardedPaths, home, undefined, managedStart)
         recheck(caller, 'run')
         const attachments = await promptAttachments(
           caller,
@@ -10737,7 +10922,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           try {
             if (helperHome) {
               await assertHelperHome(helperHome.path)
-              if (!(await ownFolders.verify(helperHome.path))) throw workspaceChanged()
+              if (!(await verifyHelperHome(helperHome.path))) throw workspaceChanged()
             }
             checkStart()
             dispatched?.()
@@ -11337,6 +11522,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         mentionTask ? scopeFolders(mentionTask.summary, workspaceRoot) : [],
         guardedPaths,
         home,
+        undefined,
+        mentionTask?.summary.cwd && (await managedHome?.permits(id, mentionTask.summary.cwd))
+          ? { root: mentionTask.summary.cwd, protectedAncestor: generalProtection }
+          : undefined,
       )
       recheck(caller, 'run')
       if (fileRefs.length && !projectFiles(caller)) throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')

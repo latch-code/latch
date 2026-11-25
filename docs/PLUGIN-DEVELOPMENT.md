@@ -320,6 +320,8 @@ context.registerSkill({ id: 'review', name: '发布检查', description: '逐项
 
 **文件夹。** 项目可以有多个文件夹：`workspaceRoot` 是主文件夹，`workspaceFolders` 是全部（主文件夹在前；旧 Driver 可能省略）。让模型用文件夹的 `id` 选择、路径相对所选文件夹，不把绝对路径交给模型；内置 [workspace-files](../apps/host/src/plugins/tools/workspace-files/index.ts) 是参考实现。
 
+工具的 `preview` 上下文可带 `sessionId`。Latch 内置 Harness 会传它，内置文件工具用它核对会话能否访问通用的「家」。第三方 Driver 可以省略它，路径仍按普通工作区规则检查。
+
 **显示。**
 
 - `title` 是工具做什么的短说法，过程行与审批卡写它加这次调用的对象。Latch 自带工具的标题按原文记录，页面在英文界面按工具名与原文对应到英文（`apps/web/src/conversation/toolTitles.ts`）；插件工具的标题原样显示。Host 截到 40 个字符，把不可见与改变方向的字符转义显示；审批卡仍写出工具名。

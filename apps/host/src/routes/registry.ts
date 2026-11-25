@@ -16,6 +16,7 @@ import type { AuditActor, AuditLog, StepupMethod } from '../audit.ts'
 import type { BoardDelivery } from '../board.ts'
 import type { ConnectionContext, DeviceStore, EnrollmentService } from '../auth.ts'
 import type { HostConfig } from '../config.ts'
+import type { ManagedHomeAccess } from '../files/resolve.ts'
 import type { RepositoryHolds } from '../git-delivery.ts'
 import { KIB } from '../http-util.ts'
 import type { HarnessHub } from '../hub.ts'
@@ -74,6 +75,7 @@ export interface RouteContext {
   board: BoardDelivery
   /** Paths nothing outside the Host's own stores reads or writes. */
   guardedPaths: readonly string[]
+  managedHome?: ManagedHomeAccess
   /**
    * The folders a session may use, as file handles get them: undefined with no such session, `removed` once one of them
    * has left its project or is gone.

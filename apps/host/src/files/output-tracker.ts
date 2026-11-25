@@ -6,11 +6,12 @@ import type { FileTrackingHandle, FileTrackingInput, FileTrackingResult } from '
 import { isInsidePath } from '../paths.ts'
 import { isIgnoredPath, isSecretLookingPath } from './ignore.ts'
 import { fileFormat } from './metadata.ts'
-import { ProtectedPaths, resolveRecorded, type FileRoot } from './resolve.ts'
+import { ProtectedPaths, resolveRecorded, type FileRoot, type ManagedHomeAccess } from './resolve.ts'
 type Stamp = { signature: string; birth: number }
 type WatchFiles = (root: string, changed: (path: string | null) => void, failed: () => void) => () => void
 interface TrackerOptions {
   protectedPaths: readonly string[]
+  managedHome?: ManagedHomeAccess
   allowedRoot?(root: FileRoot): Promise<boolean>
   platform?: string
   settleMs?: number
@@ -37,7 +38,9 @@ const watchFiles: WatchFiles = (root, changed, failed) => {
 /** One Host owns all watchers. No shell or Git command is involved in discovery. */
 export function createFileTrackingService(options: TrackerOptions) {
   const active = new Set<FileTrackingHandle>(),
-    guard = new ProtectedPaths(options.protectedPaths)
+    baseGuard = new ProtectedPaths(options.protectedPaths)
+  const managedHome = options.managedHome
+  const managedProtectedPaths = managedHome ? options.protectedPaths.filter(path => path !== managedHome.protectedAncestor) : undefined
   const entryLimit = Math.min(options.entryLimit ?? 50_000, 50_000),
     pathLimit = Math.min(options.pathLimit ?? 1000, 1000)
   const scanMs = Math.min(options.scanMs ?? 2000, 2000),
@@ -70,11 +73,17 @@ export function createFileTrackingService(options: TrackerOptions) {
       )
         return unavailable()
       const roots: FileRoot[] = []
+      let guard = baseGuard
+      let managedRoot: string | undefined
       for (const folder of input.folders) {
         if (!isAbsolute(folder.path) || !isFileMention({ root: folder.id, path: 'file' })) return unavailable()
         const path = await realpath(folder.path).catch(() => undefined)
-        if (!path || (await guard.contains(path)) || (options.allowedRoot && !(await options.allowedRoot({ id: folder.id, path }))))
-          return unavailable()
+        if (!path || (options.allowedRoot && !(await options.allowedRoot({ id: folder.id, path })))) return unavailable()
+        if (input.folders.length === 1 && managedProtectedPaths && (await managedHome?.permits(input.sessionId, path))) {
+          managedRoot = path
+          guard = new ProtectedPaths(options.protectedPaths, { root: path, protectedPaths: managedProtectedPaths })
+        }
+        if (await guard.contains(path)) return unavailable()
         if (roots.some(root => root.id === folder.id || isInsidePath(root.path, path) || isInsidePath(path, root.path)))
           return unavailable()
         roots.push({ id: folder.id, path })
@@ -123,10 +132,17 @@ export function createFileTrackingService(options: TrackerOptions) {
         pathBytes += Buffer.byteLength(key)
         return true
       }
+      const homeStillUsable = async () => {
+        if (!managedRoot || (await managedHome?.permits(input.sessionId, managedRoot))) return true
+        changes.clear()
+        failedScan = true
+        return false
+      }
       const scan = async (): Promise<{ entries: Map<string, Stamp>; complete: boolean }> => {
         const entries = new Map<string, Stamp>(),
           queue = roots.map(root => ({ root, path: '', depth: 0 })),
           deadline = Date.now() + scanMs
+        if (!(await homeStillUsable())) return { entries, complete: false }
         let count = 0,
           complete = true
         while (queue.length && !disposed) {
@@ -228,6 +244,10 @@ export function createFileTrackingService(options: TrackerOptions) {
           .then(async () => {
             const keys = [...pending]
             pending.clear()
+            if (!(await homeStillUsable())) {
+              emit()
+              return
+            }
             const deadline = Date.now() + scanMs
             for (const key of keys) {
               if (Date.now() > deadline) {
@@ -236,6 +256,7 @@ export function createFileTrackingService(options: TrackerOptions) {
               }
               await inspect(key)
             }
+            await homeStillUsable()
             emit()
           })
         refreshWork = work
@@ -311,6 +332,7 @@ export function createFileTrackingService(options: TrackerOptions) {
               truncated = true
               failedScan = true
             })
+            if (!(await homeStillUsable())) return structuredClone(result())
             if (fallback) {
               // Shutdown can end observation early, but still gets one bounded final scan.
               const wasDisposed = disposed

@@ -397,7 +397,7 @@ MermaidKit 由 Xcode 的 Package.resolved 精确锁定，只链接到 App 和模
 | 路径 | 解析顺序 |
 | --- | --- |
 | 数据目录 | `--data-dir` → `LATCH_DATA_DIR` → 源码入口当前目录下已存在的 `.runtime`（打印迁移提示；应用包忽略）→ macOS `~/.latch/host`（原位置的数据见下），Linux `${XDG_DATA_HOME:-~/.local/share}/latch/host`，Windows `%APPDATA%\Latch\Host` |
-| 启动目录 | `--workspace` → `LATCH_WORKSPACE` → 数据目录内已存在的 `workspace`（打印提示）→ `~/Latch/workspace` |
+| 启动目录 | `--workspace` → `LATCH_WORKSPACE` → 数据目录内已存在的 `workspace`（打印提示）→ `~/Workspaces/Latch/workspace` |
 | 工作树目录 | `LATCH_WORKTREES_DIR` → 启动目录旁边的 `worktrees`（规则见「Git 与工作树」） |
 | Agent 安装目录 | `LATCH_AGENTS_DIR` → macOS `~/Library/Application Support/Latch/Agents`，Linux `${XDG_DATA_HOME:-~/.local/share}/latch/agents`，Windows `%APPDATA%\Latch\Agents`（只用于重叠检查） |
 | 运行目录 | macOS 的 `DARWIN_USER_TEMP_DIR`（否则 `TMPDIR`）、Linux 的 `XDG_RUNTIME_DIR`，都没有时 `/tmp/latch-<uid>`；其下的 `latch-<hostId 前 8 位>/` 放 `host.sock` 与会话临时目录 |
@@ -414,7 +414,7 @@ MermaidKit 由 Xcode 的 Package.resolved 精确锁定，只链接到 App 和模
   - 移动本身不写审计：审计日志在被移动的目录里。
 - 数据目录必须是当前用户拥有的目录（不是符号链接），否则拒绝启动（500 `data-dir-insecure`）；权限收紧到 0700。启动目录不存在时以 0700 创建。
 - 运行目录及其父目录必须是当前用户拥有的真实目录，运行目录与其中的 `tmp/` 不带组与其他人的权限位（500 `runtime-dir-insecure`）；`host.sock` 路径超过 103 字节时 500 `runtime-dir-too-long`；Windows 上 500 `runtime-dir-unsupported`。`host.sock` 只靠这个目录的属主与权限保护。
-- Host 自动选启动目录时会跳过与 Latch 程序目录重叠的位置。它依次检查数据目录里已有的 `workspace`、`~/Latch/workspace` 和备用的 `~/Latch Files/workspace`，按已有父目录的真实路径判断。备用目录也重叠时，启动报错并提示用 `--workspace` 指定目录。已有文件留在原处。显式指定的启动目录仍按下文「启动目录」的规则使用。
+- Host 自动选启动目录时会跳过与 Latch 程序目录重叠的位置。它依次检查数据目录里已有的 `workspace`、`~/Workspaces/Latch/workspace` 和备用的 `~/Workspaces/Latch Files/workspace`，按已有父目录的真实路径判断。备用目录也重叠时，启动报错并提示用 `--workspace` 指定目录。旧默认路径只有已登记的普通会话文件夹仍在原处，或 Git 工作树仍通过会话归属核验时，才保留相应目录。旧目录仅供已有会话和工作树使用，新建走新默认路径。已有文件留在原处。显式指定的启动目录仍按下文「启动目录」的规则使用。
 - 路径比较用真实路径，去掉 macOS 的别名前缀（`/System/Volumes/Data`、`/.nofollow`、`/.resolve/<n>`，只在两种写法是同一个目录时去掉），在 macOS 与 Windows 上按 NFC 与小写比较；重叠同时按写法和文件系统身份（`dev:ino`）判断。
 
 ### 项目与文件夹
@@ -495,7 +495,9 @@ Host 按需检查每个项目的文件夹（文件夹规则与项目内的重叠
 
 ### 启动目录
 
-我的 Agent 与通用的固定家 `helpers/<Agent ID>` 用同一个分配器，指定了 `--workspace` 时也建立；它不加入公共项目目录，也不能存成公共项目；家的规则见「我的 Agent 与定时」。
+我的 Agent 在启动目录下使用固定的 `helpers/<Agent ID>`，指定 `--workspace` 时也建立。macOS 上的通用使用数据目录旁的 `agent-homes/general`（默认 `~/.latch/agent-homes/general`），更换启动目录后继续使用同一个家。不同 Host 数据目录不会共用家，同名目录已被占用时使用带标签的目录。家不加入公共项目目录，也不能存成公共项目。
+
+升级时，Host 在持有数据目录锁、加载会话前检查通用旧家的设备号、inode、所有者和私有权限，先写审计和迁移记录，再经 `latch-home` 按目录描述符在同一文件系统内独占改名。目标已有文件、找到多个无法区分的旧家或无法核验旧目录时保留原处。已移动的目录凭原 inode 认领，Standard 会话中指向这个旧家的工作目录和结构化文件夹路径一起更新，会话 ID 和历史保留。已核验的旧目录确实不存在时，在新位置建立空目录并保留原会话。中断后从迁移记录继续。通用会话的文件操作仅使用 Host 核验过的家，其他 `~/.latch` 路径继续受保护。
 
 `classifyDefaultWorkspace` 对启动目录给出三项判断：
 
@@ -785,6 +787,7 @@ iOS 遇到首次发言失去回执时保留原请求。用户点核对后，App 
 | `customization.json` | 外观的修订与写入回执（[CUSTOMIZATION.md](CUSTOMIZATION.md)） |
 | `sessions-meta.json` | Host 为每个会话保存的元数据：标题覆盖、置顶、归档、标签、优先级、看板记号、所属项目、会话文件夹或工作树、分叉来源、接入来源、Agent 归属、绑定的 PR，以及审批、取消、交付与配置修改的回执 |
 | `session-folders.json`、`history-imports.json` | 会话启动请求键的哈希、自有文件夹名与启动目录哈希；Agent 固定家的归属与目录身份（0600） |
+| `general-home.json` | macOS 通用固定家的目录身份与未完成迁移记录（0600） |
 | `project-context.json` | 上次成功启动时用于离线项目校验的目录与 TLS 私钥路径（0600，不含密钥内容） |
 | `sessions/runtime.json`、`runtime.lock` | Standard 的会话、请求回执与删除记录 |
 | `harnesses/<id>/` | 外部 Harness 的私有数据；ACP 为 `acp.json`、`acp.lock`、命令目录缓存与每会话的 `skills/` |

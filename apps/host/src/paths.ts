@@ -18,7 +18,7 @@ export interface LatchPaths {
   /** Starting with the automatic workspace is impossible. Data-only commands can still locate their Host. */
   workspaceError?: string
   agentsDir: string
-  /** Where the Host makes Git worktrees for sessions: beside the start directory, as `~/Latch/worktrees` by default. */
+  /** Where the Host makes Git worktrees for sessions: beside the start directory by default. */
   worktreesDir: string
   /** Chinese, printed by the start script; never contain secrets. */
   warnings: string[]
@@ -83,7 +83,7 @@ function codeRootOrUndefined(): string | undefined {
  * Data, workspace, agent-install and worktree directories, from flags, environment, a legacy `./.runtime`, or platform
  * defaults.
  * The Host never picks a start directory inside Latch's own code: a legacy `<data>/workspace` there gives way to
- * `~/Latch/workspace`. A directory named by `--workspace` or `LATCH_WORKSPACE` is the owner's choice and kept. A
+ * `~/Workspaces/Latch/workspace`. A directory named by `--workspace` or `LATCH_WORKSPACE` is the owner's choice and kept. A
  * variable is read only when no flag replaces it.
  */
 export function resolveLatchPaths(input: {
@@ -166,10 +166,10 @@ export function resolveLatchPaths(input: {
     workspaceSource = 'legacy-data'
     warnings.push(`工作区位于数据目录内（${workspaceRoot}）。迁出之前只能使用内置 Harness。`)
   } else {
-    workspaceRoot = path.join(home, 'Latch', 'workspace')
+    workspaceRoot = path.join(home, 'Workspaces', 'Latch', 'workspace')
     workspaceSource = 'default'
     if (overlapsCode(workspaceRoot)) {
-      const fallback = path.join(home, 'Latch Files', 'workspace')
+      const fallback = path.join(home, 'Workspaces', 'Latch Files', 'workspace')
       if (overlapsCode(fallback)) {
         workspaceError = '默认文件夹和备用文件夹均与 Latch 程序目录重叠。请用 --workspace 指定其他文件夹。'
       } else {
@@ -954,9 +954,9 @@ export function hasProtectedComponent(absolutePath: string): boolean {
 /**
  * Whether a workspace-relative path touches a protected name. Absolute, escaping and empty paths count as protected.
  * With `root` (the absolute, canonical workspace root), the root's own components count too, so a workspace rooted at
- * `<repo>/.git` protects `hooks/pre-commit`.
+ * `<repo>/.git` protects `hooks/pre-commit`. The Host can exempt the one `.latch` ancestor of a verified managed home.
  */
-export function isProtectedWorkspacePath(relativePath: string, root?: string): boolean {
+export function isProtectedWorkspacePath(relativePath: string, root?: string, managedHomeAncestor?: string): boolean {
   if (typeof relativePath !== 'string' || relativePath.trim() === '' || relativePath.includes('\u0000')) return true
   if (posix.isAbsolute(relativePath) || win32.isAbsolute(relativePath)) return true
   const components = relativePath.split(/[\\/]+/u).filter(part => part !== '' && part !== '.')
@@ -964,7 +964,11 @@ export function isProtectedWorkspacePath(relativePath: string, root?: string): b
   if (components.some(part => part === '..')) return true
   const rootParts = root === undefined ? [] : absoluteComponents(root)
   if (rootParts === undefined) return true
-  const folded = [...rootParts, ...components].map(foldComponent)
+  const foldedRoot = rootParts.map(foldComponent)
+  const ancestor = managedHomeAncestor ? absoluteComponents(managedHomeAncestor)?.map(foldComponent) : undefined
+  if (ancestor?.at(-1) === '.latch' && ancestor.length < foldedRoot.length && ancestor.every((part, index) => part === foldedRoot[index]))
+    foldedRoot.splice(ancestor.length - 1, 1)
+  const folded = [...foldedRoot, ...components.map(foldComponent)]
   return protectedComponents(folded) || protectedBase(folded[folded.length - 1]!)
 }
 

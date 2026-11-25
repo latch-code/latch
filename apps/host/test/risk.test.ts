@@ -102,6 +102,21 @@ describe('classifyStandardCall', () => {
     })
   })
 
+  it('exempts only the verified managed home ancestor when classifying writes', () => {
+    const managedHomeAncestor = '/Users/me/.latch'
+    const root = `${managedHomeAncestor}/agent-homes/general`
+    const write = (path: string, folder: CallFolder) =>
+      classifyStandardCall(call('workspace-files', 'write_file', { path }, { folders: [folder] }))
+    const folder = { id: 'main', root, codeRoot: false }
+    expect(write('report.txt', folder)).toEqual({ risk: 'R2', reason: 'protected-path' })
+    expect(write('report.txt', { ...folder, managedHomeAncestor })).toEqual({ risk: 'R1' })
+    expect(write('report.txt', { ...folder, managedHomeAncestor, root: `${root}/.latch` })).toEqual({
+      risk: 'R2',
+      reason: 'protected-path',
+    })
+    expect(write('.env.local', { ...folder, managedHomeAncestor })).toEqual({ risk: 'R2', reason: 'protected-path' })
+  })
+
   describe('in a session of several folders', () => {
     const folders: CallFolder[] = [
       PRIMARY,

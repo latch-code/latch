@@ -28,6 +28,33 @@ async function fixture(options: Partial<Parameters<typeof createFileTrackingServ
   return { root, base, privateDir, service, input, changes }
 }
 describe('bounded per-run workspace changes', () => {
+  it('tracks a managed home only for its verified session and stops after verification changes', async () => {
+    const f = await fixture()
+    const credentialRoot = join(f.base, '.latch')
+    const general = join(credentialRoot, 'agent-homes', 'general')
+    await mkdir(general, { recursive: true })
+    let allowed = true
+    const service = createFileTrackingService({
+      protectedPaths: [credentialRoot],
+      managedHome: { protectedAncestor: credentialRoot, permits: async (id, path) => id === 'task' && path === general && allowed },
+      platform: 'linux',
+      settleMs: 0,
+    })
+    cleanup.push(() => service.close())
+    const input = { ...f.input, folders: [{ id: 'main', path: general }] }
+    const other = await service.start({ ...input, sessionId: 'other' })
+    expect(await other.finish()).toEqual({ files: [], unavailable: true })
+
+    const handle = await service.start(input)
+    await writeFile(join(general, 'report.txt'), 'text')
+    expect(await handle.finish()).toMatchObject({ files: [{ path: 'report.txt' }] })
+
+    const later = await service.start(input)
+    await writeFile(join(general, 'later.txt'), 'text')
+    allowed = false
+    expect(await later.finish()).toEqual({ files: [], unavailable: true })
+  })
+
   it('receives actual native recursive watcher events when the platform supports them', async () => {
     const f = await fixture({ platform: process.platform, settleMs: 2000 })
     const handle = await f.service.start(f.input)

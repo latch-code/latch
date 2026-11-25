@@ -19,6 +19,8 @@ const NOFOLLOW = constants.O_NOFOLLOW ?? 0
 export interface WorkspacePluginOptions {
   /** Absolute paths no tool may read, list, or write, e.g. the Host's private data directory. */
   protectedPaths?: string[]
+  /** The Host authenticates the session and the exact real directory before omitting this one protected ancestor. */
+  managedHome?: { protectedAncestor: string; permits(sessionId: string, canonicalHome: string): Promise<boolean> }
   /**
    * Test seam only; the Host never sets it. `afterResolve` runs after a path has been walked and
    * checked: before `read_file` opens the file, and before `write_file` renames its temporary file into place.
@@ -74,7 +76,14 @@ function sameFile(left: { dev: bigint; ino: bigint }, right: { dev: bigint; ino:
  * string prefix check of a not-yet-existing target cannot.
  */
 class ProtectedPaths {
-  constructor(private readonly paths: readonly string[]) {}
+  private readonly managedGuard: ProtectedPaths | undefined
+
+  constructor(
+    private readonly paths: readonly string[],
+    private readonly managedHome?: WorkspacePluginOptions['managedHome'],
+  ) {
+    if (managedHome) this.managedGuard = new ProtectedPaths(paths.filter(path => path !== resolve(managedHome.protectedAncestor)))
+  }
 
   get empty(): boolean {
     return this.paths.length === 0
@@ -93,7 +102,9 @@ class ProtectedPaths {
   }
 
   /** Rejects `target` when it, or any ancestor, is a protected path. */
-  async assertAllowed(target: string): Promise<void> {
+  async assertAllowed(target: string, root?: string, sessionId?: string): Promise<void> {
+    if (root && sessionId && this.managedGuard && (await this.managedHome?.permits(sessionId, root)))
+      return this.managedGuard.assertAllowed(target)
     if (this.empty) return
     const ids = await this.identities()
     const spelled = await Promise.all(this.paths.map(path => realpath(path).catch(() => resolve(path))))
@@ -112,7 +123,7 @@ class ProtectedPaths {
 }
 
 /** Resolves existing ancestors and refuses symlinks rather than following them outside the workspace. */
-async function workspacePath(root: string, name: string, guard: ProtectedPaths): Promise<string> {
+async function workspacePath(root: string, name: string, guard: ProtectedPaths, sessionId?: string): Promise<string> {
   if (isAbsolute(name) || name.includes('\0')) throw new Error('请使用工作区内的相对路径')
   const base = await realpath(root)
   const target = resolve(base, name)
@@ -126,7 +137,7 @@ async function workspacePath(root: string, name: string, guard: ProtectedPaths):
       if (codeOf(error) !== 'ENOENT') throw error
     }
   }
-  await guard.assertAllowed(target)
+  await guard.assertAllowed(target, base, sessionId)
   return target
 }
 
@@ -136,8 +147,15 @@ async function workspacePath(root: string, name: string, guard: ProtectedPaths):
  * the one at that path, which catches an ancestor swapped for a symlink in between. O_NONBLOCK keeps
  * a FIFO from blocking the run before the type check.
  */
-async function readRegular(root: string, name: string, guard: ProtectedPaths, signal: AbortSignal, hooks: Hooks): Promise<string> {
-  const target = await workspacePath(root, name, guard)
+async function readRegular(
+  root: string,
+  name: string,
+  guard: ProtectedPaths,
+  signal: AbortSignal,
+  hooks: Hooks,
+  sessionId?: string,
+): Promise<string> {
+  const target = await workspacePath(root, name, guard, sessionId)
   await hooks?.afterResolve?.(target)
   const handle = await open(target, constants.O_RDONLY | NOFOLLOW | constants.O_NONBLOCK).catch((error: unknown) => {
     throw codeOf(error) === 'ELOOP' ? new Error(SYMLINK_REFUSED) : error
@@ -145,7 +163,7 @@ async function readRegular(root: string, name: string, guard: ProtectedPaths, si
   try {
     const info = await handle.stat({ bigint: true })
     if (!info.isFile()) throw new Error('只能读取普通文件')
-    await workspacePath(root, name, guard)
+    await workspacePath(root, name, guard, sessionId)
     const current = await lstat(target, { bigint: true }).catch(() => undefined)
     if (!current || !sameFile(current, info)) throw new Error(SYMLINK_REFUSED)
     if (info.size > READ_LIMIT) throw new Error('文件超过 128 KiB，请缩小读取范围')
@@ -167,11 +185,12 @@ async function writeRegular(
   guard: ProtectedPaths,
   signal: AbortSignal,
   hooks: Hooks,
+  sessionId: string,
 ): Promise<void> {
-  const target = await workspacePath(root, name, guard)
+  const target = await workspacePath(root, name, guard, sessionId)
   signal.throwIfAborted()
   await mkdir(dirname(target), { recursive: true })
-  await workspacePath(root, name, guard)
+  await workspacePath(root, name, guard, sessionId)
   const parent = dirname(target)
   const parentId = await lstat(parent, { bigint: true })
   const unchanged = async (temp: string, tempId: { dev: bigint; ino: bigint }) => {
@@ -196,7 +215,7 @@ async function writeRegular(
   try {
     await hooks?.afterResolve?.(target)
     signal.throwIfAborted()
-    await workspacePath(root, name, guard)
+    await workspacePath(root, name, guard, sessionId)
     await unchanged(temp, tempId)
     await rename(temp, target)
   } catch (error) {
@@ -211,7 +230,7 @@ export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): Har
     if (!isAbsolute(path)) throw new Error('Protected workspace paths must be absolute')
     return resolve(path)
   })
-  const guard = new ProtectedPaths(protectedPaths)
+  const guard = new ProtectedPaths(protectedPaths, options.managedHome)
   const hooks = options.hooks
   return {
     id: 'workspace-files',
@@ -250,7 +269,7 @@ export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): Har
         async execute(args, context) {
           const { path, folder } = pathInput.parse(args)
           context.signal.throwIfAborted()
-          const directory = await workspacePath(targetFolder(context, folder).folder.path, path, guard)
+          const directory = await workspacePath(targetFolder(context, folder).folder.path, path, guard, context.sessionId)
           const entries = (await readdir(directory, { withFileTypes: true })).slice(0, 200)
           const hidden = guard.empty ? new Set<string>() : await guard.identities()
           const lines: string[] = []
@@ -280,7 +299,9 @@ export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): Har
         async execute(args, context) {
           const { path, folder } = pathInput.parse(args)
           context.signal.throwIfAborted()
-          return { text: await readRegular(targetFolder(context, folder).folder.path, path, guard, context.signal, hooks) }
+          return {
+            text: await readRegular(targetFolder(context, folder).folder.path, path, guard, context.signal, hooks, context.sessionId),
+          }
         },
       })
       ctx.registerTool({
@@ -298,11 +319,11 @@ export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): Har
         async preview(args, context) {
           const input = writeInput.parse(args)
           const folder = targetFolder(context, input.folder)
-          const target = await workspacePath(folder.folder.path, input.path, guard)
+          const target = await workspacePath(folder.folder.path, input.path, guard, context.sessionId)
           let oldText: string | undefined
           // A missing, oversized, non-regular, or swapped file has no previous text to show.
           try {
-            oldText = await readRegular(folder.folder.path, input.path, guard, context.signal, undefined)
+            oldText = await readRegular(folder.folder.path, input.path, guard, context.signal, undefined, context.sessionId)
           } catch (error) {
             if (context.signal.aborted) throw error
           }
@@ -321,7 +342,7 @@ export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): Har
         async execute(args, context) {
           const input = writeInput.parse(args)
           const folder = targetFolder(context, input.folder)
-          await writeRegular(folder.folder.path, input.path, input.content, guard, context.signal, hooks)
+          await writeRegular(folder.folder.path, input.path, input.content, guard, context.signal, hooks, context.sessionId)
           const text = `${describe('已写入', input.path, folder)}（${Buffer.byteLength(input.content)} 字节）`
           return { text, textWithoutFiles: text }
         },

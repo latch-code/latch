@@ -16,11 +16,16 @@ export async function checkedFileMentions(
   home: string,
   /** Said instead when a file is simply not in these roots, where the caller knows why. */
   missing?: string,
+  /** The caller has verified this exact home for the session that will receive the references. */
+  managedHome?: { root: string; protectedAncestor: string },
 ): Promise<FileMention[]> {
   if (!refs?.length) return []
   if (refs.length > 32 || new Set(refs.map(ref => JSON.stringify(ref))).size !== refs.length)
     throw new AppError(400, 'file-reference-invalid', '每条消息最多引用 32 个不同文件。')
-  const guard = new ProtectedPaths(paths),
+  const guard = new ProtectedPaths(
+      paths,
+      managedHome && { root: managedHome.root, protectedPaths: paths.filter(path => path !== managedHome.protectedAncestor) },
+    ),
     result: FileMention[] = []
   for (const ref of refs) {
     if (!isFileMention(ref)) throw new AppError(400, 'file-reference-invalid', '文件引用无效。')

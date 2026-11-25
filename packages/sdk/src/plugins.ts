@@ -114,7 +114,7 @@ export interface ToolDefinition {
   /** Optional, side-effect free. Describes a call before it runs, e.g. the diff a write would apply. */
   preview?(
     args: Record<string, unknown>,
-    context: { workspaceRoot: string; workspaceFolders?: ReadonlyArray<SessionFolder>; signal: AbortSignal },
+    context: { sessionId?: string; workspaceRoot: string; workspaceFolders?: ReadonlyArray<SessionFolder>; signal: AbortSignal },
   ): Promise<ToolPreview>
   execute(
     args: Record<string, unknown>,

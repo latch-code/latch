@@ -112,7 +112,7 @@ export interface TerminalServiceOptions {
    * The session's primary folder, which the Host takes from the session record: undefined when there is no such
    * session, `removed` when its folder is no longer one the session may use. No caller ever names a folder.
    */
-  sessionFolder(sessionId: string): Promise<{ path: string } | 'removed' | undefined>
+  sessionFolder(sessionId: string): Promise<{ path: string; check?(opened: BigIntStats): void } | 'removed' | undefined>
   /** Resolves a saved workspace before audit, with an identity check for the synchronous launch boundary. */
   workspaceFolder?(workspaceId: string): Promise<{ path: string; check(opened: BigIntStats): void }>
   /** Refuses a launch in a worktree whose removal has already started. */

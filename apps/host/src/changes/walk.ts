@@ -59,7 +59,7 @@ export class ProtectedIndex {
     private readonly ids: ReadonlySet<string>,
   ) {}
 
-  static async of(paths: readonly string[]): Promise<ProtectedIndex> {
+  static async of(paths: readonly string[], managedHome?: { root: string; protectedAncestor: string }): Promise<ProtectedIndex> {
     const spelled = new Set<string>(),
       ids = new Set<string>()
     for (const path of paths) {
@@ -67,7 +67,11 @@ export class ProtectedIndex {
       const info = await stat(path, { bigint: true }).catch(() => undefined)
       if (info) ids.add(`${info.dev}:${info.ino}`)
     }
-    return new ProtectedIndex(new ProtectedPaths(paths), spelled, ids)
+    const guard = new ProtectedPaths(
+      paths,
+      managedHome && { root: managedHome.root, protectedPaths: paths.filter(path => path !== managedHome.protectedAncestor) },
+    )
+    return new ProtectedIndex(guard, spelled, ids)
   }
 
   /** An entry found by walking down from a real folder path, so its path is its real path. */

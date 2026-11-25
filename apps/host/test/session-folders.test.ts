@@ -2,6 +2,7 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, s
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { sha256Hex } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
 import { canonicalPath } from '../src/paths.ts'
 import { SESSION_FOLDER_NAME, SessionFolders, helperIdentitySchema, sessionFolderName } from '../src/session-folders.ts'
@@ -42,6 +43,177 @@ async function folders(input: { suffixes?: string[]; at?: number; create?: boole
     },
   }
 }
+
+async function generalMigration() {
+  const { base, root } = await folders()
+  const dataDir = join(base, 'data')
+  const managedRoot = join(base, '.latch')
+  const target = join(managedRoot, 'agent-homes', 'general')
+  for (const path of [dataDir, managedRoot]) await mkdir(path, { mode: 0o700 })
+  const shared = { dataDir, clock: Date.now, now: Date.now, log() {} }
+  const previousOptions = { ...shared, root, canonicalRoot: await canonicalPath(root) }
+  const managedOptions = { ...shared, root: managedRoot, canonicalRoot: await canonicalPath(managedRoot), managedGeneral: true as const }
+  const previous = new SessionFolders(previousOptions)
+  const managed = new SessionFolders(managedOptions)
+  const from = join(root, 'helpers', 'general')
+  type Migration = Parameters<SessionFolders['migrateGeneral']>[0]
+  const beforeMove = vi.fn<Migration['beforeMove']>(async () => {})
+  const moveSessions = vi.fn<Migration['moveSessions']>(async () => {})
+  const moveDirectory = vi.fn<Migration['moveDirectory']>((source, destination) =>
+    rename(source.path, join(destination.root, 'agent-homes', destination.name)),
+  )
+  const options = {
+    previous,
+    previousRoots: [root],
+    paths: (name: string) => (name === 'helpers/general' ? [from] : []),
+    beforeMove,
+    moveSessions,
+    moveDirectory,
+  }
+  return { base, previousOptions, managedOptions, previous, managed, from, target, options }
+}
+
+describe('managed General home', () => {
+  it('allocates the first home under agent-homes while keeping its logical marker', async () => {
+    const { managed, managedOptions, target, options } = await generalMigration()
+    await expect(managed.needsGeneralMigration(options.previous)).resolves.toBe(false)
+    await managed.migrateGeneral(options)
+    expect(options.beforeMove).not.toHaveBeenCalled()
+    expect(await managed.helperState('general')).toBe('absent')
+    expect(await managed.helperHome('general', async () => {})).toEqual({ name: 'helpers/general', path: target })
+    expect((await stat(target)).mode & 0o777).toBe(0o700)
+    const restarted = new SessionFolders(managedOptions)
+    await expect(restarted.needsGeneralMigration(options.previous)).resolves.toBe(false)
+    expect(await restarted.verify(target)).toBe(true)
+  })
+
+  it('moves the recorded directory and its saved session paths after authorizing the move', async () => {
+    const { previous, previousOptions, managed, managedOptions, from, target, options } = await generalMigration()
+    await previous.helperHome('general', async () => {})
+    await writeFile(join(from, 'notes.md'), 'keep these files')
+    const original = await stat(from, { bigint: true })
+    options.beforeMove.mockImplementation(async () => {
+      await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(options.moveDirectory).not.toHaveBeenCalled()
+    })
+    options.moveSessions.mockImplementation(async () => {
+      expect(await readFile(join(target, 'notes.md'), 'utf8')).toBe('keep these files')
+      await expect(stat(from)).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
+    await managed.migrateGeneral(options)
+    expect(options.beforeMove).toHaveBeenCalledOnce()
+    expect(options.moveDirectory).toHaveBeenCalledOnce()
+    expect(options.moveSessions).toHaveBeenCalledExactlyOnceWith('helpers/general', from, target)
+    expect((await stat(target, { bigint: true })).ino).toBe(original.ino)
+    expect(await new SessionFolders(previousOptions).recordedHomes()).toEqual([])
+    const restarted = new SessionFolders(managedOptions)
+    await restarted.migrateGeneral(options)
+    expect(await restarted.verify(target)).toBe(true)
+    expect(options.moveSessions).toHaveBeenCalledOnce()
+  })
+
+  it('moves only the home used by the saved session when the legacy roots share a logical name', async () => {
+    const { base, previous, previousOptions, managed, from, target, options } = await generalMigration()
+    await previous.helperHome('general', async () => {})
+    await writeFile(join(from, 'notes.md'), 'active home')
+    const otherRoot = join(base, 'other-workspace')
+    await mkdir(otherRoot, { mode: 0o700 })
+    const other = new SessionFolders({ ...previousOptions, root: otherRoot, canonicalRoot: await canonicalPath(otherRoot) })
+    const otherHome = await other.helperHome('general', async () => {})
+    await writeFile(join(otherHome.path, 'notes.md'), 'other home')
+
+    await managed.migrateGeneral({
+      ...options,
+      previous: new SessionFolders(previousOptions),
+      previousRoots: [...options.previousRoots, otherRoot],
+    })
+    expect(await readFile(join(target, 'notes.md'), 'utf8')).toBe('active home')
+    expect(await readFile(join(otherHome.path, 'notes.md'), 'utf8')).toBe('other home')
+    expect(options.moveSessions).toHaveBeenCalledExactlyOnceWith('helpers/general', from, target)
+  })
+
+  it('resumes the saved session rewrite after an interruption just after the directory move', async () => {
+    const { previous, previousOptions, managed, managedOptions, from, target, options } = await generalMigration()
+    await previous.helperHome('general', async () => {})
+    await writeFile(join(from, 'notes.md'), 'keep these files')
+    options.moveSessions.mockRejectedValueOnce(new Error('interrupted'))
+    await expect(managed.migrateGeneral(options)).rejects.toThrow('interrupted')
+    expect(await readFile(join(target, 'notes.md'), 'utf8')).toBe('keep these files')
+    await expect(stat(from)).rejects.toMatchObject({ code: 'ENOENT' })
+
+    const restarted = new SessionFolders(managedOptions)
+    await restarted.migrateGeneral({ ...options, previous: new SessionFolders(previousOptions) })
+    expect(await restarted.verify(target)).toBe(true)
+    expect(options.beforeMove).toHaveBeenCalledOnce()
+    expect(options.moveDirectory).toHaveBeenCalledOnce()
+    expect(options.moveSessions.mock.calls).toEqual([
+      ['helpers/general', from, target],
+      ['helpers/general', from, target],
+    ])
+  })
+
+  it.each(['home', 'parent'] as const)('recreates a verified missing legacy %s and resumes its saved session rewrite', async missing => {
+    const { previous, previousOptions, managed, managedOptions, from, target, options } = await generalMigration()
+    await previous.helperHome('general', async () => {})
+    await rm(missing === 'home' ? from : join(previousOptions.root, 'helpers'), { recursive: true })
+    await expect(managed.needsGeneralMigration(previous)).resolves.toBe(true)
+    options.moveSessions.mockRejectedValueOnce(new Error('interrupted'))
+    await expect(managed.migrateGeneral(options)).rejects.toThrow('interrupted')
+    const allocated = await stat(target, { bigint: true })
+    expect(allocated.mode & 0o777n).toBe(0o700n)
+    expect(await readdir(target)).toEqual([])
+
+    const restarted = new SessionFolders(managedOptions)
+    await restarted.migrateGeneral({ ...options, previous: new SessionFolders(previousOptions) })
+    expect(await restarted.verify(target)).toBe(true)
+    expect((await stat(target, { bigint: true })).ino).toBe(allocated.ino)
+    expect(options.beforeMove).toHaveBeenCalledExactlyOnceWith(false)
+    expect(options.moveDirectory).not.toHaveBeenCalled()
+    expect(options.moveSessions.mock.calls).toEqual([
+      ['helpers/general', from, target],
+      ['helpers/general', from, target],
+    ])
+    await expect(stat(from)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('refuses a replacement at the previous home without touching either directory', async () => {
+    const { base, previous, managed, from, target, options } = await generalMigration()
+    await previous.helperHome('general', async () => {})
+    await writeFile(join(from, 'original.md'), 'original files')
+    const retained = join(base, 'retained')
+    await rename(from, retained)
+    await mkdir(from, { mode: 0o700 })
+    await writeFile(join(from, 'replacement.md'), 'replacement files')
+    await expect(managed.migrateGeneral(options)).rejects.toMatchObject({ code: 'helper-home-unavailable' })
+    expect(options.beforeMove).not.toHaveBeenCalled()
+    expect(options.moveDirectory).not.toHaveBeenCalled()
+    expect(options.moveSessions).not.toHaveBeenCalled()
+    expect(await readFile(join(retained, 'original.md'), 'utf8')).toBe('original files')
+    expect(await readFile(join(from, 'replacement.md'), 'utf8')).toBe('replacement files')
+    await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('refuses a directory that appeared at the journaled destination', async () => {
+    const { previous, previousOptions, managed, managedOptions, from, target, options } = await generalMigration()
+    await previous.helperHome('general', async () => {})
+    await writeFile(join(from, 'original.md'), 'original files')
+    options.moveDirectory.mockImplementationOnce(async () => {
+      await mkdir(target, { mode: 0o700 })
+      await writeFile(join(target, 'other.md'), 'unrelated files')
+      throw new Error('destination changed')
+    })
+    await expect(managed.migrateGeneral(options)).rejects.toThrow('destination changed')
+    const restarted = new SessionFolders(managedOptions)
+    await expect(restarted.migrateGeneral({ ...options, previous: new SessionFolders(previousOptions) })).rejects.toMatchObject({
+      code: 'helper-home-unavailable',
+    })
+    expect(options.moveDirectory).toHaveBeenCalledOnce()
+    expect(options.moveSessions).not.toHaveBeenCalled()
+    expect(await readFile(join(from, 'original.md'), 'utf8')).toBe('original files')
+    expect(await readFile(join(target, 'other.md'), 'utf8')).toBe('unrelated files')
+  })
+})
 
 describe('folders of their own for sessions outside a project', () => {
   it('keeps one private helper home across requests and restarts, bound to the original start root', async () => {
@@ -344,7 +516,7 @@ describe('folders of their own for sessions outside a project', () => {
     await mkdir(dataDir)
     const options = { dataDir, root, canonicalRoot: await canonicalPath(root), clock: Date.now, now: Date.now, log: () => {} }
     const first = new SessionFolders(options)
-    const created = await first.allocate('private-request-id')
+    const created = await first.allocate('private-request-id', folder => writeFile(join(folder.path, 'draft.md'), 'keep this draft'))
     await first.starting('private-request-id')
     first.created('private-request-id')
     const record = await readFile(join(dataDir, 'session-folders.json'), 'utf8')
@@ -358,6 +530,23 @@ describe('folders of their own for sessions outside a project', () => {
     const moved = new SessionFolders({ ...options, root: other, canonicalRoot: await canonicalPath(other) })
     await expect(moved.allocate('private-request-id')).rejects.toMatchObject({ code: 'session-folder-unavailable' })
     expect(moved.paths([])).not.toContain(join(other, created.name))
+
+    const legacy = new SessionFolders({
+      ...options,
+      root: other,
+      canonicalRoot: await canonicalPath(other),
+      legacyOrdinary: { root, canonicalRoot: options.canonicalRoot },
+    })
+    await legacy.start()
+    expect(legacy.paths([])).toContain(created.path)
+    expect(await legacy.verify(created.path)).toBe(true)
+    expect(await legacy.allocate('private-request-id')).toEqual(created)
+    expect(await legacy.authoringFolder(sha256Hex('private-request-id'))).toBe(created.path)
+    const unrecorded = join(root, '20260101-c0de')
+    await mkdir(unrecorded, { mode: 0o700 })
+    expect(await legacy.verify(unrecorded)).toBe(false)
+    const fresh = await legacy.allocate('new-request-id')
+    expect(fresh.path).toBe(join(other, fresh.name))
   })
 
   it('names a folder after the local date and four hex characters', () => {

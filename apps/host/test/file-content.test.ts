@@ -20,13 +20,14 @@ afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close()
 })
 
-async function fixture() {
+async function fixture(managed = false) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-content-')))
   cleanup.push(() => rm(root, { recursive: true, force: true }))
-  const workspace = join(root, 'project')
+  const credentialRoot = join(root, '.latch')
+  const workspace = managed ? join(credentialRoot, 'agent-homes', 'general') : join(root, 'project')
   const second = join(root, 'second')
   const privateDir = join(workspace, 'private')
-  await mkdir(workspace)
+  await mkdir(workspace, { recursive: true })
   await mkdir(second)
   await mkdir(privateDir)
   await writeFile(join(workspace, 'report.md'), '# Report\n0123456789')
@@ -65,9 +66,18 @@ async function fixture() {
   const revoked = new Set<string>()
   let removed = false
   let privateSession = false
+  let managedAllowed = managed
   let now = Date.now()
   const routes = createFileRoutes({
-    protectedPaths: [privateDir],
+    protectedPaths: managed ? [privateDir, credentialRoot] : [privateDir],
+    ...(managed
+      ? {
+          managedHome: {
+            protectedAncestor: credentialRoot,
+            permits: async (id, path) => id === 'session' && path === workspace && managedAllowed,
+          },
+        }
+      : {}),
     home: root,
     now: () => now,
     audit,
@@ -75,15 +85,11 @@ async function fixture() {
     sessionAccess: caller => {
       if (privateSession && caller.device?.dataScope !== 'all') throw new AppError(403, 'agent-scope-required', '私有会话只供 all 范围查看')
     },
-    sessionRoots: async id =>
-      id !== 'session'
-        ? undefined
-        : removed
-          ? 'removed'
-          : [
-              { id: 'primary', path: workspace },
-              { id: 'second', path: second },
-            ],
+    sessionRoots: async id => {
+      if (id !== 'session' && (!managed || id !== 'unexpected')) return undefined
+      if (removed) return 'removed'
+      return [{ id: 'primary', path: workspace }, ...(managed ? [] : [{ id: 'second', path: second }])]
+    },
     sessionDetail: async () => detail,
     recheck: caller => {
       if (!caller.device || revoked.has(caller.device.name)) throw new AppError(403, 'device-revoked', '已撤销')
@@ -154,6 +160,9 @@ async function fixture() {
     request,
     resolve,
     revoked,
+    revokeManaged: () => {
+      managedAllowed = false
+    },
     makePrivate: () => {
       privateSession = true
     },
@@ -165,6 +174,23 @@ async function fixture() {
     },
   }
 }
+
+it('keeps a managed home readable only through its authorized session', async () => {
+  const f = await fixture(true)
+  const answer = await f.resolve('all', ['report.md', 'private/host.json'])
+  const handle = answer.files[0]?.file?.handle
+  expect(handle).toBeDefined()
+  expect(answer.files[1]).toMatchObject({ status: 'protected' })
+  expect(await (await f.request('all', `files/${handle}`)).text()).toBe('# Report\n0123456789')
+
+  const other = await f.request('all', 'tasks/unexpected/files/resolve', { paths: ['report.md'] })
+  expect(await other.json()).toMatchObject({ files: [{ status: 'protected' }] })
+
+  f.revokeManaged()
+  const refused = await f.request('all', `files/${handle}`)
+  expect(refused.status).toBe(403)
+  expect(await refused.json()).toEqual({ error: 'file-protected' })
+})
 
 describe('opaque bulk file authorization', () => {
   it('authorizes an existing large handle and rejects stale versions, foreign devices and small files', async () => {

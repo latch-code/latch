@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { promisify } from 'node:util'
@@ -51,7 +51,8 @@ export async function buildHomeHelper(codeRoot = latchCodeRoot()): Promise<strin
   }
 }
 
-if (import.meta.main) {
+// The source Host imports this builder and its bundle is also a main module.
+if (import.meta.main && basename(process.argv[1] ?? '') === 'build-home.ts') {
   try {
     const result = await buildHomeHelper()
     console.log(result ? 'latch-home 已构建' : 'latch-home 仅支持 macOS')

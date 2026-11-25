@@ -205,8 +205,8 @@ pnpm desktop -- --tailnet \
 | 参数 | 环境变量 | 默认值 |
 | --- | --- | --- |
 | `--data-dir <目录>` | `LATCH_DATA_DIR` | 见「数据与工作区」 |
-| `--workspace <目录>` | `LATCH_WORKSPACE` | `~/Latch/workspace` |
-| — | `LATCH_WORKTREES_DIR` | 启动目录旁边的 `worktrees`（默认 `~/Latch/worktrees`） |
+| `--workspace <目录>` | `LATCH_WORKSPACE` | `~/Workspaces/Latch/workspace` |
+| — | `LATCH_WORKTREES_DIR` | 启动目录旁边的 `worktrees`（默认 `~/Workspaces/Latch/worktrees`） |
 | — | `LATCH_AGENTS_DIR` | 平台数据目录下的 `Agents`（macOS 为 `~/Library/Application Support/Latch/Agents`） |
 | `--port <端口>` | `LATCH_PORT` | `4317`，回环 |
 | `--tls-cert`、`--tls-key`、`--public-origin` | `LATCH_TLS_CERT`、`LATCH_TLS_KEY`、`LATCH_PUBLIC_ORIGIN` | 不启用 HTTPS |
@@ -254,13 +254,15 @@ pnpm desktop -- --tailnet \
 
 ## 数据与工作区
 
+macOS 上，「通用」的默认工作文件夹是 `~/.latch/agent-homes/general`。以后更换启动目录，通用仍用这个文件夹。运行新版 Host 时，通用已核验的旧工作文件会随目录一起迁移，原会话继续使用新路径。路径、权限或归属无法核实时，原目录会保留，「通用 → 设置 → 家」会显示不可用。
+
 **数据目录**（已连接的设备、审计、安全策略、模型服务与密钥、会话）按以下顺序确定：
 
 1. `--data-dir` 或 `LATCH_DATA_DIR`；
 2. 当前目录下已存在的 `.runtime`（旧位置，继续使用并打印迁移提示）；
 3. 平台默认：macOS `~/.latch/host`，Linux `${XDG_DATA_HOME:-~/.local/share}/latch/host`。macOS 上原先在 `~/Library/Application Support/Latch/Host` 的数据，由 Host 在下一次启动时整体移到新位置（一次改名，不复制），原位置留下一个说明文件。
 
-**启动目录**优先用 `--workspace` 或 `LATCH_WORKSPACE` 指定的位置。自动选择时，先用数据目录内已有的 `workspace`（旧布局），再用 `~/Latch/workspace`。与 Latch 程序目录重叠的位置会跳过。如果 `~/Latch/workspace` 也与程序目录重叠，Host 会尝试 `~/Latch Files/workspace`。启动时会显示选中的目录。原有文件留在原处。
+**启动目录**优先用 `--workspace` 或 `LATCH_WORKSPACE` 指定的位置。自动选择时，先用数据目录内已有的 `workspace`（旧布局），再用 `~/Workspaces/Latch/workspace`。与 Latch 程序目录重叠的位置会跳过。如果 `~/Workspaces/Latch/workspace` 也与程序目录重叠，Host 会尝试 `~/Workspaces/Latch Files/workspace`。仍在使用的普通会话文件夹和 Git 工作树留在旧位置，新建使用新默认路径。启动时会显示选中的目录。原有文件留在原处。
 
 - 没有用 `--workspace` 或 `LATCH_WORKSPACE` 指定时，每个不在项目中的新 Agent 会话在启动目录中得到一个自己的新文件夹（权限 0700）；删除会话不删除它的文件夹。指定了启动目录时，会话直接在其中工作。
 - **项目**在桌面端「设置 → 项目」或用 `pnpm latch project` 添加，每个项目最多 8 个文件夹。项目与文件夹只能在 Host 所在的电脑上添加。

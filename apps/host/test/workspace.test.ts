@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { access, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -117,6 +117,32 @@ it('denies every tool access to protected paths, including when the workspace co
   const nested = contextFor(join(dataDir, 'auth'))
   await expect(tools.get('list_files')!.execute({ path: '.' }, nested)).rejects.toThrow(denied)
   expect(() => createWorkspacePlugin({ protectedPaths: ['relative/data'] })).toThrow('absolute')
+})
+
+it('allows only the verified session to work in its managed home under a protected ancestor', async () => {
+  const latch = join(await realpath(await directory()), '.latch')
+  const general = join(latch, 'agent-homes', 'general')
+  const host = join(latch, 'host')
+  await mkdir(general, { recursive: true })
+  await mkdir(host)
+  await writeFile(join(general, 'draft.txt'), 'old')
+  await writeFile(join(host, 'secret.txt'), 'private')
+  await symlink(host, join(general, 'other'))
+  const tools = await mount({
+    protectedPaths: [latch, host],
+    managedHome: { protectedAncestor: latch, permits: async (sessionId, root) => sessionId === 'test' && root === general },
+  })
+  const read = tools.get('read_file')!
+  const write = tools.get('write_file')!
+  const context = contextFor(general)
+  const input = { path: 'draft.txt', content: 'new' }
+  expect((await write.preview!(input, context)).diffs).toEqual([{ path: 'draft.txt', oldText: 'old', newText: 'new', previous: 'text' }])
+  await write.execute(input, context)
+  expect(await read.execute({ path: 'draft.txt' }, context)).toEqual({ text: 'new' })
+  await expect(read.execute({ path: 'draft.txt' }, { ...context, sessionId: 'other' })).rejects.toThrow('私有数据目录')
+  await expect(read.execute({ path: 'secret.txt' }, contextFor(host))).rejects.toThrow('私有数据目录')
+  await expect(read.execute({ path: 'other/secret.txt' }, context)).rejects.toThrow('符号链接')
+  await expect(read.execute({ path: '../../host/secret.txt' }, context)).rejects.toThrow('超出')
 })
 
 describe('a session of several folders', () => {

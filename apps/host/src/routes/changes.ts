@@ -126,7 +126,13 @@ export function createChangeRoutes(context: RouteContext): ChangeRoutes {
   const { audited, actorOf, devices, hub, lifecycle, limits, log, recheck, refresh, requireLocal, sessionRoots } = context
   const requireScope: RouteContext['requireScope'] = context.requireScope
   const opened = (async () => {
-    const engine = await ChangesEngine.open({ dataDir: context.dataDir, protectedPaths: context.guardedPaths, now: context.clock, log })
+    const engine = await ChangesEngine.open({
+      dataDir: context.dataDir,
+      protectedPaths: context.guardedPaths,
+      ...(context.managedHome ? { managedHome: context.managedHome } : {}),
+      now: context.clock,
+      log,
+    })
     // A stop ends the runs it finds open, without a `runSettled`, here or in the next process.
     await engine.recover()
     return engine

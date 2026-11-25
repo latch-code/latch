@@ -44,6 +44,7 @@ import {
   resolveReference,
   type ResolvedFile,
   type FileRoot,
+  type ManagedHomeAccess,
   type ResolveOptions,
   type ResolveStatus,
 } from './resolve.ts'
@@ -145,6 +146,7 @@ export interface FileRoutesOptions {
   contentChunkBytes?(caller: FileCaller): 65_536 | undefined
   /** Latch's private paths: the same list the built-in file tools refuse. */
   protectedPaths: readonly string[]
+  managedHome?: ManagedHomeAccess
   /**
    * Files a session's messages named outside its folders (`outside.ts`): `excluded` are never opened (Latch's data and
    * program folders, credential stores), `cliHomes` show everything but their login files and databases. Without it none are opened.
@@ -211,11 +213,12 @@ export function editProtection(
   file: Pick<ResolvedFile, 'realPath' | 'relativePath'>,
   root: FileRoot,
   codeRoot: string | undefined,
+  managedHomeAncestor?: string,
 ): { protection: 'none' | 'protected-path' } | { refusal: EditRefusal } {
   const code =
     codeRoot !== undefined
     && (isInsidePath(file.realPath, codeRoot) || isInsidePath(root.path, codeRoot) || isInsidePath(codeRoot, root.path))
-  if (!code && !isProtectedWorkspacePath(file.relativePath, root.path)) return { protection: 'none' }
+  if (!code && !isProtectedWorkspacePath(file.relativePath, root.path, managedHomeAncestor)) return { protection: 'none' }
   return device.scopes.includes('approve:elevated') ? { protection: 'protected-path' } : { refusal: 'file-edit-elevated' }
 }
 const refuseEdit = (code: EditRefusal) => new AppError(EDIT_REFUSALS[code].status, code, EDIT_REFUSALS[code].message)
@@ -223,6 +226,11 @@ const refuseEdit = (code: EditRefusal) => new AppError(EDIT_REFUSALS[code].statu
 export function createFileRoutes(options: FileRoutesOptions) {
   const handles = new FileHandles(options.now)
   const guard = new ProtectedPaths(options.protectedPaths)
+  const managedHome = options.managedHome
+  const managedProtectedPaths = managedHome
+    ? options.protectedPaths.filter(path => path !== managedHome.protectedAncestor)
+    : options.protectedPaths
+  let managedGuard: { root: string; guard: ProtectedPaths } | undefined
   const outsideGuard: OutsideGuard | undefined = options.outsidePaths
     ? { excluded: new ProtectedPaths(options.outsidePaths.excluded), cliHomes: new ProtectedPaths(options.outsidePaths.cliHomes) }
     : undefined
@@ -342,12 +350,24 @@ export function createFileRoutes(options: FileRoutesOptions) {
     }
     return sha256Hex(JSON.stringify(identities))
   }
+  async function managedRoot(context: FileContext, roots: readonly FileRoot[]): Promise<string | undefined> {
+    if (context.kind !== 'session' || roots.length !== 1 || !managedHome) return undefined
+    const root = roots[0].path
+    return (await managedHome.permits(context.sessionId, root)) ? root : undefined
+  }
+  function guardFor(root: string | undefined): ProtectedPaths {
+    if (!root) return guard
+    if (managedGuard?.root !== root)
+      managedGuard = { root, guard: new ProtectedPaths(options.protectedPaths, { root, protectedPaths: managedProtectedPaths }) }
+    return managedGuard.guard
+  }
   async function contextLease(caller: FileCaller, context: FileContext, entry?: HandleEntry) {
     const revision = entry?.revision ?? revisionOf(context)
     options.recheck(caller, 'view')
     const roots = await contextRoots(caller, context, () => options.recheck(caller, 'view'))
     check(caller, context, revision)
     const hash = await rootsHash(roots, () => check(caller, context, revision))
+    const managed = await managedRoot(context, roots)
     check(caller, context, revision)
     if (entry?.rootsHash !== undefined && entry.rootsHash !== hash)
       throw new AppError(409, 'file-roots-changed', '文件夹已变化，请重新打开')
@@ -355,14 +375,18 @@ export function createFileRoutes(options: FileRoutesOptions) {
       roots,
       hash,
       revision,
+      guard: guardFor(managed),
+      protectedPaths: managed ? managedProtectedPaths : options.protectedPaths,
+      managedHomeAncestor: managed ? managedHome?.protectedAncestor : undefined,
       check: () => check(caller, context, revision),
       async recheck() {
         check(caller, context, revision)
         const current = await contextRoots(caller, context, () => check(caller, context, revision))
         check(caller, context, revision)
         const currentHash = await rootsHash(current, () => check(caller, context, revision))
+        const currentManaged = await managedRoot(context, current)
         check(caller, context, revision)
-        if (hash !== currentHash) throw new AppError(409, 'file-roots-changed', '文件夹已变化，请重新打开')
+        if (hash !== currentHash || managed !== currentManaged) throw new AppError(409, 'file-roots-changed', '文件夹已变化，请重新打开')
       },
     }
   }
@@ -373,7 +397,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
   }
 
   /** A handle's file again: a folder's by its recorded path, a named outside file by its binding. */
-  function resolveEntry(entry: HandleEntry, roots: readonly FileRoot[]) {
+  function resolveEntry(entry: HandleEntry, { roots, guard }: Awaited<ReturnType<typeof contextLease>>) {
     if (entry.outside) {
       if (!outsideGuard) return Promise.resolve({ status: 'missing' as const })
       return resolveOutside(entry.outside.path, outsideGuard, { expect: entry.outside, ...(options.hooks ? { hooks: options.hooks } : {}) })
@@ -516,7 +540,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
     access.check()
     const resolveOptions: ResolveOptions = {
       roots: input.rootId ? roots.filter(root => root.id === input.rootId) : roots,
-      protectedPaths: guard,
+      protectedPaths: access.guard,
       home: options.home,
       ...(options.hooks ? { hooks: options.hooks } : {}),
     }
@@ -602,7 +626,8 @@ export function createFileRoutes(options: FileRoutesOptions) {
             : undefined
       const offered = editableFile && scopeRefusal === undefined
       const editRoot = access.roots.find(root => root.id === file.rootId)
-      const gate = offered && editRoot ? editProtection(caller.device, file, editRoot, options.codeRoot) : undefined
+      const gate =
+        offered && editRoot ? editProtection(caller.device, file, editRoot, options.codeRoot, access.managedHomeAncestor) : undefined
       const editRefusal: EditRefusal | undefined =
         gate && 'refusal' in gate ? gate.refusal : offered && mixedLineEndings(file.head) ? 'file-mixed-eol' : undefined
       const editable = offered && !!gate && !editRefusal
@@ -688,7 +713,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
       throw new AppError(403, 'file-handle-foreign', '这个文件句柄不属于这个上下文')
     const access = await contextLease(caller, context, found.entry)
     const { roots } = access
-    const result = await resolveEntry(found.entry, roots)
+    const result = await resolveEntry(found.entry, access)
     access.check()
     if (result.status !== 'ok') {
       const failure = STATUS_CODE[result.status]
@@ -731,7 +756,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
     const context = entryContext(entry)
     const access = await contextLease(caller, context, entry)
     const { roots } = access
-    const result = await resolveEntry(entry, roots)
+    const result = await resolveEntry(entry, access)
     access.check()
     if (result.status !== 'ok') {
       const failure = STATUS_CODE[result.status]
@@ -859,7 +884,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
       throw new AppError(413, 'file-edit-too-large', `超过 ${FILE_EDIT_LIMIT / 1024 / 1024} MiB 的文件不能在这里编辑。`)
     const root = access.roots.find(item => item.id === file.rootId)
     if (!root) throw new AppError(409, 'file-roots-changed', '文件夹已变化，请重新打开')
-    const gate = editProtection(caller.device, file, root, options.codeRoot)
+    const gate = editProtection(caller.device, file, root, options.codeRoot, access.managedHomeAncestor)
     if ('refusal' in gate) throw refuseEdit(gate.refusal)
     // Outside the changes lock a turn still being recorded is waited for; under it, it only refuses.
     const refuseRunning = async (wait: boolean) => {
@@ -946,7 +971,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
     const access = await contextLease(caller, context)
     const result = await searchIndex.search(
       access.roots,
-      guard,
+      access.guard,
       JSON.stringify([context, access.hash, access.revision]),
       input.q,
       input.limit,
@@ -1022,10 +1047,10 @@ export function createFileRoutes(options: FileRoutesOptions) {
       const access = await contextLease(caller, context)
       const identity = JSON.stringify([context, access.hash, access.revision])
       const found: Array<{ file: ResolvedFile; lines: number }> = []
-      const result = await grepFiles(access.roots, guard, input, cancelled, access.check, options.grepLimits, {
+      const result = await grepFiles(access.roots, access.guard, input, cancelled, access.check, options.grepLimits, {
         consume: lease.consume,
         found: (file, lines) => found.push({ file, lines }),
-        list: (root, late, check) => searchIndex.files(root, guard, identity, late, check),
+        list: (root, late, check) => searchIndex.files(root, access.guard, identity, late, check),
         ...(options.hooks ? { resolve: options.hooks } : {}),
       })
       if (cancelled()) return
@@ -1101,7 +1126,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
             deviceId: caller.device.id,
             root: root.path,
             dir,
-            protectedPaths: options.protectedPaths,
+            protectedPaths: access.protectedPaths,
             showHidden: hidden === 'true',
             check: access.check,
             signal: abort.signal,

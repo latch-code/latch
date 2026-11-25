@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, mkdir, open, readdir, realpath, rmdir, stat } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { AppError } from '@latch/sdk'
 import { sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
 import { z } from 'zod'
@@ -34,6 +34,7 @@ export function homeBelongsTo(home: string, owner: string): boolean {
 const TAG = /^[0-9a-f]{8}$/u
 const directoryIdentitySchema = z.strictObject({ dev: z.string().regex(/^\d+$/u), ino: z.string().regex(/^\d+$/u) })
 const rootHashSchema = z.string().regex(/^[a-f0-9]{64}$/u)
+const absolutePath = z.string().refine(path => isAbsolute(path) && join(path) === path)
 /** The earlier layout's record: one home per owner, under the start directory `rootHash` names, at the plain name. */
 const legacyHelperSchema = z.strictObject({
   rootHash: rootHashSchema,
@@ -51,11 +52,40 @@ export const helperIdentitySchema = z.strictObject({
 type Identity = z.infer<typeof directoryIdentitySchema>
 type HelperIdentity = z.infer<typeof helperIdentitySchema>
 type HelperFolder = HelperIdentity & { rootHash: string }
+const generalMoveSchema = z.strictObject({
+  sourceRoot: absolutePath,
+  source: helperIdentitySchema,
+  sourceName: z.string().regex(/^general(?:-[0-9a-f]{8})?$/u),
+  spellings: z.array(absolutePath),
+  target: helperIdentitySchema.extend({ name: z.string().regex(/^general(?:-[0-9a-f]{8})?$/u) }),
+  sourceAbsent: z.literal(true).optional(),
+})
+type GeneralMove = z.infer<typeof generalMoveSchema>
+
+interface GeneralMigration {
+  previous: SessionFolders
+  previousRoots: string[]
+  paths(name: string): string[]
+  moveSessions(name: string, from: string, to: string): Promise<void>
+  beforeMove(needsNativeMove: boolean): Promise<void>
+  moveDirectory(source: LocatedHome, destination: { root: string; rootId: string; parentId: string; name: string }): Promise<unknown>
+}
 
 async function directoryIdentity(path: string): Promise<Identity> {
   const info = await lstat(path, { bigint: true })
   if (!info.isDirectory() || info.isSymbolicLink()) throw helperUnavailable()
   return { dev: String(info.dev), ino: String(info.ino) }
+}
+
+async function syncVerifiedDirectory(path: string, identity: Identity): Promise<void> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
+  try {
+    const info = await handle.stat({ bigint: true })
+    if (!sameDirectory(identity, { dev: String(info.dev), ino: String(info.ino) })) throw helperUnavailable()
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
 }
 
 /**
@@ -94,6 +124,13 @@ export interface RecordedHome {
   /** `owner` or the tagged name, without `helpers/`. */
   name: string
   identity: HelperIdentity
+}
+
+/** The recorded root is pinned and the home is genuinely absent, without following a link at either directory entry. */
+interface AbsentHome extends RecordedHome {
+  root: string
+  path: string
+  absent: true
 }
 
 /** A recorded home found where its record says, as it is now: the link-free start directory and each identity. */
@@ -193,6 +230,7 @@ const recordsSchema = z
     homes: z.record(rootHashSchema, z.record(z.string().regex(HELPER_OWNER), helperIdentitySchema)).optional(),
     /** This data directory's tag for a home whose plain name another Host already has: random, made once, kept. */
     tag: z.string().regex(TAG).optional(),
+    generalMove: generalMoveSchema.optional(),
   })
   .strict()
 
@@ -238,12 +276,16 @@ interface RequestFolder {
 }
 
 export interface SessionFolderOptions {
+  /** General has a stable root and an independent copy of the folder records. */
+  managedGeneral?: true
   /** Private data directory for durable request-to-folder mappings. */
   dataDir?: string
   /** The start directory as the Host was given it. */
   root: string
   /** Its `canonicalPath` at startup: a folder is made only while the start directory is still there. */
   canonicalRoot: string
+  /** Earlier automatic location for recorded ordinary folders. New allocations always use `root`. */
+  legacyOrdinary?: { root: string; canonicalRoot: string }
   /** The date in the name. */
   clock: () => number
   /** Expiry of requests' folders. */
@@ -262,6 +304,7 @@ export class SessionFolders {
   /** Homes by `rootHash`, then owner. Only the current start directory's are ever used; the others are kept as they are. */
   private homes = new Map<string, Map<string, HelperIdentity>>()
   private tag?: string
+  private generalMove?: GeneralMove
   private readonly makingHelpers = new Map<string, Promise<{ name: string; path: string }>>()
   /** A failed durable write can retry the directory this process made, without adopting an unrelated existing entry. */
   private readonly unrecordedHelpers = new Map<string, HelperFolder>()
@@ -275,8 +318,22 @@ export class SessionFolders {
   private rootIdentity?: Identity
   private writes = Promise.resolve()
 
+  private get helperParentName(): string {
+    return this.options.managedGeneral ? 'agent-homes' : 'helpers'
+  }
+
+  private get recordFile(): string {
+    return this.options.managedGeneral ? 'general-home.json' : RECORD_FILE
+  }
+
   private get rootHash(): string {
     return sha256Hex(this.options.canonicalRoot)
+  }
+
+  private ordinaryRoot(rootHash: string): Pick<SessionFolderOptions, 'root' | 'canonicalRoot'> | undefined {
+    if (rootHash === this.rootHash) return this.options
+    const legacy = this.options.legacyOrdinary
+    return legacy && sha256Hex(legacy.canonicalRoot) === rootHash ? legacy : undefined
   }
 
   /** The home this allocator recorded for `owner` under the current start directory, the newest made first. */
@@ -312,18 +369,18 @@ export class SessionFolders {
     if ((await entryState(plain.path)) === 'absent') return plain
     if (!this.tag) return undefined
     const directory = `${owner}-${this.tag}`
-    return { name: `helpers/${directory}`, path: join(this.options.root, 'helpers', directory) }
+    return { name: `helpers/${directory}`, path: join(this.options.root, this.helperParentName, directory) }
   }
 
   /** `owner`'s home under the current start directory, as recorded; the plain name before its first allocation. */
   homeOf(owner: string): { name: string; path: string } {
     const directory = this.currentHomes().get(owner) ?? owner
-    return { name: `helpers/${directory}`, path: join(this.options.root, 'helpers', directory) }
+    return { name: `helpers/${directory}`, path: join(this.options.root, this.helperParentName, directory) }
   }
 
   private recordText(folders: Map<string, z.infer<typeof storedFolderSchema>>, homes: SessionFolders['homes'], tag = this.tag): string {
     const stored = Object.fromEntries([...homes].map(([hash, owners]) => [hash, Object.fromEntries(owners)]))
-    return `${JSON.stringify({ version: 1, folders: Object.fromEntries(folders), homes: stored, ...(tag ? { tag } : {}) })}\n`
+    return `${JSON.stringify({ version: 1, folders: Object.fromEntries(folders), homes: stored, ...(tag ? { tag } : {}), ...(this.generalMove ? { generalMove: this.generalMove } : {}) })}\n`
   }
 
   constructor(private readonly options: SessionFolderOptions) {}
@@ -334,7 +391,7 @@ export class SessionFolders {
       if (!this.options.dataDir) return
       let text: string
       try {
-        text = await readPrivateRecord(join(this.options.dataDir, RECORD_FILE))
+        text = await readPrivateRecord(join(this.options.dataDir, this.recordFile))
       } catch (error) {
         if (codeOf(error) === 'ENOENT') return
         throw new AppError(500, 'config-corrupt', '会话文件夹的请求记录无法读取，原文件已保留。')
@@ -344,6 +401,8 @@ export class SessionFolders {
         this.recorded = new Map(Object.entries(record.folders))
         this.homes = new Map(Object.entries(record.homes ?? {}).map(([hash, owners]) => [hash, new Map(Object.entries(owners))]))
         this.tag = record.tag
+        if (record.generalMove && !this.options.managedGeneral) throw helperUnavailable()
+        this.generalMove = record.generalMove
         // The earlier layout: each owner's one home, at its plain name, filed under the start directory it names (a
         // record in the newer layout wins).
         for (const [owner, { rootHash, ...identity }] of Object.entries(record.helpers ?? {})) {
@@ -355,6 +414,129 @@ export class SessionFolders {
         throw new AppError(500, 'config-corrupt', '会话文件夹的请求记录无法读取，原文件已保留。')
       }
     })())
+  }
+
+  /** A fresh or already upgraded Host has no need to open the Standard snapshot for this step. */
+  async needsGeneralMigration(previous: SessionFolders): Promise<boolean> {
+    if (!this.options.managedGeneral) return false
+    await this.start()
+    if (this.savedHelper('general')) return false
+    return this.generalMove !== undefined || (await previous.recordedHomes()).some(home => home.owner === 'general')
+  }
+
+  /** A startup-only, journaled move. Recovery verifies the moved directory or the fresh allocation by identity. */
+  async migrateGeneral(options: GeneralMigration): Promise<void> {
+    if (!this.options.managedGeneral || !this.options.dataDir) throw helperUnavailable()
+    await this.start()
+    if (this.savedHelper('general')) return
+    const { previous, previousRoots, paths, moveSessions, beforeMove, moveDirectory } = options
+    const legacy = (await previous.recordedHomes()).filter(home => home.owner === 'general')
+    const located = (home: RecordedHome) =>
+      previous.locateHomeState(home, [...paths(`helpers/${home.name}`), ...previousRoots.map(root => join(root, 'helpers', home.name))])
+    if (!this.generalMove) {
+      if (!legacy.length) return
+      const homes = (await Promise.all(legacy.map(located))).filter(home => typeof home !== 'string')
+      const spellings = await Promise.all(
+        homes.map(async home => {
+          const candidates = paths(`helpers/${home.name}`)
+          if ('absent' in home) {
+            const canonical = await canonicalPath(home.root)
+            const verified = await Promise.all(
+              candidates.map(
+                async path =>
+                  basename(path) === home.name
+                  && basename(dirname(path)) === 'helpers'
+                  && (await entryState(path)) === 'absent'
+                  && (await canonicalPath(dirname(dirname(path))).catch(() => undefined)) === canonical,
+              ),
+            )
+            return candidates.filter((_path, index) => verified[index])
+          }
+          const canonical = await canonicalPath(home.path)
+          const verified = await Promise.all(candidates.map(path => canonicalPath(path).catch(() => undefined)))
+          return candidates.filter((_path, index) => verified[index] === canonical)
+        }),
+      )
+      const savedPaths = new Set(legacy.flatMap(home => paths(`helpers/${home.name}`)))
+      const matching = homes.filter((_home, index) => spellings[index]!.length === savedPaths.size)
+      const source = matching.length === 1 ? matching[0] : undefined
+      if (!source) throw helperUnavailable()
+      if (!(await this.rootPinned())) throw helperUnavailable()
+      const root = await realpath(this.options.root)
+      const parentPath = join(root, this.helperParentName)
+      const parentState = await entryState(parentPath)
+      if (parentState === 'error') throw helperUnavailable()
+      const rootId = await directoryIdentity(root)
+      const sourceAbsent = 'absent' in source
+      await beforeMove(!sourceAbsent)
+      const parent = parentState === 'absent' ? await makePrivateDirectory(parentPath) : await directoryIdentity(parentPath)
+      if (!(await this.helperParent())) throw helperUnavailable()
+      const plain = await entryState(join(parentPath, 'general'))
+      if (plain === 'error') throw helperUnavailable()
+      const name = plain === 'absent' ? 'general' : `general-${await this.dataTag()}`
+      const target = join(parentPath, name)
+      if ((await entryState(target)) !== 'absent') throw helperUnavailable()
+      if (sourceAbsent) {
+        const current = await previous.locateHomeState(source, [source.path])
+        if (typeof current === 'string' || !('absent' in current) || current.root !== source.root) throw helperUnavailable()
+      }
+      const directory = sourceAbsent ? await makePrivateDirectory(target) : source.identity.directory
+      this.generalMove = {
+        sourceRoot: source.root,
+        source: source.identity,
+        sourceName: source.name,
+        spellings: spellings[homes.indexOf(source)]!,
+        target: { root: rootId, parent, directory, name },
+        ...(sourceAbsent ? { sourceAbsent: true as const } : {}),
+      }
+      await writeFileAtomic(join(this.options.dataDir, this.recordFile), this.recordText(this.recorded, this.homes))
+    }
+
+    const plan = this.generalMove
+    const old = legacy.find(home => home.name === plan.sourceName && sameDirectory(home.identity.directory, plan.source.directory))
+    const root = await realpath(this.options.root)
+    const parent = join(root, this.helperParentName)
+    const target = join(parent, plan.target.name)
+    const stillAtTarget = async () => {
+      const info = await lstat(target, { bigint: true }).catch(() => undefined)
+      return (
+        info !== undefined
+        && privateDirectoryOf(info)
+        && sameDirectory(plan.target.directory, { dev: String(info.dev), ino: String(info.ino) })
+      )
+    }
+    if (
+      !(await this.rootPinned())
+      || !(await this.helperParent())
+      || !sameDirectory(plan.target.root, await directoryIdentity(root))
+      || !sameDirectory(plan.target.parent, await directoryIdentity(parent))
+    )
+      throw helperUnavailable()
+    if (plan.sourceAbsent) {
+      if (!old) throw helperUnavailable()
+      const source = await previous.locateHomeState(old, [join(plan.sourceRoot, 'helpers', plan.sourceName)])
+      if (typeof source === 'string' || !('absent' in source) || source.root !== plan.sourceRoot) throw helperUnavailable()
+    } else if (!(await stillAtTarget())) {
+      if (!old || (await entryState(target)) !== 'absent') throw helperUnavailable()
+      const source = await previous.locateHome(old, [join(plan.sourceRoot, 'helpers', plan.sourceName)])
+      if (typeof source === 'string' || source.root !== plan.sourceRoot) throw helperUnavailable()
+      await moveDirectory(source, {
+        root,
+        rootId: `${plan.target.root.dev}:${plan.target.root.ino}`,
+        parentId: `${plan.target.parent.dev}:${plan.target.parent.ino}`,
+        name: plan.target.name,
+      })
+    }
+    if (!(await stillAtTarget())) throw helperUnavailable()
+    if (!plan.sourceAbsent) await syncVerifiedDirectory(join(plan.sourceRoot, 'helpers'), plan.source.parent)
+    await syncVerifiedDirectory(parent, plan.target.parent)
+    await syncVerifiedDirectory(root, plan.target.root)
+    for (const from of plan.spellings) await moveSessions(`helpers/${plan.sourceName}`, from, target)
+    const homes = new Map(this.homes).set(this.rootHash, new Map([['general', plan.target]]))
+    this.generalMove = undefined
+    await writeFileAtomic(join(this.options.dataDir, this.recordFile), this.recordText(this.recorded, homes))
+    this.homes = homes
+    if (old) await previous.forgetHome(old).catch(() => this.options.log('通用已迁移，旧工作文件夹的记录暂时无法清理。'))
   }
 
   /**
@@ -381,6 +563,10 @@ export class SessionFolders {
   private async rootPinned(): Promise<boolean> {
     if (!this.rootIdentity) return false
     if ((await canonicalPath(this.options.root).catch(() => undefined)) !== this.options.canonicalRoot) return false
+    if (this.options.managedGeneral) {
+      const info = await lstat(this.options.root, { bigint: true }).catch(() => undefined)
+      if (!info?.isDirectory() || (info.mode & 0o022n) !== 0n || (process.getuid && info.uid !== BigInt(process.getuid()))) return false
+    }
     const current = await rootIdentityOf(this.options.root).catch(() => undefined)
     return current !== undefined && sameDirectory(this.rootIdentity, current)
   }
@@ -402,11 +588,11 @@ export class SessionFolders {
     if (!(await this.helperParent())) return false
     const known = this.knownParents()
     if (!known.length) return true
-    const current = await directoryIdentity(join(this.options.root, 'helpers')).catch(() => undefined)
+    const current = await directoryIdentity(join(this.options.root, this.helperParentName)).catch(() => undefined)
     if (current !== undefined && known.some(parent => sameDirectory(parent, current))) return true
     if (this.unrecordedHelpers.size) return false
     for (const name of this.currentHomes().values())
-      if ((await entryState(join(this.options.root, 'helpers', name))) !== 'absent') return false
+      if ((await entryState(join(this.options.root, this.helperParentName, name))) !== 'absent') return false
     return true
   }
 
@@ -460,7 +646,7 @@ export class SessionFolders {
       return this.makeHelper(owner, recorded.name ?? owner, guard, true, options.beforeCreate)
     }
     // A first allocation under this start directory: the plain name, unless something this Host never recorded has it.
-    const plain = join(this.options.root, 'helpers', owner)
+    const plain = join(this.options.root, this.helperParentName, owner)
     await guard(plain)
     const taken = await entryState(plain)
     if (taken === 'error') throw helperUnavailable()
@@ -475,7 +661,7 @@ export class SessionFolders {
       if (this.tag) return
       const tag = randomBytes(4).toString('hex')
       if (this.options.dataDir)
-        await writeFileAtomic(join(this.options.dataDir, RECORD_FILE), this.recordText(this.recorded, this.homes, tag))
+        await writeFileAtomic(join(this.options.dataDir, this.recordFile), this.recordText(this.recorded, this.homes, tag))
       this.tag = tag
     })
     this.writes = write.catch(() => {})
@@ -497,14 +683,14 @@ export class SessionFolders {
     if (root === 'absent') return 'absent'
     if (!(await this.rootPinned()) && this.rootIdentity !== undefined) return 'refused'
     if ((await canonicalPath(this.options.root).catch(() => undefined)) !== this.options.canonicalRoot) return 'refused'
-    const parent = await entryState(join(this.options.root, 'helpers'))
+    const parent = await entryState(join(this.options.root, this.helperParentName))
     if (parent === 'absent') return 'absent'
     if (parent !== 'present' || !(await this.parentUsable())) return 'refused'
     const entry = await entryState(folder.path)
     if (entry === 'absent') return 'absent'
     if (entry === 'error' || this.homes.get(this.rootHash)?.has(owner)) return 'refused'
     // The plain name is someone else's: a first allocation uses this data directory's tagged name.
-    const tagged = this.tag ? await entryState(join(this.options.root, 'helpers', `${owner}-${this.tag}`)) : 'absent'
+    const tagged = this.tag ? await entryState(join(this.options.root, this.helperParentName, `${owner}-${this.tag}`)) : 'absent'
     return tagged === 'absent' ? 'absent' : 'refused'
   }
 
@@ -516,12 +702,12 @@ export class SessionFolders {
     beforeCreate: HelperHomeOptions['beforeCreate'],
   ) {
     const { root, canonicalRoot } = this.options
-    const folder = { name: `helpers/${directory}`, path: join(root, 'helpers', directory) }
+    const folder = { name: `helpers/${directory}`, path: join(root, this.helperParentName, directory) }
     if (!HELPER_DIRECTORY.test(directory)) throw helperUnavailable()
     if ((await canonicalPath(root).catch(() => undefined)) !== canonicalRoot) throw helperUnavailable()
     if (!(await this.rootPinned())) throw helperUnavailable()
     if (!this.unrecordedHelpers.has(owner)) {
-      const parent = join(root, 'helpers')
+      const parent = join(root, this.helperParentName)
       const parentState = await entryState(parent)
       if (parentState === 'error' || (parentState === 'present' && !(await this.parentUsable()))) throw helperUnavailable()
       // An unknown entry is never adopted, even if it is empty and named after this Agent.
@@ -560,7 +746,7 @@ export class SessionFolders {
       const { rootHash, ...identity } = made
       const next = new Map([...this.homes].map(([hash, owners]) => [hash, new Map(owners)]))
       next.set(rootHash, (next.get(rootHash) ?? new Map<string, HelperIdentity>()).set(owner, identity))
-      if (this.options.dataDir) await writeFileAtomic(join(this.options.dataDir, RECORD_FILE), this.recordText(this.recorded, next))
+      if (this.options.dataDir) await writeFileAtomic(join(this.options.dataDir, this.recordFile), this.recordText(this.recorded, next))
       this.homes = next
       this.unrecordedHelpers.delete(owner)
     })
@@ -571,14 +757,14 @@ export class SessionFolders {
 
   private async helperParent(): Promise<boolean> {
     try {
-      const parent = join(this.options.root, 'helpers')
+      const parent = join(this.options.root, this.helperParentName)
       const info = await lstat(parent)
       return (
         info.isDirectory()
         && !info.isSymbolicLink()
         && !(info.mode & 0o077)
         && (process.getuid === undefined || info.uid === process.getuid())
-        && (await canonicalPath(parent)) === join(this.options.canonicalRoot, 'helpers')
+        && (await canonicalPath(parent)) === join(this.options.canonicalRoot, this.helperParentName)
       )
     } catch {
       return false
@@ -601,10 +787,10 @@ export class SessionFolders {
         && (process.getuid === undefined || info.uid === process.getuid())
         && (await this.rootPinned())
         && sameDirectory(saved.root, await rootIdentityOf(this.options.root))
-        && sameDirectory(saved.parent, await directoryIdentity(join(this.options.root, 'helpers')))
+        && sameDirectory(saved.parent, await directoryIdentity(join(this.options.root, this.helperParentName)))
         && sameDirectory(saved.directory, await directoryIdentity(path))
         && (await this.helperParent())
-        && (await canonicalPath(path)) === join(this.options.canonicalRoot, 'helpers', directory)
+        && (await canonicalPath(path)) === join(this.options.canonicalRoot, this.helperParentName, directory)
       )
     } catch {
       return false
@@ -627,6 +813,11 @@ export class SessionFolders {
    * directory is there and nothing is at the home's path. Anything else that does not match is `unverified`.
    */
   async locateHome(home: RecordedHome, sessionFolders: readonly string[]): Promise<LocatedHome | 'absent' | 'unverified'> {
+    const found = await this.locateHomeState(home, sessionFolders)
+    return typeof found !== 'string' && 'absent' in found ? 'absent' : found
+  }
+
+  private async locateHomeState(home: RecordedHome, sessionFolders: readonly string[]): Promise<LocatedHome | AbsentHome | 'unverified'> {
     await this.start()
     const recorded = this.homes.get(home.rootHash)?.get(home.owner)
     if (!recorded || (recorded.name ?? home.owner) !== home.name || this.unrecordedHelpers.has(home.owner)) return 'unverified'
@@ -637,7 +828,7 @@ export class SessionFolders {
       candidates.push(this.options.root)
     } else
       for (const folder of sessionFolders)
-        if (basename(folder) === home.name && basename(dirname(folder)) === 'helpers') candidates.push(dirname(dirname(folder)))
+        if (basename(folder) === home.name && basename(dirname(folder)) === this.helperParentName) candidates.push(dirname(dirname(folder)))
     for (const candidate of candidates) {
       const canonicalRoot = await canonicalPath(candidate).catch(() => undefined)
       if (canonicalRoot === undefined || sha256Hex(canonicalRoot) !== home.rootHash) continue
@@ -648,20 +839,20 @@ export class SessionFolders {
         const rootInfo = await lstat(root, { bigint: true })
         if (!rootInfo.isDirectory() || !sameDirectory(home.identity.root, { dev: String(rootInfo.dev), ino: String(rootInfo.ino) }))
           return 'unverified'
-        const parentPath = join(root, 'helpers'),
+        const parentPath = join(root, this.helperParentName),
           path = join(parentPath, home.name)
         const parentState = await entryState(parentPath)
-        if (parentState === 'absent') return 'absent'
+        if (parentState === 'absent') return { ...home, root, path, absent: true }
         const parent = await lstat(parentPath, { bigint: true })
         if (!privateDirectoryOf(parent) || !sameDirectory(home.identity.parent, { dev: String(parent.dev), ino: String(parent.ino) }))
           return 'unverified'
         const entry = await entryState(path)
-        if (entry === 'absent') return 'absent'
+        if (entry === 'absent') return { ...home, root, path, absent: true }
         if (entry === 'error') return 'unverified'
         const info = await lstat(path, { bigint: true })
         if (!privateDirectoryOf(info) || !sameDirectory(home.identity.directory, { dev: String(info.dev), ino: String(info.ino) }))
           return 'unverified'
-        if ((await canonicalPath(path)) !== join(canonicalRoot, 'helpers', home.name)) return 'unverified'
+        if ((await canonicalPath(path)) !== join(canonicalRoot, this.helperParentName, home.name)) return 'unverified'
         return {
           ...home,
           root,
@@ -687,28 +878,33 @@ export class SessionFolders {
       const next = new Map([...this.homes].map(([hash, owners]) => [hash, new Map(owners)]))
       next.get(home.rootHash)!.delete(home.owner)
       if (!next.get(home.rootHash)!.size) next.delete(home.rootHash)
-      if (this.options.dataDir) await writeFileAtomic(join(this.options.dataDir, RECORD_FILE), this.recordText(this.recorded, next))
+      if (this.options.dataDir) await writeFileAtomic(join(this.options.dataDir, this.recordFile), this.recordText(this.recorded, next))
       this.homes = next
     })
     this.writes = write.catch(() => {})
     await write
   }
 
-  private async authoringIdentity(name: string): Promise<{ path: string; hash: string }> {
-    const root = await realpath(this.options.root)
-    if ((await canonicalPath(root)) !== this.options.canonicalRoot) throw unavailable()
+  private async authoringIdentity(
+    name: string,
+    location: Pick<SessionFolderOptions, 'root' | 'canonicalRoot'> = this.options,
+  ): Promise<{ path: string; hash: string }> {
+    const root = await realpath(location.root)
+    if ((await canonicalPath(root)) !== location.canonicalRoot) throw unavailable()
     const path = join(root, name)
     const directory = await lstat(path, { bigint: true })
     if (!privateDirectoryOf(directory) || (await realpath(path)) !== path) throw unavailable()
     const parent = await rootIdentityOf(root)
-    return { path, hash: sha256Hex([this.options.canonicalRoot, parent.dev, parent.ino, directory.dev, directory.ino].join(':')) }
+    return { path, hash: sha256Hex([location.canonicalRoot, parent.dev, parent.ino, directory.dev, directory.ino].join(':')) }
   }
 
   /** The exact private directory allocated for this creator start, independent of paths a Driver reports. */
   async authoringFolder(requestHash: string): Promise<string> {
     await this.start()
     const record = this.recorded.get(requestHash)
-    const current = record?.authoringIdentity ? await this.authoringIdentity(record.name).catch(() => undefined) : undefined
+    const location = record && this.ordinaryRoot(record.rootHash)
+    const current =
+      record?.authoringIdentity && location ? await this.authoringIdentity(record.name, location).catch(() => undefined) : undefined
     if (!current || current.hash !== record?.authoringIdentity)
       throw new AppError(409, 'app-draft-missing', '这个创作会话原来的专用文件夹已变化，请检查本机文件。')
     return current.path
@@ -730,8 +926,9 @@ export class SessionFolders {
     }
     const recorded = this.recorded.get(sha256Hex(requestId))
     if (recorded) {
-      if (recorded.rootHash !== sha256Hex(this.options.canonicalRoot)) throw unavailable()
-      const folder = { name: recorded.name, path: join(this.options.root, recorded.name) }
+      const location = this.ordinaryRoot(recorded.rootHash)
+      if (!location) throw unavailable()
+      const folder = { name: recorded.name, path: join(location.root, recorded.name) }
       await removing
       if (!(await this.verify(folder.path))) throw unavailable()
       this.made.add(folder.path)
@@ -784,7 +981,7 @@ export class SessionFolders {
         rootHash: sha256Hex(this.options.canonicalRoot),
         ...(entry.authoringIdentity ? { authoringIdentity: entry.authoringIdentity } : {}),
       })
-      if (this.options.dataDir) await writeFileAtomic(join(this.options.dataDir, RECORD_FILE), this.recordText(next, this.homes))
+      if (this.options.dataDir) await writeFileAtomic(join(this.options.dataDir, this.recordFile), this.recordText(next, this.homes))
       this.recorded = next
     })
     this.writes = write.catch(() => {})
@@ -820,7 +1017,7 @@ export class SessionFolders {
       const write = this.writes.then(async () => {
         const next = new Map(this.recorded)
         next.delete(hash)
-        if (this.options.dataDir) await writeFileAtomic(join(this.options.dataDir, RECORD_FILE), this.recordText(next, this.homes))
+        if (this.options.dataDir) await writeFileAtomic(join(this.options.dataDir, this.recordFile), this.recordText(next, this.homes))
         this.recorded = next
       })
       this.writes = write.catch(() => {})
@@ -833,12 +1030,23 @@ export class SessionFolders {
   /** Directories a driver may accept as a new or existing session's `cwd`: the ones made here and those `recorded`. */
   paths(recorded: Iterable<string>): string[] {
     const paths = new Set<string>(this.made)
-    for (const name of this.helperNames()) paths.add(join(this.options.root, name))
-    for (const folder of this.recorded.values())
-      if (folder.rootHash === sha256Hex(this.options.canonicalRoot)) paths.add(join(this.options.root, folder.name))
+    for (const name of this.currentHomes().values()) paths.add(join(this.options.root, this.helperParentName, name))
+    for (const folder of this.recorded.values()) {
+      const location = this.ordinaryRoot(folder.rootHash)
+      if (location) paths.add(join(location.root, folder.name))
+    }
     for (const entry of this.requests.values()) if (entry.path) paths.add(entry.path)
     for (const name of recorded) if (SESSION_FOLDER_NAME.test(name)) paths.add(join(this.options.root, name))
     return [...paths]
+  }
+
+  /** Whether an existing ordinary session folder still uses this startup directory. */
+  async hasRecordedSessionFolder(): Promise<boolean> {
+    await this.start()
+    const hash = this.rootHash
+    for (const folder of this.recorded.values())
+      if (folder.rootHash === hash && (await this.verify(join(this.options.root, folder.name)))) return true
+    return false
   }
 
   /**
@@ -846,12 +1054,18 @@ export class SessionFolders {
    * start directory. A folder replaced by a link to somewhere else no longer counts.
    */
   async verify(path: string | undefined): Promise<boolean> {
-    if (typeof path === 'string' && basename(dirname(path)) === 'helpers') return this.verifyHelper(path)
+    if (typeof path === 'string' && basename(dirname(path)) === this.helperParentName) return this.verifyHelper(path)
     if (typeof path !== 'string' || !SESSION_FOLDER_NAME.test(basename(path))) return false
     try {
       const info = await lstat(path)
       if (!info.isDirectory() || info.isSymbolicLink()) return false
-      return (await canonicalPath(dirname(await realpath(path)))) === this.options.canonicalRoot
+      const parent = await canonicalPath(dirname(await realpath(path)))
+      if (parent === this.options.canonicalRoot) return true
+      if (parent !== this.options.legacyOrdinary?.canonicalRoot) return false
+      await this.start()
+      const name = basename(path)
+      const hash = sha256Hex(parent)
+      return [...this.recorded.values()].some(folder => folder.rootHash === hash && folder.name === name)
     } catch {
       return false
     }
