@@ -427,6 +427,16 @@
     {
       "action": "device.enroll-native",
       "subject": {
+        "form": "device.enroll-native-compare",
+        "slots": {
+          "code": "052413"
+        }
+      },
+      "reason": "核对手机上的 052413，相同才允许连接这台 Mac"
+    },
+    {
+      "action": "device.enroll-native",
+      "subject": {
         "form": "device.enroll-native",
         "slots": {
           "device": "我的​iPhone"

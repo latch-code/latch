@@ -5,9 +5,10 @@ public struct NativePathCandidate: Sendable {
     public let id: String
     public let kind: Kind
     public let connect: @Sendable () async throws -> NativeHTTPConnection
-    public init(id: String, kind: Kind, connect: @escaping @Sendable () async throws -> NativeHTTPConnection) throws {
+    let didInstall: (@MainActor @Sendable () -> Void)?
+    public init(id: String, kind: Kind, didInstall: (@MainActor @Sendable () -> Void)? = nil, connect: @escaping @Sendable () async throws -> NativeHTTPConnection) throws {
         guard LinkBytes.matches(id, "[A-Za-z0-9_-]{1,128}") else { throw NativeFailure.invalidRecord }
-        self.id = id; self.kind = kind; self.connect = connect
+        self.id = id; self.kind = kind; self.didInstall = didInstall; self.connect = connect
     }
 }
 
@@ -27,7 +28,7 @@ public struct NativeLateDirects: Sendable {
  */
 public actor NativePathOwner {
     private enum Outcome: Sendable {
-        case path(String, NativePathCandidate.Kind, QualifiedNativePath?)
+        case path(NativePathCandidate, QualifiedNativePath?)
         case late([NativePathCandidate])
     }
     private var round: Task<NativeJSON, Error>?
@@ -124,14 +125,14 @@ public actor NativePathOwner {
                     do {
                         if candidate.kind == .relay, relayDelay > .zero { try await Task.sleep(for: relayDelay) }
                         let connection = try await NativeHTTPConnection.$workspaceDirectDial.withValue(candidate.kind == .direct) { try await candidate.connect() }
-                        guard !Task.isCancelled else { await connection.close(); return .path(candidate.id, candidate.kind, nil) }
+                        guard !Task.isCancelled else { await connection.close(); return .path(candidate, nil) }
                         timeline?.record(.connect, path: candidate.kind, ordinal: ordinal)
                         let path = try await workspace.qualify(connection, ticket: ticket, kind: candidate.kind, upgrade: upgrade, reopen: candidate.connect)
                         timeline?.record(.qualify, path: candidate.kind, ordinal: ordinal)
-                        return .path(candidate.id, candidate.kind, path)
+                        return .path(candidate, path)
                     } catch {
                         if !Task.isCancelled { timeline?.record(.connectFailed, path: candidate.kind, ordinal: ordinal) }
-                        return .path(candidate.id, candidate.kind, nil)
+                        return .path(candidate, nil)
                     }
                 }
             }
@@ -146,19 +147,20 @@ public actor NativePathOwner {
                     for candidate in found.filter({ $0.kind == .direct && !dialed.contains($0.id) && usable($0) }) where directs < 2 {
                         start(candidate)
                     }
-                case let .path(id, kind, path):
+                case let .path(candidate, path):
                     if let path {
                         if installed == nil, !revoked, generation == current, !Task.isCancelled {
                             do {
                                 installed = try await workspace.installQualified(path)
-                                timeline?.record(.install, path: kind)
+                                timeline?.record(.install, path: candidate.kind)
                                 group.cancelAll()
+                                await candidate.didInstall?()
                             } catch {
                                 if (error as? NativeFailure) == .revoked { revoked = true; group.cancelAll() }
                             }
                         } else { await path.connection.close() }
                     } else if !Task.isCancelled, installed == nil, generation == current {
-                        remember(id)
+                        remember(candidate.id)
                     }
                 }
                 if await workspace.verifiedRevocation() != nil { revoked = true; group.cancelAll() }

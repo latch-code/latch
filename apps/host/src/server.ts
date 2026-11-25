@@ -3561,7 +3561,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         identity,
         tls,
         loopbackOrigin: () => loopbackOrigin,
-        pairingNearby: (opening, gatewayHash) => nativeRoutes.pairingNearby(opening, gatewayHash),
+        pairingNearby: (opening, gatewayHash, compareCode) => nativeRoutes.pairingNearby(opening, gatewayHash, compareCode),
         rememberNetwork: networkHash => nativeRoutes.rememberNetwork(networkHash),
         hostName: () => options.hostName ?? hostname(),
         tlsOrigin: () => tlsOrigin,

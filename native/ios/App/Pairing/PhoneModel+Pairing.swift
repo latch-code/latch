@@ -5,16 +5,17 @@ import UIKit
 
 /** What the pairing flow is showing. Errors use one sheet with one action. */
 enum PhonePairingPhase: Equatable {
-    case connecting, confirming
+    case connecting, reconnecting, confirming(comparisonCode: String?)
     case connected(String)
     case failed(PhonePairingFailure)
 }
 
 enum PhonePairingFailure: Equatable {
-    case unreachable, localNetworkDenied, expired, contended, cancelled, timedOut, blocked, hostTooOld, unknown
+    case unreachable, notNearby, localNetworkDenied, expired, contended, cancelled, timedOut, blocked, hostTooOld, pendingCompletion, unknown
     var title: String {
         switch self {
         case .unreachable: "连不上这台 Mac"
+        case .notNearby: "当前网络未通过配对检查"
         case .localNetworkDenied: "需要“本地网络”权限"
         case .expired: "二维码已过期"
         case .contended: "这个二维码已被另一台设备使用"
@@ -22,16 +23,19 @@ enum PhonePairingFailure: Equatable {
         case .timedOut: "Mac 上没有确认"
         case .blocked: "Mac 现在不能确认"
         case .hostTooOld: "请先更新 Mac 上的 Latch"
+        case .pendingCompletion: "上一次配对的结果待确认"
         case .unknown: "连接没有完成"
         }
     }
     var message: String? {
         switch self {
-        case .unreachable: "让两台设备连同一个 Wi‑Fi，或用数据线连接并打开这台设备的个人热点，再扫一次。"
+        case .unreachable: "请确认两台设备能在局域网内互访，或用数据线连接并打开这台设备的个人热点，再扫一次。"
+        case .notNearby: "已连上 Mac，但未能验证当前网络。如果两端在不同子网，请确认两端的 Latch 都已更新。也可以用数据线连接并打开个人热点，再扫一次。"
         case .localNetworkDenied: "在“设置”里允许 Latch 访问本地网络。"
         case .expired: "Mac 上会自动显示新的二维码，再扫一次。"
         case .contended: "为安全起见已取消。你可以在 Mac 的「设置 › 设备」中查看已连接的设备。"
         case .blocked: "Mac 上有完全访问的会话在运行，结束后再扫一次。"
+        case .pendingCompletion: "请在上一次配对的 Mac 上显示新的二维码，再扫码用已保存的设备身份连接。"
         case .unknown: "再扫一次 Mac 上的二维码。"
         default: nil
         }
@@ -41,14 +45,24 @@ enum PhonePairingFailure: Equatable {
 extension PhoneModel {
     /** A scanned QR, from the scanner or a universal link. The same QR rescanned keeps its keys, so it is not contention. */
     func beginPairing(payload: String) async {
+        await pairingCleanup?.value
         guard let store, pairingTask == nil else { return }
         #if LATCH_SCREENS
         PhoneLive.pairingCheckpoint(.accepted)
         #endif
         let current = generation
         do {
-            _ = try PairingInvitation.parse(payload)
-            if let draft, draft.payload != payload { try await store.abandonDraft(); self.draft = nil }
+            let scanned = try PairingInvitation.parse(payload)
+            let saved = await store.list()
+            guard current == generation, self.store === store else { return }
+            hosts = saved
+            if await reconnectScannedHost(scanned, resumingDraft: draft?.payload == payload) { return }
+            if let draft, draft.payload != payload {
+                guard !hasPreparedDevice(draft.keys, in: saved) else {
+                    pairing = .failed(.pendingCompletion); clearPastedPairing(); return
+                }
+                try await store.abandonDraft(); self.draft = nil
+            }
             if draft == nil {
                 #if LATCH_SCREENS
                 PhoneLive.pairingCheckpoint(.keysStarted)
@@ -66,24 +80,32 @@ extension PhoneModel {
                 #endif
             }
             resumePairing()
-        } catch { await endPairing(failure(error, invitation: nil), keepDraft: false, keys: nil) }
+        } catch {
+            guard current == generation else { return }
+            pairing = .failed(failure(error, invitation: nil)); clearPastedPairing()
+        }
     }
     /** Runs the pairing in the draft. An App restart comes back here by itself, and the Host hands the enrollment back. */
-    func resumePairing() {
+    func resumePairing(addresses: [PairingInvitation.Address]? = nil) {
         guard let draft, let store, pairingTask == nil else { return }
         pairing = .connecting; busy = true
         let current = generation
         pairingTask = Task {
             var owned: NativeHTTPConnection?
             var invitation: PairingInvitation?
-            defer { if generation == current { busy = false }; pairingTask = nil }
+            defer {
+                if !Task.isCancelled || pairingTask?.isCancelled == true {
+                    if generation == current { busy = false }
+                    pairingTask = nil
+                }
+            }
             do {
                 let parsed = try PairingInvitation.parseStored(draft.payload), keys = PhoneKeys.provider(draft.keys)
                 invitation = parsed
                 #if LATCH_SCREENS
                 PhoneLive.pairingCheckpoint(.dialStarted)
                 #endif
-                let (connection, peer) = try await pairingTransport(parsed)
+                let (connection, address, gateway, allowComparison) = try await pairingTransport(parsed, addresses: addresses ?? parsed.lan)
                 #if LATCH_SCREENS
                 PhoneLive.pairingCheckpoint(.dialReady)
                 #endif
@@ -91,15 +113,10 @@ extension PhoneModel {
                 guard generation == current, !Task.isCancelled else { await connection.close(); return }
                 pairingConnection = connection
                 let flow = try NativePairing(invitation: parsed, keys: keys)
-                let paths = await NativeDiscoveryWire.lanPaths() + (currentNetworkPath.map { [$0] } ?? [])
-                #if LATCH_SCREENS
-                PhoneLive.pairingCheckpoint(.lanReady)
-                #endif
-                guard let gateway = NativeDiscoveryWire.pairingGatewayHash(peer: peer, paths: paths) else { throw NativePairingFailure.notNearby }
                 #if LATCH_SCREENS
                 PhoneLive.pairingCheckpoint(.beginStarted)
                 #endif
-                var enrollment = try await flow.begin(on: connection, name: UIDevice.current.name, gatewayHash: gateway)
+                var enrollment = try await flow.begin(on: connection, name: UIDevice.current.name, gatewayHash: gateway, allowComparison: allowComparison)
                 #if LATCH_SCREENS
                 PhoneLive.pairingCheckpoint(.beginReady)
                 #endif
@@ -107,7 +124,7 @@ extension PhoneModel {
                     if pairingConnection === connection || generation != current { await connection.close() }
                     return
                 }
-                pairing = .confirming
+                pairing = .confirming(comparisonCode: enrollment.comparisonCode)
                 for _ in 0..<300 {
                     try Task.checkCancellation()
                     if ["approved", "completed"].contains(enrollment.status) { break }
@@ -121,6 +138,8 @@ extension PhoneModel {
                 case "denied", "cancelled": throw enrollment.contended ? NativePairingFailure.contended : NativePairingFailure.cancelled
                 default: throw NativePairingFailure.timedOut
                 }
+                try Task.checkCancellation()
+                pairing = .connecting
                 #if LATCH_SCREENS
                 PhoneLive.pairingCheckpoint(.approved)
                 #endif
@@ -138,7 +157,7 @@ extension PhoneModel {
                     return
                 }
                 hosts = await store.list(); self.draft = nil
-                freshPairings[saved.id] = (parsed, networkGeneration)
+                rememberPairingAddress(address, invitation: parsed, host: saved)
                 await connection.close(); pairingConnection = nil
                 pairing = .connected(name)
                 clearPastedPairing()
@@ -151,7 +170,7 @@ extension PhoneModel {
                 PhoneLive.pairingCheckpoint(.failed)
                 #endif
                 // 取消 takes the connection over to tell the Host first, so an ordinary cancel and rescan is not contention.
-                if generation != current || error is CancellationError {
+                if generation != current || Task.isCancelled || error is CancellationError {
                     if pairingConnection === owned || generation != current { await owned?.close() }
                     return
                 }
@@ -159,6 +178,7 @@ extension PhoneModel {
                 await owned?.close()
                 if pairingConnection === owned { pairingConnection = nil }
                 let shownNetworkDenied = shown == .unreachable ? await localNetworkDenied(invitation) : false
+                guard generation == current, !Task.isCancelled else { return }
                 await endPairing(shownNetworkDenied ? .localNetworkDenied : shown, keepDraft: shown == .unreachable, keys: draft.keys)
             }
         }
@@ -170,18 +190,23 @@ extension PhoneModel {
         if UIPasteboard.general.changeCount == pasted { UIPasteboard.general.items = [] }
     }
     func cancelPairing() {
-        let connection = pairingConnection, task = pairingTask, store = store
+        let reconnecting = pairing == .reconnecting, connection = pairingConnection, task = pairingTask, store = store
+        let hadDraft = !reconnecting && draft != nil, previousCleanup = pairingCleanup
         pairingTask = nil; pairingConnection = nil
-        task?.cancel(); pairing = nil; busy = false; draft = nil
+        task?.cancel(); pairing = nil
+        if !reconnecting { busy = false }
+        if hadDraft { draft = nil }
         clearPastedPairing()
-        Task {
+        pairingCleanup = Task {
+            await previousCleanup?.value
             // Best effort: the Host's own 120 seconds end whatever this cannot reach.
             if let connection, let id = try? await connection.request(.get, path: "/link/api/native/pairing"),
                let value = try? NativeJSON.decode(id.body), let enrollment = value["enrollment"]["id"].string {
                 _ = try? await connection.request(.delete, path: "/link/api/enrollments/\(enrollment)")
             }
             await connection?.close()
-            try? await store?.abandonDraft()
+            await task?.value
+            if hadDraft { try? await store?.abandonDraft() }
         }
         returnToSavedMac()
     }
@@ -194,6 +219,11 @@ extension PhoneModel {
     private func endPairing(_ failure: PhonePairingFailure, keepDraft: Bool, keys: DeviceKeyReference?) async {
         if !keepDraft {
             if let keys, let store {
+                hosts = await store.list()
+                // A lost completion reply can outlive its QR. A new scan may authenticate this already registered identity.
+                if hasPreparedDevice(keys, in: hosts), failure != .cancelled, failure != .contended {
+                    pairing = .failed(.pendingCompletion); clearPastedPairing(); return
+                }
                 try? await store.discardPrepared(keys: keys)
                 hosts = await store.list()
             }
@@ -203,9 +233,13 @@ extension PhoneModel {
         pairing = .failed(failure)
         clearPastedPairing()
     }
+    private func hasPreparedDevice(_ keys: DeviceKeyReference, in saved: [RegisteredHost]) -> Bool {
+        saved.contains { $0.prepared && $0.keys.connectionTag == keys.connectionTag && $0.keys.verificationTag == keys.verificationTag }
+    }
     private func failure(_ error: Error, invitation: PairingInvitation?) -> PhonePairingFailure {
         switch error as? NativePairingFailure {
-        case .notNearby, .unreachable: return invitation.map { $0.expiresAt <= Date() } == true ? .expired : .unreachable
+        case .notNearby: return .notNearby
+        case .unreachable: return invitation.map { $0.expiresAt <= Date() } == true ? .expired : .unreachable
         case .expired: return .expired
         case .contended: return .contended
         case .cancelled: return .cancelled
@@ -220,10 +254,20 @@ extension PhoneModel {
         }
     }
     /** Either LAN endpoint from the QR. A wrong one costs one dial; a wrong Mac fails at the pinned root. */
-    private func pairingTransport(_ invitation: PairingInvitation) async throws -> (NativeHTTPConnection, String) {
-        for address in invitation.lan {
-            if let connection = try? await NativeHTTPConnection.open(host: address.host, port: address.port, rootSpki: invitation.rootSpki, knockKey: invitation.knockKey) {
-                return (connection, address.host)
+    private func pairingTransport(_ invitation: PairingInvitation, addresses: [PairingInvitation.Address]) async throws -> (NativeHTTPConnection, PairingInvitation.Address, Data?, Bool) {
+        let paths = await NativeDiscoveryWire.lanPaths() + (currentNetworkPath.map { [$0] } ?? [])
+        #if LATCH_SCREENS
+        PhoneLive.pairingCheckpoint(.lanReady)
+        #endif
+        for address in addresses {
+            try Task.checkCancellation()
+            let gateway = NativeDiscoveryWire.pairingGatewayHash(peer: address.host, paths: paths)
+            let interface = NativeDiscoveryWire.directInterface(to: address.host, path: currentNetworkPath, allowRouted: gateway == nil)
+            // A routed QR uses only an explicitly bound LAN path. The phone's own hotspot may have no default LAN path.
+            guard interface != nil || gateway != nil else { continue }
+            if let connection = try? await NativeHTTPConnection.open(host: address.host, port: address.port, rootSpki: invitation.rootSpki,
+                    knockKey: invitation.knockKey, interface: interface) {
+                return (connection, address, gateway, interface != nil)
             }
         }
         throw NativePairingFailure.unreachable

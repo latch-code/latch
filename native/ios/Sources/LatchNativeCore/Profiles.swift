@@ -12,6 +12,11 @@ public struct NativeRegisteredHost: Codable, Identifiable, Sendable {
     public static func preferred(in hosts: [Self], lastID: String? = nil) -> Self? {
         hosts.first { $0.id == lastID } ?? hosts.first { $0.lastSelected == true } ?? hosts.first
     }
+    /** A fresh scan can recover a lost completion reply. The original draft can still resume its own enrollment. */
+    public static func forPairingScan(in hosts: [Self], rootSpki: Data, resumingDraft: Bool, lastID: String? = nil) -> Self? {
+        let matching = hosts.filter { $0.device.rootSpki == rootSpki }, ready = matching.filter { !$0.prepared }
+        return preferred(in: ready.isEmpty && !resumingDraft ? matching : ready, lastID: lastID)
+    }
     public init(name: String, device: PreparedNativeDevice, keys: DeviceKeyReference, prepared: Bool) { self.name = name; self.device = device; self.keys = keys; self.prepared = prepared }
 }
 public struct NativePairingDraft: Codable, Sendable {

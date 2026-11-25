@@ -9,6 +9,7 @@ import {
   isPrivateDiscoveryAddress,
   mdnsDigest,
   parseIp,
+  sameSubnet,
   UTC_DAY,
   type NativeLanAddress,
 } from '@latch/link-wire'
@@ -26,6 +27,9 @@ import {
   type NativeNetworkService,
 } from './native-network-backend.ts'
 import { RelayProfiles, secretBytes, type NativeDirect } from './relay/profiles.ts'
+
+/** A proven network to remember, a routed connection requiring a code comparison, or refusal. */
+export type NativePairingProof = string | { compareCode: true } | false
 
 interface NetworkOptions {
   profiles: RelayProfiles
@@ -86,6 +90,14 @@ function sameIp(a: string, b: string): boolean {
 function linkLocal(address: string): boolean {
   const ip = parseIp(address)
   return ip.family === 4 ? ip.bytes[0] === 169 && ip.bytes[1] === 254 : ip.bytes[0] === 254 && (ip.bytes[1]! & 192) === 128
+}
+
+/** Cross-subnet comparison is limited to RFC 1918 and IPv6 ULA on both ends. */
+function routedPrivateFamily(address: string): 4 | 6 | undefined {
+  if (!isPrivateDiscoveryAddress(address)) return undefined
+  const ip = parseIp(address)
+  if (ip.family === 6) return (ip.bytes[0]! & 254) === 252 ? 6 : undefined
+  return [10, 172, 192].includes(ip.bytes[0]!) ? 4 : undefined
 }
 
 /**
@@ -378,22 +390,33 @@ export class NativeNetwork {
       this.proofs.delete(opening)
     }
   }
-  /**
-   * The pairing gate: `proveNearby` on the pairing socket. A phone sharing its own connection as a Personal Hotspot is
-   * the gateway, so here a peer may have the gateway's MAC when it also has the gateway's IP. Fails closed.
-   */
-  async pairingNearby(opening: NativeOpening, phoneGatewayHash: Uint8Array): Promise<string | false> {
+  /** A nearby phone proves its network. A routed phone must compare a code and proves no network. */
+  async pairingNearby(opening: NativeOpening, phoneGatewayHash: Uint8Array | undefined, compareCode = false): Promise<NativePairingProof> {
     if (this.pairingProofs.has(opening) || this.pairingProofs.size >= 16) return false
     this.pairingProofs.add(opening)
     // One at a time: the holder of a QR cannot use up the helper's request slots before the real phone's proof.
-    const proof = this.pairingQueue.then(() => this.proveNeighbour(opening, phoneGatewayHash, true))
+    const proof = this.pairingQueue.then(async (): Promise<NativePairingProof> => {
+      if (opening.listener.listener !== 'native-direct' || !opening.pairing || !opening.localAddress) return false
+      await this.connect()
+      if (!this.snapshot || this.stopping) return false
+      const row = this.rows().find(item => sameIp(item.address, opening.localAddress!))
+      if (!row) return false
+      const routedFamily = compareCode ? routedPrivateFamily(opening.source) : undefined
+      if (
+        routedFamily !== undefined
+        && routedPrivateFamily(row.address) === routedFamily
+        && !sameSubnet(opening.source, row.address, row.prefixLength)
+        && !this.snapshot.interfaces.some(item => sameIp(item.address, opening.source))
+      )
+        return { compareCode: true }
+      return phoneGatewayHash ? ((await this.proveNeighbour(opening, phoneGatewayHash, true)) ?? false) : false
+    })
     this.pairingQueue = proof.then(
       () => {},
       () => {},
     )
     try {
-      const network = await proof
-      return network ?? false
+      return await proof
     } catch {
       return false
     } finally {
@@ -440,7 +463,6 @@ export class NativeNetwork {
   ): Promise<string | undefined> {
     recheck()
     if (opening.listener.listener !== 'native-direct' || !opening.localAddress) return undefined
-    if (pairing) await this.connect()
     if (!this.backend || !this.snapshot) return undefined
     const backend = this.backend,
       snapshot = this.snapshot,

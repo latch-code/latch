@@ -2,6 +2,57 @@ import Darwin
 import Foundation
 import Network
 
+/** A current QR or a signed address book can supply a dial hint. It never replaces the paired keys. */
+public struct NativeDirectEndpoint: Hashable, Sendable {
+    public let host: String
+    public let port: UInt16
+    public init(host: String, port: UInt16) {
+        if let value = try? NativeDiscoveryWire.ip(host), let canonical = NativeDiscoveryWire.text(value.bytes, family: value.family) {
+            self.host = canonical
+        } else { self.host = host }
+        self.port = port
+    }
+
+    public static func signed(_ book: NativeAddressBook?) -> [Self] {
+        (book?.lan ?? []).compactMap { row in
+            guard row.kind == "wifi" || row.kind == "ethernet", NativeDiscoveryWire.isRoutedPrivatePeer(row.address) else { return nil }
+            return Self(host: row.address, port: row.port)
+        }
+    }
+}
+
+/** A foreground-network hint. Only a successfully installed path can carry an address into a later round. */
+public struct NativeDirectHints: Sendable {
+    public let addresses: [NativeDirectEndpoint]
+    public let network: UUID
+    public let expiresAt: Date
+    public let request: UUID
+    public let justPaired: Bool
+    public let requiresSignedEndpoint: Bool
+    private let fromQR: Bool
+    public init(addresses: [NativeDirectEndpoint], network: UUID, expiresAt: Date, justPaired: Bool = false, fromQR: Bool = false) {
+        self.addresses = addresses; self.network = network; self.expiresAt = expiresAt
+        self.justPaired = justPaired; self.fromQR = fromQR; requiresSignedEndpoint = !fromQR; request = UUID()
+    }
+    private init(confirmed: NativeDirectEndpoint, from attempt: Self, until: Date, bookMatched: Bool) {
+        addresses = [confirmed]; network = attempt.network; expiresAt = until
+        justPaired = attempt.justPaired; fromQR = false; requiresSignedEndpoint = bookMatched; request = attempt.request
+    }
+    public func installed(_ address: NativeDirectEndpoint, network current: UUID, signedUntil: Date?, now: Date = Date()) -> Self? {
+        guard network == current, expiresAt > now, addresses.contains(address), !requiresSignedEndpoint || signedUntil != nil else { return nil }
+        let authority = fromQR ? signedUntil ?? expiresAt : min(expiresAt, signedUntil ?? expiresAt)
+        guard authority > now else { return nil }
+        return Self(confirmed: address, from: self, until: min(authority, now.addingTimeInterval(600)), bookMatched: signedUntil != nil)
+    }
+}
+
+extension PreparedNativeDevice {
+    public func currentAddressBook() -> NativeAddressBook? {
+        try? AddressBookCodec.verify(signedAddressBook, rootSpki: rootSpki, deviceId: deviceId,
+            nowMs: UInt64(max(0, Date().timeIntervalSince1970 * 1_000)), priorGeneration: bookGeneration, priorHash: bookHash)
+    }
+}
+
 public enum NativeDiscoveryWire {
     public static func epoch(key: Data) throws -> String {
         LinkBytes.hex(LinkBytes.hash(Data("latch-discovery-epoch-v1\0".utf8) + (try LinkBytes.fixed(key, 32))))
@@ -125,7 +176,36 @@ public enum NativeDiscoveryWire {
         guard b.count == 16, bytes != Data([253, 0, 14, 194, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 84]) else { return false }
         return b[0] & 254 == 252 || b[0] == 254 && b[1] & 192 == 128
     }
-    public static func isCurrentPeer(_ peer: String, interface: String) -> Bool {
+    public static func isRoutedPrivatePeer(_ peer: String) -> Bool {
+        guard let value = try? ip(peer) else { return false }
+        return routedPeer(value.bytes, family: value.family)
+    }
+    private static func routedPeer(_ bytes: Data, family: UInt8) -> Bool {
+        guard privatePeer(bytes, family: family) else { return false }
+        if family == 6 { return bytes[0] & 254 == 252 }
+        return bytes[0] == 10 || bytes[0] == 172 || bytes[0] == 192
+    }
+    /** The current default path must actually use this physical interface for explicitly routed hints. */
+    public static func directInterface(to peer: String, path: NWPath?, allowRouted: Bool = true) -> NWInterface? {
+        guard let path, path.status == .satisfied, !path.usesInterfaceType(.other), !path.usesInterfaceType(.cellular) else { return nil }
+        return path.availableInterfaces.first { item in
+            (item.type == .wifi || item.type == .wiredEthernet) && path.usesInterfaceType(item.type)
+                && isCurrentPeer(peer, interface: item.name, allowRouted: allowRouted)
+        }
+    }
+    /** Personal Hotspot's downstream bridge may be absent from the system default NWPath. */
+    public static func isHotspotPeer(_ peer: String) -> Bool {
+        guard let interfaces = if_nameindex() else { return false }
+        defer { if_freenameindex(interfaces) }
+        for index in 0..<256 {
+            let row = interfaces[index]
+            guard row.if_index != 0, let name = row.if_name else { break }
+            let value = String(cString: name)
+            if value.hasPrefix("bridge"), isCurrentPeer(peer, interface: value) { return true }
+        }
+        return false
+    }
+    public static func isCurrentPeer(_ peer: String, interface: String, allowRouted: Bool = false) -> Bool {
         let scoped = peer.split(separator: "%", omittingEmptySubsequences: false)
         guard scoped.count <= 2, scoped.count == 1 || scoped[1] == Substring(interface),
               let ip = try? ip(String(scoped[0])), privatePeer(ip.bytes, family: ip.family) else { return false }
@@ -150,18 +230,22 @@ public enum NativeDiscoveryWire {
             let local = raw(address); own.append(local)
             if String(cString: value.ifa_name) == interface { rows.append((local, raw(mask))) }
         }
-        guard !own.contains(ip.bytes) else { return false }
+        return permitsPeer(ip.bytes, rows: rows, own: own, allowRouted: allowRouted && scoped.count == 1)
+    }
+    package static func permitsPeer(_ target: Data, rows: [(Data, Data)], own: [Data], allowRouted: Bool) -> Bool {
+        let family: UInt8 = target.count == 4 ? 4 : 6
+        guard privatePeer(target, family: family), !own.contains(target) else { return false }
         for (local, mask) in rows {
-            let a = [UInt8](ip.bytes), b = [UInt8](local), m = [UInt8](mask)
+            let a = [UInt8](target), b = [UInt8](local), m = [UInt8](mask)
             guard a.count == b.count, m.count == a.count,
                   zip(a, m).map({ $0 & $1 }) == zip(b, m).map({ $0 & $1 }) else { continue }
-            if ip.family == 4, m != [255, 255, 255, 254], m != [255, 255, 255, 255] {
+            if family == 4, m != [255, 255, 255, 254], m != [255, 255, 255, 255] {
                 let network = zip(b, m).map { $0 & $1 }, broadcast = zip(network, m).map { $0 | ~$1 }
-                if a == network || a == broadcast { continue }
+                if a == network || a == broadcast { return false }
             }
             return true
         }
-        return false
+        return allowRouted && routedPeer(target, family: family) && rows.contains { privatePeer($0.0, family: family) }
     }
 }
 
@@ -170,8 +254,9 @@ public enum NativeDiscoveryWire {
     private var continuation: CheckedContinuation<(String, UInt16), Error>?
     private let label: String
     private let interface: String
-    init(label: String, interface: String) {
-        self.label = label; self.interface = interface
+    private let routed: Set<NativeDirectEndpoint>
+    init(label: String, interface: String, routed: Set<NativeDirectEndpoint>) {
+        self.label = label; self.interface = interface; self.routed = routed
         service = NetService(domain: "local.", type: "_latch._tcp.", name: label)
         super.init(); service.includesPeerToPeer = false; service.delegate = self
     }
@@ -190,6 +275,7 @@ public enum NativeDiscoveryWire {
               txt.isEmpty || txt == Data([0]), (1...65_535).contains(sender.port), let addresses = sender.addresses, addresses.count <= 32 else {
             finish(.failure(NativeFailure.invalidRecord)); return
         }
+        var routedMatch: (String, UInt16)?
         for address in addresses {
             let text: String? = address.withUnsafeBytes { bytes in
                 guard let base = bytes.baseAddress, bytes.count >= MemoryLayout<sockaddr>.size else { return nil }
@@ -200,9 +286,14 @@ public enum NativeDiscoveryWire {
                 guard getnameinfo(pointer, socklen_t(required), &buffer, socklen_t(buffer.count), nil, 0, NI_NUMERICHOST) == 0 else { return nil }
                 return buffer.withUnsafeBufferPointer { String(validatingCString: $0.baseAddress!) }
             }
-            if let text, NativeDiscoveryWire.isCurrentPeer(text, interface: interface) { finish(.success((text, UInt16(sender.port)))); return }
+            guard let text else { continue }
+            let port = UInt16(sender.port)
+            if NativeDiscoveryWire.isCurrentPeer(text, interface: interface) { finish(.success((text, port))); return }
+            if routed.contains(NativeDirectEndpoint(host: text, port: port)), NativeDiscoveryWire.isCurrentPeer(text, interface: interface, allowRouted: true) {
+                routedMatch = (text, port)
+            }
         }
-        finish(.failure(NativeFailure.unavailable))
+        if let routedMatch { finish(.success(routedMatch)) } else { finish(.failure(NativeFailure.unavailable)) }
     }
     func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) { finish(.failure(NativeFailure.unavailable)) }
     private func finish(_ result: Result<(String, UInt16), Error>) {
@@ -212,7 +303,7 @@ public enum NativeDiscoveryWire {
     }
 }
 
-/** Fresh Bonjour results are ephemeral address hints. No historical LAN book address is dialed or promoted in authority. */
+/** Bonjour supplies a current address hint. A routed answer must also occur in the paired Mac's live, signed book. */
 @MainActor public final class NativeDiscovery {
     private var browser: NWBrowser?
     private var generation = UUID()
@@ -298,19 +389,24 @@ public enum NativeDiscoveryWire {
         for item in found.filter({ names.contains($0.label) }).prefix(2) {
             let id = "lan-" + item.label + "-\(item.interface.index)"
             result.append(try NativePathCandidate(id: id, kind: .direct) { [weak self] in
-                let resolution = await ServiceResolution(label: item.label, interface: item.interface.name)
+                let book = device.currentAddressBook()
+                let routed = Set(NativeDirectEndpoint.signed(book))
+                let resolution = await ServiceResolution(label: item.label, interface: item.interface.name, routed: routed)
                 let (address, port) = try await resolution.resolve()
-                guard let self, await self.permits(address, label: item.label, interface: item.interface.name, generation: current) else { throw NativeFailure.unavailable }
+                let allowRouted = Double(book?.expiresAt ?? 0) > Date().timeIntervalSince1970 * 1_000
+                    && routed.contains(NativeDirectEndpoint(host: address, port: port))
+                guard let self, await self.permits(address, label: item.label, interface: item.interface.name, generation: current, allowRouted: allowRouted) else { throw NativeFailure.unavailable }
                 return try await NativeHTTPConnection.open(host: address, port: port, rootSpki: device.rootSpki,
                     knockKey: device.knockKey, identity: keys.identity(), interface: item.interface)
             })
         }
         return result
     }
-    private func permits(_ address: String, label: String, interface: String, generation current: UUID) -> Bool {
+    private func permits(_ address: String, label: String, interface: String, generation current: UUID, allowRouted: Bool) -> Bool {
         let now = Date().timeIntervalSince1970 * 1000
         guard now >= 0, now <= Double(LinkBytes.maximumInteger), let key,
               let names = try? NativeDiscoveryWire.expectedNames(key: key, nowMs: UInt64(now)) else { return false }
-        return current == generation && browser != nil && names.contains(label) && NativeDiscoveryWire.isCurrentPeer(address, interface: interface)
+        return current == generation && browser != nil && names.contains(label) && found.contains { $0.label == label && $0.interface.name == interface }
+            && NativeDiscoveryWire.isCurrentPeer(address, interface: interface, allowRouted: allowRouted)
     }
 }

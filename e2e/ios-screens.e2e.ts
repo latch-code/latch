@@ -140,6 +140,7 @@ const SCENES = [
   'apps',
   'app-page',
   'pairing',
+  'pairing-compare',
   'review-list',
   'updating',
   'review',

@@ -107,6 +107,7 @@ private struct PhoneHostDetail: View {
     @State private var removal: Removal?
     @State private var working = false
     @State private var failed: Removal?
+    @State private var directFailed = false
     private var row: PhoneComputerRow? { model.computerRows.first { $0.id == host.id } }
     private var name: String { row?.name ?? host.name }
     private var connectedHere: Bool { model.selectedHost?.id == host.id && model.connected }
@@ -121,6 +122,18 @@ private struct PhoneHostDetail: View {
                     Button(row?.state == .online ? "连接这台 Mac" : "重新连接") {
                         Task { await model.retryComputer(host.id) }
                     }.disabled(working || model.busy || row == nil)
+                    if !NativeDirectEndpoint.signed(row?.host.device.currentAddressBook()).isEmpty {
+                        Button("用 Mac 的局域网地址重连") {
+                            guard let row else { return }
+                            working = true; directFailed = false
+                            Task {
+                                directFailed = !(await model.reconnectUsingBook(row.host))
+                                working = false
+                            }
+                        }.disabled(working)
+                    }
+                } footer: {
+                    Text(directFailed ? "没有连上这台 Mac。请确认局域网允许设备互访，或重新扫码。" : "如果 Mac 的地址已变，可以重新扫 Mac 上的二维码。")
                 }
             }
             Section {

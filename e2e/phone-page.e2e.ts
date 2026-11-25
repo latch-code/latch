@@ -220,7 +220,7 @@ describe('设置 › 设备', () => {
       await relay.getByText('relay.fixture.test', { exact: true }).waitFor()
       await capture('relays-saved')
       await relay.getByRole('button', { name: '更多', exact: true }).click()
-      await page.getByRole('menuitem', { name: '移除', exact: true }).click()
+      await page.getByRole('menuitem', { name: '从这台 Mac 移除', exact: true }).click()
       await relay.waitFor({ state: 'hidden' })
       expect(state.relays).toHaveLength(0)
       await openEntry(page, '设备')
@@ -350,7 +350,7 @@ describe('设置 › 设备', () => {
         state.pairing = { state: 'ready', offNetwork: false }
       })
       await capture('sheet-contention')
-      const offNetwork = sheet.getByText('Mac 无法确认扫码设备在同一网络。请按下面的方式连接后再扫码。', { exact: true })
+      const offNetwork = sheet.getByText('这次扫码未通过网络检查。可用数据线连接并打开个人热点后重试。', { exact: true })
       await setPairing({ state: 'ready', offNetwork: true }, () => offNetwork.waitFor())
       await capture('sheet-offnet')
       await setPairing({ state: 'ready', offNetwork: true, localNetwork: 'unreadable' }, () =>
@@ -375,7 +375,7 @@ describe('设置 › 设备', () => {
       state.create = 'no-lan'
       await connect.click()
       await sheet.getByText('这台 Mac 暂时没有可用于配对的网络。', { exact: true }).waitFor()
-      await sheet.getByText('让两台设备连同一个 Wi‑Fi，或用数据线连接并打开手机或平板的个人热点。', { exact: true }).waitFor()
+      await sheet.getByText('让 Mac 接入手机能访问的网络，或用数据线连接并打开手机或平板的个人热点。', { exact: true }).waitFor()
       expect(await qr.count()).toBe(0)
       await capture('sheet-nonet')
       // The network comes back on a wired hotspot: the QR and the corresponding instructions appear by themselves.
@@ -383,7 +383,7 @@ describe('设置 › 设备', () => {
       state.create = 'ok'
       await qr.waitFor()
       await sheet.getByText('用数据线连接这台 Mac，并打开设备上的个人热点', { exact: true }).waitFor()
-      expect(await sheet.getByText('和这台 Mac 连同一个 Wi‑Fi', { exact: true }).count()).toBe(0)
+      expect(await sheet.getByText('手机连上能访问这台 Mac 的 Wi‑Fi', { exact: true }).count()).toBe(0)
       await sheet.getByRole('button', { name: '关闭', exact: true }).click()
       await sheet.waitFor({ state: 'hidden' })
       state.create = 'failed'

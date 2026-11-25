@@ -224,6 +224,7 @@ export interface ConfirmationTicket {
 export type PresenceReasonForm =
   | 'device.enroll-named'
   | 'device.enroll-native'
+  | 'device.enroll-native-compare'
   | 'device.grant'
   | 'origin.confirm'
   | 'policy.egress-many'
@@ -300,6 +301,8 @@ export interface EnrollmentView {
   fingerprint: string
   /** Present only in the creation response. */
   nonce?: string
+  /** The phone must calculate the comparison code using this attempt and its own keys. */
+  compareCode?: true
   expiresAt: string
   /** The confirmation's preview hash. The Host computer no longer shows it. */
   hashDisplay?: string

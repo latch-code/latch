@@ -374,6 +374,7 @@ import UIKit
         case "apps": model.tab = .apps
         case "app-page": model.tab = .apps; model.appPath = ["release-check/main"]
         case "pairing": scanning = true
+        case "pairing-compare": model.pairing = .confirming(comparisonCode: "052413")
         case _ where stageComputers(model, name): break
         case _ where stageWork(model, name): break
         case _ where stageReview(model, name, snapshot: value): break

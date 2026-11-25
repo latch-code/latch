@@ -33,6 +33,7 @@ import type { ConnectionContext, DeviceScopeBase } from '../auth.ts'
 import { codeOf, json, jsonBody, optionalJsonBody, safeDecode } from '../http-util.ts'
 import type { ListenerContext, ValidatedTls } from '../listeners.ts'
 import type { NativeOpening } from '../native.ts'
+import type { NativePairingProof } from '../native-network.ts'
 import type { HostAddressBooks } from '../relay/address-book.ts'
 import {
   BASE_RETRIES,
@@ -59,6 +60,7 @@ const enrollmentSchema = z.object({
   scopes: z.array(scopeSchema).max(6).optional(),
   dataScope: z.enum(DATA_SCOPES).optional(),
   invitation: z.string().min(1).max(64).optional(),
+  compareCode: z.literal(true).optional(),
   gatewayHash: z
     .string()
     .regex(/^[a-f0-9]{64}$/u)
@@ -99,7 +101,7 @@ export interface DeviceRouteDeps {
   /** A device as clients see it, with the state of its native connection. */
   deviceView: (device: Device) => Device
   /** The proximity gate for a phone's pairing request. */
-  pairingNearby: (opening: NativeOpening, gatewayHash: Uint8Array) => Promise<string | false>
+  pairingNearby: (opening: NativeOpening, gatewayHash: Uint8Array | undefined, compareCode: boolean) => Promise<NativePairingProof>
   /** A phone proven on this network has paired. */
   rememberNetwork: (networkHash: string) => void
   /** Signs `POST /host-proof`. */
@@ -209,6 +211,7 @@ export function createDeviceRoutes(context: RouteContext, deps: DeviceRouteDeps)
         ...(input.offlineCode ? { offlineCode: input.offlineCode } : {}),
         ...(input.native ? { native: input.native } : {}),
         ...(input.gatewayHash ? { gatewayHash: input.gatewayHash } : {}),
+        ...(input.compareCode ? { compareCode: input.compareCode } : {}),
       }
       const presented = presentedCredential(req, listener, hostId8)
       const legacy = presented?.kind === 'legacy-cookie' ? presented : undefined
@@ -220,8 +223,8 @@ export function createDeviceRoutes(context: RouteContext, deps: DeviceRouteDeps)
           legacy,
           native?.pairing
             ? {
-                async nearby(gatewayHash) {
-                  const proof = await deps.pairingNearby(native, gatewayHash)
+                async nearby(gatewayHash, compareCode) {
+                  const proof = await deps.pairingNearby(native, gatewayHash, compareCode)
                   // Refusals cost only the connection asking; one that keeps asking loses it.
                   if (proof === false && (native.gateRefusals = (native.gateRefusals ?? 0) + 1) >= MAX_GATE_REFUSALS) void native.close?.()
                   return proof
