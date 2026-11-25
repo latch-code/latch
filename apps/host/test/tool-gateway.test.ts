@@ -15,7 +15,7 @@ const TOOLS = [
   { name: 'browser_wait', description: 'wait', inputSchema: { type: 'object' } },
 ]
 
-async function gateway(admits?: (sessionId: string) => boolean) {
+async function gateway(admits?: (sessionId: string) => boolean | readonly string[]) {
   const root = await mkdtemp(join(tmpdir(), 'lbt-'))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const calls: GatewayCall[] = []
@@ -118,6 +118,20 @@ describe('the tool gateway', () => {
     expect((await client.reply(5)).error).toMatchObject({ code: -32001 })
     await client.closed
     expect(calls).toHaveLength(1)
+  })
+
+  it('lists and accepts only the tools named by a limited lease', async () => {
+    const { server, socketPath, calls } = await gateway(() => ['browser_tabs'])
+    const lease = server.open({ sessionId: 'limited' })!
+    expect(server.hasToolLease('limited')).toBe(false)
+    const client = connect(socketPath)
+    client.send({ id: 1, token: lease.token, method: 'tools/list' })
+    expect((await client.reply(1)).result.tools).toEqual([TOOLS[0]])
+    client.send({ id: 2, token: lease.token, method: 'tools/call', params: { name: 'browser_wait', arguments: {} } })
+    expect((await client.reply(2)).error).toMatchObject({ code: -32602 })
+    expect(calls).toHaveLength(0)
+    client.send({ id: 3, token: lease.token, method: 'tools/call', params: { name: 'browser_tabs', arguments: {} } })
+    expect((await client.reply(3)).result.content[0].text).toBe('browser_tabs for limited')
   })
 
   it('mints no token for a session it does not admit now', async () => {

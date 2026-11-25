@@ -1,15 +1,20 @@
+import { AgentAvatar } from '../agents/AgentAvatar.tsx'
+import { MENTION_COPY, type AgentMentions } from '../agents/AgentMentions.tsx'
+import { VisibleText } from '../components/VisibleText.tsx'
+import { useStableCallback } from '../hooks/useStableCallback.ts'
 import { defineCopy, plural } from '../core/i18n.ts'
 import { useFileMentions, type FileMentionChoice, type MentionMembers } from '../hooks/useFileMentions.tsx'
 import type { AttachmentDraftController } from '../hooks/useAttachments.ts'
 import type { MenuSection } from '../components/overlays.tsx'
 import { AttachmentButton, AttachmentDrafts, pasteAttachments, dropAttachments } from './AttachmentDrafts.tsx'
 import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
-import { ListPlus, Slash } from 'lucide-react'
+import { AtSign, ListPlus, Slash } from 'lucide-react'
 import type { PromptTemplate, SessionCommand, SessionSkill } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
 import type { FollowUpDefault, SendKey } from '../preferences.ts'
 import { clientKind, useShortcutBindings } from '../core/shortcutBindings.ts'
 import { followUpKeyLabels, followUpShortcuts, primarySendKeys, shortcutChordMatches } from '../workbenchShortcuts.ts'
+import { useViewport } from '../breakpoints.ts'
 import { escapeIsLeftover } from '../escapeGrace.ts'
 import { SlashCommands, useSlashCommands, type SlashAction } from './SlashCommands.tsx'
 import { promptLengthError } from './promptLength.ts'
@@ -29,6 +34,7 @@ import {
   Tooltip,
   useLiveChange,
   LockGlyph,
+  CloseGlyph,
   SendGlyph,
   DrawerStack,
   Kbd,
@@ -39,6 +45,9 @@ import {
 const COPY = defineCopy(
   {
     actionUnavailable: '这个动作在当前页面不可用',
+    choosePeer: '先选择收件人',
+    peerBusy: '忙碌',
+    peerUnavailable: '不可用',
     waitForSubmit: '等待这次提交完成',
     writeFirst: '输入内容后发送',
     sendAfterTurn: '本轮完成后发送',
@@ -77,6 +86,9 @@ const COPY = defineCopy(
   },
   {
     actionUnavailable: 'This action is unavailable here',
+    choosePeer: 'Choose a recipient first',
+    peerBusy: 'Busy',
+    peerUnavailable: 'Unavailable',
     waitForSubmit: 'Wait for this submission',
     writeFirst: 'Enter a message to send',
     sendAfterTurn: 'Send after this turn',
@@ -211,6 +223,7 @@ export function Composer({
   attachments,
   attachmentMenu,
   fileMentions,
+  agentMentions,
   members,
   lastPrompt,
 }: {
@@ -218,6 +231,7 @@ export function Composer({
   /** The running turn can take this draft immediately. */
   steerable?: boolean
   queueTray?: ReactNode
+  agentMentions?: AgentMentions | undefined
   fileMentions?: FileMentionChoice
   /**
    * The open session leads a team: its members after `@`, their chips drawn as marks, and, while the draft names any,
@@ -343,17 +357,77 @@ export function Composer({
     if (input && !input.disabled) input.edit(value, selection)
     else onDraft(value)
   }
-  const mentions = useFileMentions(draft, completionCaret, editDraft, textareaRef, fileMentions, commandAnchor, members?.mention)
+  const phone = useViewport() === 'phone'
+  const peers = agentMentions?.source && agentMentions.canRun && !answer ? agentMentions : undefined
+  const addressed = !!peers?.targetId
+  const recipient = peers?.target
+  const peerMenu: MentionMembers | undefined =
+    peers && !addressed
+      ? {
+          label: MENTION_COPY.group,
+          empty: MENTION_COPY.empty,
+          owner: peers.source,
+          onChoose: peers.select,
+          items: peers.targets.map(target => ({
+            id: target.id,
+            token: '@' + target.name,
+            name: target.name,
+            title: target.description,
+            media: <AgentAvatar avatar={target.avatar} size={28} still />,
+            description: target.description,
+            source: target.disabled ? (
+              <Tooltip content={target.disabled}>
+                <span className="composer-peer-status">{target.disabled === MENTION_COPY.busy ? COPY.peerBusy : COPY.peerUnavailable}</span>
+              </Tooltip>
+            ) : undefined,
+            ...(target.disabled ? { disabled: target.disabled } : {}),
+          })),
+        }
+      : undefined
+  const mentions = useFileMentions(
+    draft,
+    completionCaret,
+    editDraft,
+    textareaRef,
+    fileMentions,
+    commandAnchor,
+    peerMenu ?? members?.mention,
+  )
+  const peerHeld = peers?.attempt?.state === 'unknown' || peers?.attempt?.state === 'sending'
+  const peerBlock = !addressed
+    ? undefined
+    : !recipient
+      ? MENTION_COPY.unavailable
+      : (recipient.disabled
+        ?? (attachments?.items.length || fileMentions?.refs.length
+          ? MENTION_COPY.textOnly
+          : !draft.trim()
+            ? MENTION_COPY.write
+            : undefined))
+  const peerLabel = MENTION_COPY.send(recipient?.name ?? 'Agent')
+  const clearPeerDraft = useStableCallback((source: string | undefined, text: string) => {
+    if (source && source === peers?.source && text.trim() === draft.trim()) onDraft('')
+  })
+  useLayoutEffect(() => {
+    const delivered = peers?.takeDelivered()
+    if (delivered) clearPeerDraft(delivered.source, delivered.body.text)
+  })
+  const sendPeer = async (retry: boolean) => {
+    if (!peers) return
+    const text = retry ? peers.attempt?.request.body.text : draft
+    if (text && (await (retry ? peers.retry() : peers.send(text)))) clearPeerDraft(peers.source, text)
+  }
 
   const roundSending = members?.sending === true
-  const locked = sending || roundSending || pending !== null || attachments?.preparing === true
+  const locked = sending || roundSending || peerHeld || pending !== null || attachments?.preparing === true
   // One unconfirmed write per device: nothing else is sent meanwhile, but only the input that holds its text is held.
-  const textLocked = sending || roundSending || (pending !== null && onOpenPending === undefined) || attachments?.preparing === true
+  const textLocked =
+    sending || roundSending || peerHeld || (pending !== null && onOpenPending === undefined) || attachments?.preparing === true
   const empty = draft.trim().length === 0 && !attachments?.items.length
-  const typedAction = answer === undefined ? latchActionOf(draft) : undefined
+  const typedAction = !addressed && answer === undefined ? latchActionOf(draft) : undefined
   // Members named in the draft: it goes to them as a round, whether or not this session is at work.
   const round = answer === undefined && typedAction === undefined ? members?.round : undefined
-  const rounding = round !== undefined
+  const rounding = round !== undefined || addressed
   const lengthError = !rounding && !typedAction && !answer && readOnly === undefined ? promptLengthError(draft) : undefined
   const queueDraft =
     !rounding
@@ -369,14 +443,17 @@ export function Composer({
   const sendable =
     !locked
     && !lengthError
+    && !mentions.pickingPerson
     && readOnly === undefined
     && (answer !== undefined
       ? !empty
       : typedAction
         ? !actionBlock
-        : round
-          ? canSend && round.ready
-          : canSend && !empty && (!run || queueDraft))
+        : addressed
+          ? !!peers?.online && !peerBlock
+          : round
+            ? canSend && round.ready
+            : canSend && !empty && (!run || queueDraft))
   const chooseDelivery = queueDraft && queueable && steerable && !!onQueue
   const defaultQueue = !steerable || (chooseDelivery && followUpDefault === 'queue')
   useShortcutBindings()
@@ -386,7 +463,8 @@ export function Composer({
     if (answer) answer.onSubmit()
     else if (typedAction) {
       if (!actionBlock) localAction?.run?.(typedAction.argument)
-    } else if (chooseDelivery && defaultQueue) onQueue()
+    } else if (addressed) void sendPeer(false)
+    else if (chooseDelivery && defaultQueue) onQueue()
     else onSubmit()
   }
   useLayoutEffect(() => {
@@ -422,7 +500,7 @@ export function Composer({
     awaitingSession: commandSource?.awaitingSession,
     ...(historyScope ? { historyScope } : {}),
     ...(actions ? { actions } : {}),
-    enabled: !locked && readOnly === undefined && answer === undefined,
+    enabled: !addressed && !locked && readOnly === undefined && answer === undefined,
     onDraft: (value, selection) => {
       editDraft(value, selection)
       textareaRef.current?.focus({ preventScroll: true })
@@ -516,7 +594,9 @@ export function Composer({
   const sendTip =
     actionBlock
     ?? lengthError
-    ?? blockReason
+    ?? (mentions.pickingPerson ? COPY.choosePeer : undefined)
+    ?? peerBlock
+    ?? (addressed ? undefined : blockReason)
     ?? round?.reason
     ?? (locked ? COPY.waitForSubmit : empty ? COPY.writeFirst : queueDraft && !steerable ? COPY.sendAfterTurn : undefined)
 
@@ -565,7 +645,7 @@ export function Composer({
         activeDescendant:
           slash.open && slash.options[slash.active] ? slash.id + '-' + slash.active : !slash.open ? mentions.activeId : undefined,
       }}
-      placeholder={placeholder}
+      placeholder={addressed ? peerLabel : peers?.targets.length ? MENTION_COPY.placeholder : placeholder}
       disabled={textLocked}
       onKeyDown={event => {
         keydown(event)
@@ -639,13 +719,13 @@ export function Composer({
         />
       ) : readOnly !== undefined ? null : (
         <Tooltip
-          content={sendTip ?? (choosing ? COPY.runAction : rounding ? members!.sendLabel : COPY.send)}
+          content={sendTip ?? (choosing ? COPY.runAction : addressed ? peerLabel : rounding ? members!.sendLabel : COPY.send)}
           shortcut={sendTip === undefined ? shortcut : undefined}
           describe={sendTip !== undefined}>
           <button
             type="submit"
             className="send-button"
-            aria-label={choosing ? COPY.runAction : rounding ? members!.sendLabel : COPY.send}
+            aria-label={choosing ? COPY.runAction : addressed ? peerLabel : rounding ? members!.sendLabel : COPY.send}
             aria-disabled={!sendable || undefined}
             aria-busy={sending || roundSending || undefined}
             onClick={event => {
@@ -664,7 +744,46 @@ export function Composer({
     </div>
   )
 
-  const add = attachments ? <AttachmentButton controller={attachments} disabled={locked} sections={attachmentMenu} /> : null
+  const peerAction = peerMenu?.items.length ? mentions.openPeople : undefined
+  const recipientChip = addressed && (
+    <span className="agent-mention-chip composer-peer-chip">
+      <AgentAvatar avatar={recipient?.avatar ?? 'general'} size={20} still />
+      <VisibleText text={peerLabel} />
+      <IconButton
+        icon={CloseGlyph}
+        size="xs"
+        label={MENTION_COPY.remove}
+        disabled={peerHeld}
+        onClick={() => {
+          peers?.select()
+          textareaRef.current?.focus({ preventScroll: true })
+        }}
+      />
+    </span>
+  )
+  const peerPickerButton = !phone && peerAction && readOnly === undefined && (
+    <Button
+      variant="ghost"
+      size="sm"
+      icon={AtSign}
+      className="composer-peer-trigger"
+      aria-haspopup="listbox"
+      aria-expanded={mentions.open}
+      aria-controls={mentions.open ? mentions.listId : undefined}
+      shortcut="@"
+      tooltip={MENTION_COPY.contact}
+      disabled={locked}
+      onClick={peerAction}>
+      {MENTION_COPY.contact}
+    </Button>
+  )
+  const sections: MenuSection[] = [
+    ...(phone && peerAction ? [{ id: 'agent', items: [{ id: 'contact-agent', label: MENTION_COPY.contact, onSelect: peerAction }] }] : []),
+    ...(attachmentMenu ?? []),
+  ]
+  const add = attachments ? (
+    <AttachmentButton controller={attachments} disabled={locked} sections={sections.length || attachmentMenu ? sections : undefined} />
+  ) : null
   const fields = (
     <>
       <RunBar run={run} />
@@ -714,6 +833,25 @@ export function Composer({
       )}
       {confirmation}
       {over}
+      {peers?.attempt && peers.attempt.state !== 'sending' && (
+        <InlineNotice
+          tone={peers.attempt.state === 'unknown' ? 'warn' : 'error'}
+          title={peers.attempt.state === 'unknown' ? MENTION_COPY.unknown : undefined}
+          action={
+            peers.attempt.state === 'unknown' ? (
+              <>
+                <Button size="xs" disabled={!peers.online || !peers.attempt.request.body.text} onClick={() => void sendPeer(true)}>
+                  {MENTION_COPY.retry}
+                </Button>
+                <Button size="xs" onClick={peers.abandon}>
+                  {MENTION_COPY.abandon}
+                </Button>
+              </>
+            ) : undefined
+          }>
+          {peers.attempt.reason}
+        </InlineNotice>
+      )}
       {pending !== null && !sending && (
         <div className="pending-submission" data-tint="warn" role="status">
           <div className="pending-submission-text">
@@ -763,11 +901,19 @@ export function Composer({
           if (sendable) submit()
         }}>
         {fields}
+        {addressed && (phone || (peerBlock && draft.trim())) && (
+          <div className="agent-mention-address">
+            {phone && recipientChip}
+            {peerBlock && draft.trim() && <span>{peerBlock}</span>}
+          </div>
+        )}
         {input}
         {/* The text, then one line: 「+」, slash and the Harness at its start; the one entry, 「⋯」 and send at its end. */}
         <div className="composer-toolbar">
           <div className="composer-controls">
             {add}
+            {peerPickerButton}
+            {!phone && recipientChip}
             {!inline && slashButton}
             {controls}
             {trailing}

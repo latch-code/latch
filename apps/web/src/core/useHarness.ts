@@ -98,6 +98,8 @@ export function useHarness() {
   /** Whether a queued synchronization re-establishes state instead of following a change; merged requests keep it. */
   const pendingResync = useRef(false)
   const request = useRef<AbortController | null>(null)
+  const detailRequest = useRef<AbortController | null>(null)
+  const globalInvalidations = useRef(0)
   const activeStream = useRef<{ stream: EventStreamConnection; ticket: ProjectionTicket; clear: () => void } | null>(null)
   /** Renews and then reloads state; set once synchronize exists. */
   const retryRenewal = useRef<() => void>(() => {})
@@ -215,6 +217,7 @@ export function useHarness() {
       const task = async () => {
         let synchronized = false
         while (pending.current && alive.current) {
+          const invalidationsAtStart = globalInvalidations.current
           const currentMode = pending.current
           const currentResync = pendingResync.current
           pending.current = null
@@ -259,6 +262,9 @@ export function useHarness() {
             if (currentMode === 'all') {
               const detailTicket = guard.current.capture()
               if (detailTicket.sessionId !== null) {
+                // The queued full sync will read this detail after rechecking that the device can still see it.
+                if (invalidationsAtStart !== globalInvalidations.current) continue
+                detailRequest.current = controller
                 const nextDetail = await api<TaskDetail>(`tasks/${encodeURIComponent(detailTicket.sessionId)}`, {
                   signal: controller.signal,
                 }).catch((cause: unknown) => {
@@ -296,6 +302,7 @@ export function useHarness() {
               setConnection(navigator.onLine ? 'reconnecting' : 'offline')
             }
           } finally {
+            if (detailRequest.current === controller) detailRequest.current = null
             if (request.current === controller) request.current = null
             if (alive.current) setLoading(false)
           }
@@ -465,6 +472,11 @@ export function useHarness() {
         if (!Number.isSafeInteger(event.revision)) return
         if (event.type === 'refresh') setRefreshHints(value => value + 1)
         if (event.revision <= (latestSnapshot.current?.revision ?? -1)) return
+        // A global refresh can withdraw private content. A stalled detail cannot delay its newer listing.
+        if (event.type === 'refresh') {
+          globalInvalidations.current++
+          detailRequest.current?.abort()
+        }
         void synchronize(event.type === 'tasks-invalidated' ? 'list' : 'all')
       } catch {
         /* Malformed events cannot replace browser state. */

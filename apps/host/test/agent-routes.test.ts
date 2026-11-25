@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
 import type {
   AgentComputer,
+  AgentMention,
   AppSnapshot,
   Automation,
   AutomationDetail,
@@ -66,6 +67,67 @@ async function fixture(options: Parameters<typeof startTestHost>[0] = {}) {
 }
 const settled = (owner: Awaited<ReturnType<TestHost['enroll']>>, id: string, timeout?: number) =>
   expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${id}`)).summary.status, { timeout }).toBe('idle')
+
+test('mentions start only the addressed Agent, replay once, and show only the addressed turn', async () => {
+  const { host, owner, seen } = await fixture()
+  const source = await owner.json<CustomAgent>('custom-agents', {
+    method: 'POST',
+    body: definition({ name: '来源', instructions: 'PRIVATE SOURCE INSTRUCTIONS' }),
+  })
+  const target = await owner.json<CustomAgent>('custom-agents', { method: 'POST', body: definition({ name: '架构师' }) })
+  const path = `custom-agents/${source.id}/mentions`
+  const input = { requestId: randomUUID(), target: { kind: 'agent', customAgentId: target.id }, text: 'Review just this' }
+  const send = () => owner.json<AgentMention>(path, { method: 'POST', body: input })
+  const [sent, retry] = await Promise.all([send(), send()])
+  expect(sent).toMatchObject({ id: retry.id, sourceAgentId: source.id, targetAgentId: target.id, initiator: 'person' })
+  expect(sent.sourceSessionId).toBeUndefined()
+  const sessionId = sent.targetSessionId!
+  await settled(owner, sessionId)
+  const list = () => owner.json<{ mentions: AgentMention[] }>(path)
+  const original = (await list()).mentions[0]!
+  expect(original).toMatchObject({
+    id: sent.id,
+    targetSessionId: sessionId,
+    text: input.text,
+    status: 'completed',
+    reply: { text: 'Answer' },
+  })
+  expect((await owner.json<AppSnapshot>('snapshot')).agentChats).toMatchObject({
+    [source.id]: { state: 'empty' },
+    [target.id]: { state: 'ready', sessionId },
+  })
+  expect(seen).toHaveLength(1)
+  expect(JSON.stringify(seen)).not.toContain('PRIVATE SOURCE INSTRUCTIONS')
+  const next = await owner.json<AgentMention>(path, {
+    method: 'POST',
+    body: { ...input, requestId: randomUUID(), text: 'Now the second question' },
+  })
+  expect(next.targetSessionId).toBe(sessionId)
+  await settled(owner, sessionId)
+  const second = (await list()).mentions
+  expect(second.map(row => row.status)).toEqual(['completed', 'completed'])
+  expect(second[0]?.reply).toEqual(original.reply)
+  expect(second[1]?.reply?.messageId).not.toBe(original.reply?.messageId)
+  expect(await send()).toMatchObject({ id: original.id, reply: original.reply })
+  await expect(owner.json(path, { method: 'POST', body: { ...input, text: 'changed' } })).rejects.toThrow()
+  const forbidden = await host.enroll({ listener: 'loopback-tcp' })
+  await owner.json(`devices/${forbidden.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
+  for (const request of [forbidden.request(path), forbidden.request(path, { method: 'POST', body: input })]) {
+    expect((await request).status).toBe(403)
+  }
+  expect((await owner.request(path, { method: 'POST', body: { ...input, initiator: 'agent' } })).status).toBe(400)
+  expect(
+    (
+      await owner.request(path, {
+        method: 'POST',
+        body: { ...input, requestId: randomUUID(), target: { kind: 'agent', customAgentId: source.id } },
+      })
+    ).status,
+  ).toBe(400)
+  expect(seen).toHaveLength(2)
+  await owner.json(`custom-agents/${target.id}`, { method: 'DELETE', body: { requestId: randomUUID() } })
+  expect((await list()).mentions).toEqual([])
+})
 
 test('a work computer belongs to one assistant, prevents local dispatch and can be detached without losing its conversation', async () => {
   const { host, owner, seen } = await fixture()

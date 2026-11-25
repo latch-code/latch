@@ -198,6 +198,13 @@ import {
   type LaunchRoute,
   type ProfileSelection,
 } from './permission.ts'
+import {
+  DSH_CONSULTATION_GUARD_VERSION,
+  DSH_CONSULTATION_METHOD,
+  DSH_CONSULTATION_MINIMUM,
+  DSH_MODES,
+  guardedDshSession,
+} from './profiles/dsh-mode.ts'
 import type { AcpPermissionProfile, ExtensionRequest, ProjectedChild, RetryReport, ToolDenial } from './profiles/index.ts'
 import type { GatewayModelValues, GatewayPlace, HarnessProfile, HistoryImportRule } from './profiles/types.ts'
 import { fingerprintProjectConfig, type ProjectConfig } from './project-config.ts'
@@ -284,7 +291,7 @@ import {
 import { listPiSessions, piProjectTrust, readPiHeader, readPiSession, type PiPlace } from './pi-store.ts'
 import { createAcpStore, emptyAcpState, type AcpRecord, type AcpState, type AcpStore, type AcpTask, type StartChoice } from './store.ts'
 import type { AgentHealth, AgentRecord, ResolvedOptions } from './types.ts'
-import { assertVersion, compareVersions } from './version.ts'
+import { assertVersion, compareVersions, knownVersion } from './version.ts'
 
 export const CLIENT_VERSION = '0.1.0'
 const CANCELLED_OUTCOME = { outcome: { outcome: 'cancelled' } }
@@ -337,6 +344,10 @@ interface Live {
   sessions: Map<string, string>
   /** Reports from the process-local permission service, including sessions not yet bound by their ACP response. */
   processModes?: Map<string, string>
+  /** Dedicated to exactly one text-only consultation; its successor must spawn again. */
+  consultationRun?: string
+  consultationExecution?: string
+  consultationSessions?: Set<string>
   launchMode?: string
   /** The `session/load` of an agent's earlier session, whose replay is kept while it runs. */
   capture?: Capture
@@ -403,6 +414,9 @@ interface Segment {
 }
 
 interface Run {
+  /** Host reauthorization for this one delegated turn. Never saved or inherited by the next prompt. */
+  authorizeConsultation?: () => void
+  recordConsultationGuard?: CreateTaskInput['recordConsultationGuard']
   /** `TaskSummary.runId` once the turn is recorded; a cancel naming another run leaves this one alone. */
   id: string
   taskId: string
@@ -2775,6 +2789,19 @@ export class AgentRuntime implements Bridge {
     return hash
   }
 
+  canReceiveConsultation(sessionId?: string): boolean {
+    if (this.closed || !this.selection.verified || this.selection.profile?.presetId !== 'dsh' || !this.agent.confirmedCommand) return false
+    const seen = knownVersion(this.agent, this.agent.confirmedCommand)?.version
+    if (seen && (compareVersions(seen, DSH_CONSULTATION_MINIMUM) ?? -1) < 0) return false
+    if (sessionId === undefined) return true
+    const task = this.state.tasks[sessionId]
+    return !!task?.summary.agent?.customAgentId && !task.acp.drift && !task.summary.archived && !this.busy(sessionId)
+  }
+
+  private consultationRefusal(): AppError {
+    return new AppError(409, 'agent-consultation-guard', '无法确认此 DeepSeek Harness 回合只能回复文字，未发送委托。')
+  }
+
   async createTask(input: CreateTaskInput): Promise<{ sessionId: string }> {
     await this.ready()
     assertStart(input)
@@ -2797,6 +2824,7 @@ export class AgentRuntime implements Bridge {
       ...(input.fork ? { fork: forkKey(input.fork) } : {}),
       ...(input.seed ? { seed: digest(input.seed) } : {}),
       ...(input.pluginCreation ? { pluginCreation: true } : {}),
+      ...(input.consultation ? { consultation: true } : {}),
     })
     const pending = this.creating.get(key)
     if (pending) {
@@ -2842,6 +2870,7 @@ export class AgentRuntime implements Bridge {
       ...(input.fork ? { fork: forkKey(input.fork) } : {}),
       ...(input.seed ? { seed: digest(input.seed) } : {}),
       ...(input.pluginCreation ? { pluginCreation: true } : {}),
+      ...(input.consultation ? { consultation: true } : {}),
     })
     const receipt = this.state.receipts[key]
     if (receipt) {
@@ -2850,6 +2879,18 @@ export class AgentRuntime implements Bridge {
       await this.flush()
       return { sessionId: receipt.taskId }
     }
+    if (
+      input.consultation
+      && (!this.canReceiveConsultation()
+        || !input.agentContext?.agent?.customAgentId
+        || !input.authorizeConsultation
+        || !input.recordConsultationGuard
+        || input.seed !== undefined
+        || input.fork
+        || attachments.length
+        || fileRefs.length)
+    )
+      throw this.consultationRefusal()
     const route = checkedRoute(input.modelRoute)
     this.assertAskableMode(config)
     const launch = this.currentLaunch(project, scope?.passed, route, this.startProcessMode(config))
@@ -2886,6 +2927,9 @@ export class AgentRuntime implements Bridge {
       ...(commandContext ? { commandContext } : {}),
       ...(scope ? { scope } : {}),
       ...(input.agentContext ? { agentContext: input.agentContext } : {}),
+      ...(input.consultation
+        ? { authorizeConsultation: input.authorizeConsultation, recordConsultationGuard: input.recordConsultationGuard }
+        : {}),
       ...(config.length
         ? {
             startConfig: startChoices(config, this.state.catalogue, route ? this.routedOptions(route) : undefined),
@@ -2938,6 +2982,8 @@ export class AgentRuntime implements Bridge {
     commandContext?: NonNullable<AcpRecord['commandContext']>
     scope?: Scope
     agentContext?: AgentExecutionContext
+    authorizeConsultation?: () => void
+    recordConsultationGuard?: CreateTaskInput['recordConsultationGuard']
     startConfig?: StartChoice[]
     route?: ModelRoute
     fork?: NonNullable<AcpRecord['fork']>
@@ -2958,6 +3004,10 @@ export class AgentRuntime implements Bridge {
     if (agentContext?.skillBodies?.length || this.proposing(agentContext) || create.workProposals)
       await writeSessionSkills(skillsDirectory(this.options.dataDir, sessionId), agentContext?.skillBodies ?? [])
     const run = this.reserve(sessionId, 1, context, create.userText)
+    if (create.authorizeConsultation) {
+      run.authorizeConsultation = create.authorizeConsultation
+      run.recordConsultationGuard = create.recordConsultationGuard
+    }
     run.attachments = attachments
     const at = isoTime(run.clock.startedAt)
     run.userMessageId = randomUUID()
@@ -3107,9 +3157,10 @@ export class AgentRuntime implements Bridge {
     const fresh = options.freshContext === true
     // The new context joins the hash only when asked, so receipts written before it existed still match.
     const payloadHash = digest(
-      attachments.length || fileRefs.length || fresh || options.teamRequest
+      attachments.length || fileRefs.length || fresh || options.teamRequest || options.consultation
         ? {
             prompt,
+            ...(options.consultation ? { consultation: true } : {}),
             ...(options.model ? { model: options.model } : {}),
             ...(attachments.length ? { attachments } : {}),
             ...(fileRefs.length ? { fileRefs } : {}),
@@ -3152,6 +3203,16 @@ export class AgentRuntime implements Bridge {
       throw new AppError(409, 'task-running', '任务仍在运行，请等待完成或先取消')
     }
     this.assertNotChecking(sessionId)
+    if (
+      options.consultation
+      && (!this.canReceiveConsultation(sessionId)
+        || !options.authorizeConsultation
+        || !options.recordConsultationGuard
+        || attachments.length
+        || fileRefs.length
+        || fresh)
+    )
+      throw this.consultationRefusal()
     let context: string
     try {
       context = fileMentionContext(prompt, fileRefs, task.summary.folders ?? [{ id: 'default', path: task.acp.cwd }])
@@ -3162,6 +3223,10 @@ export class AgentRuntime implements Bridge {
     const seed = fresh ? '' : (task.acp.seed ?? '')
     context = seed + context
     const run = this.reserve(sessionId, task.acp.turnSeq + 1, context, userText)
+    if (options.consultation) {
+      run.authorizeConsultation = options.authorizeConsultation
+      run.recordConsultationGuard = options.recordConsultationGuard
+    }
     run.attachments = attachments
     // Shown as starting from now on (`preparing`), while the process starts.
     this.notify(sessionId)
@@ -3395,7 +3460,14 @@ export class AgentRuntime implements Bridge {
   }
 
   private steerable(run: Run): boolean {
-    return run.sent && !run.cancelRequested && run.live?.initialized === true && run.live.capabilities.steer && !!run.acpSessionId
+    return (
+      run.sent
+      && !run.authorizeConsultation
+      && !run.cancelRequested
+      && run.live?.initialized === true
+      && run.live.capabilities.steer
+      && !!run.acpSessionId
+    )
   }
 
   private inputBlocks(taskId: string, live: Live, prompt: string, attachments: AttachmentRef[]): Promise<unknown[]> {
@@ -5275,6 +5347,31 @@ export class AgentRuntime implements Bridge {
     return [...(this.profile?.notes ?? []), ...(this.selection.notes ?? []), ...(this.settingsNotes.get(task.summary.id) ?? [])]
   }
 
+  private authorizeConsultation(taskId: string, runId: string): void {
+    const run = this.runs.get(taskId)
+    if (this.closed || run?.id !== runId || run.cancelRequested || !run.authorizeConsultation) throw this.consultationRefusal()
+    run.authorizeConsultation()
+  }
+
+  private verifyConsultation(taskId: string, binding: Binding): void {
+    const { live, acpSessionId } = binding
+    const mode = live.processModes?.get(acpSessionId)
+    const task = this.task(taskId)
+    if (
+      !live.consultationRun
+      || this.lives.get(taskId) !== live
+      || live.wire.stopping
+      || live.sessions.get(acpSessionId) !== taskId
+      || !live.consultationSessions?.has(acpSessionId)
+      || !mode
+      || !(DSH_MODES as readonly string[]).includes(mode)
+      || mode !== (task.acp.expectedMode ?? task.acp.launchMode ?? this.profile?.expectedMode)
+      || task.acp.drift
+    )
+      throw this.consultationRefusal()
+    this.authorizeConsultation(taskId, live.consultationRun)
+  }
+
   /**
    * The session's reported mode must equal the expected one before a prompt. A mismatch, or a mode recorded before
    * the process was restarted, is set once and read back from the response or the agent's notifications; anything
@@ -5666,7 +5763,13 @@ export class AgentRuntime implements Bridge {
     clearTimeout(run.graceTimer)
     if (this.runs.get(run.taskId) === run) this.runs.delete(run.taskId)
     run.resolveDone()
-    this.scheduleIdle(run.taskId)
+    this.afterRunProcess(run)
+  }
+
+  private afterRunProcess(run: Run): void {
+    const live = this.lives.get(run.taskId)
+    if (live?.consultationRun === run.id) void live.wire.stop('stop', this.limits.stopGraceMs).catch(() => {})
+    else this.scheduleIdle(run.taskId)
   }
 
   private begin(run: Run): void {
@@ -5728,6 +5831,13 @@ export class AgentRuntime implements Bridge {
       this.assertGatewayThinking(task)
       if (run.attachments?.length) binding.live.receivedAttachments = true
       if (binding.live.receivedAttachments) run.sensitiveOutput = true
+      if (run.authorizeConsultation) {
+        this.verifyConsultation(run.taskId, binding)
+        const executionId = binding.live.consultationExecution
+        if (!executionId || !run.recordConsultationGuard) throw this.consultationRefusal()
+        await run.recordConsultationGuard({ sessionId: run.taskId, runId: run.id, version: DSH_CONSULTATION_GUARD_VERSION, executionId })
+        this.verifyConsultation(run.taskId, binding)
+      }
       run.sent = true
       if (binding.live.gateway) {
         run.gatewayMark = binding.live.gateway.requests()
@@ -6085,7 +6195,7 @@ export class AgentRuntime implements Bridge {
     }
     if (this.runs.get(run.taskId) === run) this.runs.delete(run.taskId)
     this.notify(run.taskId)
-    this.scheduleIdle(run.taskId)
+    this.afterRunProcess(run)
     this.fileTracking.finish(run.id, async result => {
       const current = this.state.tasks[run.taskId]
       const message = current?.messages.find(item => item.id === outputMessageId)
@@ -6189,9 +6299,17 @@ export class AgentRuntime implements Bridge {
   private async ensureProcess(key: string, cwd: string, confirmed: Confirmed): Promise<Live> {
     for (;;) {
       const pending = this.spawning.get(key)
-      if (pending) return pending
+      if (pending) {
+        await pending
+        continue
+      }
       const live = this.lives.get(key)
-      if (live?.initialized && !live.wire.stopping) return live
+      const run = this.runs.get(key)
+      const consultationId = run?.authorizeConsultation ? run.id : undefined
+      if (live?.initialized && !live.wire.stopping) {
+        if (live.consultationRun === consultationId) return live
+        await live.wire.stop('stop', this.limits.stopGraceMs)
+      }
       // A process being stopped would drop new requests; start its successor only once it is gone.
       if (live) {
         await live.wire.exited
@@ -6229,6 +6347,14 @@ export class AgentRuntime implements Bridge {
     if (paused) throw new AppError(503, 'agent-paused', `${name} 在一分钟内连续崩溃 3 次，已暂停自动重启。请检查安装与登录状态，稍后再试。`)
     // Every start reads the project configuration again: the agent loads it now, not when the session was confirmed.
     const first = await this.assertLaunch(cwd, confirmed)
+    const run = this.runs.get(key)
+    const consultationRun = run?.authorizeConsultation ? run.id : undefined
+    const consultationExecution = consultationRun ? digest([first.hash, consultationRun, DSH_CONSULTATION_GUARD_VERSION]) : undefined
+    if (consultationRun) {
+      const gate = this.selection.profile?.minimumVersion
+      if (!gate || !this.canReceiveConsultation()) throw this.consultationRefusal()
+      await assertVersion(this.agent, first.command, { ...gate, minimum: DSH_CONSULTATION_MINIMUM }, '接收文字委托', true)
+    }
     const cacheDirectory = await commandDirectory(cwd)
     // A command older than its profile supports would not start, or would start and never answer: refused before it
     // runs. Not recorded as the harness's last error: it says so itself, and an upgrade ends it. Before the re-check
@@ -6274,7 +6400,12 @@ export class AgentRuntime implements Bridge {
     const processMode = this.selection.profile?.processMode
     const mode =
       this.processModeChanges.get(key)?.value ?? (this.checking.has(key) ? undefined : (confirmed.launchMode ?? this.profile?.expectedMode))
-    const processSettings = await processMode?.prepare(sessionTmpDir, mode)
+    // A resumed private chat keeps its own persisted mode; this read never repairs/widens it for another Agent.
+    const processSettings = await processMode?.prepare(
+      sessionTmpDir,
+      consultationRun && this.state.tasks[key]?.acp.acpSessionId ? undefined : mode,
+      consultationExecution,
+    )
     this.assertOpen()
     // Opened as late as it can be: the route's files name the gateway's address. Closed again if anything before the
     // spawn fails.
@@ -6298,6 +6429,7 @@ export class AgentRuntime implements Bridge {
       this.launchThinkingChanges.get(key)?.authorize?.()
       this.routeChanges.get(key)?.authorize?.()
       this.makeRoom(key)
+      if (consultationRun) this.authorizeConsultation(key, consultationRun)
     } catch (error) {
       gateway?.close()
       throw error
@@ -6384,6 +6516,9 @@ export class AgentRuntime implements Bridge {
       authMethods: [],
       sessions: new Map(),
       ...(processMode ? { processModes: new Map<string, string>() } : {}),
+      ...(consultationRun && consultationExecution
+        ? { consultationRun, consultationExecution, consultationSessions: new Set<string>() }
+        : {}),
       ...(mode ? { launchMode: mode } : {}),
       children: new Map(),
       lastUsed: Date.now(),
@@ -6575,9 +6710,12 @@ export class AgentRuntime implements Bridge {
       // 核对 only reads: no start choice and no mode is set, and no turn can follow until it ends; the next turn's
       // binding sets and reads back the mode as always.
       if (this.checking.has(taskId) || this.processModeChanges.has(taskId) || this.launchThinkingChanges.has(taskId)) return binding
+      if (live.consultationRun) this.verifyConsultation(taskId, binding)
       const unrouted = this.routeModel(taskId)
       const refused = unrouted ?? (await this.applyStart(taskId, binding, signal))
-      await this.verifyMode(taskId, binding, signal)
+      // applyStart reads back model and other settings. Only an ordinary turn may repair a mismatched permission mode.
+      if (live.consultationRun) this.verifyConsultation(taskId, binding)
+      else await this.verifyMode(taskId, binding, signal)
       if (refused) throw refused
       return binding
     } catch (error) {
@@ -6726,6 +6864,7 @@ export class AgentRuntime implements Bridge {
     // start refused, so the session fails with a reason instead of running until the general timeout.
     const setupMs = Math.min(this.limits.sessionSetupTimeoutMs, this.limits.requestTimeoutMs)
     const setup = (method: string, params: unknown): Promise<unknown> => {
+      if (live.consultationRun) this.authorizeConsultation(taskId, live.consultationRun)
       this.processModeChanges.get(taskId)?.authorize?.()
       this.launchThinkingChanges.get(taskId)?.authorize?.()
       this.routeChanges.get(taskId)?.authorize?.()
@@ -6754,7 +6893,7 @@ export class AgentRuntime implements Bridge {
         this.limits.log(`${this.agent.name} 会话 ${taskId} 的团队名单没有写入：${clip(this.redact(message(error)), 200)}`),
       )
     }
-    const skilled = task.acp.skills === true || task.acp.proposals === true || board || team
+    const skilled = !live.consultationRun && (task.acp.skills === true || task.acp.proposals === true || board || team)
     const mcpServers: unknown[] = skilled
       ? [
           skillsServer(
@@ -6767,9 +6906,9 @@ export class AgentRuntime implements Bridge {
           ),
         ]
       : []
-    const tools = this.openTools(taskId, live)
+    const tools = live.consultationRun ? undefined : this.openTools(taskId, live)
     if (tools) mcpServers.push(browserServer(tools))
-    const leases = await this.openMcp(taskId, live)
+    const leases = live.consultationRun ? [] : await this.openMcp(taskId, live)
     for (const lease of leases) mcpServers.push(mcpBridgeServer(lease))
     // An ACP agent may start the servers it is given with its whole environment, the gateway's token included (Grok
     // does): Latch's own servers never use it, so each gets it blanked. Latch's own wires start them themselves.
@@ -7543,6 +7682,10 @@ export class AgentRuntime implements Bridge {
   // ---- agent messages ---------------------------------------------------------------------------------------------
 
   private onRequest(live: Live, method: string, params: unknown, id: RpcId): Promise<unknown> {
+    if (live.consultationRun) {
+      if (method === 'session/request_permission') return Promise.resolve(CANCELLED_OUTCOME)
+      return Promise.reject(new RpcError(RPC.invalidParams, 'This consultation accepts a text reply only.'))
+    }
     if (method === 'session/request_permission') return this.onPermission(live, params, id)
     if (method === ELICITATION_METHOD && this.options.askUser) {
       const ask = elicitationAsk(params)
@@ -7789,6 +7932,12 @@ export class AgentRuntime implements Bridge {
   }
 
   private onNotification(live: Live, method: string, params: unknown): void {
+    if (method === DSH_CONSULTATION_METHOD && live.consultationSessions) {
+      const session = guardedDshSession(params, live.consultationExecution)
+      if (session && this.lives.get(live.key) === live && !live.wire.stopping && live.consultationSessions.size < 256)
+        live.consultationSessions.add(session)
+      return
+    }
     const processMode = this.selection.profile?.processMode?.read?.(method, params)
     if (processMode) {
       // A report is evidence only from this live process and for the session it actually opened.

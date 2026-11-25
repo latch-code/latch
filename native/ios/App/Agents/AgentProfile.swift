@@ -100,6 +100,16 @@ struct AgentProfileSheet: View {
     }
     @ViewBuilder private func runSettings(_ entry: PhoneAgentEntry) -> some View {
         if entry.destination != .local { section("工作电脑") { AgentWorkComputer(entry: entry) } }
+        if entry.destination == .local, model.snapshot["catalog"]["features"]["agentMentions"].bool {
+            detailed { value in
+                let agent = general ? value["general"] : value["agent"]
+                let engine = model.engineInfo(entry.harnessId)
+                let supported = general || (agent["mode"].string == "agent" && (entry.harnessId == "standard" || engine["skills"].string == "server"))
+                if supported || agent["canConsultAgents"].bool {
+                    ConsultationPermission(owner: id, agent: agent, supported: supported, saved: reload)
+                }
+            }
+        }
         section(entry.destination == .local ? "电脑" : "原电脑上的定时") { ComputerSection(id: id, agent: general ? .null : summary) }
         if !general, summary != .null { section("通知") { NotificationSection(agent: summary) } }
         section("工作位置") { Text(entry.place ?? "不带项目").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2).lineLimit(1) }
@@ -443,6 +453,62 @@ private struct UpcomingSection: View {
             working.remove(automationId)
             // Unknown stays with the model's pending write, which the row offers again.
             if outcome != .done && outcome != .unknown { states[automationId] = outcome }
+        }
+    }
+}
+
+
+private struct ConsultationPermission: View {
+    @EnvironmentObject private var model: PhoneModel
+    let owner: String
+    let agent: NativeJSON
+    let supported: Bool
+    let saved: () -> Void
+    @State private var state: PhoneAgentWrite?
+    @State private var saving = false
+    private var on: Bool { agent["canConsultAgents"].bool }
+    private var held: NativePendingWrite? {
+        model.pending.first { item in
+            item.method == "PATCH" && item.path == "/link/api/custom-agents/" + owner
+                && (try? NativeJSON.decode(item.body).object["canConsultAgents"]) != nil
+        }
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Toggle("允许主动联系其他 Agent", isOn: Binding(get: { on }, set: setPermission))
+                .font(.body.weight(.medium))
+                .disabled(locked)
+            Text(!supported ? "当前运行方式不支持主动联系其他 Agent。" : legacy ? "当前只可联系内置 Agent。允许后，它也可在你的聊天回合询问本机已确认的 DeepSeek Harness。DeepSeek 以你的电脑账户运行，只回复文字。"
+                        : "你直接发消息时，它每轮可询问一位本机 Agent。已确认的 DeepSeek Harness 以你的电脑账户运行，本轮只回复文字。")
+                .font(.caption).foregroundStyle(PhoneTheme.muted)
+            if legacy && supported {
+                Button("允许联系 DeepSeek Harness") { setPermission(true) }.disabled(locked)
+            }
+            if let outcome = held == nil ? state : .unknown {
+                WriteNotice(state: outcome, retry: held.map { write in { submit(write) } }, reload: saved, held: held, settled: saved)
+            }
+        }
+    }
+    private var legacy: Bool { on && !agent["canConsultDeepSeek"].bool }
+    private var locked: Bool {
+        !model.canRun || !model.transportReady || model.busy || saving || !model.pending.isEmpty || agent["revision"].integer == nil
+    }
+    private func setPermission(_ enabled: Bool) {
+        guard !locked, !enabled || supported, let revision = agent["revision"].integer else { return }
+        var fields: [String: NativeJSON] = ["baseRevision": .number(Double(revision)), "canConsultAgents": .bool(enabled)]
+        if enabled { fields["canConsultDeepSeek"] = .bool(true) }
+        guard let request = try? NativePendingWrite(method: .patch, path: "/link/api/custom-agents/" + owner, fields: fields) else { return }
+        submit(request)
+    }
+    private func submit(_ request: NativePendingWrite) {
+        guard !saving else { return }
+        let host = model.generation, window = model.privateSnapshot.epoch
+        saving = true
+        Task {
+            let result = await model.writeAgent(request)
+            guard model.generation == host, model.privateSnapshot.accepts(window) else { return }
+            saving = false; state = result
+            if result == .done { saved() }
         }
     }
 }

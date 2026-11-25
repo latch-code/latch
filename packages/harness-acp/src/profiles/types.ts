@@ -343,7 +343,7 @@ export interface HarnessProfile {
   readonly version: number
   /** A process-level mode. An official service may report it, or a launch flag augments the ACP-reported mode. */
   readonly processMode?: {
-    prepare(directory: string, mode?: string): Promise<{ args: string[]; env: Record<string, string> }>
+    prepare(directory: string, mode?: string, consultationExecution?: string): Promise<{ args: string[]; env: Record<string, string> }>
     read?(method: string, params: unknown): { sessionId: string; mode: string } | undefined
     /** A launch flag that ACP cannot report; a restart cannot independently verify the old flag. */
     readonly unread?: true

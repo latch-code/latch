@@ -38,6 +38,8 @@ import { DEVICE_FAILURE_STEPS, OWNER_FAILURE_STEPS, SendingBubble, SessionCompos
 import type { ShellState } from './useShellLayout.tsx'
 import { SourceHandoffDock, type HandoffRequest } from '../handoffs/SourceHandoff.tsx'
 import { TargetHandoffDock } from '../handoffs/TargetHandoff.tsx'
+import { AgentMentionHistory } from '../agents/AgentMentions.tsx'
+import { topicOwner } from '../agents/chat.ts'
 import { ReturnedResult } from '../handoffs/ReturnedResult.tsx'
 import { placeByTime, quotedSummary } from '../handoffs/model.ts'
 import { useTopicProposals } from '../agents/TopicProposals.tsx'
@@ -244,6 +246,27 @@ export function ConversationView({
         item => item.sourceSessionId === current.summary.id && (item.result || (item.contentRemoved && item.status === 'returned')),
       )
     : []
+  const mentions =
+    shell.agentMentions.source && shell.agentMentions.source === topicOwner(current?.summary) ? shell.agentMentions : undefined
+  const placeMentions = (turns: ReadonlyArray<{ key: string; at: number | undefined }>) => {
+    if (!mentions?.rows.length) return undefined
+    const grouped = placeByTime(
+      turns,
+      mentions.rows.map(item => ({ at: item.createdAt, item })),
+    )
+    return new Map(
+      [...grouped].map(([key, rows]) => [
+        key,
+        <AgentMentionHistory
+          mentions={mentions}
+          items={rows.map(row => row.item)}
+          snapshot={snapshot}
+          open={shell.openMentionTarget}
+          reportError={false}
+        />,
+      ]),
+    )
+  }
   const placeReturned = (turns: ReadonlyArray<{ key: string; at: number | undefined }>) => {
     const placed = placeByTime(
       turns,
@@ -547,7 +570,12 @@ export function ConversationView({
                                 contextToolMessageId={shell.contextToolMessageId}
                                 {...(handing ? { onHandoff: handOff } : {})}
                                 {...(ownTeams.length ? { teams: ownTeams } : {})}
-                                {...(returned.length || placeProposals || placeResults || placeBoard || placeOwnTeams
+                                {...(returned.length
+                                || placeProposals
+                                || placeResults
+                                || placeBoard
+                                || placeOwnTeams
+                                || mentions?.rows.length
                                   ? {
                                       placed: (turns: ReadonlyArray<{ key: string; at: number | undefined }>) =>
                                         // After a turn, what it proposed comes first (想定时), then the results of what was
@@ -561,7 +589,7 @@ export function ConversationView({
                                             // A team started from a turn's proposal stands where that proposal stood.
                                             placeOwnTeams?.(turns),
                                           ),
-                                          placeResults?.(turns),
+                                          joinPlaced(placeResults?.(turns), placeMentions(turns)),
                                         ),
                                     }
                                   : {})}
@@ -574,6 +602,9 @@ export function ConversationView({
                               />
                             </SentCatalogue.Provider>
                           </ReplyQuoteSource.Provider>
+                          {mentions?.readError && (
+                            <AgentMentionHistory mentions={mentions} items={[]} snapshot={snapshot} open={shell.openMentionTarget} />
+                          )}
                           <SendingBubble shell={shell} />
                         </RoundPageContext.Provider>
                       </TeamPageContext.Provider>

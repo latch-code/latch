@@ -3,7 +3,7 @@ import { mkdir, rmdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { expect, it } from 'vitest'
-import type { AppSnapshot, CustomAgent, CustomAgentList, TaskDetail, WorkspaceInfo } from '@latch/protocol'
+import type { AgentMention, AppSnapshot, CustomAgent, CustomAgentList, TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
@@ -13,6 +13,225 @@ import { stillMotion } from './helpers/visual.ts'
 import { promptValue } from './helpers/prompt.ts'
 
 const OUT = 'test-results/helper-chat'
+
+function createPeer(owner: TestDevice, name: string, description: string) {
+  return owner.json<CustomAgent>('custom-agents', {
+    method: 'POST',
+    body: {
+      requestId: randomUUID(),
+      name,
+      description,
+      harnessId: 'standard',
+      mode: 'agent',
+      model: { providerId: 'helper-fixture', model: 'fixture-one' },
+    },
+  })
+}
+
+it('addresses one other personal Agent from an empty or existing chat and reads its own reply', async () => {
+  const host = await startTestHost({ plugins: [fixture] })
+  const browser = await chromium.launch(browserLaunchOptions())
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', reducedMotion: 'reduce' })
+  try {
+    page.setDefaultTimeout(15_000)
+    const owner = await host.enroll({ listener: 'unix' })
+    const source = await createPeer(owner, '编辑', '整理想法与写作素材')
+    const target = await createPeer(owner, '架构师', '评审架构与技术方案')
+    await fullScopeBrowser(page, host, owner, '协作验收')
+    await place(page, '我的 Agent').click()
+    await page.locator(`button[data-agent-id="${source.id}"]`).filter({ visible: true }).first().click()
+    const field = page.getByRole('textbox', { name: '给编辑发消息', exact: true })
+    const contact = page.getByRole('button', { name: '联系其他 Agent', exact: true })
+    const option = page.getByRole('option', { name: /架构师/u })
+    // The toolbar can address an Agent while the caret is in a quoted source, without editing or completing its text.
+    const excerpt = '下面是原文：\n> 评审人是 @架'
+    await field.fill(excerpt)
+    await field.press('End')
+    expect(await option.count()).toBe(0)
+    await contact.click()
+    await option.waitFor()
+    await field.press('Escape')
+    expect(await promptValue(field)).toBe(excerpt)
+    await field.fill('')
+    await contact.focus()
+    await contact.press('Enter')
+    await option.waitFor()
+    expect(await page.getByRole('option', { name: /编辑/u }).count()).toBe(0)
+    expect(await field.getAttribute('aria-activedescendant')).toBeNull()
+    await mkdir(OUT, { recursive: true })
+    for (const [width, height, scheme] of [
+      [1440, 900, 'light'],
+      [834, 1112, 'light'],
+      [390, 844, 'dark'],
+    ] as const) {
+      await page.setViewportSize({ width, height })
+      await page.emulateMedia({ colorScheme: scheme })
+      await field.fill('@')
+      await option.waitFor()
+      await shoot(page, `mention-picker-${width}-${scheme}`)
+    }
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await field.fill('@架')
+    await field.press('ArrowDown')
+    await field.press('Enter')
+    await page.getByRole('button', { name: '发给架构师', exact: true }).waitFor()
+    await shoot(page, 'pc-mention-addressed-dark')
+    await page.getByRole('button', { name: '移除收件人' }).click()
+    await page.setViewportSize({ width: 390, height: 844 })
+    await field.fill('请＠架')
+    await field.press('Enter')
+    const addressed = page.getByRole('button', { name: '发给架构师', exact: true })
+    await addressed.waitFor()
+    expect(await promptValue(field)).toBe('请')
+    await page.getByRole('button', { name: '移除收件人' }).click()
+    await field.fill('')
+    await page.getByRole('button', { name: '更多', exact: true }).filter({ visible: true }).click()
+    await page.getByRole('menuitem', { name: '联系其他 Agent' }).click()
+    await option.click()
+    const question = '请评审这份离线同步方案'
+    await field.fill(question)
+    const attempts: string[] = []
+    await page.route(`**/custom-agents/${source.id}/mentions`, async route => {
+      if (route.request().method() !== 'POST') {
+        // Neither the acceptance nor the read-back is visible until this tab retries after reload.
+        if (attempts.length === 1) {
+          const response = await route.fetch()
+          if (response.ok()) return route.abort('failed')
+          return route.fulfill({ response })
+        }
+        return route.continue()
+      }
+      const sent = route.request().postDataJSON() as { requestId: string; target: { customAgentId: string }; text: string }
+      expect(sent.target.customAgentId).toBe(target.id)
+      expect(sent.text).toBe(question)
+      attempts.push(sent.requestId)
+      if (attempts.length !== 1) return route.continue()
+      const accepted = await route.fetch()
+      expect(accepted.ok()).toBe(true)
+      await route.abort('failed')
+    })
+    await addressed.click()
+    const retry = page.getByRole('button', { name: '重试同一请求', exact: true })
+    await retry.waitFor()
+    await page.reload()
+    await connected(page)
+    if (!(await field.isVisible())) {
+      await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '我的 Agent', exact: true }).click()
+      await page.locator(`button[data-agent-id="${source.id}"]`).filter({ visible: true }).first().click()
+    }
+    await retry.click()
+    const record = page.locator('.agent-mention-record').filter({ hasText: question })
+    await record.getByText('好的，我来整理。', { exact: true }).waitFor()
+    expect(attempts).toHaveLength(2)
+    expect(new Set(attempts).size).toBe(1)
+    expect(await record.count()).toBe(1)
+    expect((await owner.json<AppSnapshot>('snapshot')).agentChats?.[source.id]?.state).toBe('empty')
+    await shoot(page, 'mention-reply-390-dark')
+    await record.getByRole('button', { name: '打开对方聊天' }).click()
+    const backToSource = page.getByRole('button', { name: '返回编辑', exact: true })
+    await backToSource.click()
+    await expect.poll(() => record.locator('[data-open-agent-mention]').evaluate(el => el === document.activeElement)).toBe(true)
+    await record.locator('[data-open-agent-mention]').press('Enter')
+    const followup = page.getByRole('textbox', { name: '继续对话', exact: true })
+    await followup.fill('@')
+    await page.getByRole('option', { name: /编辑/u }).click()
+    await followup.fill('把意见整理成提纲')
+    await page.getByRole('button', { name: '发给编辑', exact: true }).click()
+    await page
+      .locator('.agent-mention-record')
+      .filter({ hasText: '把意见整理成提纲' })
+      .getByText('好的，我来整理。', { exact: true })
+      .waitFor()
+  } finally {
+    await browser.close()
+    await host.close()
+  }
+})
+
+const consultRequest = '帮我梳理离线同步方案的验收重点。'
+const reviewQuestion = '离线编辑后重新联网，哪些场景要优先验收？'
+const reviewAnswer = [
+  '建议先测三种场景。',
+  '',
+  '1. 离线编辑后重连，修改仍在。',
+  '2. 同一条修改重复提交，只写入一次。',
+  '3. 两台设备同时编辑，保留双方的内容并提示冲突。',
+].join('\n')
+
+it('shows a desktop Agent-initiated consultation in place and returns to the same exchange', async () => {
+  const host = await startTestHost({ plugins: [fixture] })
+  const browser = await chromium.launch(browserLaunchOptions())
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', reducedMotion: 'reduce' })
+  try {
+    page.setDefaultTimeout(15_000)
+    const owner = await host.enroll({ listener: 'unix' })
+    const source = await createPeer(owner, '编辑', '整理想法与写作素材')
+    const target = await createPeer(owner, '架构师', '评审架构与技术方案')
+    await owner.json(`custom-agents/${source.id}`, {
+      method: 'PATCH',
+      body: { requestId: randomUUID(), baseRevision: source.revision, canConsultAgents: true },
+    })
+    await fullScopeBrowser(page, host, owner, '桌面协作验收')
+    await mkdir(OUT, { recursive: true })
+    await place(page, '我的 Agent').click()
+    await page.locator(`button[data-agent-id="${source.id}"]`).filter({ visible: true }).first().click()
+    const profile = page.getByRole('region', { name: '编辑 的资料', exact: true })
+    await page.getByRole('button', { name: '编辑 的资料', exact: true }).click()
+    await profile.getByRole('button', { name: '设置', exact: true }).click()
+    expect(await profile.getByRole('switch', { name: '允许主动联系其他 Agent', exact: true }).getAttribute('aria-checked')).toBe('true')
+    await profile.getByText(/当前只可联系内置 Agent/u).waitFor()
+    const expandConsent = profile.getByRole('button', { name: '允许联系 DeepSeek Harness', exact: true })
+    await expandConsent.scrollIntoViewIfNeeded()
+    await shoot(page, 'pc-consultation-permission-upgrade')
+    await expandConsent.click()
+    await profile.getByRole('button', { name: '保存', exact: true }).click()
+    await expect
+      .poll(
+        async () => (await owner.json<CustomAgentList>('custom-agents')).agents.find(agent => agent.id === source.id)?.canConsultDeepSeek,
+      )
+      .toBe(true)
+    await profile.getByRole('button', { name: '关闭资料', exact: true }).click()
+    const field = page.getByRole('textbox', { name: '给编辑发消息', exact: true })
+    await field.fill(consultRequest)
+    await field.press('Meta+Enter')
+    const records = () => owner.json<{ mentions: AgentMention[] }>(`custom-agents/${source.id}/mentions`)
+    await expect.poll(async () => (await records()).mentions[0]?.status, { timeout: 15_000 }).toBe('completed')
+    const [mention] = (await records()).mentions
+    expect(mention).toMatchObject({ sourceAgentId: source.id, targetAgentId: target.id, initiator: 'agent', reply: { text: reviewAnswer } })
+    const card = page.locator(`[data-agent-mention-id="${mention!.id}"]`)
+    await card.getByText(reviewQuestion, { exact: true }).waitFor()
+    await card.getByRole('button', { name: '展开回复' }).click()
+    await card.getByText('两台设备同时编辑，保留双方的内容并提示冲突。', { exact: false }).waitFor()
+    await shoot(page, 'pc-mention-result-light')
+    await page.setViewportSize({ width: 1152, height: 720 })
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await shoot(page, 'pc-mention-result-dark')
+    const open = card.getByRole('button', { name: '打开对方聊天' })
+    await open.focus()
+    await open.press('Enter')
+    const back = page.getByRole('button', { name: '返回编辑', exact: true })
+    await back.waitFor()
+    await page.locator(`[data-message-id="${mention!.reply!.messageId}"]`).waitFor()
+    await shoot(page, 'pc-mention-target-dark')
+    await back.focus()
+    await back.press('Enter')
+    await expect.poll(() => open.evaluate(el => el === document.activeElement)).toBe(true)
+    expect(await card.getByRole('button', { name: '收起回复' }).isVisible()).toBe(true)
+    expect((await records()).mentions).toHaveLength(1)
+    await open.press('Enter')
+    await back.waitFor()
+    const choosePeer = async (id: string) => page.locator(`button[data-agent-id="${id}"]`).filter({ visible: true }).first().click()
+    await choosePeer(source.id)
+    await card.waitFor()
+    await choosePeer(target.id)
+    await page.locator(`[data-message-id="${mention!.reply!.messageId}"]`).waitFor()
+    expect(await back.count()).toBe(0)
+  } finally {
+    await browser.close()
+    await host.close()
+  }
+})
 
 it('binds abandonment to the creation shown when the confirmation opened', async () => {
   const host = await startTestHost({ plugins: [fixture] })
@@ -551,7 +770,34 @@ const fixture: HarnessPlugin = {
       name: 'Helper fixture',
       model: 'fixture-one',
       models: ['fixture-one', 'fixture-two'],
-      async *stream({ messages }) {
+      async *stream({ messages, tools }) {
+        const last = messages.at(-1)
+        if (last?.role === 'user' && last.content === consultRequest && tools?.some(tool => tool.name === 'list_personal_agents')) {
+          yield { type: 'tool-call', call: { id: 'peer-list', name: 'list_personal_agents', arguments: {} } }
+          yield { type: 'finish', reason: 'tool-calls' }
+          return
+        }
+        if (last?.role === 'tool' && last.toolCallId === 'peer-list') {
+          const peers = JSON.parse(last.content) as { id: string; name: string }[]
+          const peer = peers.find(entry => entry.name === '架构师')
+          if (!peer) throw new Error('Fixture expected its peer')
+          yield {
+            type: 'tool-call',
+            call: { id: 'peer-review', name: 'consult_personal_agent', arguments: { agentId: peer.id, question: reviewQuestion } },
+          }
+          yield { type: 'finish', reason: 'tool-calls' }
+          return
+        }
+        if (last?.role === 'tool' && last.toolCallId === 'peer-review') {
+          yield { type: 'text', text: '评审意见已收到。我会把重连、幂等和冲突处理加入验收清单。' }
+          yield { type: 'finish', reason: 'stop' }
+          return
+        }
+        if (last?.role === 'user' && last.content.endsWith(reviewQuestion)) {
+          yield { type: 'text', text: reviewAnswer }
+          yield { type: 'finish', reason: 'stop' }
+          return
+        }
         if (messages.findLast(message => message.role === 'user')?.content === '失败一轮') throw new Error('本地验收模型暂时不可用')
         yield { type: 'reasoning', text: '想一下' }
         yield { type: 'text', text: '好的，我来整理。' }
@@ -749,6 +995,9 @@ it('creates a helper in two steps, talks to it as a person, and changes its mode
     const panel = page.getByRole('region', { name: '晨报 的资料', exact: true })
     await panel.getByRole('button', { name: '设置', exact: true }).click()
     await panel.getByText('由 Latch 内置 运行').waitFor()
+    const consult = panel.getByRole('switch', { name: '允许主动联系其他 Agent', exact: true })
+    expect(await consult.getAttribute('aria-checked')).toBe('false')
+    await consult.click()
     await shoot(page, 'settings-1440-light')
     await panel.getByRole('button', { name: /^模型：/u }).click()
     // The model panel lists one source at a time (66e1b331); its search reaches every source.
@@ -758,6 +1007,10 @@ it('creates a helper in two steps, talks to it as a person, and changes its mode
     await expect
       .poll(async () => (await owner.json<CustomAgentList>('custom-agents')).agents.find(agent => agent.id === morning.id)?.model)
       .toEqual({ providerId: 'helper-fixture', model: 'fixture-two' })
+    expect((await owner.json<CustomAgentList>('custom-agents')).agents.find(agent => agent.id === morning.id)).toMatchObject({
+      canConsultAgents: true,
+      canConsultDeepSeek: true,
+    })
     await panel.getByRole('button', { name: '关闭资料', exact: true }).click()
     // The existing chat uses the selected default for its next turn.
     const continued = page.getByRole('textbox', { name: '继续对话', exact: true }).filter({ visible: true })

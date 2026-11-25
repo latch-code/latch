@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { hasFileMention, mentionRange } from '../src/fileMentions.ts'
-import { activeFileMention, mentionActive, mentionKey } from '../src/hooks/useFileMentions.tsx'
+import { activeAgentMention, activeFileMention, mentionActive, mentionKey } from '../src/hooks/useFileMentions.tsx'
 
 describe('explicit file markers', () => {
   const ref = { root: 'web', path: 'report.txt' }
@@ -14,6 +14,12 @@ describe('explicit file markers', () => {
     expect(hasFileMention('@web:meeting notes.txt ', { root: 'web', path: 'meeting notes.txt' })).toBe(true)
     expect(activeFileMention('user@example.com', 16)).toBeUndefined()
     expect(activeFileMention('look @rep later', 9)).toEqual({ start: 5, end: 9, query: 'rep' })
+  })
+  it('opens the personal Agent picker after Chinese text or a full-width at-sign, but never inside an email', () => {
+    expect(activeAgentMention('请＠架构师帮忙', 4)).toEqual({ start: 1, end: 4, query: '架构' })
+    expect(activeAgentMention('请@编辑', 4)).toEqual({ start: 1, end: 4, query: '编辑' })
+    expect(activeAgentMention('me@example', 10)).toBeUndefined()
+    expect(activeAgentMention('请@架构师。', 6)).toBeUndefined()
   })
 })
 

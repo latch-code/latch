@@ -302,6 +302,8 @@ interface PendingApproval {
   signal: AbortSignal
 }
 interface Run {
+  /** Only the Host definitions that survived conflicts with the fixed registry lease. */
+  hostTools?: readonly ToolDefinition[]
   contextStep?: RequestContextStep
   /** Steps of this turn that a 「出错时改用」 service answered, for the turn's record; absent when none did. */
   routed?: RoutedTurn
@@ -1551,6 +1553,7 @@ class HarnessRuntime implements Bridge {
         cwd: run.cwd,
         sessionId: run.sessionId,
         folders: structuredClone(run.folders),
+        ...(run.hostTools?.includes(tool) ? { fromHost: true as const } : {}),
       })
     } catch {
       return { risk: 'R2' }
@@ -1994,6 +1997,7 @@ class HarnessRuntime implements Bridge {
             ? [...run.lease.tools.filter(tool => !own.some(item => item.name === tool.name)), ...own]
             : run.lease.tools
       const remote = run.mode === 'agent' ? await this.remoteTools(run, base) : []
+      run.hostTools = remote
       signal.throwIfAborted()
       const availableTools = [...base, ...remote].filter(tool => !tool.returnsImages || this.sees(run))
       const tools = new Map(availableTools.map(tool => [tool.name, tool]))

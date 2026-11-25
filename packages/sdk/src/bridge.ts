@@ -66,7 +66,22 @@ export interface ModelRouteFallback {
   origin: string
 }
 
+/** Evidence bound to the actual restricted process and ACP session, checked before its one prompt. */
+export interface ConsultationGuardEvidence {
+  sessionId: string
+  runId: string
+  version: number
+  /** Digest binding the confirmed launch to this run and the guard version it reported. */
+  executionId: string
+}
+
 export interface CreateTaskInput {
+  /** Host-only. Receive a delegated question in a text-only process for this turn. */
+  consultation?: true
+  /** Recheck the active foreground grant immediately before sending the delegated prompt. Never persisted. */
+  authorizeConsultation?: () => void
+  /** Await the Host's record of a verified guard before sending the prompt, then recheck the live authorization. */
+  recordConsultationGuard?: (evidence: ConsultationGuardEvidence) => Promise<void>
   /** The Host made an authoring workspace. Give its guide to the engine while keeping the person's prompt as written. */
   pluginCreation?: true
   /** Authoritative Host-only agent context, transient for this run. */
@@ -136,6 +151,12 @@ export interface CreateTaskInput {
 export interface PromptOptions {
   /** This turn was explicitly submitted from the team panel to the Harness's own subagents. */
   teamRequest?: true
+  /** Host-only. Use the text-only delegated process for this turn, including when resuming a human chat. */
+  consultation?: true
+  /** Recheck the active foreground grant immediately before sending the delegated prompt. Never persisted. */
+  authorizeConsultation?: () => void
+  /** Await the Host's record of a verified guard before sending the prompt, then recheck the live authorization. */
+  recordConsultationGuard?: (evidence: ConsultationGuardEvidence) => Promise<void>
   /** The agent's context as it stands for this turn; never accepted from an HTTP body. */
   agentContext?: AgentExecutionContext
   /** Host queue time, for the accepted user message. */
@@ -314,6 +335,8 @@ export interface ExternalSessionAdopt extends ExternalSessionPlace {
 }
 
 export interface Bridge {
+  /** Whether this driver supports a text-only consultation, or the named chat is eligible for one. */
+  canReceiveConsultation?(sessionId?: string): boolean
   start(): Promise<void>
   close(): Promise<void>
   listTasks(): Promise<DriverTaskSummary[]>

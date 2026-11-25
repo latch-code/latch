@@ -1,13 +1,13 @@
 # @latch/protocol
 
-浏览器与 Host 共用 DTO。会话与审批见 `src/sessions.ts`，看板的组与等待判定见 `src/board.ts`，标签规范见 `src/board-tags.ts`，待办见 `src/work-items.ts`，快照与事件见 `src/snapshot.ts`，正文增量见 `src/task-delta.ts`，设备、登记与本机确认见 `src/devices.ts`。Harness 与 Agent 见 `src/harnesses.ts`（`AgentRecord` 限 Host），模型服务和设置见 `src/settings.ts`，能力、交接、导入会话见 `src/{features,handoffs,history}.ts`，改动与行级反馈见 `src/{changes,review-notes}.ts`。预设及安全文字见 `src/{presets,agent-presets,text,listeners,decision,risk}.ts`，审批卡与本机确认共用 `RISK_REASON_TEXT`。`src/ui.ts` 定义插件面板、技能与有限数据文档，`src/files.ts` 定义预览元数据与目标。不做持久化或 I/O。
+浏览器与 Host 共用 DTO。会话与审批见 `src/sessions.ts`，看板的组与等待判定见 `src/board.ts`，标签规范见 `src/board-tags.ts`，待办见 `src/work-items.ts`，快照与事件见 `src/snapshot.ts`，正文增量见 `src/task-delta.ts`，设备、登记与本机确认见 `src/devices.ts`。Harness 与 Agent 见 `src/harnesses.ts`（`AgentRecord` 限 Host），模型服务和设置见 `src/settings.ts`，能力、交接、导入会话见 `src/{features,handoffs,history}.ts`，改动与行级反馈见 `src/{changes,review-notes}.ts`。预设及安全文字见 `src/{presets,agent-presets,text,listeners,decision,risk}.ts`，审批卡与本机确认共用 `RISK_REASON_TEXT`。`src/ui.ts` 定义插件面板、技能与有限数据文档，`src/files.ts` 定义预览元数据与目标。无 I/O。
 
-运行环境 isomorphic：只用 ECMAScript 标准库，不导入 `node:*`，不用 DOM 或 Node 的全局变量（`tsconfig.isomorphic.json`、`.oxlintrc.json`）。没有依赖，不使用其他 workspace 包；模块没有副作用。入口 `@latch/protocol` 导出类型与值；`@latch/protocol/types`（`src/types.ts`）只有类型。
+isomorphic：用 ECMAScript 标准库，不导入 `node:*`，不用 DOM 或 Node 的全局变量（`tsconfig.isomorphic.json`、`.oxlintrc.json`）。没有依赖，不使用其他 workspace 包；模块没有副作用。入口 `@latch/protocol` 导出类型与值；`@latch/protocol/types`（`src/types.ts`）只有类型。
 
 不变量：
-- `CustomAgent.workComputer` 只含 Host 与助手 ID，缺省本机。
+- 工作电脑只含 Host 与助手 ID，缺省本机。协作按 Agent ID 投递，主动联系缺省关。
 
-- `@latch/sdk` 的类型文件只用 `@latch/protocol/types`，外部项目才能检查兼容入口（`tests/plugin-sdk.test.ts#type-check in an outside TypeScript project that does not allow .ts import extensions`）。外部项目只接受仅含类型的 .ts 路径导入与导出，所以 `src/types.ts` 只写 `export type`，值由 `src/index.ts` 导出；新模块两处都要加。
+- `@latch/sdk` 的类型只用 `@latch/protocol/types`，见兼容用例（`tests/plugin-sdk.test.ts#type-check in an outside TypeScript project that does not allow .ts import extensions`）。外部项目只接受仅含类型的 .ts 路径导入与导出，所以 `src/types.ts` 只写 `export type`，值由 `src/index.ts` 导出；新模块两处都要加。
 - 技能无正文和私有路径，Harness 插件报告限短名与截断标记。React 面板只含模块摘要，源码经认证另取；数据面板禁 HTML、脚本、样式。
 - 上线前页面与 Host 同版本，新字段不必为旧 Host 写成可选。
 - `agent-presets.ts` 只放浏览器可用的展示与启动数据；权限行为写在 `packages/harness-acp/src/profiles/`。

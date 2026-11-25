@@ -18,29 +18,46 @@ import { callFakeModel } from './fake-model-client.mjs'
 const env = process.env
 /** The real Latch dsh plugin with the public permission service supplied by this deterministic fixture. */
 const processModeHandlers = new Map()
+const processGuards = []
+const modeTools = {
+  guard: guard => processGuards.push(guard),
+  checkGuards: exec => {
+    const reason = processGuards.map(guard => guard(exec)).find(value => value !== undefined)
+    return reason === undefined ? undefined : { reason }
+  },
+  restrict: () => {},
+  schemas: () => [],
+}
 if (env.FAKE_ACP_PROCESS_MODE === '1') {
   const patchAt = process.argv.indexOf('--patch')
   if (patchAt >= 0) {
-    const entry = JSON.parse(readFileSync(process.argv[patchAt + 1], 'utf8'))[0].insert[0]
-    const plugin = await import(pathToFileURL(entry.name).href)
-    plugin.apply(
-      {
-        permissionPresets: {
-          set(session, mode) {
-            session.state.mode = mode
-            save()
-            log('process-mode-set', { sessionId: session.header.id, mode })
+    const entries = JSON.parse(readFileSync(process.argv[patchAt + 1], 'utf8'))[0].insert
+    for (const entry of entries) {
+      const proof = entry.id === 'latch-text-only-consultation' ? env.FAKE_ACP_CONSULTATION_PROOF : undefined
+      if (proof === 'missing') continue
+      const plugin = await import(pathToFileURL(entry.name).href)
+      plugin.apply(
+        {
+          tools: modeTools,
+          systemPrompt: { section: () => {}, getSectionOrder: () => 0 },
+          permissionPresets: {
+            set(session, mode) {
+              session.state.mode = mode
+              save()
+              log('process-mode-set', { sessionId: session.header.id, mode })
+            },
+            current: session => session.state.mode,
           },
-          current: session => session.state.mode,
+          on: (name, handler) => processModeHandlers.set(name, [...(processModeHandlers.get(name) ?? []), handler]),
         },
-        on: (name, handler) => processModeHandlers.set(name, handler),
-      },
-      entry.config,
-    )
+        proof === 'stale' ? { ...entry.config, executionId: '0'.repeat(64) } : entry.config,
+      )
+    }
   }
 }
 function processCreated(sessionId, state) {
-  processModeHandlers.get('agent/created')?.({ agent: { session: { header: { id: sessionId }, state } } })
+  const agent = { session: { header: { id: sessionId }, state }, ctx: { tools: modeTools } }
+  for (const handler of processModeHandlers.get('agent/created') ?? []) handler({ agent })
 }
 // Like an agent's own CLI: `login status` answers from the login file, `login` writes it. FAKE_ACP_LOGIN_FILE also makes a
 // session refuse while it is absent, and a process read its login once at start, as real agents do.
@@ -1125,7 +1142,7 @@ async function prompt({ sessionId, prompt: blocks }) {
   const lastText = blocks.at(-1)?.text ?? ''
   const commandInput = blocks.length > 1 && /^schedule\s/u.test(lastText.trim()) ? lastText : input
   const [keyword, argument] = commandInput.trim().split(/\s+/)
-  log('prompt-mode', { sessionId, mode: session.mode })
+  log('prompt-mode', { sessionId, mode: session.mode, textOnly: !!modeTools.checkGuards({}) })
   cancelled.delete(sessionId)
   session.history.push({ role: 'user', text: input })
   const reply = []

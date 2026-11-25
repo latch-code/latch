@@ -19,6 +19,7 @@ import type {
 import { AGENT_AVATAR_IMAGE, AGENT_FILE_BYTES, GENERAL_AGENT_ID, isNativeListener } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { parseAgentFile, type AgentActor, type AgentMutation, type CustomAgents } from '../custom-agents.ts'
+import type { AgentMentions } from '../agent-mentions.ts'
 import type { AgentFolders } from '../agent-folders.ts'
 import type { AgentPlans } from '../agent-plans.ts'
 import type { Automations } from '../automations.ts'
@@ -30,6 +31,7 @@ import { CONFIG_BODY_LIMIT, type Caller, type DeviceCaller, type RouteContext, t
 
 export interface AgentRouteDeps {
   agents: CustomAgents
+  mentions: () => AgentMentions
   /** After an Agent is deleted: what other stores kept for it goes too. Never rejects. */
   removed?: (agentId: string) => Promise<void>
   plans: () => AgentPlans
@@ -103,6 +105,7 @@ const avatarUpload = z.strictObject({
 })
 /** Opening an Agent's chat: its process may start before the person writes. */
 const WARM = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/warm$/u
+const MENTIONS = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/mentions$/u
 const EXPORT = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36})\/export(\/preview)?$/u
 const IMPORT = /^\/link\/api\/custom-agents\/import(\/preview)?$/u
 /** Short enough that each schedule's own request, derived from it, still fits a request ID. */
@@ -137,10 +140,21 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
     context.log(`启动时没有清除不再使用的 Agent 头像：${String(error)}`),
   )
   return {
-    features: () => ({ customAgents: true, agentWorkComputer: true }) satisfies HostFeatures,
+    features: () => ({ customAgents: true, agentWorkComputer: true, agentMentions: true }) satisfies HostFeatures,
     async route({ req, res, caller, path, method }) {
       if (path !== '/link/api/custom-agents' && !path.startsWith('/link/api/custom-agents/')) return false
       const actor = deps.access(caller, method !== 'GET')
+      const mentions = MENTIONS.exec(path)
+      if (mentions) {
+        context.requireDevice(caller)
+        res.setHeader('cache-control', 'no-store')
+        if (method === 'GET') json(res, { mentions: await deps.mentions().list(caller, mentions[1]!) })
+        else if (method === 'POST') {
+          const body = await jsonBody(req, CONFIG_BODY_LIMIT)
+          json(res, await deps.mentions().send(caller, mentions[1]!, body, undefined, res))
+        } else throw new AppError(404, 'not-found', '接口不存在。')
+        return true
+      }
       const checkWorkComputer = (body: unknown) => {
         if (!body || typeof body !== 'object' || !('workComputer' in body)) return
         context.requireLocal(caller)

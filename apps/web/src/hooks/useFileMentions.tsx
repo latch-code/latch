@@ -61,6 +61,10 @@ type MentionFile = FileMention & { name: string; ignored?: boolean }
  */
 export interface MentionMembers {
   label: string
+  /** A personal chat keeps its selected recipient separately from the text. */
+  onChoose?(id: string): void
+  owner?: string | undefined
+  empty?: string
   items: ReadonlyArray<{
     id: string
     token: string
@@ -90,6 +94,12 @@ export function activeFileMention(draft: string, caret: number): { start: number
   const before = draft.slice(0, caret),
     match = /(?:^|\s)@([^\s@]*)$/u.exec(before)
   if (!match) return
+  return { start: caret - match[1]!.length - 1, end: caret, query: match[1]! }
+}
+/** A personal Agent can follow Chinese prose directly. An email and punctuation after a name close the picker. */
+export function activeAgentMention(draft: string, caret: number) {
+  const match = /(?:^|[^a-zA-Z0-9._%+@＠-])[@＠]([^\s\p{P}]{0,80})$/u.exec(draft.slice(0, caret))
+  if (!match) return undefined
   return { start: caret - match[1]!.length - 1, end: caret, query: match[1]! }
 }
 /** The chosen row: with a query the first file, with none nothing until an arrow key says so; none while files load. */
@@ -150,14 +160,24 @@ export function useFileMentions(
     [error, setError] = useState(''),
     [selected, setSelected] = useState<{ query: string; index: number }>(),
     [dismissed, setDismissed] = useState<string>()
-  const token = caret === null ? undefined : activeFileMention(draft, caret),
-    scope = choice?.sessionId ?? choice?.workspaceId
+  // The toolbar opens only people. Typing @ still searches both people and project files.
+  const [picker, setPicker] = useState<{
+    owner: string
+    at: number
+    inserted?: { before: string; after: string; original: string; selection: { start: number; end: number } }
+  }>()
+  const fileToken = caret === null ? undefined : activeFileMention(draft, caret)
+  const memberToken = members?.onChoose && caret !== null ? activeAgentMention(draft, caret) : fileToken
+  const token = memberToken ?? fileToken
+  const scope = choice?.sessionId ?? choice?.workspaceId
   const query = token?.query ?? ''
-  const people = members && token && dismissed !== draft ? matchingMembers(members.items, query) : []
+  const inPicker = !!memberToken && !!picker && picker.owner === members?.owner && picker.at === memberToken.start
+  const people = members && memberToken && dismissed !== draft ? matchingMembers(members.items, query) : []
   const choosable = people.filter(item => !item.disabled)
-  const hiddenOpen = Boolean(choice?.hidden && token && dismissed !== draft && !people.length)
-  const filesOpen = Boolean(choice?.enabled && token && dismissed !== draft)
-  const open = filesOpen || people.length > 0
+  const hiddenOpen = Boolean(!inPicker && choice?.hidden && fileToken && dismissed !== draft && !people.length)
+  const filesOpen = Boolean(!inPicker && choice?.enabled && fileToken && dismissed !== draft)
+  const memberSearch = Boolean(members?.empty && memberToken && dismissed !== draft)
+  const open = filesOpen || people.length > 0 || memberSearch
   useEffect(() => {
     setDismissed(previous => (previous === draft ? previous : undefined))
   }, [draft])
@@ -217,12 +237,59 @@ export function useFileMentions(
   const count = choosable.length + listedFiles.length
   const waiting = loading && filesOpen && !!scope && !choosable.length
   const active = open ? mentionActive({ count, loading: waiting, query, ...(selected ? { selected } : {}) }) : -1
+  const openPeople = () => {
+    const field = textarea.current
+    if (!field || !members?.owner) return
+    if (inPicker && open) {
+      dismiss()
+      field.focus({ preventScroll: true })
+      return
+    }
+    const start = field.selectionStart
+    const end = field.selectionEnd
+    const existing = start === end && start === caret ? activeAgentMention(draft, start) : undefined
+    setSelected(undefined)
+    setDismissed(undefined)
+    if (existing) {
+      setPicker({ owner: members.owner, at: existing.start })
+    } else {
+      // The editor excludes quoted text, chips and selections from inline completion. Keep its search outside that content.
+      const separateLine = caret === null && draft.length > 0
+      const before = separateLine ? '' : draft.slice(0, start)
+      const marker = before && !/\s$/u.test(before) ? ' @' : '@'
+      const after = separateLine ? '\n' + draft : draft.slice(start)
+      const next = before + marker + after
+      const to = before.length + marker.length
+      setPicker({ owner: members.owner, at: to - 1, inserted: { before, after, original: draft, selection: { start, end } } })
+      onDraft(next, { start: to, end: to })
+    }
+    requestAnimationFrame(() => field.focus({ preventScroll: true }))
+  }
+  // A toolbar search is temporary. Leave the prose and selection it was opened over intact.
+  const inserted =
+    inPicker && picker.inserted && draft.startsWith(picker.inserted.before) && draft.slice(memberToken.end) === picker.inserted.after
+      ? picker.inserted
+      : undefined
+  const restoreSearch = () => {
+    if (!inserted) return
+    onDraft(inserted.original, inserted.selection)
+  }
+  const dismiss = () => {
+    restoreSearch()
+    setPicker(undefined)
+    setDismissed(draft)
+  }
   const chooseMember = (item: MentionMembers['items'][number]) => {
     if (!token || item.disabled) return
-    const marker = `${item.token} `
-    const next = `${draft.slice(0, token.start)}${marker}${draft.slice(token.end)}`
-    const caret = token.start + marker.length
-    onDraft(next, { start: caret, end: caret })
+    setPicker(undefined)
+    members?.onChoose?.(item.id)
+    if (inserted) restoreSearch()
+    else {
+      const marker = members?.onChoose ? '' : `${item.token} `
+      const next = `${draft.slice(0, token.start)}${marker}${draft.slice(token.end)}`
+      const caret = token.start + marker.length
+      onDraft(next, { start: caret, end: caret })
+    }
     setDismissed(undefined)
     requestAnimationFrame(() => textarea.current?.focus())
   }
@@ -255,10 +322,17 @@ export function useFileMentions(
       : event.key === 'Escape'
         ? ({ do: 'close' } as const)
         : ({ do: 'pass' } as const)
-    if (action.do === 'pass') return false
+    if (action.do === 'pass') {
+      if (inPicker && event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault()
+        return true
+      }
+      if (inPicker && event.key === 'Tab') dismiss()
+      return false
+    }
     event.preventDefault()
     event.stopPropagation()
-    if (action.do === 'close') setDismissed(draft)
+    if (action.do === 'close') dismiss()
     else if (action.do === 'move') setSelected({ query, index: action.index })
     else if (action.do === 'choose') chooseEntry(action.index)
     return true
@@ -280,11 +354,11 @@ export function useFileMentions(
   ) : (
     COPY.noMatches
   )
-  const menu = (
+  const suggestions = (
     <Suggest
       frosted={!hiddenOpen}
       id={id}
-      label={people.length ? COPY.mentionMembers : COPY.mention}
+      label={memberSearch && !filesOpen ? members!.label : people.length ? COPY.mentionMembers : COPY.mention}
       open={shown}
       anchorRef={anchorRef}
       activeId={active >= 0 ? optionId(active) : undefined}
@@ -293,7 +367,7 @@ export function useFileMentions(
         const index = Number(option.slice(id.length + 1))
         if (Number.isInteger(index)) chooseEntry(index)
       }}
-      onDismiss={() => setDismissed(draft)}
+      onDismiss={dismiss}
       groups={[
         ...(people.length && members
           ? [
@@ -340,7 +414,7 @@ export function useFileMentions(
         },
         ...(listedFiles.length && truncated ? [{ id: 'more', items: [], empty: <span role="status">{COPY.more}</span> }] : []),
       ]}
-      empty={fileStatus}
+      empty={memberSearch && !filesOpen ? members?.empty : fileStatus}
       footer={
         hiddenOpen ? undefined : (
           <>
@@ -361,5 +435,14 @@ export function useFileMentions(
       }
     />
   )
-  return { menu, keydown, open, listId: id, activeId: active >= 0 ? optionId(active) : undefined }
+  const menu = memberSearch ? <div className="composer-peer-suggestions">{suggestions}</div> : suggestions
+  return {
+    menu,
+    keydown,
+    openPeople,
+    pickingPerson: inPicker && open,
+    open,
+    listId: id,
+    activeId: active >= 0 ? optionId(active) : undefined,
+  }
 }

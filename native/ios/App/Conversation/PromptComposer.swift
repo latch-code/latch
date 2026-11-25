@@ -15,6 +15,7 @@ struct PromptComposer: View {
     let editsOffline: Bool
     let engine: String
     var person: Bool = false
+    var agent: AgentFrame? = nil
     var newTopic: ((String) -> Void)? = nil
     private var rawDraft: Binding<String> {
         let opening = drafts.opening, window = model.privateSnapshot.epoch, id = draftId
@@ -65,6 +66,10 @@ struct PromptComposer: View {
         if controls.contains(where: { $0.kind == .permission }) { value.actions.insert(.permissions) }
         if value.projectId != nil, PhoneReview.readsTurns(model.snapshot) { value.actions.insert(.changes) }
         return value
+    }
+    private var addressing: AgentFrame? {
+        guard let agent, rejecting == nil, !drawerOpen, gate == nil, PhoneAgentMentions.supports(model.snapshot, owner: agent.owner) else { return nil }
+        return agent
     }
     private var mentions: MentionComposer {
         let scope = draftId.map(PhoneMentionScope.session)
@@ -134,7 +139,7 @@ struct PromptComposer: View {
     }
     var body: some View {
         VStack(spacing: 8) {
-            ForEach(model.writesAwaitingConfirmation, id: \.requestId) { pending in
+            ForEach(model.writesAwaitingConfirmation.filter { agent == nil || PhoneAgentMentions.owner(of: $0) != agent?.owner }, id: \.requestId) { pending in
                 HStack {
                     Label(PhonePending.words(pending), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                     Spacer()
@@ -168,7 +173,7 @@ struct PromptComposer: View {
                 Text("告诉 Agent 的话最多 \(PhoneConversation.rejectionNoteLimit) 个字").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
             }
             if let slashReason { Text(slashReason).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16) }
-            MentionSuggestions(input: mentions, maximumHeight: slashSpace).padding(.horizontal, 12)
+            if addressing == nil { MentionSuggestions(input: mentions, maximumHeight: slashSpace).padding(.horizontal, 12) }
             if let menu = slashMenu {
                 SlashSuggestions(menu: menu, active: slash.active(menu, text: text), engine: engine,
                     mark: model.engineMark(model.currentSummary["harnessId"].string), reportedCommands: slashCommands.count, loading: slash.loading, failure: slash.failure,
@@ -183,7 +188,12 @@ struct PromptComposer: View {
                 Label("Mac 不在线，连上后可发送", systemImage: "wifi.slash")
                     .font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
             }
-            if let gate, !editsOffline { gateLine(gate) } else { field }
+            if let gate, !editsOffline { gateLine(gate) }
+            else if let agent = addressing {
+                AgentMentionField(consultation: agent.mentions, editor: slash, owner: agent.owner, text: draftText, focused: $focused,
+                    hasMaterial: hasRoundMaterials || !PhoneInputReferences(rawDraft.wrappedValue, collapseQuotes: true).quotes.isEmpty,
+                    mentions: mentions, maximumHeight: slashSpace) { field }
+            } else { field }
             if !person && gate == nil && model.sessionId != nil && (focused || !controls.isEmpty) { chips }
         }
         .padding(.bottom, 8).padding(.top, 4)
@@ -236,6 +246,9 @@ struct PromptComposer: View {
         ComposerMenu(key: attachKey, harness: harness, selection: attachKey.flatMap { model.attachSelection($0) }, source: $attachSource) {
             if model.detail["canReferenceConversation"].bool && model.canRun && model.hasContentWindow {
                 Button("引用另一条会话", systemImage: "text.bubble") { choosingReference = true }
+            }
+            if addressing != nil, model.canRun {
+                AgentMentionMenuItem(editor: slash, text: draftText, focused: $focused)
             }
             if let alternate {
                 Button(alternate == .queue ? "排到下一轮" : "立即发送", systemImage: alternate == .queue ? "text.badge.plus" : "arrow.up") {

@@ -1186,6 +1186,9 @@ public actor NativeWorkspace {
         guard epoch == current else { throw NativeFailure.resultUnknown }
         if (200..<300).contains(response.status) {
             guard let value = try? NativeJSON.decode(response.body) else { throw NativeFailure.resultUnknown }
+            if PhoneAgentMentions.owner(of: pending) != nil, !PhoneAgentMentions.confirms(value, write: pending) {
+                throw NativeFailure.resultUnknown
+            }
             if let queueControl, !queueControl.confirmed(by: value) { throw NativeFailure.resultUnknown }
             if let round = pending.teamRound {
                 guard round.confirmed(by: value), lease.valid, accessEpoch == access else { throw NativeFailure.resultUnknown }

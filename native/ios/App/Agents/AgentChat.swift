@@ -5,6 +5,7 @@ import UIKit
 /** The Agent a conversation frames, and what its header does. */
 struct AgentFrame {
     let owner: String
+    let mentions: AgentMentionSession
     let entry: PhoneAgentEntry
     let openProfile: () -> Void
     let openTopic: (String) -> Void
@@ -68,6 +69,7 @@ private struct TopicActions: View {
 struct AgentChat: View {
     @EnvironmentObject private var model: PhoneModel
     let id: String
+    @StateObject private var mentions = AgentMentionSession()
     @State private var picked: String?
     @State private var firstPage = false
     @State private var profile = false
@@ -99,6 +101,11 @@ struct AgentChat: View {
             }
         }
         .background(PhoneTheme.canvas)
+        .task(id: [id, model.privateSnapshot.epoch.uuidString, String(model.agentAccess == .ready), String(model.connected),
+            model.tab.rawValue, String(mentions.revision), String(model.snapshot["catalog"]["features"]["agentMentions"].bool)]) {
+            await mentions.observe(model, owner: id)
+        }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in mentions.rows = []; mentions.readError = nil }
         .safeAreaInset(edge: .top, spacing: 0) {
             if let entry, model.agentAccess == .ready, entry.destination != .local {
                 AgentWorkComputer(entry: entry)
@@ -142,7 +149,7 @@ struct AgentChat: View {
         } else if model.sessionId != nil { model.closeSession() }
     }
     @ViewBuilder private func chat(_ entry: PhoneAgentEntry) -> some View {
-        let frame = AgentFrame(owner: id, entry: entry, openProfile: { profile = true }, openTopic: { reach($0) })
+        let frame = AgentFrame(owner: id, mentions: mentions, entry: entry, openProfile: { profile = true }, openTopic: { reach($0) })
         if let shown { ConversationView(id: shown, frame: frame) }
         else if entry.destination != .local && !model.pending.contains(where: { PhonePending.topicOwner($0) == id }) {
             Color.clear.navigationBarTitleDisplayMode(.inline).toolbar { AgentFrameItems(frame: frame, topic: .null, shown: nil) }
@@ -193,6 +200,7 @@ private struct NewTopicView: View {
         value.actionReasons[.new] = "每个 Agent 只有一条聊天"
         return value
     }
+    private var canAddress: Bool { PhoneAgentMentions.supports(model.snapshot, owner: frame.owner) && mine.isEmpty }
     private var mentions: MentionComposer {
         let scope = attachSelection?["mode"].string == "agent" ? MentionComposer.project(choice) : nil
         return MentionComposer(model: model, state: mentionState, editor: slash, text: $prompt,
@@ -225,7 +233,7 @@ private struct NewTopicView: View {
     private var waiting: [PhoneScheduleResult] { model.agentResults[frame.owner] ?? [] }
     var body: some View {
         ScrollView {
-            if waiting.isEmpty, frame.entry.destination == .local, frame.entry.available, model.canRun, mine.isEmpty,
+            if waiting.isEmpty, frame.mentions.rows.isEmpty, frame.entry.destination == .local, frame.entry.available, model.canRun, mine.isEmpty,
                PhoneAgentChat.slot(model.snapshot, owner: frame.owner)["state"].string == "empty" {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("想让\(frame.entry.name)先帮你做什么？").font(.title3.weight(.semibold)).foregroundStyle(PhoneTheme.ink)
@@ -236,6 +244,7 @@ private struct NewTopicView: View {
                     openFile: { file, run in files.open(model, reference: file.path, root: file.root, session: run) })
                     .frame(maxWidth: 760).padding(.horizontal, 16).padding(.vertical, 20).frame(maxWidth: .infinity)
             }
+            AgentConsultations(consultation: frame.mentions).padding(.horizontal, 16).frame(maxWidth: 760)
         }
         .sessionFilePreview(files)
         .task(id: [frame.owner, PhoneResults.signature(model.snapshot, owner: frame.owner), model.verifiedUntil == nil ? "closed" : "open"]) {
@@ -258,6 +267,11 @@ private struct NewTopicView: View {
         .onAppear {
             openedHost = model.generation; openedContent = model.privateSnapshot.epoch
             if let held = model.takeDraft(for: attachKey) { prompt = held }
+            #if LATCH_SCREENS
+            if ScreensStage.scene == "agent-mentions" {
+                prompt = "@"; slash.selection = NSRange(location: 1, length: 0); focused = true
+            }
+            #endif
         }
         // Not delivered, for certain: the text comes back into this input.
         .onChange(of: model.returnedText[attachKey], initial: true) { _, value in if let value { prompt = PhonePending.joined(prompt, value); model.returnedText[attachKey] = nil } }
@@ -294,13 +308,18 @@ private struct NewTopicView: View {
             if let blocker { Text(blocker).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).lineLimit(2).padding(.horizontal, 16).frame(maxWidth: .infinity, alignment: .leading) }
             AttachmentRows(key: attachKey, selection: attachSelection)
             if let slashReason { Text(slashReason).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16) }
-            MentionSuggestions(input: mentions, maximumHeight: slashSpace).padding(.horizontal, 12)
+            if !canAddress { MentionSuggestions(input: mentions, maximumHeight: slashSpace).padding(.horizontal, 12) }
             if let menu = slashMenu {
                 SlashSuggestions(menu: menu, active: slash.active(menu, text: prompt), engine: frame.entry.name, mark: PhoneStart.mark(harness), reportedCommands: 0,
                     loading: slash.loading, failure: slash.failure, maximumHeight: slashSpace, retry: { slash.retry += 1 },
                     choose: { slash.complete(menu, option: $0, text: $prompt, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending) }).padding(.horizontal, 12)
             }
-            if readyChat == nil || !prompt.isEmpty || !model.tray(attachKey).isEmpty || !mine.isEmpty { field }
+            if readyChat == nil || !prompt.isEmpty || !model.tray(attachKey).isEmpty || !mine.isEmpty {
+                if canAddress {
+                    AgentMentionField(consultation: frame.mentions, editor: slash, owner: frame.owner, text: $prompt, focused: $focused,
+                        hasMaterial: !model.tray(attachKey).isEmpty || !mentions.references.isEmpty, mentions: mentions, maximumHeight: slashSpace) { field }
+                } else { field }
+            }
         }.padding(.bottom, 8).padding(.top, 4)
     }
     /** This topic's project (not for General) and model; the Harness remains the owner's. */
@@ -328,6 +347,9 @@ private struct NewTopicView: View {
         return ConversationInputBar(focused: $focused) {
             ComposerMenu(key: attachKey, harness: harness, selection: attachSelection, source: $attachSource) {
                 SlashMenuItem(slash: slash, text: $prompt, focused: $focused, context: slashContext)
+                if PhoneAgentMentions.supports(model.snapshot, owner: frame.owner), model.canRun {
+                    AgentMentionMenuItem(editor: slash, text: $prompt, focused: $focused)
+                }
                 picks
             }
         } editor: {

@@ -190,6 +190,7 @@ struct ConversationView: View {
                     if let placed = results[turn.id] { resultStack(placed) }
                     ForEach(proposals[turn.id] ?? []) { proposalRow($0) }
                 }
+                if let frame, PhoneAgentChat.isCurrent(model.snapshot, task: summary) { AgentConsultations(consultation: frame.mentions) }
                 if let submission, submission.awaitingEcho { submittingRow(submission) }
                 if running && !sendingTurn {
                     RunStatusLine(person: frame != nil, waitingForReply: liveTurn.map { PhoneConversation.blocks($0, settled: false).isEmpty } ?? false).id("status")
@@ -346,7 +347,7 @@ struct ConversationView: View {
                     : hasContent || !model.connected ? inputReason : PromptComposer.closedWindow,
                     editsOffline: !model.connected && rebuiltInto == nil && frame == nil && model.tab == .code && !model.workItemsShown
                         && PhoneConversation.keepsOfflineEditor(summary: summary, permission: model.detail["permission"], device: model.snapshot["device"], bodyOpen: hasContent && model.hasContentWindow),
-                    engine: engine, person: frame != nil,
+                    engine: engine, person: frame != nil, agent: frame,
                     newTopic: nil)
             }
         }.frame(maxWidth: 760).frame(maxWidth: .infinity)

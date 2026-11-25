@@ -305,7 +305,7 @@ struct FaceWord: View {
     let face: PhoneAgentFace
     let words: String
     var body: some View {
-        Text(words).font(.system(size: 12, weight: .medium))
+        Text(words).font(.caption.weight(.medium))
             .foregroundStyle(face == .waiting ? PhoneTheme.amber : face == .failed ? PhoneTheme.red : PhoneTheme.muted)
     }
 }

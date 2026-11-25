@@ -170,6 +170,10 @@ export interface CustomAgent extends CustomAgentConfig {
    * scheduled runs until the run settles, within a cap. Absent: off. It never wakes a Mac that already sleeps.
    */
   keepAwakeForSchedules?: true
+  /** Allow this Agent to consult a peer during a person's chat turn. Absent until enabled here. */
+  canConsultAgents?: boolean
+  /** The original switch only covered built-in peers. */
+  canConsultDeepSeek?: boolean
   /**
    * 「认识你」 turned off: this Agent's turns leave out what the person confirmed in 通用 (`generalFacts`). Absent: on.
    * Stored only as off.
@@ -207,6 +211,9 @@ export type CustomAgentPatch = Partial<
   avatar?: AgentAvatar
   /** Null: back to every notification. */
   notifications?: AgentNotifications | null
+  canConsultAgents?: boolean
+  /** Explicit consent to consult a confirmed local DeepSeek Harness on a person's foreground turn. */
+  canConsultDeepSeek?: boolean
   keepAwakeForSchedules?: boolean
   /** 「认识你」: false leaves 通用's confirmed memories out of this Agent's turns; true puts them back. */
   generalFacts?: boolean
@@ -223,6 +230,9 @@ export type CustomAgentPatch = Partial<
  */
 export interface GeneralAgent {
   id: typeof GENERAL_AGENT_ID
+  canConsultAgents?: boolean
+  /** Explicit consent to consult a confirmed local DeepSeek Harness on a person's foreground turn. */
+  canConsultDeepSeek?: boolean
   /** The Host's fixed home for new Standard Agent topics; existing topics keep their original directory. */
   home?: string
   instructions: string
@@ -232,6 +242,9 @@ export interface GeneralAgent {
   updatedAt?: string
 }
 export interface GeneralAgentPatch {
+  canConsultAgents?: boolean
+  /** Explicit consent to consult a confirmed local DeepSeek Harness on a person's foreground turn. */
+  canConsultDeepSeek?: boolean
   requestId: string
   baseRevision: number
   instructions?: string

@@ -202,8 +202,8 @@ export const AGENT_PRESETS: AgentPreset[] = [
     helperCard: {
       face: { bracket: 'round', eyes: 'oval' },
       line: 'DeepSeek 的开源 Harness，整段回复。',
-      abilities: ['files', 'commands'],
-      source: 'DeepSeek Harness README；MCP、记事与定时尚未在真实 Agent 上核对',
+      abilities: ['files', 'commands', 'mcp'],
+      source: 'DeepSeek Harness README。DSH 0.2.2-rc.5 已通过会话 MCP 联系个人 Agent，也可在聊天中接收文字委托。',
     },
   },
   {

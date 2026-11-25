@@ -2120,6 +2120,39 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     for (const invalid of [Buffer.from([100, 97, 116, 97, 58, 0xff, 10, 10]), Buffer.from('event: unsafe.event\n\n')])
       await expect(invoke({ operation: 'events', chunks: [invalid.toString('hex')] })).rejects.toThrow('rejected')
   })
+  it('addresses only the chosen local personal agent and requires a matching confirmed mention receipt', async () => {
+    const owner = 'agt_11111111-1111-1111-1111-111111111111'
+    const target = 'agt_22222222-2222-2222-2222-222222222222'
+    const remote = 'agt_33333333-3333-3333-3333-333333333333'
+    expect(
+      await invoke({
+        operation: 'phoneAgents',
+        mentionOwner: owner,
+        target,
+        snapshot: {
+          catalog: { features: { customAgents: true, agentMentions: true } },
+          device: { dataScope: 'all' },
+          customAgents: [
+            { id: owner, name: '写作' },
+            { id: target, name: '架构师' },
+            { id: remote, name: '架构师', workComputer: { hostId: 'b'.repeat(52), agentId: target } },
+          ],
+        },
+      }),
+    ).toEqual({
+      choices: ['general', target],
+      query: [target],
+      token: '架',
+      quoted: false,
+      email: false,
+      path: `/link/api/custom-agents/${owner}/mentions`,
+      onlyText: ['requestId', 'target', 'text'],
+      acknowledged: true,
+      uncertain: false,
+      crossed: false,
+      self: false,
+    })
+  })
   it('does not report locally cleared private Agent data as an unconfirmed Host write', async () => {
     expect(
       await invoke({
@@ -7758,7 +7791,7 @@ S4 -->|是\n继续| End["保留\\n"]`
         id: 'general',
         name: '通用',
         general: true,
-        duty: '没选别的 Agent 的会话都带上它',
+        duty: '未指定 Agent 时使用',
         runs: '内置 · 每个会话自己选 Harness',
         place: null,
         available: true,

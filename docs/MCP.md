@@ -345,6 +345,7 @@ detail 只有服务器 ID 与类别。令牌、code、state、verifier、Client 
 
 - 命令是 Host 自己的 Node，参数是 `--disable-sigusr1 -e <固定源码> <网关套接字> <令牌文件>`，`env` 为空，名字是服务器的名称。参数里没有令牌、没有秘密。
 - **令牌。** 工具网关（[ARCHITECTURE.md](ARCHITECTURE.md#harness-与会话路由)）为每个桥发一个 `lbt1.` 令牌，写进网关目录里新建的 0600 文件；Host 只存哈希。
+- 个人 Agent 的 ACP 会话可通过同一条桥联系其他 Agent。桌面浏览器提供方离线时，桥只获准列出和调用两项协作工具；Host 在实际调用时复查本轮授权。见[个人 Agent 主动协作](ARCHITECTURE.md#个人-agent-主动协作)。
 - 桥在 `initialize` 时才读出并删除令牌。只问 `server/discover` 的一次性副本因此拿不到它：桥回答 method not found，Agent 回到 `initialize`。
 - 令牌随 Agent 进程结束、会话归档或删除、服务器被移除、停用或改动而失效。
 

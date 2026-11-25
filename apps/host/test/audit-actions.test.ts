@@ -311,6 +311,8 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
     entries: 4,
     bytes: 10,
   },
+  'agent.consultation.guard-verified': { harnessId: 'dsh', sessionId, runId: 'run-1', version: 1, executionId: hex },
+  'agent.mentioned': { sourceAgentId: 'general', targetAgentId: 'agt_1', initiator: 'person', textHash: hex },
   'agent.chat.retired': { customAgentId: 'general', sessionId: 'task-1', reason: 'home-moved' },
   'agent.chat.restored': { customAgentId: 'general', sessionId: 'task-1', reason: 'start-refused' },
   'agent.exported': { customAgentId: 'agt_1', memories: 3, schedules: 1 },

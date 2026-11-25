@@ -309,6 +309,7 @@ export function NewTopic({
       {(!ready || draft.trim() || attachments.items.length > 0) && (
         <Composer
           showSlashButton={false}
+          agentMentions={shell.agentMentions.source === owner ? shell.agentMentions : undefined}
           textareaRef={input}
           variant="new"
           label={COPY.message(name)}

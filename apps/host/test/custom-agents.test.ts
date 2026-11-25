@@ -259,6 +259,31 @@ test('通用 starts empty, takes instructions, skills and memories, and cannot b
   expect(store.memories(GENERAL_AGENT_ID)).toEqual([memory])
 })
 
+test('DeepSeek consent is per Agent, survives restart and must be renewed after switching off', async () => {
+  const { store, open: reopen, audit } = await fixture()
+  const agent = (await store.create(definition(), actor)).value
+  const patch = (baseRevision: number) => ({ requestId: randomUUID(), baseRevision, canConsultAgents: true })
+  const legacy = (await store.patch(agent.id, patch(agent.revision), actor)).value
+  expect(legacy.canConsultDeepSeek).toBeUndefined()
+  await expect(store.patchGeneral({ requestId: randomUUID(), baseRevision: 1, canConsultDeepSeek: true }, actor)).rejects.toMatchObject({
+    code: 'agent-consultation-consent',
+  })
+  const approved = (await store.patch(agent.id, { ...patch(legacy.revision), canConsultDeepSeek: true }, actor)).value
+  await store.close()
+  const restored = await reopen()
+  stores.push(restored)
+  expect(restored.get(agent.id).canConsultDeepSeek).toBe(true)
+  expect(restored.general().canConsultDeepSeek).toBeUndefined()
+  const general = (await restored.patchGeneral({ ...patch(1), canConsultDeepSeek: true }, actor)).value
+  expect(general.canConsultDeepSeek).toBe(true)
+  audit.append.mockRejectedValueOnce(new Error('audit unavailable'))
+  const off = (await restored.patch(agent.id, { requestId: randomUUID(), baseRevision: approved.revision, canConsultAgents: false }, actor))
+    .value
+  expect(off.canConsultDeepSeek).toBeUndefined()
+  expect((await restored.patch(agent.id, patch(off.revision), actor)).value.canConsultDeepSeek).toBeUndefined()
+  expect(restored.general().canConsultDeepSeek).toBe(true)
+})
+
 test('a deletion proceeds when the audit fails; a change does not', async () => {
   const { store, audit } = await fixture()
   const { id } = (await store.create(definition(), actor)).value

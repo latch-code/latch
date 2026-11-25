@@ -107,6 +107,8 @@ export const AUDIT_LABELS: Readonly<Record<AuditAction, readonly [AuditKind, str
   'agent.folder.removed': ['agents', 'Agent 文件夹的删除结果'],
   'agent.folder.exporting': ['agents', '导出 Agent 的文件夹'],
   'agent.folder.exported': ['agents', 'Agent 文件夹的导出结果'],
+  'agent.consultation.guard-verified': ['agents', '已核对 DeepSeek 委托回合的工具限制'],
+  'agent.mentioned': ['agents', '提及另一位 Agent'],
   'agent.chat.retired': ['agents', 'Agent 的聊天换到新的家'],
   'agent.chat.restored': ['agents', 'Agent 的聊天换家未成，原聊天保留'],
   'agent.changed': ['agents', '修改 Agent 或记忆'],
