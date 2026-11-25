@@ -3,12 +3,12 @@ import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { AppSnapshot, TaskDetail, TeamAnswer, TeamSummary, WorkProposalSummary } from '@latch/protocol'
 import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, settleShell } from './helpers/layout.ts'
+import { noHorizontalOverflow, reachable, settleShell } from './helpers/layout.ts'
 import { promptValue } from './helpers/prompt.ts'
 
 const OUTPUT = 'test-results/teams'
@@ -37,9 +37,7 @@ describe('a team of sessions, in the page', () => {
   const snapshot = () => owner.json<AppSnapshot>('snapshot')
   const teamOf = async (id: string) => (await owner.json<TeamAnswer>(`teams/${id}`)).team
   const settled = async (id: string) => {
-    await expect
-      .poll(async () => ['idle', 'failed', 'cancelled'].includes((await detail(id)).summary.status), { timeout: 20_000 })
-      .toBe(true)
+    await vi.waitFor(async () => expect(['idle', 'failed', 'cancelled']).toContain((await detail(id)).summary.status), { timeout: 20_000 })
   }
   const teamIn = async (id: string, wanted: TeamSummary['state']) => {
     await expect.poll(async () => (await teamOf(id)).state, { timeout: 20_000 }).toBe(wanted)
@@ -123,10 +121,11 @@ describe('a team of sessions, in the page', () => {
         env: { FAKE_ACP_CONFIG: 'options', FAKE_ACP_EFFORT_BY_MODEL: '1', FAKE_ACP_STATE: join(state, 'gamma.json') },
       },
     })
-    await owner.confirmedJson('tasks', {
+    const gamma = await owner.confirmedJson<{ sessionId: string }>('tasks', {
       method: 'POST',
       body: { requestId: randomUUID(), prompt: 'echo gamma', harnessId: 'gamma', mode: 'agent' },
     })
+    await settled(gamma.sessionId)
     for (let tries = 0; tries < 200; tries++) {
       if ((await snapshot()).catalog?.harnesses.find(harness => harness.id === 'gamma')?.catalogue?.options.length) break
       await new Promise(done => setTimeout(done, 100))
@@ -418,6 +417,82 @@ describe('a team of sessions, in the page', () => {
     })
   }, 240_000)
 
+  it('keeps team sessions and the lead’s own subagents in separate sections of the overview', async () => {
+    const title = '核对移动端布局'
+    const id = await lead(title, 'delegate nest')
+    const team = await startTeam(id, {
+      goal: title,
+      tasks: [
+        { title: '检查窄屏布局', prompt: 'permission', harnessId: 'alpha' },
+        { title: '核对交互状态', prompt: 'endturn', harnessId: 'beta' },
+      ],
+    })
+    await membersIn(team.id, ['waiting', 'running'])
+    await open(title)
+    const overview = page.getByRole('tabpanel', { name: '会话概要', exact: true })
+    const members = overview.getByRole('region', { name: '团队成员', exact: true })
+    const agents = overview.getByRole('region', { name: '子 Agent', exact: true })
+    for (const [width, height] of [
+      [1440, 900],
+      [768, 1024],
+      [390, 844],
+    ] as const) {
+      await page.setViewportSize({ width, height })
+      await settleShell(page)
+      if (!(await overview.isVisible())) await page.getByRole('button', { name: '侧边面板', exact: true }).filter({ visible: true }).click()
+      const waiting = members.getByRole('listitem').filter({ hasText: '检查窄屏布局' })
+      await waiting.getByText('等你处理', { exact: true }).waitFor()
+      await members.getByRole('listitem').filter({ hasText: '核对交互状态' }).getByText('运行中', { exact: true }).waitFor()
+      await agents.getByText('Test runner', { exact: true }).waitFor()
+      await agents.getByText('Linter', { exact: true }).waitFor()
+      expect(await members.getByRole('listitem').count()).toBe(2)
+      expect(await agents.getByRole('listitem').count()).toBe(2)
+      for (const theme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme: theme })
+        await settleShell(page)
+        await noHorizontalOverflow(page, overview)
+        await page.screenshot({ path: `${OUTPUT}/overview--${width}--${theme}.png`, animations: 'disabled', caret: 'hide' })
+        if (width === 1440) {
+          const [panel, bottom] = await Promise.all([overview.boundingBox(), agents.boundingBox()])
+          expect(panel).toBeTruthy()
+          expect(bottom).toBeTruthy()
+          await page.screenshot({
+            path: `${OUTPUT}/overview-members--${theme}.png`,
+            clip: { x: panel!.x, y: panel!.y, width: panel!.width, height: bottom!.y + bottom!.height - panel!.y },
+            animations: 'disabled',
+            caret: 'hide',
+          })
+        }
+      }
+    }
+    await agents.getByRole('button', { name: /Linter/u }).click()
+    await agents.getByRole('button', { name: '查看工作记录', exact: true }).click()
+    await overview.waitFor({ state: 'hidden' })
+    const nested = page.locator('.transcript .subagent-name').filter({ hasText: /^Linter$/u })
+    await nested.waitFor()
+    const nestedControl = nested.locator('xpath=ancestor::button[1]')
+    await expect
+      .poll(() =>
+        nestedControl.evaluate(button => {
+          const bounds = button.getBoundingClientRect()
+          const transcript = button.closest('.transcript')!.getBoundingClientRect()
+          return bounds.top >= transcript.top && bounds.bottom <= transcript.bottom
+        }),
+      )
+      .toBe(true)
+    await reachable(nestedControl)
+    await page.getByRole('button', { name: '侧边面板', exact: true }).filter({ visible: true }).click()
+    await agents.getByRole('button', { name: /子 Agent/u }).click()
+    expect(await agents.getByRole('listitem').count()).toBe(0)
+    await members.getByRole('button', { name: /检查窄屏布局/u }).click()
+    await page.locator('.team-member-line').waitFor()
+    await page.getByLabel('待批准操作').filter({ visible: true }).waitFor()
+    await owner.json(`teams/${team.id}/stop`, { method: 'POST', body: { requestId: randomUUID() } })
+    await teamIn(team.id, 'kept')
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.emulateMedia({ colorScheme: 'light' })
+  })
+
   it('starts what this session’s agent proposed as a team, each entry on the Harness chosen for it', async () => {
     const items = [
       { title: '读网关日志', prompt: 'echo 网关日志里 14:02 起有一批 504。', harness: 'beta' },
@@ -690,16 +765,13 @@ describe('a team of sessions, in the page', () => {
     expect(sent).toBe(
       '请启动 Codex 的子 Agent 并行处理下列任务。分工后等待各成员结果，再汇总给我。\n\n1. 检查窄屏\n   看 390 宽\n2. 核对回执',
     )
+    expect((await detail(id)).messages.findLast(message => message.role === 'user')?.teamRequest).toBe(true)
     expect(await promptValue(input)).toBe('先别发')
     // No team of sessions was made: Codex's own members are the record's.
     expect((await snapshot()).teams?.some(row => row.leadSessionId === id)).toBe(false)
-    const record = page.getByRole('button', { name: /Agent 团队/u }).filter({ visible: true })
-    await poll(() => record.count()).toBe(1)
     // While the session works (a member waits for the person), the next list waits in its queue, as a typed message would.
     await poll(async () => (await detail(id)).summary.status).toBe('waiting-approval')
-    await record.click()
-    const delegation = page.getByRole('dialog', { name: 'Agent 团队', exact: true })
-    await delegation.getByRole('button', { name: '用团队分工', exact: true }).click()
+    await entry.click()
     await panel.waitFor()
     expect(await modes.getByRole('radio', { name: 'Codex 子 Agent', exact: true }).getAttribute('aria-checked')).toBe('true')
     await panel.getByRole('textbox', { name: '第 1 项', exact: true }).fill('再看一遍')

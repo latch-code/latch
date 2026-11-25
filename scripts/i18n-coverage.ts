@@ -154,10 +154,6 @@ const SOURCE_FRAGMENTS: Readonly<Record<string, { reason: string; values: readon
     reason: 'Recognizes existing tool headings and a Harness plan prefix.',
     values: ['写入 ', '写入文件 ', '计划：', '该工具可能修改项目文件或产生外部副作用，需要你确认本次操作。', '拒绝', '写入文件'],
   },
-  'apps/web/src/composer/CodexTeam.tsx': {
-    reason: 'The model receives these team instructions verbatim.',
-    values: ['请启动 Codex 的子 Agent 并行处理下列任务。分工后等待各成员结果，再汇总给我。'],
-  },
   'apps/web/src/composer/slash-match.ts': {
     reason: 'These are pinyin sorting anchors for the Chinese slash index.',
     values: [

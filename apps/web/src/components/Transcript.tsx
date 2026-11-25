@@ -99,7 +99,7 @@ const COPY = defineCopy(
 /** What resending the latest turn takes, when this device may send now. */
 export interface RetryAccess {
   /** The session is a full-access one: the confirmation says it will not ask before each step. */
-  onResend: (prompt: string) => void
+  onResend: (prompt: string, teamRequest?: true) => void
 }
 
 type Question = NonNullable<TaskDetail['questions']>[number]
@@ -982,7 +982,7 @@ export function Transcript(props: TranscriptProps) {
         ? {
             warning: resendWarning(sideEffects(turn)),
             onResend: () => {
-              retry.onResend(resendText(turn.user!))
+              retry.onResend(resendText(turn.user!), turn.user!.teamRequest)
             },
           }
         : undefined

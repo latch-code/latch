@@ -127,7 +127,7 @@ export function useSubmission({
     result: { foreground: boolean; consumedDraft: boolean; memoryRefused?: string },
   ) => void
   /** A definitive refusal; `resent`, a prompt that never sat in the input. Return true when a dedicated recovery UI owns its explanation. */
-  onRefused?: (sessionId: string, error: unknown, resent?: string) => boolean | void
+  onRefused?: (sessionId: string, error: unknown, resent?: Pick<PendingSubmission, 'prompt' | 'teamRequest'>) => boolean | void
   /**
    * The Host says, for certain, that this submission was not delivered: the person released its attachments
    * (`attachment-released`). `restored`: its text is back in the input on screen; otherwise the caller keeps it.
@@ -375,14 +375,14 @@ export function useSubmission({
    */
   const submit = async (
     retry?: PendingSubmission,
-    resend?: string,
+    resend?: Pick<PendingSubmission, 'prompt' | 'teamRequest'>,
     followUp?: 'queue' | 'steer',
     attachmentIds?: string[],
     fileRefs?: FileMention[],
     pluginCreation = false,
   ): Promise<boolean> => {
     if (sendingRef.current || (!retry && resend === undefined && !draft.trim() && !attachmentIds?.length)) return false
-    if (resend !== undefined && (selectedId === null || !resend.trim())) return false
+    if (resend !== undefined && (selectedId === null || !resend.prompt.trim())) return false
     if (pluginCreation && (selectedId !== null || fork || itemRef.current || fileRefs?.length || choice.mode !== 'agent')) return false
     const creatorRequest = pluginCreation || retry?.pluginCreation === true
     const creatorRequestAllowed = () =>
@@ -396,7 +396,7 @@ export function useSubmission({
       ?? (resend !== undefined && selectedId !== null
         ? {
             requestId: newRequestId(),
-            prompt: resend,
+            ...resend,
             sessionId: selectedId,
             resent: true,
             ...(override ? { model: override } : {}),
@@ -581,7 +581,7 @@ export function useSubmission({
       const handled =
         !uncertain
         && submission.sessionId !== undefined
-        && onRefused?.(submission.sessionId, cause, origin.consumedDraft ? undefined : submission.prompt) === true
+        && onRefused?.(submission.sessionId, cause, origin.consumedDraft ? undefined : submission) === true
       // The pending card owns unknown delivery and says why; it is not a confirmed failure.
       refuse(cause, uncertain || handled ? '' : inlineError(cause))
       return false
@@ -669,9 +669,8 @@ export function useSubmission({
     setStay,
     /** While set, a new session this page starts belongs to that 待办 (`POST /work/items/:id/start`), as of that revision. */
     setItem,
-    resend: (prompt: string) => submit(undefined, prompt),
     /** A prompt for the open session that never sat in the input, through the same path; `queue` while it runs. */
-    send: (prompt: string, followUp?: 'queue') => submit(undefined, prompt, followUp),
+    send: (prompt: Pick<PendingSubmission, 'prompt' | 'teamRequest'>, followUp?: 'queue') => submit(undefined, prompt, followUp),
     /** The open session's next prompt starts a new context. */
     clearing: selectedId !== null && clearing.has(selectedId),
     setClearing: (sessionId: string, on: boolean) =>

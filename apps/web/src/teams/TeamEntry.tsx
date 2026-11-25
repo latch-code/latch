@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { TEAM_LIMITS, WORK_ITEM_LIMITS, type HostCatalog, type TaskSummary } from '@latch/protocol'
-import { Button, CloseGlyph, IconButton, InlineNotice, PlusGlyph, Popover, SegmentedControl, StatusWord, useLayerClose } from '@latch/ui'
+import { Button, CloseGlyph, IconButton, InlineNotice, PlusGlyph, Popover, SegmentedControl, useLayerClose } from '@latch/ui'
 import { AgentsGlyph } from '../agents/AgentAvatar.tsx'
 import { DraftModelControl } from '../composer/ModelPanel.tsx'
 import { readChoice, type ComposerChoice } from '../composerChoice.ts'
@@ -29,7 +29,8 @@ interface TeamSend {
   go: (text: string) => Promise<boolean>
 }
 
-export interface TeamEntryProps {
+interface TeamEntryProps {
+  codexAvailable: boolean
   summary: TaskSummary
   catalog: HostCatalog
   deviceId: string
@@ -40,14 +41,6 @@ export interface TeamEntryProps {
   onManageModels?: (() => void) | undefined
   /** The Host computer's name on a page that is not the Latch app on it. */
   computer?: string | undefined
-}
-
-/** What Codex's own subagents add to the one entry: a way of working the list, and their record once they exist. */
-export interface CodexNative {
-  /** This session's Harness can split the work among its own subagents now. */
-  available: boolean
-  /** Delegations exist: the entry opens their record, and the panel is reached from there. */
-  record?: { label: string; waiting?: string | undefined; open: () => void } | undefined
 }
 
 const newRow = (harnessId: string | undefined): TeamRow => ({ id: newRequestId(), text: '', harnessId: harnessId ?? '' })
@@ -102,8 +95,8 @@ function TeamPanel({
   send,
   onManageModels,
   computer,
-  codex,
-}: TeamEntryProps & { codex?: CodexNative | undefined }) {
+  codexAvailable,
+}: TeamEntryProps) {
   const close = useLayerClose()
   const ready = useMemo(() => catalog.harnesses.filter(harness => harness.status === 'ready'), [catalog.harnesses])
   const key = draftKey(deviceId, summary.id)
@@ -112,7 +105,7 @@ function TeamPanel({
     return [first, newRow(nextHarness([first], ready, summary.harnessId))]
   })
   const [picked, setMode] = useTeamMode(key)
-  const mode: TeamMode = codex?.available ? picked : 'sessions'
+  const mode: TeamMode = codexAvailable ? picked : 'sessions'
   const { status, start, forget } = useTeamStart(key, summary.id, refresh)
   const remembered = useMemo(() => readChoice(deviceId), [deviceId])
   const place = { projectId: summary.workspaceId, access }
@@ -185,7 +178,7 @@ function TeamPanel({
         event.preventDefault()
         submit()
       }}>
-      {codex?.available && (
+      {codexAvailable && (
         <header className="team-panel-head">
           <SegmentedControl<TeamMode>
             size="sm"
@@ -330,25 +323,9 @@ function TeamPanel({
   )
 }
 
-/**
- * 「用团队分工」 in the input's last line: a list of tasks, started together, each as a session on the Harness and model
- * chosen for it, or, for a Codex session, as one message that has Codex split them among its own subagents. The same
- * panel offers to let the session's agent write the split; once Codex has delegated, the entry opens that record
- * (`codex.record`), which leads back here.
- */
-export function TeamEntry({
-  codex,
-  panelToggle,
-  ...team
-}: TeamEntryProps & {
-  codex?: CodexNative | undefined
-  /** Filled with how to open the panel from elsewhere (the Codex record's own 用团队分工). */
-  panelToggle?: RefObject<(() => void) | undefined>
-}): ReactNode {
+/** Open the task list directly, including after this session's Harness has delegated work. */
+export function TeamEntry(props: TeamEntryProps) {
   useLocale()
-  const own = useRef<(() => void) | undefined>(undefined)
-  const toggle = panelToggle ?? own
-  const record = codex?.record
   return (
     <div className="codex-team-control">
       <Popover
@@ -356,23 +333,13 @@ export function TeamEntry({
         size="lg"
         side="top"
         align="start"
-        trigger={props => {
-          const { onClick, ...rest } = props
-          toggle.current = onClick
-          return (
-            <Button
-              {...rest}
-              variant="ghost"
-              size="xs"
-              className="codex-team-entry"
-              onClick={() => (record ? record.open() : toggle.current?.())}>
-              <AgentsGlyph size={14} />
-              <span className="codex-team-label">{record ? record.label : TEAM_COPY.useTeam}</span>
-              {record?.waiting && <StatusWord tone="waiting">{record.waiting}</StatusWord>}
-            </Button>
-          )
-        }}>
-        <TeamPanel {...team} codex={codex} />
+        trigger={trigger => (
+          <Button {...trigger} variant="ghost" size="xs" className="codex-team-entry">
+            <AgentsGlyph size={14} />
+            <span className="codex-team-label">{TEAM_COPY.useTeam}</span>
+          </Button>
+        )}>
+        <TeamPanel {...props} />
       </Popover>
     </div>
   )

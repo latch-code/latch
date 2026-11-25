@@ -12,6 +12,11 @@ describe('what 重试 sends after a mode could not be read back', () => {
 
   it('sends again a prompt that never sat in the input', () => {
     expect(retryOfRefused({ from: 'send', prompt: '上一轮的提示' }, empty)).toEqual({ kind: 'prompt', prompt: '上一轮的提示' })
+    expect(retryOfRefused({ from: 'send', prompt: '分工', teamRequest: true }, empty)).toEqual({
+      kind: 'prompt',
+      prompt: '分工',
+      teamRequest: true,
+    })
   })
 
   it('offers nothing when there is nothing to send: a refused mode change, or a cleared input', () => {

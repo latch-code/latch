@@ -2,12 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { chromium } from '@playwright/test'
+import { chromium, type Locator } from '@playwright/test'
 import { expect, it } from 'vitest'
 import type { CancelReceipt, TaskDetail, TeamAnswer } from '@latch/protocol'
 import { FAKE_CODEX_APP_SERVER } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
-import { noHorizontalOverflow, openSession, reachable } from './helpers/layout.ts'
+import { noHorizontalOverflow, openPanelTab, openSession, reachable, settleShell } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
 import { promptValue } from './helpers/prompt.ts'
 
@@ -15,7 +15,6 @@ it('delegates from the same Codex chat, opens the actual member approval and res
   const root = await mkdtemp(join(tmpdir(), 'latch-codex-team-ui-'))
   let host: Awaited<ReturnType<typeof startTestHost>> | undefined
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined
-  const output = process.env.LATCH_TEAM_E2E_IMAGES
   const trace = join(root, 'fixture-events.jsonl')
   const stopGate = join(root, 'member-command-settled')
   try {
@@ -59,24 +58,27 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     page.setDefaultTimeout(15_000)
     await enrollBrowser(page, host)
     await openSession(page, sessionId)
-    const open = (name: '用团队分工' | 'Agent 团队') => page.getByRole('button', { name: new RegExp(name, 'u') }).filter({ visible: true })
-    const dialog = page.getByRole('dialog', { name: 'Agent 团队', exact: true })
-    const currentRun = dialog.getByRole('group', { name: '当前会话', exact: true })
-    const stop = currentRun.getByRole('button', { name: '停止当前运行', exact: true })
-    const history = dialog.getByRole('button', { name: '委派记录', exact: true })
-    const selectDelegation = async (number: number) => {
-      await history.tap()
-      await page
-        .getByRole('menu', { name: '委派记录', exact: true })
-        .getByRole('menuitemradio', { name: `第 ${number} 次委派`, exact: true })
-        .tap()
+    const entry = page.getByRole('button', { name: '用团队分工', exact: true }).filter({ visible: true })
+    const overview = page.getByRole('tabpanel', { name: '会话概要', exact: true })
+    const group = (name: string) => overview.getByRole('region', { name, exact: true })
+    const team = group('团队成员')
+    const autonomous = group('子 Agent')
+    const row = (group: Locator, name: string) => group.getByRole('listitem').filter({ hasText: name })
+    const openOverview = async () => {
+      if (!(await overview.isVisible())) {
+        const toggle = page.getByRole('button', { name: '侧边面板', exact: true }).filter({ visible: true })
+        if ((await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click()
+        await openPanelTab(page, '概要')
+      }
+      await overview.waitFor()
     }
+    const stop = page.getByRole('button', { name: '停止', exact: true }).filter({ visible: true })
     const cancelResponse = () =>
       page.waitForResponse(response => response.url().endsWith(`/${path}/cancel`) && response.request().method() === 'POST')
     const input = page.getByRole('textbox', { name: '继续对话', exact: true })
     await input.fill('先留着')
     // The one entry opens the list of tasks; Codex's own subagents are a way of working it, sent as one message.
-    await open('用团队分工').click()
+    await entry.click()
     const panel = page.getByRole('dialog', { name: '团队分工', exact: true })
     await panel.getByRole('radio', { name: 'Codex 子 Agent', exact: true }).click()
     await panel.getByRole('textbox', { name: '第 1 项', exact: true }).fill('核对移动端和审批回执')
@@ -91,22 +93,21 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     expect(await promptValue(input)).toBe('先留着')
     await input.fill('')
     await expect.poll(async () => (await read()).summary.status).toBe('waiting-approval')
-    await open('Agent 团队').click()
-    const memberApproval = dialog.getByRole('button', { name: '查看此成员的审批', exact: true })
-    for (const [width, height, colorScheme] of [
-      [1440, 930, 'light'],
-      [768, 910, 'dark'],
-      [390, 844, 'dark'],
-    ] as const) {
-      await page.setViewportSize({ width, height })
-      await page.emulateMedia({ colorScheme })
-      await dialog.getByText('检查窄屏', { exact: true }).waitFor()
-      await dialog.getByText('核对回执', { exact: true }).waitFor()
-      await dialog.getByRole('listitem').filter({ hasText: 'Maple' }).getByText('等你处理', { exact: true }).waitFor()
-      await reachable(memberApproval)
-      await noHorizontalOverflow(page, dialog)
-      if (output) await page.screenshot({ path: join(output, `team-waiting-${width}-${colorScheme}.png`), animations: 'disabled' })
-    }
+    // Only an explicit delegation is counted under team members.
+    await openOverview()
+    const cedar = row(team, 'Cedar')
+    const maple = row(team, 'Maple')
+    await maple.getByText('等你处理', { exact: true }).waitFor()
+    expect(await team.getByRole('listitem').count()).toBe(2)
+    expect(await autonomous.count()).toBe(0)
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await settleShell(page)
+    await openOverview()
+    await maple.getByRole('button', { name: /Maple/u }).click()
+    const memberApproval = maple.getByRole('button', { name: '查看此成员的审批', exact: true })
+    await reachable(memberApproval)
+    await noHorizontalOverflow(page, overview)
     await memberApproval.tap()
     const card = page.getByLabel('待批准操作').filter({ visible: true })
     await card.waitFor()
@@ -115,21 +116,18 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     await expect.poll(async () => (await read()).summary.status).toBe('idle')
     await page.reload()
     await connected(page)
-    const teamEntry = open('Agent 团队')
-    if (!(await teamEntry.isVisible())) await openSession(page, sessionId)
-    await teamEntry.click()
-    const cedar = dialog.getByRole('listitem').filter({ hasText: 'Cedar' })
-    const maple = dialog.getByRole('listitem').filter({ hasText: 'Maple' })
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await settleShell(page)
+    if (!(await entry.isVisible())) await openSession(page, sessionId)
+    await openOverview()
     await cedar.getByText('已完成', { exact: true }).waitFor()
     await maple.getByText('失败', { exact: true }).waitFor()
     expect(await cedar.locator('.message-content').count()).toBe(0)
-    await cedar.getByText('成员结果', { exact: true }).click()
+    await cedar.getByRole('button', { name: /Cedar/u }).click()
     await cedar.locator('.message-content strong').getByText('已核对手机布局', { exact: true }).waitFor()
     await cedar.locator('.message-content pre').getByText('pnpm test', { exact: true }).waitFor()
-    expect(await dialog.getByRole('listitem').count()).toBe(2)
     expect(await memberApproval.count()).toBe(0)
-    if (output) await page.screenshot({ path: join(output, 'team-result-390-dark.png'), animations: 'disabled' })
-    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+    await cedar.getByRole('button', { name: /Cedar/u }).first().click()
 
     await owner.json(`${path}/prompt`, {
       method: 'POST',
@@ -138,8 +136,8 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     await expect.poll(async () => (await read()).approvals.length).toBe(3)
     const ordered = (await read()).approvals
     expect(ordered.map(item => item.subagent)).toEqual(['Cedar', 'Maple', 'Pine'])
-    await teamEntry.click()
-    await maple.getByRole('button', { name: '查看此成员的审批', exact: true }).tap()
+    await row(autonomous, 'Maple').getByRole('button', { name: /Maple/u }).click()
+    await row(autonomous, 'Maple').getByRole('button', { name: '查看此成员的审批', exact: true }).click()
     await expect.poll(() => card.getAttribute('data-approval-id')).toBe(ordered[1]!.id)
     const reject = (id: string) =>
       owner.json(`approvals/${id}`, {
@@ -171,19 +169,16 @@ it('delegates from the same Codex chat, opens the actual member approval and res
       .toBe('running')
     const runId = (await read()).summary.runId
     expect(runId).toEqual(expect.any(String))
-    await teamEntry.click()
-    await cedar.getByText('运行中', { exact: true }).waitFor()
-    await selectDelegation(1)
-    await dialog.getByText('1. 核对移动端和审批回执', { exact: true }).waitFor()
+    await openOverview()
+    await row(autonomous, 'Cedar').filter({ hasText: '运行中' }).getByRole('button').first().waitFor()
     await cedar.getByText('已完成', { exact: true }).waitFor()
-    if (output) await page.screenshot({ path: join(output, 'team-parent-completed-390-dark.png'), animations: 'disabled' })
     expect(await stop.count()).toBe(1)
     await reachable(stop)
     const write = cancelResponse()
     await stop.tap()
     await expect.poll(async () => (await readFile(trace, 'utf8')).includes('background-member-interrupted')).toBe(true)
     expect((await read()).summary.status).toBe('running')
-    await currentRun.getByRole('button', { name: '正在停止当前运行…', exact: true }).waitFor()
+    await expect.poll(() => stop.getAttribute('aria-busy')).toBe('true')
     await writeFile(stopGate, '', { flag: 'wx' })
     const response = await write
     expect(response.ok()).toBe(true)
@@ -207,7 +202,6 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     const afterDelegation = await teamMembers()
     expect(afterDelegation.filter(message => historicalMembers.some(previous => previous.id === message.id))).toEqual(historicalMembers)
     expect(afterDelegation.filter(message => message.subagent?.status === 'cancelled')).toHaveLength(1)
-    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
 
     await owner.json(`${path}/prompt`, {
       method: 'POST',
@@ -225,15 +219,11 @@ it('delegates from the same Codex chat, opens the actual member approval and res
           : undefined
       })
       .toBe('running')
-    await teamEntry.click()
-    await selectDelegation(4)
-    await cedar.getByText('已完成', { exact: true }).waitFor()
-    await maple.getByText('已完成', { exact: true }).waitFor()
+    await row(autonomous, 'Cedar delegate').filter({ hasText: '运行中' }).getByRole('button').first().waitFor()
     await reachable(stop)
     const nestedCancel = cancelResponse()
     await stop.tap()
     expect((await (await nestedCancel).json()).receipt).toMatchObject({ outcome: 'stopped', status: 'cancelled' })
-    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
 
     const settledMembers = await teamMembers()
     await owner.json(`${path}/prompt`, {
@@ -244,11 +234,9 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     const ordinaryRunId = (await read()).summary.runId
     expect(ordinaryRunId).toEqual(expect.any(String))
     expect(ordinaryRunId).not.toBe(runId)
-    await teamEntry.click()
-    await selectDelegation(1)
-    await dialog.getByText('1. 核对移动端和审批回执', { exact: true }).waitFor()
+    // Stopping a later run from its own composer cannot change these historical members.
+    await cedar.getByText('已完成', { exact: true }).waitFor()
     await reachable(stop)
-    if (output) await page.screenshot({ path: join(output, 'team-history-ordinary-run-390-dark.png'), animations: 'disabled' })
     const ordinaryCancel = cancelResponse()
     await stop.tap()
     const ordinaryResponse = await ordinaryCancel
@@ -257,7 +245,6 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     expect(ordinaryPayload).toMatchObject({ runId: ordinaryRunId, requestId: expect.any(String) })
     expect((await ordinaryResponse.json()).receipt).toMatchObject({ ...ordinaryPayload, outcome: 'stopped', status: 'cancelled' })
     expect(await teamMembers()).toEqual(settledMembers)
-    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
 
     // A Codex session that is a member of a team offers no 「用团队分工」, Codex's own subagents included.
     const other = await owner.json<{ sessionId: string }>('tasks', {
@@ -265,15 +252,15 @@ it('delegates from the same Codex chat, opens the actual member approval and res
       body: { harnessId: 'codex', prompt: 'echo 另一个会话', requestId: randomUUID() },
     })
     await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${other.sessionId}`)).summary.status).toBe('idle')
-    const { team } = await owner.json<TeamAnswer>(`tasks/${other.sessionId}/team`, {
+    const answer = await owner.json<TeamAnswer>(`tasks/${other.sessionId}/team`, {
       method: 'POST',
       body: { requestId: randomUUID(), tasks: [{ title: '成员', prompt: 'echo 成员', harnessId: 'codex' }] },
     })
-    const memberId = team.members[0]!.sessionId!
+    const memberId = answer.team.members[0]!.sessionId!
     await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${memberId}`)).codexTeam).toBe('available')
     await openSession(page, memberId)
     await page.locator('.team-member-line').waitFor()
-    expect(await open('用团队分工').count()).toBe(0)
+    expect(await entry.count()).toBe(0)
   } finally {
     await browser?.close()
     await host?.close()

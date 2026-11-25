@@ -168,6 +168,24 @@ describe('persistent Host prompt queues', () => {
     await resumed.remove('task', resumed.view('task')[0]!.id)
     expect(options.releaseAttachments).toHaveBeenCalledWith(expect.objectContaining(actor), 'task', attachmentIds, other.requestId)
   })
+  it('keeps an explicit team request on its own turn across a queue restart', async () => {
+    const { queue, detail, options } = await fixture()
+    options.steer = vi.fn(async () => 'injected' as const)
+    const body = input('Split the work')
+    await queue.submit(actor, 'task', { ...body, teamRequest: true })
+    await expect(queue.submit(actor, 'task', body)).rejects.toMatchObject({ code: 'request-conflict' })
+    await queue.close()
+    const resumed = await PromptQueues.open(options)
+    const [item] = resumed.view('task')
+    expect(item?.canSteer).toBeUndefined()
+    completed(detail)
+    await resumed.send('task', item!.id)
+    expect(options.send).toHaveBeenCalledWith(
+      expect.anything(),
+      'task',
+      expect.objectContaining({ requestId: body.requestId, teamRequest: true }),
+    )
+  })
   it('drains FIFO one successful run at a time, passing the original request identity and queue timestamp', async () => {
     const { queue, detail, options } = await fixture()
     const first = input('First'),

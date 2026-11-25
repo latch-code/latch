@@ -688,6 +688,13 @@ describe('pending submissions', () => {
     expect(submissionRequest(readPending('k')!)).toEqual({ path: 'tasks', body: creation })
     writePending('k', { ...creation, workspaceId: 'previous-project' })
     expect(readPending('k')).toBeNull()
+    const team = { requestId: 'team-id', prompt: 'delegate', sessionId: 's', queue: true, teamRequest: true } as const
+    writePending('k', team)
+    expect(readPending('k')).toEqual(team)
+    expect(submissionRequest(readPending('k')!)).toEqual({
+      path: 'tasks/s/prompt',
+      body: { requestId: team.requestId, prompt: team.prompt, queue: true, teamRequest: true },
+    })
     // A worktree belongs to a new session only.
     store.set('k', JSON.stringify({ requestId: 'r1', prompt: 'p', sessionId: 's', worktree: true }))
     expect(readPending('k')).toBeNull()

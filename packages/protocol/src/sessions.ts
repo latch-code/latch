@@ -596,6 +596,8 @@ export interface Message {
   origin?: MessageOrigin
   /** When this input entered the Host queue, before it was actually sent. */
   queuedAt?: string
+  /** User: this turn was submitted from the team panel to the Harness's own subagents. */
+  teamRequest?: true
   /**
    * User: added to a turn that was already running. The agent took it into that turn; whether it read it before the turn
    * ended is not known. It opens no turn of its own.
@@ -738,7 +740,7 @@ export interface Approval {
   advisory?: true
   /** Asked by a subagent of the session (`Message.subagent`), by its name. */
   subagent?: string
-  /** The member row of this Latch session, when linked to Codex team evidence. */
+  /** The subagent row in this Latch session, when the Host has one for the asking child. */
   subagentId?: string
   /**
    * The harness asks to go on with this plan (Markdown, in full); its own options answer it: allow is going on with

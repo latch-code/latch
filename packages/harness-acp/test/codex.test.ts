@@ -30,6 +30,7 @@ import {
   type AcpAgentOptions,
   type AgentRecord,
 } from '../src/index.ts'
+import { CodexTeam, type CodexMemberUpdate } from '../src/wires/codex-team.ts'
 import { CodexWire, codexMcpServer, codexVersion, setCodexStopLimits } from '../src/wires/codex.ts'
 import { codexOptions, gatewayEffortOption } from '../src/codex-models.ts'
 import { configFromOptions } from '../src/mapping.ts'
@@ -1668,7 +1669,8 @@ describe('Codex over its app-server', () => {
     const bridge = await t.open()
     const id = await start(bridge, t.main, 'echo one')
     await until(bridge, id, detail => detail.codexTeam === 'available' && detail.summary.status === 'idle')
-    await bridge.prompt(id, 'team 真实委派', rid())
+    const requestId = rid()
+    await bridge.prompt(id, 'team 真实委派', requestId, { teamRequest: true })
     const waiting = await until(bridge, id, detail => detail.summary.status === 'waiting-approval')
     const members = waiting.messages.filter(message => message.subagent?.team)
     expect(members.map(member => member.subagent?.title)).toEqual(['Cedar', 'Maple'])
@@ -1676,6 +1678,7 @@ describe('Codex over its app-server', () => {
     expect(new Set(members.map(member => member.subagent?.team?.id)).size).toBe(1)
     expect(new Set(members.map(member => member.subagent?.team?.memberId)).size).toBe(2)
     expect(members[0]?.subagent?.team?.userMessageId).toBe(waiting.messages.findLast(message => message.role === 'user')?.id)
+    expect(waiting.messages.find(message => message.requestId === requestId)?.teamRequest).toBe(true)
     expect(waiting.approvals).toHaveLength(1)
     expect(waiting.approvals[0]).toMatchObject({ subagent: 'Maple', subagentId: members[1]?.id })
     const other = await start(bridge, t.main, 'echo unrelated root')
@@ -1695,6 +1698,10 @@ describe('Codex over its app-server', () => {
       decision: 'cancel',
     })
     expect(sent(log, 'turn/start')).toHaveLength(3)
+    await bridge.close()
+    const reopened = await t.open()
+    expect((await reopened.detail(id)).messages.find(message => message.requestId === requestId)?.teamRequest).toBe(true)
+    await expect(reopened.prompt(id, 'team 真实委派', requestId)).rejects.toMatchObject({ code: 'request-conflict' })
   })
 
   it('links a native Team approval that arrived before its parent finished spawning the member', async () => {
@@ -1702,12 +1709,49 @@ describe('Codex over its app-server', () => {
     const bridge = await t.open()
     const id = await start(bridge, t.main, 'team 真实委派')
     const early = await until(bridge, id, detail => detail.summary.status === 'waiting-approval')
-    expect(early.approvals[0]?.subagentId).toBeUndefined()
+    const earlyRow = early.messages.find(row => row.id === early.approvals[0]?.subagentId)
+    expect(earlyRow?.subagent).toBeDefined()
+    expect(earlyRow?.subagent?.team).toBeUndefined()
     const later = await until(bridge, id, detail => detail.messages.filter(message => message.subagent?.team).length === 2)
     const maple = later.messages.find(message => message.subagent?.title === 'Maple')
+    expect(maple?.id).toBe(earlyRow?.id)
+    expect(later.messages.find(message => message.id === maple?.subagent?.team?.userMessageId)?.teamRequest).toBeUndefined()
     expect(later.approvals[0]).toMatchObject({ id: early.approvals[0]?.id, subagent: 'Maple', subagentId: maple?.id })
     await bridge.decide(later.approvals[0]!.id, 'reject')
     await settled(bridge, id)
+  })
+
+  it('publishes a directly related child’s own activity when no parent turn reported a delegation', () => {
+    const updates: Array<{ id: string; update: CodexMemberUpdate }> = []
+    const team = new CodexTeam('lead', (id, update) => updates.push({ id, update }))
+    expect(team.acceptThread({ id: 'other-child', parentThreadId: 'other-lead' })).toBe(false)
+    team.output('other-child', 'turn', 'unrelated')
+    expect(team.acceptThread({ id: 'child', parentThreadId: 'lead', agentNickname: 'Reader' })).toBe(true)
+    team.start('child', 'turn')
+    team.output('child', 'turn', 'reviewed')
+    team.output('child', 'turn', 'reviewed')
+    team.finish('child', 'turn', 'completed')
+    expect(updates.map(item => item.id)).toEqual(['child', 'child', 'child'])
+    expect(updates.every(item => item.update.parentTurnId === undefined)).toBe(true)
+    expect(updates[0]?.update).toMatchObject({ title: 'Reader', state: { state: 'running' } })
+    expect(updates.at(-1)?.update).toMatchObject({ result: 'reviewed', state: { state: 'idle' } })
+  })
+
+  it('places a native member’s text-only delegate and its final report under the actual parent', async () => {
+    const t = await computer({ FAKE_CODEX_TEAM_BACKGROUND_MS: '250' })
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'team 孙成员停止夹具')
+    const done = await settled(bridge, id)
+    const parent = done.messages.find(row => row.subagent?.title === 'Cedar')
+    const descendants = parent?.subagent?.steps.filter(row => row.subagent)
+    expect(descendants).toHaveLength(1)
+    expect(descendants?.[0]?.subagent).toMatchObject({
+      title: 'Cedar delegate',
+      status: 'done',
+      steps: [{ role: 'assistant', text: 'Nested finished on its own' }],
+    })
+    expect(descendants?.[0]?.subagent?.team).toBeUndefined()
+    expect(done.messages.filter(row => row.subagent)).toHaveLength(2)
   })
 
   it('recognizes native Team v2 activity and rejects a delayed earlier member turn', async () => {

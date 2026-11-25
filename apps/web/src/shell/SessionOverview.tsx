@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { readsProjectFiles, type TaskSummary } from '@latch/protocol'
 import {
   Button,
@@ -15,6 +15,9 @@ import {
   type IconComponent,
   type StatusTone,
 } from '@latch/ui'
+import { overviewAgents } from './overviewAgents.ts'
+import { OverviewAgentSection } from './OverviewAgentSection.tsx'
+import { switchWorkView } from '../preferences.ts'
 import { BranchName } from '../components/MiddleEllipsis.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { toolLabel, turnsOf } from '../conversation.ts'
@@ -177,11 +180,34 @@ function Section({ title, count, action, children }: { title: string; count?: nu
   )
 }
 
-/** The latest turn's observed changes and commands, followed by the separately observed repository state. */
+/** The session's participants, the latest turn's changes and commands, and the repository's delivery state. */
 export function SessionOverview({ shell, summary }: { shell: ShellState; summary: TaskSummary }) {
   const connected = shell.connection === 'connected'
   const canReadChanges = shell.canViewChanges && readsProjectFiles(shell.snapshot.device.dataScope)
   const detail = shell.current?.summary.id === summary.id ? shell.current : null
+  const roster = useMemo(
+    () => overviewAgents(summary.id, shell.snapshot.teams, detail?.messages ?? [], detail?.approvals ?? []),
+    [summary.id, shell.snapshot.teams, detail?.messages, detail?.approvals],
+  )
+  const showConversation = () => {
+    switchWorkView('chat')
+    if (shell.placement?.kind === 'sheet') shell.closePanel()
+    else if (shell.pageMode) shell.closeInfoPage()
+  }
+  const agentSection = {
+    connected,
+    harnesses: shell.catalog?.harnesses ?? [],
+    actions: {
+      openSession: (id: string) => shell.choose(id, showConversation),
+      reveal: (id: string) => {
+        if (shell.revealContextRow(summary.id, 'subagent', id)) showConversation()
+      },
+      review: (id: string) => {
+        shell.selectApproval(id)
+        showConversation()
+      },
+    },
+  }
   const turn = detail ? turnsOf(detail.messages).at(-1) : undefined
   const messages = turn?.replies ?? []
   const tools = messages.filter(message => message.role === 'tool')
@@ -220,13 +246,12 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
       {label}
     </Button>
   )
-  // A section with nothing to show draws nothing; with all three empty the panel is one quiet word.
   const showChanges = !canReadChanges || !detail || unavailable || pending || truncated || distinct.length > 0
   const showChecks = commands.length > 0
   // A folder without Git has nothing to deliver, and what this device may not read is already said once above.
   const showDelivery =
     readsProjectFiles(shell.snapshot.device.dataScope) && (!shell.canDeliver || !!failure || entry?.notApplicable !== 'not-repository')
-  if (!showChanges && !showChecks && !showDelivery)
+  if (!roster.members.length && !roster.children.length && !showChanges && !showChecks && !showDelivery)
     return (
       <div className="session-overview">
         <p className="session-overview-empty">{COPY.noChanges}</p>
@@ -234,6 +259,8 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
     )
   return (
     <div className="session-overview">
+      <OverviewAgentSection team rows={roster.members} {...agentSection} />
+      <OverviewAgentSection rows={roster.children} {...agentSection} />
       {showChanges && (
         <Section
           title={COPY.changes}
