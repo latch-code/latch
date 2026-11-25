@@ -269,13 +269,14 @@ describe('message markdown', () => {
 
   it('falls back to plain text when rendering a message throws, and retries with the next text', () => {
     const boundary = new ErrorBoundary({ resetKey: 'a', fallback: 'plain', children: 'markdown' })
-    boundary.state = { ...boundary.state, ...ErrorBoundary.getDerivedStateFromError() }
+    boundary.state = { ...boundary.state, ...ErrorBoundary.getDerivedStateFromError(new Error('Render failed')) }
     expect(boundary.render()).toBe('plain')
     expect(ErrorBoundary.getDerivedStateFromProps({ resetKey: 'a', fallback: 'plain', children: 'markdown' }, boundary.state)).toBeNull()
-    expect(ErrorBoundary.getDerivedStateFromProps({ resetKey: 'ab', fallback: 'plain', children: 'markdown' }, boundary.state)).toEqual({
-      failed: false,
-      resetKey: 'ab',
-    })
+    boundary.state = {
+      ...boundary.state,
+      ...ErrorBoundary.getDerivedStateFromProps({ resetKey: 'ab', fallback: 'plain', children: 'markdown' }, boundary.state),
+    }
+    expect(boundary.render()).toBe('markdown')
   })
 
   it('gives footnotes unique ids across messages and retains their local links', () => {

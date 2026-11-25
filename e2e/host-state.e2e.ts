@@ -1,11 +1,13 @@
-import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test'
+import { chromium, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test'
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, showTooltip } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSettings, showTooltip } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 /** The widths the banner is checked at besides the desktop one; each is a separately enrolled browser. */
 const NARROW = [
@@ -198,14 +200,18 @@ describe('a Host older than the page', () => {
   let browser: Browser
   let testHost: TestHost
   let ui: string
+  let currentBuild: string
+  const previousBuild = '20261107T080000Z-0a1b2c'
+  const builtUi = resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web')
 
   beforeAll(async () => {
     // The page as just built, beside a Host that started with an earlier build of it.
     ui = await mkdtemp(join(tmpdir(), 'latch-old-host-'))
-    await cp(resolve('dist/web'), ui, { recursive: true })
+    await cp(builtUi, ui, { recursive: true })
     const { build } = JSON.parse(await readFile(join(ui, 'build.json'), 'utf8')) as { build: string }
     expect(build).toMatch(/^\d{8}T\d{6}Z-[0-9a-f]{6}$/u)
-    await writeFile(join(ui, 'build.json'), JSON.stringify({ build: '20261107T080000Z-0a1b2c' }))
+    currentBuild = build
+    await writeFile(join(ui, 'build.json'), JSON.stringify({ build: previousBuild }))
     testHost = await startTestHost({ demo: true, hostName: 'studio-mini', uiDir: ui })
     browser = await chromium.launch(browserLaunchOptions())
     await mkdir('test-results', { recursive: true })
@@ -241,4 +247,65 @@ describe('a Host older than the page', () => {
       }
     }
   }, 90_000)
+
+  it('loads the current page and keeps drafts from both the update checker and a retired General Settings module', async () => {
+    // Two versions of the real page. A separate URL space for the first graph gives each old import its own module URL.
+    const htmlPath = join(ui, 'index.html')
+    const html = await readFile(htmlPath, 'utf8')
+    const entry = /<script\b[^>]*\bsrc="\/link\/assets\/([^"/]+\.js)"/u.exec(html)?.[1]
+    if (!entry) throw new Error('The built page has no module entry')
+    const oldAssets = join(ui, 'assets', 'previous')
+    await cp(join(builtUi, 'assets'), oldAssets, { recursive: true })
+    const oldEntry = join(oldAssets, entry)
+    const code = await readFile(oldEntry, 'utf8')
+    expect(code).toContain(currentBuild)
+    await writeFile(oldEntry, code.replaceAll(currentBuild, previousBuild).replaceAll('"assets/', '"assets/previous/'))
+    await writeFile(htmlPath, html.replaceAll('/link/assets/', '/link/assets/previous/'))
+
+    const viewport = { width: 1440, height: 900 }
+    const [first, second] = await Promise.all([openPage(browser, viewport, false), openPage(browser, viewport, false)])
+    const checker = first.page,
+      stale = second.page
+    const draft = (target: Page) => target.getByRole('textbox', { name: '新会话消息', exact: true })
+    const reopen = async (target: Page, reload: Locator, text: string) => {
+      await reload.waitFor()
+      await Promise.all([target.waitForEvent('framenavigated', frame => frame === target.mainFrame()), reload.click()])
+      await connected(target)
+      await expect.poll(() => promptValue(draft(target))).toBe(text)
+      await target
+        .locator('.banner-region')
+        .filter({ visible: true })
+        .getByText('studio-mini 上的 Latch 还是旧版本', { exact: true })
+        .waitFor()
+      const settings = await openSettings(target)
+      await settings.getByText('界面语言', { exact: true }).first().waitFor()
+    }
+    try {
+      for (const [target, text] of [
+        [checker, '更新前的草稿'],
+        [stale, '设置出错前的草稿'],
+      ] as const) {
+        await enrollBrowser(target, testHost, { name: text, scopes: ['admin'] })
+        await draft(target).fill(text)
+      }
+      // The Host stays up across publication. Its new index and assets are complete, and old optional imports now return 404.
+      await writeFile(htmlPath, html)
+      await writeFile(join(ui, 'build.json'), JSON.stringify({ build: currentBuild }))
+      await rm(oldAssets, { recursive: true })
+      await checker.getByRole('button', { name: '检查更新', exact: true }).filter({ visible: true }).first().click()
+      const check = checker.getByRole('dialog', { name: '检查更新', exact: true })
+      await check.getByText('有新版页面', { exact: true }).waitFor()
+      await reopen(checker, check.getByRole('button', { name: '重新载入', exact: true }), '更新前的草稿')
+
+      const missing = stale.waitForResponse(response =>
+        /\/assets\/previous\/GeneralSettings-[^/]+\.js$/u.test(new URL(response.url()).pathname),
+      )
+      const settings = await openSettings(stale)
+      expect((await missing).status()).toBe(404)
+      await settings.getByText('页面版本已更新，请重新载入后打开通用设置。', { exact: true }).waitFor()
+      await reopen(stale, settings.getByRole('button', { name: '重新载入', exact: true }), '设置出错前的草稿')
+    } finally {
+      await Promise.all([first.context.close(), second.context.close()])
+    }
+  })
 })
