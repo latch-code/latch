@@ -597,7 +597,9 @@ describe("a turn's blocks and its fold", () => {
       }),
     ).toBe('结果未知，请先核对它做了什么。Latch 不会自动重做。\n\n工具报告失败，详细输出未向此设备显示。')
     expect(failureReason({ state: 'failed', text: '' })).toBe('没有成功')
-    // A call that reported nothing carries its arguments as its text; a line of JSON says nothing about why.
+    // A call that reported nothing carries its arguments as its text; a line of JSON says nothing about why, and is not shown as output.
+    expect(shownToolOutput({ state: 'completed', text: '{\n  "steps": []\n}', tool: { input: '{\n  "steps": []\n}' } })).toBe('')
+    expect(shownToolOutput({ state: 'completed', text: 'update_steps', tool: { title: 'update_steps' } })).toBe('')
     expect(failureReason({ state: 'failed', text: '{\n  "command": "ls"\n}', tool: { input: '{\n  "command": "ls"\n}' } })).toBe('没有成功')
     expect(failureReason({ state: 'failed', text: 'x'.repeat(200) })).toHaveLength(121)
     // A runner's output passes cases before it names the error; the row says the error, without its colours.

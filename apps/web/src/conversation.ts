@@ -807,6 +807,16 @@ const legacyRejected = (message: Pick<Message, 'state' | 'tool' | 'text'>) =>
 
 /** A tool's output as shown: history recorded before decision records still carries the rejection's internal code. */
 export function shownToolOutput(message: Pick<Message, 'state' | 'tool' | 'text'>): string {
+  // A call that reported nothing has its arguments or title as its text, which are not output.
+  if (
+    message.tool?.output === undefined
+    && (message.text === message.tool?.input
+      || message.text === message.tool?.title
+      || (message.tool?.title !== undefined
+        && message.tool?.input !== undefined
+        && message.text === `${message.tool.title} · ${message.tool.input}`))
+  )
+    return ''
   const output = message.tool?.output ?? message.text
   return withoutToolCode(legacyRejected(message) ? output.slice(LEGACY_REJECTED.length).trimStart() : output)
 }
@@ -1182,9 +1192,7 @@ const ERROR_LINE = /(?:error|exception)\b|\b(?:fatal|panic)\b|错误/iu
  * runtime's code or terminal colours, and cut.
  */
 export function failureReason(message: Pick<Message, 'state' | 'tool' | 'text'>): string {
-  // A call that reported nothing has its arguments or title as its text, which are no reason.
-  const silent = message.tool?.output === undefined && (message.text === message.tool?.input || message.text === message.tool?.title)
-  const lines = stripAnsi(silent ? '' : shownToolOutput(message))
+  const lines = stripAnsi(shownToolOutput(message))
     .split('\n')
     .map(part => part.trim())
     .filter(Boolean)
