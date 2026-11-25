@@ -70,7 +70,7 @@ it.each([320, 390, 768, 1100, 1440])('preserves the draft, caret and focus when 
     await enrollBrowser(page, testHost, { followSystemLanguage: true })
     await hasLanguage(page, 'en')
 
-    if (phone) await page.locator('.phone-list-head').getByRole('button').click()
+    if (phone) await page.locator('.phone-list-head').getByRole('button', { name: 'New session', exact: true }).click()
     const draft = page.locator('.workbench-home').getByRole('textbox').first()
     await draft.fill('draft to keep')
     const input = await draft.elementHandle()

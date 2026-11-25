@@ -83,15 +83,22 @@ it.each([
     await input.fill('仍在输入的草稿')
     expect(await input.evaluate(node => document.activeElement === node)).toBe(true)
     release!()
+    const outputs = page.getByRole('region', { name: '这一轮生成的文件', exact: true })
+    const toggle = outputs.getByRole('button', { name: '显示文件', exact: true })
     if (opens) {
       await page.getByRole('tab', { name: 'created.html', exact: true }).waitFor()
       await page.frameLocator('iframe').getByRole('heading', { name: 'Generated document', exact: true }).waitFor()
     } else {
-      await page.getByRole('button', { name: '打开 created.html', exact: true }).waitFor()
+      await toggle.waitFor()
+      expect(await toggle.getAttribute('aria-expanded')).toBe('false')
       expect(await page.locator('.file-preview').count()).toBe(0)
     }
     expect(await promptValue(input)).toBe('仍在输入的草稿')
     expect(await input.evaluate(node => document.activeElement === node)).toBe(true)
+    if (!opens) {
+      await toggle.click()
+      await outputs.getByRole('button', { name: '打开 created.html', exact: true }).waitFor()
+    }
   } finally {
     release?.()
     await host.close()
