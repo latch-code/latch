@@ -5,6 +5,8 @@ import { Decoration, EditorView, WidgetType, keymap, placeholder as placeholderT
 import { history, historyKeymap, insertNewline, isolateHistory, standardKeymap } from '@codemirror/commands'
 import type { FileMention } from '@latch/protocol'
 import { escapeSecurityText } from '@latch/protocol'
+import { fencedParts } from '../conversation/fencedParts.ts'
+import { webLinks } from '../webLinks.ts'
 import { chipIcon, chipLabel, chipTip } from './PromptChip.tsx'
 import { promptChips, type PromptCatalogue, type PromptChip } from './prompt-tokens.ts'
 import { terminalExcerptField } from './terminalExcerptDecorations.tsx'
@@ -149,6 +151,14 @@ const chipField = StateField.define<DecorationSet>({
     return value
   },
   provide: field => [EditorView.decorations.from(field), EditorView.atomicRanges.of(view => view.state.field(field))],
+})
+
+const urlMark = Decoration.mark({ class: 'prompt-url' })
+const urlHighlights = EditorView.decorations.compute(['doc'], state => {
+  const text = state.doc.toString()
+  if (!text.includes('://')) return Decoration.none
+  const prose = text.includes('```') ? fencedParts(text).filter(part => part.kind === 'text') : [{ text, from: 0 }]
+  return Decoration.set(prose.flatMap(part => webLinks(part.text).map(link => urlMark.range(part.from + link.start, part.from + link.end))))
 })
 
 const hintField = StateField.define<DecorationSet>({
@@ -299,6 +309,7 @@ export function PromptEditor(props: PromptEditorProps) {
           sourceField.init(() => ({ catalogue: initial.catalogue, refs: initial.refs ?? [], hint: initial.hint })),
           terminalExcerptField,
           chipField,
+          urlHighlights,
           hintField,
           undo.of(history()),
           EditorView.lineWrapping,

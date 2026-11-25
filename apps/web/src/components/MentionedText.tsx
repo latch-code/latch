@@ -6,6 +6,7 @@ import { fencedParts } from '../conversation/fencedParts.ts'
 import { QUOTE_COPY, ReplyQuoteSource } from '../conversation/ReplyQuoteControl.tsx'
 import { replyQuotes } from '../conversation/replyQuote.ts'
 import { mentionRange } from '../fileMentions.ts'
+import { webLinks } from '../webLinks.ts'
 import { promptChips, type PromptCatalogue } from '../composer/prompt-tokens.ts'
 import { PromptChipView } from '../composer/PromptChip.tsx'
 import { FileChip } from './FileChip.tsx'
@@ -138,6 +139,25 @@ function UserTextParts({ text, refs }: { text: string; refs?: readonly FileMenti
   )
 }
 
+function linkedText(text: string): ReactNode {
+  const links = webLinks(text)
+  if (!links.length) return text
+  const fragments: ReactNode[] = []
+  let at = 0
+  for (const { start, end } of links) {
+    const address = text.slice(start, end)
+    fragments.push(
+      text.slice(at, start),
+      <a key={start} href={address} target="_blank" rel="noopener noreferrer">
+        {address}
+      </a>,
+    )
+    at = end
+  }
+  fragments.push(text.slice(at))
+  return fragments
+}
+
 /**
  * Host-validated file choices as file chips, and the tokens the catalogue knows as the input's chips; edited or ordinary
  * @ text stays exactly as typed.
@@ -158,7 +178,7 @@ export function MentionedText({
   let at = 0
   for (const chip of promptChips(text, catalogue, selected)) {
     fragments.push(
-      text.slice(at, chip.start),
+      linkedText(text.slice(at, chip.start)),
       chip.kind === 'file' ? (
         <FileChip key={`${chip.start}:${chip.root}`} path={chip.path} rootId={chip.root} prompt />
       ) : (
@@ -167,7 +187,7 @@ export function MentionedText({
     )
     at = chip.end
   }
-  fragments.push(text.slice(at))
+  fragments.push(linkedText(text.slice(at)))
   const other = rest ? selected.filter(ref => !mentionRange(text, ref)) : []
   return (
     <>

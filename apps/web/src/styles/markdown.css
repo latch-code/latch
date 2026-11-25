@@ -85,17 +85,17 @@
   border-top: 1px solid var(--line);
 }
 /* Web and email links keep a fine underline even on devices without hover. */
-.message-content a {
+:is(.message-content, .user-bubble-text) a {
   color: var(--accent-ink);
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
   text-underline-offset: 0.16em;
 }
-.message-content a:is(:hover, :focus-visible, :active) {
+:is(.message-content, .user-bubble-text) a:is(:hover, :focus-visible, :active) {
   text-decoration-color: currentColor;
 }
-.message-content a:focus-visible {
+:is(.message-content, .user-bubble-text) a:focus-visible {
   outline-offset: 2px;
 }
 .message-content a strong {

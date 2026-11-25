@@ -29,6 +29,32 @@ it('keeps a fence that never closes, or a shorter closing run, as typed', () => 
   expect(fencedParts('plain `code` text')).toEqual([{ kind: 'text', text: 'plain `code` text', from: 0 }])
 })
 
+it('links web addresses in sent prose while preserving the surrounding text and fenced code', () => {
+  const first = 'https://example.com/评测/sets?id=42&tab=ui#scores'
+  const second = 'http://[::1]:8080/wiki/Path_(example)'
+  const text = [`**看**：${first}，以及 (${second}).`, '```', first, '```'].join('\n')
+  const html = renderToStaticMarkup(createElement(UserText, { text }))
+  const shown = first.replace('&', '&amp;')
+  expect(html).toBe(
+    [
+      `**看**：<a href="${shown}" target="_blank" rel="noopener noreferrer">${shown}</a>，以及 (`,
+      `<a href="${second}" target="_blank" rel="noopener noreferrer">${second}</a>).`,
+      `<pre class="user-code"><code>${shown}</code></pre>`,
+    ].join(''),
+  )
+})
+
+it('keeps malformed addresses, credentials and non-web schemes as text', () => {
+  const text = 'file:///tmp/test javascript:alert(1) www.example.com https://:80 https://name:pass@example.com https://example.com\\bad'
+  expect(renderToStaticMarkup(createElement(UserText, { text }))).toBe(text)
+})
+
+it('keeps pairing links, token parameters and recognized keys out of link destinations', () => {
+  const text = ['https://example.com/#pair=sample', 'https://example.com/?id=1&token=sample', 'https://example.com/sk-' + 'x'.repeat(24)]
+  for (const address of text)
+    expect(renderToStaticMarkup(createElement(UserText, { text: address }))).toBe(address.replaceAll('&', '&amp;'))
+})
+
 it('renders reply citations only outside fenced code in a sent message', () => {
   const marker = '[引用回复 session/example@0]'
   const text = [

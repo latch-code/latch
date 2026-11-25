@@ -203,6 +203,9 @@
 .composer-input:has(.cm-content[aria-disabled='true']) {
   color: var(--ink-2);
 }
+.prompt-editor .prompt-url {
+  color: var(--accent-ink);
+}
 .prompt-editor .terminal-excerpt {
   box-sizing: border-box;
   --prompt-line-padding: 0 var(--sp-12);

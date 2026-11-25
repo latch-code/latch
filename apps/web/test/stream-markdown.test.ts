@@ -169,6 +169,13 @@ describe('display-only inline completion', () => {
     expect(render(false)).toContain('<p>**重点</p>')
   })
 
+  it('completes quoted emphasis while it arrives, leaving unfinished settled source literal', () => {
+    const text = '明显的**“皮相规整'
+    const render = (streaming: boolean) => renderToStaticMarkup(createElement(MessageContent, { text, streaming }))
+    expect(render(true)).toContain('明显的<strong>“皮相规整</strong>')
+    expect(render(false)).toContain('明显的**“皮相规整')
+  })
+
   it('previews an unfinished table header as words, preserving escaped and inline-code pipes', () => {
     expect(closeInline('| 名称 | 结果 |')).toBe('名称   结果')
     expect(closeInline('| 名称 | 结果 |\n|')).toBe('名称   结果')

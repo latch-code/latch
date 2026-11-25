@@ -35,6 +35,7 @@ import { hasHiddenCharacters, VisibleText } from './components/VisibleText.tsx'
 import { codePathCandidate, linkTarget, namesPath, referenceName, referenceText, urlScheme } from './fileReference.ts'
 import { exceedsMarkdownNesting, MAX_TREE_DEPTH, treeDepth } from './markdownNesting.ts'
 import { createStreamingMarkdown } from './markdown/renderBlocks.tsx'
+import { quotedEmphasis } from './markdown/quotedEmphasis.ts'
 import { TerminalFillButton } from './components/TerminalFillButton.tsx'
 import { isShellLanguage } from './panel/terminal/fill.ts'
 import { FillPlace } from './panel/terminal/fills.ts'
@@ -180,10 +181,10 @@ function reasoningOnly() {
 const markdownGuards = [restrictInlineMath, limitDepth]
 const remarkPlugins = [remarkGfm, remarkMath, ...markdownGuards]
 // No GFM and no math: a table, an address or a formula in a thought stays the text it is.
-const reasoningPlugins = [limitDepth, reasoningOnly]
+const reasoningPlugins = [quotedEmphasis, limitDepth, reasoningOnly]
 const REASONING_ELEMENTS = ['p', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li', 'br']
-const replyPlugins = [...remarkPlugins, literalHtml]
-const replyPluginsWithoutMath = [remarkGfm, ...markdownGuards, literalHtml]
+const replyPlugins = [...remarkPlugins, quotedEmphasis, literalHtml]
+const replyPluginsWithoutMath = [remarkGfm, quotedEmphasis, ...markdownGuards, literalHtml]
 const MarkdownFileContext = createContext<MarkdownFiles>({})
 const relativeBase = 'https://markdown.invalid/'
 const relativeOrigin = new URL(relativeBase).origin

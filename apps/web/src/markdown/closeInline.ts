@@ -1,6 +1,13 @@
+import { isEmphasisQuote } from './quotedEmphasis.ts'
+
 const whitespace = (value: string | undefined) => value === undefined || /\s/u.test(value)
 const punctuation = (value: string | undefined) => value !== undefined && /[\p{P}\p{S}]/u.test(value)
 const FENCE = /(?:^|\n)[ \t]*(?:(?:[-+*>]|\d{1,9}[.)])[ \t]+)?(?:`{3,}|~{3,})/u
+
+function canFlank(marker: string, outside: string | undefined, inside: string | undefined): boolean {
+  if (whitespace(inside)) return false
+  return !punctuation(inside) || whitespace(outside) || punctuation(outside) || (marker !== '~' && isEmphasisQuote(inside))
+}
 
 function tableHeader(source: string): string {
   const lines = source.split('\n')
@@ -136,8 +143,8 @@ export function closeInline(source: string): string {
     }
     const before = text[index - 1],
       after = text[end]
-    const left = !whitespace(after) && (!punctuation(after) || whitespace(before) || punctuation(before))
-    const right = !whitespace(before) && (!punctuation(before) || whitespace(after) || punctuation(after))
+    const left = canFlank(char, before, after)
+    const right = canFlank(char, after, before)
     const canOpen = left && (char !== '_' || !right || punctuation(before))
     const canClose = right && (char !== '_' || !left || punctuation(after))
     if (canClose) {
