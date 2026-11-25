@@ -114,7 +114,7 @@ struct PromptComposer: View {
     }
     var body: some View {
         VStack(spacing: 8) {
-            ForEach(model.pending, id: \.requestId) { pending in
+            ForEach(model.writesAwaitingConfirmation, id: \.requestId) { pending in
                 HStack {
                     Label(PhonePending.words(pending), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                     Spacer()
@@ -279,9 +279,7 @@ struct PromptComposer: View {
     }
     /** Stop remains the primary action only while there is nothing this phone can send to the next turn. */
     @ViewBuilder private var action: some View {
-        if sending {
-            ProgressView().controlSize(.small).frame(width: 44, height: 44).accessibilityLabel("正在提交")
-        } else if running && trimmed.isEmpty && (rejecting != nil || !model.canQueueAttachments || (attachments.isEmpty && pasteID == nil)) { stopButton(quiet: drawerOpen) }
+        if running && trimmed.isEmpty && (rejecting != nil || !model.canQueueAttachments || (attachments.isEmpty && pasteID == nil)) { stopButton(quiet: drawerOpen) }
         else if running && rejecting == nil && followUp != .none && PhoneSlash.actionOf(text) == nil {
             let steer = followUp == .steer
             Button { send() } label: {
@@ -311,7 +309,7 @@ struct PromptComposer: View {
                 else { RoundedRectangle(cornerRadius: 2).fill(quiet ? PhoneTheme.muted : PhoneTheme.canvas).frame(width: 12, height: 12) }
             }.frame(width: 36, height: 36).background(quiet ? PhoneTheme.bubble : PhoneTheme.ink, in: Circle())
                 .frame(width: 44, height: 44).contentShape(Rectangle())
-        }.buttonStyle(.plain).disabled(model.stoppingCurrent || !model.transportReady).accessibilityLabel(model.stoppingCurrent ? "正在停止" : "停止")
+        }.buttonStyle(.plain).disabled(sending || model.stoppingCurrent || !model.transportReady).accessibilityLabel(model.stoppingCurrent ? "正在停止" : "停止")
     }
     private var canQueueInstead: Bool {
         followUp == .steer && model.canQueueCurrent && !trimmed.isEmpty && rejecting == nil && PhoneSlash.actionOf(text) == nil
@@ -352,9 +350,9 @@ struct PromptComposer: View {
                           model.sessionId == target, case let .success(value) = ready else { return }
                     ids = value
                 }
-                sent = await model.send(text: input, queue: queue, steer: steer, nextModel: chosen, attachments: ids, target: .some(target))
+                sent = await model.send(text: input, queue: queue, steer: steer, nextModel: chosen, attachments: ids, target: .some(target), takingDraft: true)
             }
-            if sent, sendID == submission, model.generation == host, model.contentGeneration == reading, model.sessionId == target, rawDraft.wrappedValue == input {
+            if reject != nil, sent, sendID == submission, model.generation == host, model.contentGeneration == reading, model.sessionId == target, rawDraft.wrappedValue == input {
                 rawDraft.wrappedValue = ""
             }
         }

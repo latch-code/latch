@@ -10,15 +10,18 @@ public struct PhoneTranscriptFrame: Equatable, Sendable {
         self.offset = offset.rounded()
     }
 
-    public func position(after prior: Self?, away: Bool, scrolling: Bool) -> (away: Bool, followEnd: Bool) {
+    public func position(after prior: Self?, away: Bool, scrolling: Bool?) -> (away: Bool, followEnd: Bool) {
         let overflow = contentHeight - viewportHeight
         guard viewportHeight > 0, overflow > 1 else { return (false, false) }
         // Rubber-banding above the first line does not create any additional content below.
         let gap = overflow - max(0, offset)
         let resized = prior?.contentHeight != contentHeight || prior?.viewportHeight != viewportHeight
         let movedUp = !resized && offset < (prior?.offset ?? offset)
-        let readingHistory = gap > 48 && (away || (gap > 72 && (scrolling || movedUp)))
-        return (readingHistory, resized && !readingHistory && !scrolling && gap > 1)
+        // Only iOS 17 needs to infer a gesture from a changed offset. Keyboard and lazy row layout can also move it.
+        let userScrolled = scrolling ?? movedUp
+        let readingHistory = gap > 48 && (away || (gap > 72 && userScrolled))
+        let realign = resized || (scrolling == false && movedUp)
+        return (readingHistory, realign && !readingHistory && !userScrolled && abs(gap) > 1)
     }
 }
 
@@ -27,6 +30,28 @@ public struct PhoneTurn: Equatable, Sendable, Identifiable {
     public let id: String
     public let user: NativeJSON?
     public var replies: [NativeJSON]
+}
+/** A local send only until the Host echoes this exact request in this session. */
+public struct PhoneSubmittingPrompt: Sendable {
+    public let requestId: String
+    public let text: String
+    public let attachmentCount: Int
+    public let newTurn: Bool
+    public let awaitingEcho: Bool
+    public let status: String
+
+    public init?(requestId: String?, pending: [NativePendingWrite], session: String, detail: NativeJSON) {
+        guard let requestId, detail["summary"]["id"].string == session,
+              let write = pending.first(where: { $0.requestId == requestId && $0.method == "POST" && PhoneHistory.promptSession($0.path) == session }),
+              let fields = try? NativeJSON.decode(write.body), let text = fields["prompt"].string else { return nil }
+        self.requestId = requestId; self.text = text
+        attachmentCount = fields["attachmentIds"].array.count
+        let queue = fields["queue"].bool, steer = fields["steer"].bool
+        newTurn = !queue && !steer
+        awaitingEcho = !PhonePending.delivered(write, detail: detail)
+        status = queue ? "正在排队…" : steer ? "正在追加…" : "正在发送…"
+    }
+    public var showsDraft: Bool { newTurn && awaitingEcho }
 }
 public enum PhoneWorkItem: Equatable, Sendable {
     case tool(NativeJSON), thinking(NativeJSON), reads([NativeJSON])
@@ -103,6 +128,12 @@ public struct PhoneApprovalGate: Equatable, Sendable {
 
 public enum PhoneConversation {
     public static func isLive(_ detail: NativeJSON) -> Bool { !(detail["liveText"].string ?? "").isEmpty || !(detail["liveReasoning"].string ?? "").isEmpty }
+    /** ACP may announce a new run before its prompt is recorded. Earlier and imported turns stay settled. */
+    public static func liveTurn(last: PhoneTurn?, running: Bool, summary: NativeJSON, submitting: PhoneSubmittingPrompt?) -> PhoneTurn? {
+        guard running, let last, submitting?.showsDraft != true, last.user?["turn"]["endedAt"].string == nil, last.user?["imported"].bool != true else { return nil }
+        if let recorded = last.user?["turnId"].string, let run = summary["runId"].string ?? summary["live"]["runId"].string, recorded != run { return nil }
+        return last
+    }
     /** Committed messages plus the streaming reply under the ID it will keep once committed. */
     public static func rendered(_ detail: NativeJSON) -> [NativeJSON] {
         var messages = detail["messages"].array

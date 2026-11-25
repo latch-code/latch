@@ -387,6 +387,42 @@ async function invoke(input: unknown, timeoutMs = 15_000): Promise<Record<string
 }
 
 describe.skipIf(process.platform !== 'darwin')('Swift native core interoperability', () => {
+  it('shows one local prompt until its own Host echo and keeps a resumed run off the previous reply', async () => {
+    const summary = { id: 'selected', runId: 'new' }
+    const previous = { role: 'user', id: 'old-prompt', text: 'same', turnId: 'old', requestId: 'different-request' }
+    const current = { ...previous, id: 'new-prompt', requestId: 'fixture-request-id', turnId: 'new' }
+    const detail = { summary, messages: [previous] }
+    const attempt = { active: true, pending: true, fields: { prompt: 'same' }, detail }
+    const submissionCases = [
+      attempt,
+      { ...attempt, detail: { summary, messages: [previous, current] } },
+      { ...attempt, active: false },
+      { ...attempt, pending: false },
+      { ...attempt, session: 'other' },
+      { ...attempt, detail: { ...detail, summary: { ...summary, id: 'other' } } },
+      { ...attempt, fields: { prompt: 'same', queue: true } },
+      { ...attempt, fields: { prompt: 'same', steer: true } },
+      { ...attempt, active: false, detail: { summary, messages: [{ ...current, turn: { endedAt: '2026-01-02' } }] } },
+      { ...attempt, active: false, detail: { summary, messages: [{ ...current, imported: true }] } },
+      { ...attempt, active: false, detail: { summary: { id: 'selected' }, messages: [{ role: 'user', id: 'legacy' }] } },
+    ]
+    expect(await invoke({ operation: 'phoneProjection', submissionCases })).toEqual({
+      answers: [
+        ['same', '正在发送…', ''],
+        ['', '', 'new-prompt'],
+        ['', '', ''],
+        ['', '', ''],
+        ['', '', ''],
+        ['', '', ''],
+        ['', '正在排队…', ''],
+        ['', '正在追加…', ''],
+        ['', '', ''],
+        ['', '', ''],
+        ['', '', 'legacy'],
+      ],
+    })
+  })
+
   it('selects current native summary facts by Host revision without reviving cached or other-instance bodies', async () => {
     const summary = (title: string, status: string) => ({ id: 'selected', title, status })
     const snapshot = { instanceId: 'host-a', revision: 20, tasks: [summary('list-running', 'running')] }
@@ -430,14 +466,36 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       step(1000, 400, 600), // The last line and its actions are fully visible.
       step(1100, 400, 600), // Follow growth while already at the end.
       step(1100, 400, 700),
-      step(1100, 400, 450), // iOS 17 detects scrolling up from the offset change.
+      step(1100, 400, 450), // A layout adjustment moves the offset again after the resize has finished.
+      step(1100, 400, 700),
+      { height: 1100, viewport: 400, offset: 450 }, // iOS 17 has no scroll phase and infers a history read from the offset.
       step(1100, 1200, -100), // A larger viewport fits all the text again.
+      step(1800, 400, 1400),
+      step(900, 400, 1400), // A long reply folds, leaving the old offset past all the content.
     ]
     const history = [true, false]
     const latest = [false, false]
     const follow = [false, true]
     expect(await invoke({ operation: 'phoneProjection', transcriptFrames })).toEqual({
-      positions: [latest, latest, follow, latest, history, history, history, history, latest, follow, latest, history, latest],
+      positions: [
+        latest,
+        latest,
+        follow,
+        latest,
+        history,
+        history,
+        history,
+        history,
+        latest,
+        follow,
+        latest,
+        follow,
+        latest,
+        history,
+        latest,
+        latest,
+        follow,
+      ],
     })
   })
   it('projects a delivered body into its existing list row and helper face without fabricating global revision', async () => {

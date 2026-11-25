@@ -27,8 +27,16 @@ import Foundation
         drafts[id] = PhonePending.joined(drafts[id] ?? "", text)
     }
 
-    public func take(for id: String) -> String? {
-        guard drafts[id] != nil else { return nil }
+    /** The first attempt can return only what it took. A definitive retry refusal has the original prompt in the request. */
+    public func restoreRefusedPrompt(_ request: NativePendingWrite, taken: String?, confirmedRetry: Bool, opening: UUID, permitted: Bool) {
+        guard permitted, let id = PhoneHistory.promptSession(request.path),
+              let text = taken ?? (confirmedRetry ? PhonePending.prompt(request) : nil), !text.isEmpty else { return }
+        restore(text, for: id, opening: opening)
+    }
+
+    public func take(for id: String, matching text: String? = nil) -> String? {
+        guard let draft = drafts[id] else { return nil }
+        if let text, !draft.utf8.elementsEqual(text.utf8) { return nil }
         return drafts.removeValue(forKey: id)
     }
 

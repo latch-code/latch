@@ -114,7 +114,7 @@ struct TurnView: View, Equatable {
 
 extension NativeJSON { var path: String { self["path"].string ?? "" } }
 
-private struct UserBubble: View {
+struct UserBubble: View {
     @EnvironmentObject private var model: PhoneModel
     @State private var original: PhoneReplyQuote?
     let message: NativeJSON

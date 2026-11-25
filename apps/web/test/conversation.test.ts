@@ -1203,6 +1203,38 @@ describe('a settled turn', () => {
     expect(turn('idle', '')).not.toContain('thinking-line')
   })
 
+  it('keeps a resumed run off the previous reply until its own prompt is recorded', () => {
+    const live: RunLive = { runId: 'next', activity: 'starting', since: at(100), lastEventAt: at(100) }
+    const render = (messages: Message[], stream: Partial<TaskDetail> = {}) =>
+      renderToStaticMarkup(
+        createElement(Transcript, {
+          detail: detail(messages, { summary: { ...detail([]).summary, status: 'running', runId: 'next', live }, ...stream }),
+          approvals: [],
+          harnessName: 'Antigravity',
+          active: true,
+        }),
+      )
+    const previous = [user('first', { turnId: 'prior' }), reply('a1', '上一轮的回复', { completedAt: at(90) })]
+    const preparing = render(previous)
+    expect(preparing).not.toContain('thinking-line')
+    expect(preparing).toContain('<time dateTime=')
+    // A run can also have ended without an answer. Older saved turns may only carry their settlement time.
+    expect(render([user('first', { turnId: 'prior' })])).not.toContain('thinking-line')
+    expect(render([user('first', { turn: { endedAt: at(90) } })])).not.toContain('thinking-line')
+    const current = [...previous, user('second', { turnId: 'next' })]
+    const waiting = render(current)
+    expect(waiting).toMatch(/data-turn="second".*class="thinking-line"/su)
+    // A real reasoning row or a committed reply already occupies the place where the answer starts.
+    expect(render(current, { liveMessageId: 'a2', liveReasoning: '正在考虑' })).not.toContain('thinking-line')
+    const answered = [...current, reply('a2', '这一轮的回复')]
+    expect(render(answered)).not.toContain('thinking-line')
+    for (const state of ['running', 'completed'] as const) {
+      const afterTool = [...answered, tool('tool:read', { state })]
+      expect(render(afterTool)).toContain('thinking-line')
+      expect(render(afterTool, { liveMessageId: 'a3', liveText: '接下来' })).not.toContain('thinking-line')
+    }
+  })
+
   it('names the model of a running turn from the run before its first step records one', () => {
     expect(streamingTranscript('running')).toContain('<span class="assistant-meta-model">fixture-large</span>')
     // A settled turn names only the model its steps recorded: here, just the engine.

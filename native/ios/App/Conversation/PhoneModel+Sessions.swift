@@ -116,7 +116,7 @@ extension PhoneModel {
     }
     /** `steer`: into the running turn, where the Harness takes that now. A message after 清空上下文 starts a new context; it is never queued or steered. */
     /** `target`: with attachments, the session the send began in; the message goes nowhere else. */
-    @discardableResult func send(text: String, queue: Bool = false, steer: Bool = false, nextModel: PhoneModelChoice? = nil, attachments: [String] = [], target: String?? = nil) async -> Bool {
+    @discardableResult func send(text: String, queue: Bool = false, steer: Bool = false, nextModel: PhoneModelChoice? = nil, attachments: [String] = [], target: String?? = nil, takingDraft: Bool = false) async -> Bool {
         guard transportReady else { return false }
         if let target, target != sessionId { if let key = target { attachTrays[key, default: PhoneAttachTray()].note = PhoneAttachSend.movedWords }; return false }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty, text.count <= 16_000,
@@ -136,16 +136,16 @@ extension PhoneModel {
             let fresh = sessionId.map { clearing.contains($0) && !queue && !steer } ?? false
             if fresh { fields["freshContext"] = .bool(true) }
             if !attachments.isEmpty { fields["attachmentIds"] = .array(attachments.map { .string($0) }) }
-            let sent = await submit(try NativePendingWrite(method: .post, path: path, fields: fields))
+            let sent = await submit(try NativePendingWrite(method: .post, path: path, fields: fields), takingDraft: takingDraft)
             if sent, fresh, pending.isEmpty, let selected { clearing.remove(selected) }
             return sent
         } catch { report(error); return false }
     }
-    @discardableResult func submit(_ request: NativePendingWrite) async -> Bool {
+    @discardableResult func submit(_ request: NativePendingWrite, takingDraft: Bool = false) async -> Bool {
         guard let workspace, transportReady, !busy else { return false }
         let current = generation, initialReading = contentGeneration
         do { try await ensureVerified() } catch { report(error); return false }
-        guard current == generation, initialReading == contentGeneration, transportReady else { return false }
+        guard current == generation, initialReading == contentGeneration, transportReady, !busy else { return false }
         // Older pending writes belong to this Host and may already have succeeded. Only their original request may settle them.
         if !pending.contains(where: { $0.requestId == request.requestId }) {
             let owner = PhonePending.topicOwner(request) ?? PhoneHistory.promptSession(request.path).flatMap { PhoneAgentChat.owner(summary(of: $0)) }
@@ -155,12 +155,32 @@ extension PhoneModel {
         busy = true; defer { if generation == current { busy = false } }
         // A message with attachments hears the Host's own refusal: `attachment-released` proves it was not delivered, even on a retry.
         let attached = PhoneAttachments.count(request) > 0, retried = pending.contains { $0.requestId == request.requestId }
+        let promptSession = PhoneHistory.promptSession(request.path)
+        let opening = heldDrafts.opening, window = privateSnapshot.epoch
+        var taken: String?
+        if let id = promptSession {
+            submittingPromptId = request.requestId
+            if takingDraft, !retried, let text = PhonePending.prompt(request) {
+                taken = heldDrafts.take(for: id, matching: text)
+            }
+        }
+        defer { if generation == current, submittingPromptId == request.requestId { submittingPromptId = nil } }
+        var mayReturnPrompt: Bool {
+            guard let promptSession, hasContentWindow, privateSnapshot.accepts(window), canRun else { return false }
+            return PhoneSessions.mayReadBody(snapshot: snapshot, sessionId: promptSession)
+        }
+        func discardRefusedWrite(confirmedRetry: Bool = false, mayRestore: Bool = true) {
+            pending.removeAll { $0.requestId == request.requestId }
+            heldDrafts.restoreRefusedPrompt(request, taken: taken, confirmedRetry: confirmedRetry, opening: opening, permitted: mayRestore && mayReturnPrompt)
+        }
         do {
             if !retried { pending.append(request) }
             let value = try await workspace.submit(request, explain: attached || PhoneQueueControl(request) != nil,
                 retryAnswered: { attached && $0.code == "attachment-released" })
             guard generation == current else { return false }
-            pending.removeAll { $0.requestId == request.requestId }
+            // Keep the submitting row until the refreshed transcript can take its place.
+            if promptSession == nil { pending.removeAll { $0.requestId == request.requestId } }
+            defer { if promptSession != nil, generation == current { pending.removeAll { $0.requestId == request.requestId } } }
             if attached, let key = Self.trayKey(request) { attachmentsSent(key) }
             guard contentGeneration == reading else { return false }
             if let target = selected, sessionId == target, hasContentWindow, canRun,
@@ -181,13 +201,21 @@ extension PhoneModel {
             error = unsettled.refusal.message.isEmpty ? NativeFailure.resultUnknown.errorDescription : unsettled.refusal.message
             return false
         } catch let refusal as NativeHostRefusal {
-            guard generation == current, contentGeneration == reading else { return false }
-            pending.removeAll { $0.requestId == request.requestId }
+            guard generation == current else { return false }
+            discardRefusedWrite(confirmedRetry: retried)
+            // A released attachment still belongs to the original session's tray after navigating away.
+            guard hasContentWindow, privateSnapshot.accepts(window),
+                  contentGeneration == reading || (refusal.code == "attachment-released" && mayReturnPrompt) else { return false }
             attachmentRefused(request, refusal: refusal, retried: retried)
             return false
         } catch {
-            guard generation == current, contentGeneration == reading else { return false }
-            if (error as? NativeFailure) != .resultUnknown { pending.removeAll { $0.requestId == request.requestId } }
+            guard generation == current else { return false }
+            let failure = error as? NativeFailure
+            // A local retry failure says nothing about delivery of the first request.
+            if failure != .resultUnknown && !(retried && promptSession != nil) {
+                discardRefusedWrite(mayRestore: failure != .expired && failure != .revoked && failure != .forbidden && failure != .contextChanged)
+            }
+            guard contentGeneration == reading else { return false }
             // The Harness lost its own session: the stop row above the input says so and offers 按文字重建, as the web does.
             // Only a session brought in as it was gets that row; any other keeps the ordinary failure (HARNESSES.md).
             if (error as? NativeFailure) == .sessionLost, let id = PhoneHistory.promptSession(request.path),
@@ -207,10 +235,8 @@ extension PhoneModel {
         if refusal.code == "attachment-released", let key {
             attachTrays[key, default: PhoneAttachTray()].markReleased()
             attachTrays[key]?.note = PhoneAttachments.releasedWords
-            // A session's composer takes it as an insert; the sheet and a new topic take it back into their own field.
-            if retried, let text = PhonePending.prompt(request), !text.isEmpty {
-                if key.hasPrefix("\u{0}") { returnedText[key] = text } else { draftInserts[key] = text }
-            }
+            // Sessions use heldDrafts; the new-session sheet and a new topic have their own fields.
+            if retried, key.hasPrefix("\u{0}"), let text = PhonePending.prompt(request), !text.isEmpty { returnedText[key] = text }
             return
         }
         error = refusal.message.isEmpty ? "暂时无法完成，请稍后重试。" : refusal.message

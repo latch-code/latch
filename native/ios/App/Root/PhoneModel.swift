@@ -215,6 +215,11 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         return value
     }
     func hostNow() -> Date { Date().addingTimeInterval(hostClockOffset) }
+    /** Local attempt currently submitting a prompt. Only the window-scoped pending store holds its body. */
+    @Published var submittingPromptId: String?
+    var writesAwaitingConfirmation: [NativePendingWrite] {
+        pending.filter { $0.requestId != submittingPromptId }
+    }
     @Published var busy = false
     @Published var verifying = false
     @Published var verifiedUntil: Date? {
@@ -260,7 +265,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     private let hold = NativeBackgroundHold()
     private var holdTask = UIBackgroundTaskIdentifier.invalid
     private var transportWatch: Task<Void, Never>?
-    private(set) var generation = UUID()
+    private(set) var generation = UUID() { didSet { submittingPromptId = nil } }
     private(set) var networkGeneration = UUID()
     var freshPairings: [String: (PairingInvitation, UUID)] = [:]
     private var eventTask: Task<Void, Never>?
@@ -1429,6 +1434,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         clearWorkContent()
         createdHelper = nil
         cancelPreview()
+        submittingPromptId = nil
         detail = .null; detailFailed = nil; pending = []; contentGeneration = UUID(); PreviewFiles.clear(); clearAttachments()
         contentSearch = PhoneContentSearch(); forkDraft = nil; draftInserts = [:]; editPaths = [:]
         // Diffs, notes and handoffs are content: they go with the window, and the review page with them.
