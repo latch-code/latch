@@ -17,6 +17,8 @@ export const AUDIT_FIELDS: AuditFieldTable = {
   'agent.catalogue.requested': { agentId: 'short', auto: 'show' },
   'agent.changed': { kind: 'show', operation: 'show', before: 'short', after: 'short', customAgentId: 'short', via: 'show' },
   'agent.chat.restored': { customAgentId: 'short', sessionId: 'short', reason: 'show' },
+  'agent.consultation.guard-verified': { harnessId: 'short', sessionId: 'short', runId: 'short', version: 'show', executionId: 'short' },
+  'agent.mentioned': { sourceAgentId: 'short', targetAgentId: 'short', initiator: 'show', textHash: 'short' },
   'agent.chat.retired': { customAgentId: 'short', sessionId: 'short', reason: 'show' },
   'agent.defined': { agentId: 'short', definitionHash: 'short', created: 'show' },
   'agent.deleted': { agentId: 'short' },

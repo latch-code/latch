@@ -4,6 +4,17 @@ import Foundation
 /** Session drafts belong to this unlocked opening. A view can disappear without writing its display back. */
 @MainActor public final class PhoneConversationDrafts: ObservableObject {
     @Published private var drafts: [String: String] = [:]
+    public struct AddressedDraft {
+        public let target: PhoneAgentEntry
+        public let message: String
+        public let original: String
+    }
+    private var addressed: [String: AddressedDraft] = [:]
+    public func addressedDraft(for owner: String) -> AddressedDraft? { addressed[owner] }
+    public func address(_ target: PhoneAgentEntry?, owner: String, message: String, original: String, opening: UUID) {
+        guard opening == self.opening else { return }
+        addressed[owner] = target.map { AddressedDraft(target: $0, message: message, original: original) }
+    }
     public private(set) var opening = UUID()
 
     public init() {}
@@ -41,7 +52,7 @@ import Foundation
     }
 
     public func clear() {
-        opening = UUID()
+        opening = UUID(); addressed = [:]
         if !drafts.isEmpty { drafts = [:] }
     }
 }

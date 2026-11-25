@@ -20,10 +20,13 @@ interface Pending<State> {
   hash: string
   state: State
   value: unknown
+  afterPublish?: () => void
 }
 export interface JournalChange<Value> {
   value: Value
   changed?: boolean
+  /** Nonthrowing in-memory invalidation, synchronous with publication (including a recovered write). */
+  afterPublish?: () => void
 }
 
 const DEFAULT_MAXIMUM_BYTES = 16 * 1024 * 1024
@@ -130,7 +133,7 @@ export class AgentJournal<State> {
             throw new AppError(409, 'agent-storage-limit', 'Agent 记录已达到容量上限，请先整理记录。')
           if (Buffer.byteLength(journalText(draft)) > (this.options.maximumBytes ?? DEFAULT_MAXIMUM_BYTES))
             throw new AppError(409, 'agent-storage-limit', 'Agent 记录已达到存储上限。')
-          await this.publish({ key, hash, state: draft, value: structuredClone(result.value) })
+          await this.publish({ key, hash, state: draft, value: structuredClone(result.value), afterPublish: result.afterPublish })
         }
         authorize()
         return structuredClone(result.value)
@@ -158,6 +161,7 @@ export class AgentJournal<State> {
     }
     this.state = pending.state
     this.pending = undefined
+    pending.afterPublish?.()
   }
   private retryLater(): void {
     if (!this.options.retryMs || this.retry || this.closed) return

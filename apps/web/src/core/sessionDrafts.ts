@@ -96,11 +96,11 @@ export function forgetStoredDrafts(origin: string, keep?: string): void {
     /* Nothing was stored. */
   }
   try {
-    const prefix = `latch.board.proposals.${origin}.`
+    const prefixes = [`latch.board.proposals.${origin}.`, `latch.agent-mentions.${origin}.`]
     const stale: string[] = []
     for (let index = 0; index < sessionStorage.length; index++) {
       const key = sessionStorage.key(index)
-      if (key?.startsWith(prefix) && key !== `${prefix}${keep ?? ''}`) stale.push(key)
+      if (key && prefixes.some(prefix => key.startsWith(prefix) && key !== `${prefix}${keep ?? ''}`)) stale.push(key)
     }
     for (const key of stale) sessionStorage.removeItem(key)
   } catch {

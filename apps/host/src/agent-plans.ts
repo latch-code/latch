@@ -127,10 +127,10 @@ export class AgentPlans {
    * Agent's reply may repeat them. Neither is in the revision, so they apply as they stand when the turn is sent, as 通用
    * does for a Code session.
    */
-  agentContext(id: string, harnessId: string, scope: DataScope | undefined): AgentExecutionContext {
+  agentContext(id: string, harnessId: string, scope: DataScope | undefined, consultation = false): AgentExecutionContext {
     const agent = this.options.agents.get(id)
     assertAgentWorksHere(agent)
-    return this.build(agent, harnessId, scope === 'all')
+    return this.build(agent, harnessId, scope === 'all', consultation)
   }
 
   /** What a session on this engine that picks no other agent receives; undefined while 通用 has nothing to add. */
@@ -251,7 +251,7 @@ export class AgentPlans {
     return skills.filter(id => known.has(id))
   }
 
-  private build(agent: CustomAgent, harnessId: string, personal: boolean): AgentExecutionContext {
+  private build(agent: CustomAgent, harnessId: string, personal: boolean, consultation = false): AgentExecutionContext {
     const harness = this.options.harness(harnessId)
     if (!harness?.agentContext) throw new AppError(409, 'agent-unavailable', '这个 Harness 收不到 Agent 的指令。')
     const facts = personal && !agent.generalFactsOff ? generalFacts(this.options.agents.memories(GENERAL_AGENT_ID)).facts : []
@@ -264,6 +264,7 @@ export class AgentPlans {
       ...this.skillDelivery(harness, agent.skills),
       proposals: canPropose(harness),
       brief: {
+        consultation,
         agentName: agent.name,
         engineName: harness.capabilities.display.label,
         instructions: agent.instructions,

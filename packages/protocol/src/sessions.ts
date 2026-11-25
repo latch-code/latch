@@ -501,7 +501,7 @@ export interface ToolAction {
 }
 
 /** How outside content reached a user's turn (`Message.origin`). */
-export type MessageOrigin = 'mcp-prompt' | 'conversation-reference'
+export type MessageOrigin = 'mcp-prompt' | 'conversation-reference' | 'agent-mention'
 
 /** Structured presentation of one tool call. `Message.text` keeps the plain-text form. */
 export interface ToolDetail {

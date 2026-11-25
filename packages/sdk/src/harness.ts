@@ -23,6 +23,8 @@ export interface ToolRisk {
 }
 
 export interface ToolRiskInput {
+  /** The selected definition is one of this run's Host-supplied tools. A leased plugin cannot set this. */
+  fromHost?: true
   toolName: string
   arguments: Record<string, unknown>
   cwd: string

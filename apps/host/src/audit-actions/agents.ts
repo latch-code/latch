@@ -46,6 +46,20 @@ export const AGENT_ACTIONS = {
     entries: count,
     bytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   }),
+  /** The live DSH guard was verified before sending this mention's prompt; this does not attest delivery or completion. */
+  'agent.consultation.guard-verified': z.strictObject({
+    harnessId: opaqueId,
+    sessionId: opaqueId,
+    runId: opaqueId,
+    version: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    executionId: hex64,
+  }),
+  'agent.mentioned': z.strictObject({
+    sourceAgentId: opaqueId,
+    targetAgentId: opaqueId,
+    initiator: z.enum(['agent', 'person']),
+    textHash: hex64,
+  }),
   /**
    * The Agent's one chat can never run again because its home is under another start directory than the Host's now:
    * the chat stays to read and the person's message that found this starts the new chat (`sessionId` is the old one).

@@ -432,6 +432,9 @@ test('the phone app may export by its scope but never imports: the route refuses
         importAgent: async () => (calls.push('import'), { value: {}, audited: true }),
         list: () => [],
       } as never,
+      mentions: () => {
+        throw new Error('unexpected mention')
+      },
       plans: () => ({ harnessFor: () => ({ id: 'standard', ready: true, canSchedule: true }) }) as never,
       automations: () => ({ list: () => [], create: async () => void calls.push('schedule') }) as never,
       access: () => ({ actor: { listener: 'native-direct', deviceId: 'dev_1' }, authorize: () => {} }) as never,

@@ -879,10 +879,7 @@ describe('streamed messages in the real workspace', () => {
       await expect.poll(async () => (await host.bridge.detail(id)).summary.status).toBe('idle')
       const transcript = page.locator('.transcript').getByText(text, { exact: true })
       await transcript.waitFor()
-      const owner = await testHost.enroll({ listener: 'unix' })
       const task = `tasks/${encodeURIComponent(id)}`
-      const lastRead = await owner.json<TaskDetail>(task)
-      expect(lastRead.sync?.revision).toBeDefined()
       await page.route(
         url => url.pathname === `/link/api/${task}`,
         async route => {
@@ -891,6 +888,12 @@ describe('streamed messages in the real workspace', () => {
           await route.abort('connectionreset').catch(() => {})
         },
       )
+      // Enrollment refreshes the open detail. Keep that request in flight before the deletion refresh arrives.
+      const reading = page.waitForRequest(request => request.method() === 'GET' && new URL(request.url()).pathname === `/link/api/${task}`)
+      const owner = await testHost.enroll({ listener: 'unix' })
+      await reading
+      const lastRead = await owner.json<TaskDetail>(task)
+      expect(lastRead.sync?.revision).toBeDefined()
       const complete = page.waitForResponse(async response => {
         if (new URL(response.url()).pathname !== '/link/api/snapshot' || !response.ok()) return false
         const snapshot = (await response.json()) as AppSnapshot

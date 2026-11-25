@@ -1,3 +1,4 @@
+import { CONSULT_AGENT, LIST_AGENTS } from './agent-consultations.ts'
 import { posix, win32 } from 'node:path'
 import type { ApprovalRiskReason, RiskLevel } from '@latch/protocol'
 import { BROWSER_READS, isBrowserTool, type OriginClass } from './browser-broker.ts'
@@ -26,6 +27,7 @@ export interface StandardCallInput {
   browser?: BrowserCallFacts
   /** The Host itself put its conversation-reference read among this run's tools; no plugin's tool has that name in it. */
   hostReference?: boolean
+  hostConsultation?: boolean
 }
 
 /** What the Host knows of the tab a browser call names, from the desktop app's reports. */
@@ -105,6 +107,10 @@ export function classifyStandardCall(input: StandardCallInput): { risk: RiskLeve
   // A read, like the file reads. Only the tool the Host offered this run: a plugin's tool of this name is not it,
   // with an owner or (its plugin switched off mid-run) without one.
   if (input.hostReference === true && input.pluginId === undefined && input.toolName === REFERENCE_READ_TOOL) return { risk: 'R0' }
+  if (input.hostConsultation && input.pluginId === undefined) {
+    // Consultation is pre-authorized by this Agent's own switch. Its peer retains unattended approvals for its work.
+    if (input.toolName === LIST_AGENTS || input.toolName === CONSULT_AGENT) return { risk: 'R0' }
+  }
   const key = `${input.pluginId ?? ''}:${input.toolName}`
   const builtin = input.pluginId !== undefined
   if (input.pluginId === BROWSER_PLUGIN && isBrowserTool(input.toolName))

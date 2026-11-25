@@ -6,6 +6,7 @@ import { Button, EmptyState, IconButton, ChevronLeftGlyph } from '@latch/ui'
 import { defineCopy } from '../core/i18n.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { AgentWorkDestination } from './AgentWorkComputer.tsx'
+import { AgentMentionHistory } from './AgentMentions.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
 import { personalChat } from './chat.ts'
 import { helperAbilities } from './helpers.ts'
@@ -123,7 +124,9 @@ export function AgentChat({ shell, owner, onBack }: { shell: ShellState; owner: 
   const chat = personalChat(snapshot, owner)
   const pendingHere = shell.delegation.pending?.customAgentId === owner
   // Only while nothing has been said: a first message on its way, or another device's chat, has no opening.
-  const opening = !locked && !missing && !confirming && !agent?.workComputer && chat?.state === 'empty' && !pendingHere
+  const mentions = shell.agentMentions.source === owner ? shell.agentMentions : undefined
+  const hasMentions = !!(mentions?.rows.length || mentions?.readError)
+  const opening = !hasMentions && !locked && !missing && !confirming && !agent?.workComputer && chat?.state === 'empty' && !pendingHere
   const fill = (text: string) => {
     setDraft(previous => fillDraft(previous, text))
     requestAnimationFrame(() => {
@@ -140,8 +143,9 @@ export function AgentChat({ shell, owner, onBack }: { shell: ShellState; owner: 
           {phone && <IconButton size="lg" className="topbar-back" label={AGENT_SPACE_COPY.back} icon={ChevronLeftGlyph} onClick={onBack} />}
           {frame}
         </header>
-        {(locked || missing || confirming || waiting.length > 0 || opening) && (
+        {(locked || missing || confirming || waiting.length > 0 || opening || hasMentions) && (
           <div className="agent-chat-body">
+            {mentions && <AgentMentionHistory mentions={mentions} snapshot={snapshot} open={shell.openMentionTarget} />}
             {opening && (
               <Opening
                 shell={shell}

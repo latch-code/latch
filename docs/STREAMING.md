@@ -180,7 +180,7 @@ Host 从启动起在内存里计数自己发出的字节（[traffic.ts](../apps/
 
 **open 不等于已连接。** 流打开后先完成 snapshot 与 detail 的 HTTP 同步，确认选择仍有效、流仍打开且浏览器在线，`.app-shell` 的 `data-connection` 才变为 `connected`；其他取值是 `connecting`、`reconnecting`、`offline`。离线时保留已读内容。
 
-**`refresh` 与 `tasks-invalidated`** 只在 `instanceId` 与当前 Host 相同且 revision 新于当前 snapshot 时触发同步；`instanceId` 不同则立即重新同步并重新绑定。
+**`refresh` 与 `tasks-invalidated`** 只在 `instanceId` 与当前 Host 相同且 revision 新于当前 snapshot 时触发同步；`instanceId` 不同则立即重新同步并重新绑定。收到更新的全局 `refresh` 时，浏览器中断还在等待的旧详情，先检查新快照，再读取仍可见的会话。
 
 **重新建立与跟随。** `useHarness` 的 `resyncs` 只在重新建立状态的同步发布快照时加一：首次加载与连接页的重试、事件流每次打开、重新联网或页面重新可见、续期之后、任一请求发现凭据失效之后、断线时的同步，以及人按下的同步或重试。跟随变化的同步（`refresh`、`tasks-invalidated`、`task-state`、用户操作之后的刷新、选择会话）不加；排在一起的请求有一个是重新建立就算重新建立。界面用它作一次性过渡的纪元，见 [DESIGN.md](./DESIGN.md)「界面原语」。
 
@@ -684,6 +684,7 @@ Codex 的原生委派在同一会话的详情里沿用 `Message.subagent`。
 - **`reveal(messageId)`** 把指定消息行滚入视野，目标已在底部附近时等同于回到最新。目标在收起的折叠里时，页面先向它外层每个 `hidden="until-found"` 的容器派发 `beforematch`（与浏览器页内查找同一条路径），下一帧再 `reveal`。
 - **嵌套滚动框**（思考、运行中的工具输出）用 `flex-direction: column-reverse` 从末尾排布，自然跟随最新内容，不写 `scrollTop`。
 - **每个会话各自的位置。** 切换会话保存各自的模式与锚点，至多 100 个会话，只在内存：不写磁盘或浏览器存储，刷新整页不保证恢复。锚点消息消失时用限制在有效范围内的旧 offset。
+- **个人 Agent 协作。** 原聊天按 Host 记录里的目标和投递标识读取这一轮的答复和状态；目标会话后续的回复各自归属新的回合。工具把对方的回复交还给模型前，将发起回合记为 `origin: 'agent-mention'`。回执丢失后沿用原请求重试。
 - **待办的来源跳转。** 从讨论按源消息定位，用该轮用户输入作为同轮内的备用位置。源回合不可用时回到待办。阅读同轮回复时保留锚点，返回后恢复待办滚动位置与焦点。
 - **未绘制的轮次。** 视野外的已结算轮次用 `content-visibility: auto` 推迟绘制（打印时恢复）。它只占估计高度，行却按完整高度测量，所以定位锚点时先让锚点所在轮次与视野内其下的轮次真正绘制（`data-drawn`），且只在与视口相交的轮次里测量。切回会话、页内查找与 `reveal` 因此落在同一行。
 - **会话定位条**与消息列表共用已提交轮次的投影，跳转用 `reveal`；只让正文变长的帧沿用同一份投影。

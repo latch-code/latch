@@ -21,8 +21,8 @@
 - `latchCodeRoot()` 固定；自动避开，显式可选，写入仍 R2。
 - 项目内变更与启动串行，跨项目及撤销收紧可并行。会话冻结目录；项目摘要复核当前成员与文件权限。
 - 确认只经 `PresenceService`，无设备签名批准。开发固定 CDHash，发布固定身份与审计，缺一须离线重新固定，运行前核验子进程（ARCHITECTURE）。
-- 终端与助手工作电脑配置限 `host.sock`、`run`、`all`；终端复核目录身份，环境用 `terminalEnvironment`。
-- 助手改绑后凭原设备、请求 ID、请求体哈希核对已接收的发送或追加，缺证据保留未确认。
+- 终端、工作电脑限 `host.sock`、`run`、`all`；终端复核目录身份，环境用 `terminalEnvironment`。
+- 助手改绑按设备、请求 ID 与体哈希复核。@ 只投本机唯一聊天。DSH 前台委托另取来源授权。
 - 本机 MCP 提示先审计、持久化来源再转发；远程拒绝（MCP.md）。
 - 构建禁测试代码；组件自检；私有框架限画面，输入走 idb Unix 套接字。
 - `work` 不见文件差异；扩展报告限 `admin`、普通来源。投影不改执行参数、回执、终态（STREAMING）。
@@ -33,4 +33,4 @@
 - 准备及配置回执见 ARCHITECTURE。外观写入需基版与回执，替换前复核权限，目录同步未确认复用原请求（CUSTOMIZATION）。
 - 插件连接仅随原生入口启用；远程 review/正文窗口与真实关闭见 [STREAMING](../../docs/STREAMING.md#原生客户端的流)。
 - 家只由分配器建并验身份，空时重建，经 `latch-home` 删；默认项走 startConfig。后台按实际等级核上限，手动运行不授后台权。
-- 权限见 ARCHITECTURE，基线与 PR 续办见 GIT-REVIEW，推送见 IOS-NOTIFICATIONS。
+- 权限：ARCHITECTURE。基线与续办：GIT-REVIEW。推送：IOS-NOTIFICATIONS。

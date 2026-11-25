@@ -919,6 +919,18 @@ export function SessionComposer({
             : undefined
         }
         fileMentions={mentionChoice}
+        agentMentions={
+          !home
+          && visible
+          && speaker
+          && !asked
+          && !noteComposer
+          && !sideQuestion
+          && gate.kind === 'open'
+          && selectedId === current?.summary.id
+            ? shell.agentMentions
+            : undefined
+        }
         members={
           choices && catalog
             ? {

@@ -143,17 +143,45 @@ const patchSchema = z.strictObject({
   defaultProjectId: projectId.nullable().optional(),
   avatar: faceAvatar.optional(),
   notifications: notifications.nullable().optional(),
+  canConsultAgents: z.boolean().optional(),
+  canConsultDeepSeek: z.boolean().optional(),
   keepAwakeForSchedules: z.boolean().optional(),
   generalFacts: z.boolean().optional(),
   requestId,
   baseRevision: revision,
 })
 const generalPatchSchema = z.strictObject({
+  canConsultAgents: z.boolean().optional(),
+  canConsultDeepSeek: z.boolean().optional(),
   instructions: instructions.optional(),
   skills: skills.nullable().optional(),
   requestId,
   baseRevision: revision,
 })
+// Turning off a grant must still work if the audit cannot be written. Other edits keep their own audit requirement.
+type ConsultationPatch = Pick<CustomAgentPatch, 'canConsultAgents' | 'canConsultDeepSeek'>
+
+function removesConsultationOnly(patch: ConsultationPatch): boolean {
+  const changes = Object.entries(patch).filter(([key]) => key !== 'requestId' && key !== 'baseRevision')
+  return (
+    changes.length > 0 && changes.every(([key, value]) => (key === 'canConsultAgents' || key === 'canConsultDeepSeek') && value === false)
+  )
+}
+
+function applyConsultationPatch(target: { canConsultAgents?: true; canConsultDeepSeek?: true }, patch: ConsultationPatch) {
+  if (patch.canConsultDeepSeek && patch.canConsultAgents !== true)
+    throw new AppError(400, 'agent-consultation-consent', '请为这位 Agent 一并开启主动协作并确认可联系本机 DeepSeek Harness。')
+  const reduced =
+    target.canConsultAgents && patch.canConsultAgents === false
+      ? 'all'
+      : target.canConsultDeepSeek && patch.canConsultDeepSeek === false
+        ? 'deepseek'
+        : undefined
+  if (patch.canConsultAgents !== undefined) assign(target, 'canConsultAgents', patch.canConsultAgents ? true : null)
+  if (patch.canConsultAgents === false) delete target.canConsultDeepSeek
+  else if (patch.canConsultDeepSeek !== undefined) assign(target, 'canConsultDeepSeek', patch.canConsultDeepSeek ? true : null)
+  return reduced
+}
 const content = z
   .string()
   .max(4000)
@@ -180,6 +208,8 @@ const agentSchema = config.extend({
   home: z.string().regex(HELPER_HOME_NAME).optional(),
   avatar,
   notifications: notifications.optional(),
+  canConsultAgents: z.literal(true).optional(),
+  canConsultDeepSeek: z.literal(true).optional(),
   keepAwakeForSchedules: z.literal(true).optional(),
   generalFactsOff: z.literal(true).optional(),
   revision,
@@ -322,6 +352,8 @@ const recallSchema = z.strictObject({
   count: z.number().int().min(1).max(1000),
 })
 const generalSchema = z.strictObject({
+  canConsultAgents: z.literal(true).optional(),
+  canConsultDeepSeek: z.literal(true).optional(),
   id: z.literal(GENERAL_AGENT_ID),
   home: z
     .string()
@@ -403,6 +435,7 @@ interface Options {
   dataDir: string
   audit: Pick<AuditLog, 'append'>
   now?: () => number
+  consultationReduced?: (owner: string, scope: 'all' | 'deepseek') => void
   atomicFs?: AtomicWriteFs
 }
 
@@ -734,42 +767,58 @@ export class CustomAgents {
   patch(id: string, input: CustomAgentPatch, actor: AgentActor, pauseSchedules?: () => Promise<void>): Promise<AgentMutation<CustomAgent>> {
     agentId.parse(id)
     const parsed = patchSchema.parse(input)
-    return this.mutate('update', 'agent', id, parsed, actor, state => {
-      const found = state.agents.find(agent => agent.id === id)
-      if (!found) throw missing()
-      if (found.revision !== parsed.baseRevision) throw changed()
-      // A helper is who it is: another Harness is another helper, so the Agent's own is the only one it takes.
-      if (parsed.harnessId !== undefined && parsed.harnessId !== found.harnessId) throw harnessFixed()
-      const {
-        requestId: _,
-        baseRevision: __,
-        model: nextModel,
-        engineOptions: nextOptions,
-        tools: nextTools,
-        defaultProjectId: project,
-        workComputer: destination,
-        notifications: nextNotifications,
-        keepAwakeForSchedules: wake,
-        generalFacts: knows,
-        ...rest
-      } = parsed
-      Object.assign(found, stripUndefined(rest), { revision: found.revision + 1, updatedAt: this.at() })
-      assign(found, 'notifications', nextNotifications)
-      // Off is the default, so it is stored only as on.
-      assign(found, 'keepAwakeForSchedules', wake === undefined ? undefined : wake ? true : null)
-      // On is the default, so it is stored only as off.
-      assign(found, 'generalFactsOff', knows === undefined ? undefined : knows ? null : true)
-      assign(found, 'model', nextModel)
-      assign(found, 'engineOptions', nextOptions)
-      assign(found, 'tools', nextTools)
-      assign(found, 'defaultProjectId', project)
-      const moves =
-        destination !== undefined
-        && (found.workComputer?.hostId !== destination?.hostId || found.workComputer?.agentId !== destination?.agentId)
-      if (moves && !pauseSchedules) throw new AppError(503, 'agent-write-unknown', '尚未确认原电脑上的定时任务已暂停。')
-      assign(found, 'workComputer', destination)
-      return { target: id, customAgentId: id, ...(moves && pauseSchedules ? { beforeCommit: pauseSchedules } : {}) }
-    }).then(result => ({ ...result, value: this.get(id) }))
+    return this.mutate(
+      'update',
+      'agent',
+      id,
+      parsed,
+      actor,
+      state => {
+        const found = state.agents.find(agent => agent.id === id)
+        if (!found) throw missing()
+        if (found.revision !== parsed.baseRevision) throw changed()
+        // A helper is who it is: another Harness is another helper, so the Agent's own is the only one it takes.
+        if (parsed.harnessId !== undefined && parsed.harnessId !== found.harnessId) throw harnessFixed()
+        const {
+          requestId: _,
+          baseRevision: __,
+          model: nextModel,
+          engineOptions: nextOptions,
+          tools: nextTools,
+          defaultProjectId: project,
+          workComputer: destination,
+          notifications: nextNotifications,
+          canConsultAgents: consult,
+          canConsultDeepSeek: deepSeek,
+          keepAwakeForSchedules: wake,
+          generalFacts: knows,
+          ...rest
+        } = parsed
+        Object.assign(found, stripUndefined(rest), { revision: found.revision + 1, updatedAt: this.at() })
+        assign(found, 'notifications', nextNotifications)
+        // Off is the default, so it is stored only as on.
+        const reduced = applyConsultationPatch(found, { canConsultAgents: consult, canConsultDeepSeek: deepSeek })
+        assign(found, 'keepAwakeForSchedules', wake === undefined ? undefined : wake ? true : null)
+        // On is the default, so it is stored only as off.
+        assign(found, 'generalFactsOff', knows === undefined ? undefined : knows ? null : true)
+        assign(found, 'model', nextModel)
+        assign(found, 'engineOptions', nextOptions)
+        assign(found, 'tools', nextTools)
+        assign(found, 'defaultProjectId', project)
+        const moves =
+          destination !== undefined
+          && (found.workComputer?.hostId !== destination?.hostId || found.workComputer?.agentId !== destination?.agentId)
+        if (moves && !pauseSchedules) throw new AppError(503, 'agent-write-unknown', '尚未确认原电脑上的定时任务已暂停。')
+        assign(found, 'workComputer', destination)
+        return {
+          target: id,
+          customAgentId: id,
+          consultationReduced: moves ? 'all' : reduced,
+          ...(moves && pauseSchedules ? { beforeCommit: pauseSchedules } : {}),
+        }
+      },
+      removesConsultationOnly(parsed),
+    ).then(result => ({ ...result, value: this.get(id) }))
   }
 
   /**
@@ -838,14 +887,23 @@ export class CustomAgents {
 
   patchGeneral(input: GeneralAgentPatch, actor: AgentActor): Promise<AgentMutation<GeneralAgent>> {
     const parsed = generalPatchSchema.parse(input)
-    return this.mutate('update', 'general', GENERAL_AGENT_ID, parsed, actor, state => {
-      if (state.general.revision !== parsed.baseRevision) throw changed()
-      if (parsed.instructions !== undefined) state.general.instructions = parsed.instructions
-      assign(state.general, 'skills', parsed.skills)
-      state.general.revision++
-      state.general.updatedAt = this.at()
-      return { target: GENERAL_AGENT_ID }
-    }).then(result => ({ ...result, value: this.general() }))
+    return this.mutate(
+      'update',
+      'general',
+      GENERAL_AGENT_ID,
+      parsed,
+      actor,
+      state => {
+        if (state.general.revision !== parsed.baseRevision) throw changed()
+        if (parsed.instructions !== undefined) state.general.instructions = parsed.instructions
+        const reduced = applyConsultationPatch(state.general, parsed)
+        assign(state.general, 'skills', parsed.skills)
+        state.general.revision++
+        state.general.updatedAt = this.at()
+        return { target: GENERAL_AGENT_ID, consultationReduced: reduced }
+      },
+      removesConsultationOnly(parsed),
+    ).then(result => ({ ...result, value: this.general() }))
   }
 
   createMemory(owner: string, input: AgentMemoryCreate, actor: AgentActor): Promise<AgentMutation<AgentMemory>> {
@@ -1513,6 +1571,7 @@ export class CustomAgents {
       target: string
       customAgentId?: string
       via?: 'proposal' | 'undo' | 'own'
+      consultationReduced?: 'all' | 'deepseek'
       /** A scope reduction that must be durable before this agent change becomes visible. */
       beforeCommit?: () => Promise<void>
       /** The audit record in place of `agent.changed`. */
@@ -1564,7 +1623,8 @@ export class CustomAgents {
         const stored = { hash: payload, target: result.target, audited }
         state.receipts[key] = stored
         keep(state.receipts)
-        return { value: stored }
+        const reduced = result.consultationReduced
+        return { value: stored, ...(reduced ? { afterPublish: () => this.options.consultationReduced?.(result.target, reduced) } : {}) }
       },
       actor.authorize,
     )
@@ -1663,6 +1723,8 @@ function upgradeState(raw: unknown): unknown {
 }
 
 export interface AgentDelivery {
+  /** The first message is a foreground, text-only consultation to DSH. */
+  consultation?: boolean
   /** 「通用」, or the agent's name. */
   agentName: string
   /** The engine's name, as the first-turn block says it. */
@@ -1736,7 +1798,10 @@ export function firstTurnBrief(input: AgentDelivery): AgentBrief | undefined {
   const facts = input.facts ?? []
   if (!text.trim() && !memories.length && !skillNames.length && !facts.length) return undefined
   const segments: AgentBrief['segments'] = [
-    { source: 'latch', text: `这是用户为「${agentName}」写的指令，第一轮发给 ${engineName}。${engineName} 自带的提示词和工具不变。` },
+    {
+      source: 'latch',
+      text: `这是用户为「${agentName}」写的指令，第一轮发给 ${engineName}。${input.consultation ? '接收个人 Agent 的文字委托时，请根据已有资料回答。该轮关闭所有工具。' : `${engineName} 自带的提示词和工具不变。`}`,
+    },
   ]
   if (text.trim()) segments.push({ source: 'latch', text: '指令：' }, { source: 'user', text })
   const own = memories.filter(memory => !outsideMemory(memory)),
@@ -1749,8 +1814,10 @@ export function firstTurnBrief(input: AgentDelivery): AgentBrief | undefined {
       { source: 'latch', text: MATERIAL_MEMORIES },
       ...material.map(memory => ({ source: 'material' as const, text: memory.content })),
     )
-  if (skillNames.length)
-    segments.push({ source: 'latch', text: `技能${skillNames.map(skill => `「${skill}」`).join('')}可以用技能服务取到。` })
+  if (skillNames.length) {
+    const names = skillNames.map(skill => `「${skill}」`).join('')
+    segments.push({ source: 'latch', text: input.consultation ? `人工聊天中可用的技能有${names}。` : `技能${names}可以用技能服务取到。` })
+  }
   return { segments }
 }
 

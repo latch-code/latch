@@ -117,6 +117,7 @@ struct PromptHint: View {
 }
 
 struct LocalTextEditor: UIViewRepresentable {
+    @Environment(\.agentPickerKeys) var agentPicker
     @Binding var text: String
     let placeholder: String
     var maximumLines: Int? = 6
@@ -166,7 +167,9 @@ struct LocalTextEditor: UIViewRepresentable {
         } else {
             coordinator.sync(view)
         }
-        view.completionKeys = commandKeys; view.completionCommand = onCommand
+        view.addressingAgent = !agentPicker.keys.isEmpty
+        view.completionKeys = agentPicker.keys.isEmpty ? commandKeys : agentPicker.keys
+        view.completionCommand = agentPicker.keys.isEmpty ? onCommand : agentPicker.select
         view.configureImagePaste(onPasteImages != nil)
         if view.commandHint != suffixHint { view.commandHint = suffixHint; view.setNeedsLayout() }
         view.accessibilityHint = suffixHint
@@ -699,6 +702,22 @@ final class LocalPromptView: LocalTextView {
             button.frame = CGRect(x: rect.minX + attachment.bounds.width - 44, y: rect.minY, width: 44, height: min(44, rect.height)).integral
         }
         for (offset, item) in leftover { item.button.removeFromSuperview(); terminalButtons.removeValue(forKey: offset) }
+    }
+    var addressingAgent = false
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if addressingAgent, isFirstResponder, markedTextRange == nil, presses.count == 1, let key = presses.first?.key,
+           key.modifierFlags.intersection([.command, .control, .alternate, .shift]).isEmpty {
+            let word: String? = switch key.keyCode {
+            case .keyboardUpArrow: UIKeyCommand.inputUpArrow
+            case .keyboardDownArrow: UIKeyCommand.inputDownArrow
+            case .keyboardEscape: UIKeyCommand.inputEscape
+            case .keyboardTab: "\t"
+            case .keyboardReturnOrEnter: "\r"
+            default: nil
+            }
+            if let word, completionKeys.contains(word) { completionCommand?(word); return }
+        }
+        super.pressesBegan(presses, with: event)
     }
     override var keyCommands: [UIKeyCommand]? {
         guard isFirstResponder, window != nil, markedTextRange == nil, completionCommand != nil else { return super.keyCommands }

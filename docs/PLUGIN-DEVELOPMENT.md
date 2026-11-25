@@ -355,11 +355,11 @@ context.registerSkill({ id: 'review', name: '发布检查', description: '逐项
 
 ### 风险分级与审批
 
-**是否审批由 Host 的分级决定，不由工具声明。** 内置 Harness 在每次工具调用前请 Host 分级（`HarnessHostOptions.classifyToolCall`，规则在 [risk.ts](../apps/host/src/risk.ts) 的 `classifyStandardCall`）。只有列出的内置工具与 Host 自己的会话引用读取低于 R2。
+**是否审批由 Host 的分级决定，不由工具声明。** 内置 Harness 在每次工具调用前请 Host 分级（`HarnessHostOptions.classifyToolCall`，规则在 [risk.ts](../apps/host/src/risk.ts) 的 `classifyStandardCall`）。低于 R2 的工具见下表。内置 Harness 按本轮实际选用的工具对象判定来源，只对来自 Host 的工具报告 `fromHost`。
 
 | 等级 | 哪些调用 | 审批 |
 | --- | --- | --- |
-| R0 | 内置 `list_folders`，会话任一文件夹中的 `list_files`、`read_file`；内置 `ask_user`；Host 自己的 `read_conversation_reference`（不属于任何插件，读取前后由 Host 核对并审计，见 [ARCHITECTURE](ARCHITECTURE.md)；同名的插件工具仍是 R2）；内置浏览器工具里只看不动的（`BROWSER_READS`）与关闭 Agent 自己开的标签；`--demo` 时的 `long_task` | 直接执行 |
+| R0 | 内置 `list_folders`，会话任一文件夹中的 `list_files`、`read_file`；内置 `ask_user`；Host 自己的 `read_conversation_reference`（不属于任何插件，读取前后由 Host 核对并审计，见 [ARCHITECTURE](ARCHITECTURE.md)；同名的插件工具仍是 R2）；显式开启的个人 Agent 协作工具（目标运行沿用无人值守审批）；内置浏览器工具里只看不动的（`BROWSER_READS`）与关闭 Agent 自己开的标签；`--demo` 时的 `long_task` | 直接执行 |
 | R1 | 内置 `write_file` 写会话任一文件夹内的普通路径；内置浏览器工具的其余操作，关闭人开的标签；`--demo` 时的 `write_report` | 每次询问，可选「本会话始终允许」；会话的[权限档位](#权限档位)可以不问 |
 | R2 | 其余全部，见下 | 每次询问，没有「始终允许」，即使同一工具此前在本会话被始终允许 |
 
@@ -449,6 +449,8 @@ ctx.registerHarness({
 - `create(options)` 同步返回尚未启动的 Bridge，异步初始化放进 `start()`。
 - `status()` 返回 `ready` 或 `unavailable` 与说明；命令已知太旧时带 `statusReason: 'outdated'`。
 
+- 前台文字委托只用于 Host 已确认的 DSH 驱动。`canReceiveConsultation(sessionId?)` 表示能否为新聊天或指定聊天建立受限回合。`CreateTaskInput` 与 `PromptOptions` 的 `consultation`、`authorizeConsultation` 都由 Host 提供。驱动通过 `recordConsultationGuard` 等待 Host 记录本轮工具限制的执行证据，在实际发送前再复核授权。无法确认限制或写入审计时拒绝投递。其他插件声明同名能力不会获准接单。
+
 ### 第三方 Harness 的会话是 L3
 
 Host 把第三方 Harness 的会话标为完全访问（L3）：Latch 无法核实它的执行范围。规则与 ACP 会话相同（[HARNESSES.md](./HARNESSES.md#权限级别完全访问l3)）：有 `run` 的设备能新建、输入、改设置与允许询问，不弹确认，每次启动有审计；只有 `view` 的设备只能查看、拒绝与取消。它的审批由 Host 标为 `advisory` 与 `R2`，不由 Driver 声明。
@@ -495,7 +497,7 @@ Driver 上的其他声明：
 | `workspaces()`、`projects()` | 会话的 `cwd` 必须属于 `workspaces()` |
 | `registry` | 运行开始时 `acquire(providerId, { tools })`，租约持有到运行真正结束 |
 | `clock()` | 消息与运行的时间用它记录，不直接读 `Date.now`：客户端按 Host 的 `hostTime` 校准（[STREAMING.md](./STREAMING.md#时间与用量)） |
-| `classifyToolCall` | 只传给内置 Harness |
+| `classifyToolCall` | 内置 Harness 只在实际调用 Host 提供的工具时附 `fromHost: true`，用于区分同名插件工具 |
 | `mcpTools({ sessionId, signal, runId, unattended })` | Standard 在每轮开始时提供当前轮次 ID 与无人值守状态。Host 据此选择本轮可用的会话工具，并在会话引用读取前和返回前核对轮次 |
 | `securityEvent(event)` | 上报 `permission-drift`、`permission-unverified`、`model-route-bypassed`、`approval-auto-rejected`、`tool-judged`，只带哈希与枚举。Host 写审计（`task.permission-drift`、`task.model.bypassed`、`task.approval-auto-rejected`、`task.tool.judged`；`permission-unverified` 只写日志）并刷新会话，不向 Driver 抛错。只有 `tool-judged` 返回 Promise：审计写不进去时它被拒绝，Driver 应取消这一轮 |
 | `modelGateway` | 给声明了 `models.wires` 的 Driver：按进程 `open` 一个凭据，进程结束时 `close`，`active()` 为假后换进程；一轮发出时与结束时各调用一次 `takeTurn()`，把结果记进 `TurnStats.routed`。凭据不进参数、URL、日志与消息（网关的规则见 [ARCHITECTURE.md](ARCHITECTURE.md#模型网关)） |

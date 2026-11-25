@@ -5,6 +5,25 @@ import LatchNativeCore
 func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     let value = try NativeJSON.decode(JSONSerialization.data(withJSONObject: input))
     let snapshot = value["snapshot"], catalog = snapshot["catalog"]
+    if let owner = value["mentionOwner"].string, let target = value["target"].string {
+        let write = try PhoneAgentMentions.request(owner: owner, target: target, text: "  检查这份草稿  ")
+        let input = try NativeJSON.decode(write.body)
+        var response: [String: NativeJSON] = ["id": .string("mention-1"), "sourceAgentId": .string(owner), "targetAgentId": .string(target),
+            "requestId": .string(write.requestId), "initiator": .string("person"), "text": input["text"], "status": .string("running")]
+        let acknowledged = PhoneAgentMentions.confirms(.object(response), write: write)
+        response["status"] = .string("unknown")
+        let uncertain = PhoneAgentMentions.confirms(.object(response), write: write)
+        response["status"] = .string("completed"); response["targetAgentId"] = .string(owner)
+        let crossed = PhoneAgentMentions.confirms(.object(response), write: write)
+        let quote = "> 回复中 @架"
+        return ["choices": PhoneAgentMentions.options(snapshot, owner: owner, query: "").map(\.id),
+            "query": PhoneAgentMentions.options(snapshot, owner: owner, query: "架").map(\.id),
+            "token": PhoneAgentMentions.token("你好👋 ＠架", selection: NSRange(location: "你好👋 ＠架".utf16.count, length: 0))?.query ?? "",
+            "quoted": PhoneAgentMentions.token(quote, selection: NSRange(location: quote.utf16.count, length: 0)) != nil,
+            "email": PhoneAgentMentions.token("a@b", selection: NSRange(location: 3, length: 0)) != nil,
+            "path": write.path, "onlyText": input.object.keys.sorted(), "acknowledged": acknowledged, "uncertain": uncertain, "crossed": crossed,
+            "self": (try? PhoneAgentMentions.request(owner: owner, target: owner, text: "检查")) != nil]
+    }
     if value["privateProjectionProbe"].bool {
         var proposals = PhoneProposalStore(), results = PhoneResultStore()
         var projection = PhonePrivateSnapshot()

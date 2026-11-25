@@ -81,8 +81,8 @@ struct Unavailable: View {
     let reason: String?
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: "exclamationmark.triangle").font(.system(size: 11)).foregroundStyle(PhoneTheme.amberIcon)
-            Text("不可用").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
+            Image(systemName: "exclamationmark.triangle").font(.caption).imageScale(.small).foregroundStyle(PhoneTheme.amberIcon).accessibilityHidden(true)
+            Text("不可用").font(.caption).foregroundStyle(PhoneTheme.amber)
             if let reason { HintButton(label: "为什么不可用", text: reason) }
         }
     }
@@ -115,14 +115,34 @@ private struct AgentList: View {
                         }.plainAgentRow()
                     }
                 }
-                ForEach(entries) { entry in
-                    AgentRow(entry: entry, selected: entry.id == selection).tag(entry.id)
-                        .listRowInsets(EdgeInsets(top: 10, leading: 20, bottom: 10, trailing: 20))
+                if let general = entries.first(where: \.general) {
+                    AgentRow(entry: general, selected: general.id == selection)
+                        .padding(16)
+                        .background(selection == general.id ? PhoneTheme.selectedRow : PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 18))
+                        .tag(general.id)
+                        .listRowInsets(EdgeInsets(top: 10, leading: 20, bottom: 20, trailing: 20))
+                        .listRowSeparator(.hidden).listRowBackground(Color.clear)
                 }
-                if entries.count == 1 {
-                    Button("新建 Agent") { creating = true }.buttonStyle(.bordered).foregroundStyle(PhoneTheme.ink).buttonBorderShape(.capsule)
-                        .frame(maxWidth: .infinity).padding(.top, 32).plainAgentRow().disabled(!model.canRun)
-                }
+                let personal = entries.filter { !$0.general }
+                Section {
+                    ForEach(personal) { entry in
+                        AgentRow(entry: entry, selected: entry.id == selection).tag(entry.id)
+                            .listRowInsets(EdgeInsets(top: 14, leading: 20, bottom: 14, trailing: 20))
+                            .listRowBackground(entry.id == selection ? PhoneTheme.selectedRow : Color.clear)
+                            .listRowSeparatorTint(PhoneTheme.line)
+                    }
+                    if personal.isEmpty && model.canRun {
+                        Button { creating = true } label: {
+                            Label("创建第一个 Agent", systemImage: "plus.circle").font(.subheadline.weight(.medium))
+                                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                        }.foregroundStyle(PhoneTheme.ink).plainAgentRow()
+                    }
+                } header: {
+                    HStack(spacing: 8) {
+                        Text("个人 Agent").font(.headline).foregroundStyle(PhoneTheme.ink)
+                        if !personal.isEmpty { Text("\(personal.count)").font(.subheadline.monospacedDigit()).foregroundStyle(PhoneTheme.muted) }
+                    }.textCase(nil).accessibilityElement(children: .combine)
+                }.listSectionSeparator(.hidden)
             }
         }
         .listStyle(.plain)
@@ -181,28 +201,66 @@ extension View {
 
 private struct AgentRow: View {
     @EnvironmentObject private var model: PhoneModel
+    @Environment(\.dynamicTypeSize) private var typeSize
     let entry: PhoneAgentEntry
     let selected: Bool
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            AgentFace(avatar: entry.avatar, size: 40, face: entry.face)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(entry.name).font(.system(size: 15, weight: selected ? .semibold : .medium)).foregroundStyle(PhoneTheme.ink).lineLimit(1)
+        HStack(alignment: .center, spacing: 14) {
+            AgentFace(avatar: entry.avatar, size: entry.general ? 52 : 46, face: entry.face)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
+                    Text(PhoneConversation.visible(entry.name)).font(entry.general ? .title3.weight(.semibold) : .headline.weight(selected ? .bold : .semibold))
+                        .foregroundStyle(PhoneTheme.ink).lineLimit(2)
                     if entry.general { BuiltInMark() }
                 }
-                if !entry.duty.isEmpty { Text(entry.duty).font(.system(size: 14)).foregroundStyle(PhoneTheme.ink2).lineLimit(1) }
-                if case let .remote(hostId, _) = entry.destination {
-                    let host = model.hosts.first { $0.device.hostId == hostId }
-                    Label(host.map(model.computerName) ?? "工作电脑 · " + String(hostId.prefix(8)), systemImage: "desktopcomputer")
-                        .font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1)
-                } else if let place = entry.place { Text(place).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1) }
-                if let words = liveWords { FaceWord(face: entry.face, words: words) }
-                else if !entry.available && entry.destination == .local { Unavailable(reason: entry.unavailableReason) }
+                if !entry.duty.isEmpty {
+                    Text(PhoneConversation.visible(entry.duty)).font(.subheadline).foregroundStyle(PhoneTheme.ink2).lineLimit(2)
+                }
+                metadata
             }
+            .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
             Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold)).foregroundStyle(PhoneTheme.muted).accessibilityHidden(true)
         }.contentShape(Rectangle())
     }
+
+    private var location: (icon: String, name: String)? {
+        if case let .remote(hostId, _) = entry.destination {
+            let host = model.hosts.first { $0.device.hostId == hostId }
+            return ("desktopcomputer", host.map(model.computerName) ?? "工作电脑 · " + String(hostId.prefix(8)))
+        }
+        return entry.place.map { ("folder", $0) }
+    }
+
+    @ViewBuilder private var metadata: some View {
+        let place = location
+        let words = liveWords
+        let unavailable = !entry.available && entry.destination == .local
+        if place != nil || words != nil || unavailable {
+            let layout = typeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 3))
+                : AnyLayout(HStackLayout(spacing: 6))
+            layout {
+                if let place {
+                    HStack(spacing: 4) {
+                        Image(systemName: place.icon).imageScale(.small).accessibilityHidden(true)
+                        Text(PhoneConversation.visible(place.name)).lineLimit(1)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("工作位置，" + PhoneConversation.visible(place.name))
+                    if !typeSize.isAccessibilitySize && (words != nil || unavailable) {
+                        Text("·").accessibilityHidden(true)
+                    }
+                }
+                if let words { FaceWord(face: entry.face, words: words).layoutPriority(1) }
+                else if unavailable { Unavailable(reason: entry.unavailableReason).layoutPriority(1) }
+            }
+            .font(.caption)
+            .foregroundStyle(PhoneTheme.muted)
+        }
+    }
+
     private var liveWords: String? {
         guard model.connected else { return nil }
         if entry.face == .waiting {

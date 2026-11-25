@@ -10,9 +10,11 @@ import {
   UpdateWindow,
   updateWindowInputSchema,
 } from './update-window.ts'
+import { CONSULT_AGENT, CONSULT_TOOLS, ConsultationTurns, LIST_AGENTS, consultDenied, consultInput } from './agent-consultations.ts'
 import { CustomAgents, harnessFixed, rememberRequest, type AgentActor, type FirstChatStart } from './custom-agents.ts'
 import { DataExports } from './data-export.ts'
 import { AgentFolders, HomeHelper, archiveLabel } from './agent-folders.ts'
+import { AgentMentions } from './agent-mentions.ts'
 import { DataInventoryService } from './data-inventory.ts'
 import { Automations, automationSummary, type AutomationStartInput } from './automations.ts'
 import { Handoffs } from './handoffs.ts'
@@ -170,6 +172,7 @@ import {
 import { MODE_CONFIG_ID, PluginRegistry, modeChange } from '@latch/core'
 import { canonicalJson, sha256Hex, redactKnownSecrets, syncDirectory } from '@latch/core/node-kit'
 import {
+  DSH_CONSULTATION_GUARD_VERSION,
   assertCommandVersion,
   createAcpAgentPlugin,
   loginShellValues,
@@ -586,11 +589,18 @@ type SessionStart = z.infer<typeof createTaskSchema> & {
   outsideStart?: true
   /** Its first message holds words of a device the Host cannot name (a handoff's user message): no simulator grant. */
   withoutDeviceGrant?: true
+  /** Standard applies per-turn unattended approvals. Confirmed DSH runs a foreground, text-only process. */
+  agentConsultation?: 'standard' | 'dsh'
+  authorizeMention?: () => void
+  recordConsultationGuard?: PromptOptions['recordConsultationGuard']
 }
 /** Devices other than the sender whose words an input carries; see `sendPrompt`. */
 type TurnWriters = {
   coauthors?: readonly string[]
   narrower?: boolean
+  consultation?: true
+  authorizeMention?: () => void
+  recordConsultationGuard?: PromptOptions['recordConsultationGuard']
   followGuard?: () => Promise<NonNullable<PromptOptions['authorizeUnattended']>>
 }
 const taskPatchSchema = z
@@ -1353,11 +1363,10 @@ function programOf(agent: Pick<AgentRecord, 'presetId' | 'command' | 'args'>): s
 }
 
 /**
- * Whether the Host may read this definition's CLI credential for its quota (`cli-quota.ts`) and its record of a session
- * Latch started for that session's tokens (`cli-usage.ts`): DeepSeek Harness's own preset command, exactly as the
- * preset table names it with no variables, bound to a program this Mac confirmed.
+ * The official DeepSeek preset exactly as the Host defines it, without variables, bound to a locally confirmed program.
+ * The Host uses that identity for CLI quota/usage reads and foreground text consultations.
  */
-function readsCliQuota(agent: AgentRecord): boolean {
+function confirmedDshPreset(agent: AgentRecord): boolean {
   return agent.presetId === 'dsh' && agent.confirmedCommand !== undefined && runsPresetCommand(agent)
 }
 
@@ -1644,7 +1653,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const uid = process.getuid?.()
       return async (agentId: string, input: { cwd?: string; signal: AbortSignal }) => {
         const current = config.settings().agents.find(agent => agent.id === agentId)
-        if (!current || !readsCliQuota(current) || uid === undefined) return null
+        if (!current || !confirmedDshPreset(current) || uid === undefined) return null
         // What DeepSeek Harness inherits (`agentEnvironment`): `DSH_HOME` from the Host or the login shell.
         const env = {
           DSH_HOME: process.env.DSH_HOME || loginShellValues().DSH_HOME,
@@ -1690,7 +1699,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         input: { sessionId: string; cwd: string; from: number; to: number; signal: AbortSignal },
       ): Promise<TokenUsage | undefined> => {
         const current = config.settings().agents.find(agent => agent.id === agentId)
-        if (!current || !readsCliQuota(current) || uid === undefined) return undefined
+        if (!current || !confirmedDshPreset(current) || uid === undefined) return undefined
         await delay(TURN_LOG_SETTLE_MS, undefined, { signal: input.signal }).catch(() => {})
         if (input.signal.aborted) return undefined
         const command = current.confirmedCommand!
@@ -1757,8 +1766,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           log,
           requireConfirmedCommand: true,
           ...(options.cliStore ? { claudeStore: true } : {}),
-          ...(readCliQuota && readsCliQuota(agent) ? { readQuota: input => readCliQuota(agent.id, input) } : {}),
-          ...(readCliUsage && readsCliQuota(agent) ? { readTurnUsage: input => readCliUsage(agent.id, input) } : {}),
+          ...(readCliQuota && confirmedDshPreset(agent) ? { readQuota: input => readCliQuota(agent.id, input) } : {}),
+          ...(readCliUsage && confirmedDshPreset(agent) ? { readTurnUsage: input => readCliUsage(agent.id, input) } : {}),
           ...(options.cliStore ? { cliStore: { home: options.cliStore.home } } : {}),
           ...(readGooseUsage && agent.presetId === 'goose' ? { readTurnUsage: input => readGooseUsage(agent.id, input) } : {}),
           ...(storeAccess ? { storeAccess } : {}),
@@ -2181,7 +2190,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       { managed: 'core', revision: executionBuildRevision('standard-harness') },
     )
     await registry.enable('standard-harness')
-    const customAgents = await CustomAgents.open({ dataDir, audit, now })
+    const consultationTurns = new ConsultationTurns()
+    const customAgents = await CustomAgents.open({
+      dataDir,
+      audit,
+      now,
+      consultationReduced: (owner, scope) => consultationTurns.restrict(owner, scope),
+    })
     // A deleted memory's text goes when its undo window ends, whether or not anything is written meanwhile.
     const purgeMemories = () => void customAgents.purgeExpired().catch(error => log(`过期的已删除记忆没有清除：${errorText(error)}`))
     purgeMemories()
@@ -2325,12 +2340,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       Buffer.byteLength(toolGatewayPath) <= MAX_SOCKET_PATH
         ? new ToolGatewayServer({
             socketPath: toolGatewayPath,
-            // Only while this Mac's desktop app is the browser provider: a session opened without it gets the server
-            // when it next resumes. Sessions without a project are left out by the driver, and refused on every call.
-            admits: () => browserBroker.available(),
+            // Without the desktop browser provider, a personal chat may receive a lease confined to peer consultation.
+            admits: sessionId => {
+              if (browserBroker.available()) return true
+              return sessionOwner(sessionId) || hub?.startingAgentId() ? [LIST_AGENTS, CONSULT_AGENT] : false
+            },
             // The simulator tools join while the last list found Xcode on this Mac.
             tools: sessionId =>
               [
+                ...(!sessionId || sessionOwner(sessionId) || hub?.startingAgentId() ? CONSULT_TOOLS : []),
                 REFERENCE_TOOL,
                 ...BROWSER_TOOL_DEFINITIONS,
                 ...(simulators.ready
@@ -2347,6 +2365,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 inputSchema: parameters,
               })),
             call: async input => {
+              if (input.tool === LIST_AGENTS || input.tool === CONSULT_AGENT) {
+                try {
+                  if (input.context.turn !== 'running' || !input.context.runId) throw consultDenied()
+                  const text = await callPersonalAgent(input.sessionId, input.context.runId, input.tool, input.args, input.signal)
+                  return { content: [{ type: 'text', text }] }
+                } catch (error) {
+                  return {
+                    isError: true,
+                    content: [{ type: 'text', text: error instanceof AppError ? error.message : '无法联系这位 Agent。' }],
+                  }
+                }
+              }
               if (input.tool !== REFERENCE_TOOL.name) return isDeviceTool(input.tool) ? gatewayDeviceCall(input) : gatewayBrowserCall(input)
               if (input.context.turn !== 'running' || !input.context.runId) throw unavailableReference()
               const text = await readConversationReference(input.sessionId, input.context.runId, input.args, input.signal)
@@ -2528,6 +2558,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const sessionLifecycle = new SessionLifecycle({ log, ...(options.lifecycleBounds ? { bounds: options.lifecycleBounds } : {}) })
     const lifecycleListeners = sessionLifecycle.listenOnly()
     lifecycleListeners.on('runStarted', ({ sessionId, runId }) => {
+      consultationTurns.start(sessionId, runId)
       const deviceIds = simulatorPromptDevices.getStore()
       removeSimulatorRun(sessionId)
       if (!deviceIds?.length || !deviceIds.every(simulatorDeviceAllowed)) return
@@ -2540,8 +2571,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       })
       if (simulatorRuns.size > 2000) removeSimulatorRun(simulatorRuns.keys().next().value!)
     })
-    lifecycleListeners.on('runSettled', ({ sessionId, runId }) => removeSimulatorRun(sessionId, runId))
-    lifecycleListeners.on('sessionDeleted', ({ sessionId }) => removeSimulatorRun(sessionId))
+    lifecycleListeners.on('runSettled', ({ sessionId, runId }) => {
+      consultationTurns.end(sessionId, runId)
+      removeSimulatorRun(sessionId, runId)
+    })
+    lifecycleListeners.on('sessionDeleted', ({ sessionId }) => {
+      consultationTurns.end(sessionId)
+      removeSimulatorRun(sessionId)
+    })
     lifecycleListeners.on('hostStopping', () => {
       for (const sessionId of simulatorRuns.keys()) removeSimulatorRun(sessionId)
     })
@@ -3109,6 +3146,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       memoryRefusals.delete(id)
       await keepWorktreePrivacy(id)
       await harnessHub.remove(id, options)
+      await agentMentions.forget('session', id)
       await conversationRefs.forget(id)
       await promptQueues.forgetSession(id)
       await questions.forgetSession(id)
@@ -3602,9 +3640,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       terminalWorkspaceOperation: (workspaceId, caller, operation) => projectOperation(workspaceId, caller, 'run', operation),
       agents: {
         agents: customAgents,
+        mentions: () => agentMentions,
         // Only once it is really gone: a deletion still being confirmed keeps its budget.
         removed: async id => {
           if (customAgents.list().some(agent => agent.id === id)) return
+          consultationTurns.restrict(id, 'all')
+          await agentMentions.forget('agent', id).catch(error => log(`清理已删除 Agent 的提及失败：${errorText(error)}`))
           await modelSpend.forget('agent', id).catch(error => log(`清除预算失败：${errorText(error)}`))
         },
         plans: () => agentPlans,
@@ -4094,6 +4135,31 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
     function privateAccess(caller: Caller, summary: Pick<TaskSummary, 'personal' | 'agent' | 'agentPrivate'> | undefined): void {
       if (privateSession(summary)) agentAccess(caller)
+    }
+    function consultationGrant(owner: string): { deepSeek?: true } | undefined {
+      if (customAgents.hasPending()) return undefined
+      const agent =
+        owner === GENERAL_AGENT_ID ? customAgents.general() : customAgents.list().find(item => item.id === owner && !item.workComputer)
+      if (agent?.canConsultAgents !== true) return undefined
+      return agent.canConsultDeepSeek === true ? { deepSeek: true } : {}
+    }
+
+    /** The normal unattended ceiling applies only to Standard. Foreground delegation to DSH needs a separate source grant. */
+    function consultationReceiver(harnessId: string): SessionStart['agentConsultation'] {
+      const trust = hub!.trustOf(harnessId)
+      if (harnessId === STANDARD)
+        return trust?.kind === 'builtin' && levelAtMost(trust.level, policy.get().unattended.maxLevel) ? 'standard' : undefined
+      if (trust?.kind !== 'acp' || trust.level !== 'L3') return undefined
+      const record = config.settings().agents.find(item => item.id === harnessId)
+      return record?.enabled && confirmedDshPreset(record) && versionReadable(record) && hub!.supportsConsultation(harnessId)
+        ? 'dsh'
+        : undefined
+    }
+
+    /** Bind only a directly submitted personal-chat prompt. A peer's run has no authority to contact another peer. */
+    function personChatTurn<T>(owner: string | undefined, caller: DeviceCaller, requestId: string, start: () => T): T {
+      const grant = owner && consultationGrant(owner)
+      return consultationTurns.prompt(owner && grant ? { owner, caller, requestId, ...grant } : undefined, start)
     }
     function enabledPluginInfo() {
       return registry
@@ -4624,6 +4690,117 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       })
     }
     startupCleanup.push(() => automations.close())
+    const agentMentions = await AgentMentions.open(dataDir, {
+      owners: () => new Set([GENERAL_AGENT_ID, ...customAgents.list().map(agent => agent.id)]),
+      access(caller, write) {
+        agentAccess(caller, write)
+      },
+      owner(id, writing) {
+        if (id !== GENERAL_AGENT_ID) customAgents.get(id)
+        if (writing) customAgents.assertWorksHere(id)
+      },
+      async slot(caller, id) {
+        await migrateAgentChats(caller)
+        const slot = customAgents.chats()[id]
+        if (!slot) throw new AppError(503, 'agent-chat-history-unknown', '旧会话尚未核对完成，请稍后再试。')
+        return slot
+      },
+      detail: id => hub!.detail(id),
+      async audit(caller, item) {
+        await audited({
+          action: 'agent.mentioned',
+          actor: actorOf(caller),
+          target: item.id,
+          detail: {
+            sourceAgentId: item.sourceAgentId,
+            targetAgentId: item.targetAgentId,
+            initiator: item.initiator,
+            textHash: sha256Hex(item.text),
+          },
+        })
+      },
+      async deliver(caller, item, authorize, res) {
+        authorize()
+        const agent = item.targetAgentId === GENERAL_AGENT_ID ? undefined : customAgents.get(item.targetAgentId)
+        const automated = item.initiator === 'agent'
+        const harnessId = agent?.harnessId ?? STANDARD
+        const receiver = automated ? consultationReceiver(harnessId) : undefined
+        const authorizeDelivery = () => {
+          authorize()
+          if (automated && (!receiver || consultationReceiver(harnessId) !== receiver))
+            throw new AppError(409, 'agent-consultation-harness', '这位 Agent 的 Harness 不能逐轮限制自主咨询。')
+          if (
+            item.destination
+            && (sessionOwner(item.destination) !== item.targetAgentId || (automated && hub!.ownerOf(item.destination) !== harnessId))
+          )
+            throw new AppError(409, 'agent-chat-changed', '目标聊天已改变，请重新选择 Agent。')
+          if (automated && item.targetAgentId !== GENERAL_AGENT_ID && customAgents.get(item.targetAgentId).harnessId !== harnessId)
+            throw new AppError(409, 'agent-chat-changed', '目标 Agent 的 Harness 已改变，请重新选择。')
+        }
+        authorizeDelivery()
+        const recordConsultationGuard: NonNullable<PromptOptions['recordConsultationGuard']> = async evidence => {
+          authorizeDelivery()
+          if (
+            receiver !== 'dsh'
+            || evidence.version !== DSH_CONSULTATION_GUARD_VERSION
+            || (item.destination && evidence.sessionId !== item.destination)
+          )
+            throw new AppError(409, 'agent-consultation-guard', '未能核对此次 DeepSeek 工具限制，委托未发出。')
+          await audited({
+            action: 'agent.consultation.guard-verified',
+            actor: actorOf(caller),
+            target: item.id,
+            detail: {
+              harnessId,
+              sessionId: evidence.sessionId,
+              runId: evidence.runId,
+              version: evidence.version,
+              executionId: evidence.executionId,
+            },
+          })
+        }
+        const prompt = automated && item.sourceLabel ? `来自个人 Agent「${item.sourceLabel}」的委托\n\n${item.text}` : item.text
+        const input = { requestId: item.dispatchId, prompt }
+        if (item.destination) {
+          await sendPrompt(
+            caller,
+            item.destination,
+            input,
+            false,
+            true,
+            {
+              narrower: true,
+              authorizeMention: authorizeDelivery,
+              ...(receiver === 'dsh' ? { consultation: true, recordConsultationGuard } : {}),
+            },
+            receiver === 'standard',
+          )
+          return item.destination
+        }
+        const record = config.settings().agents.find(each => each.id === agent?.harnessId)
+        if (record && record.confirmedCommand === undefined)
+          throw new AppError(409, 'harness-unconfirmed', '请先在这台 Mac 上确认这位 Agent 的 Harness。')
+        const first = { ...input, customAgentId: item.targetAgentId }
+        const started = await startAgentChat(caller, first, dispatched =>
+          startSession(
+            caller,
+            {
+              ...first,
+              outsideStart: true,
+              withoutDeviceGrant: true,
+              authorizeMention: authorizeDelivery,
+              ...(receiver === 'dsh' ? { recordConsultationGuard } : {}),
+              ...(receiver ? { agentConsultation: receiver } : {}),
+            },
+            res,
+            dispatched,
+          ),
+        )
+        return started.sessionId
+      },
+      changed: () => refresh(),
+    })
+    startupCleanup.push(() => agentMentions.close())
     const handoffs = await Handoffs.open({
       dataDir,
       audit,
@@ -5862,9 +6039,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return Promise.all(scopeFolders(session, workspaceRoot).map(async folder => ({ id: folder.id, ...(await folderOf(folder.path)) })))
     }
 
-    /** Sessions whose current run got the Host's own conversation-reference read (`builtinMcpTools`), with that run. */
-    const referenceOffered = new Map<string, string>()
-    async function classifyCall(input: { toolName: string; arguments: Record<string, unknown>; sessionId?: string } & SessionScope) {
+    async function classifyCall(
+      input: { toolName: string; arguments: Record<string, unknown>; sessionId?: string; fromHost?: true } & SessionScope,
+    ) {
       const pluginId = toolOwner(input.toolName)
       const browser = pluginId === BROWSER_PLUGIN && isBrowserTool(input.toolName) ? browserFacts(input) : undefined
       return classifyStandardCall({
@@ -5874,7 +6051,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         demo: options.demo,
         folders: await callFolders(input),
         ...(browser ? { browser } : {}),
-        ...(input.sessionId !== undefined && referenceOffered.has(input.sessionId) ? { hostReference: true } : {}),
+        ...(input.fromHost ? { hostConsultation: true, hostReference: true } : {}),
       })
     }
 
@@ -6270,6 +6447,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         written.catch(error => logNoted('audit-write-failed', { error: error }, `审计记录写入失败：${errorText(error)}`))
         return written.then(() => undefined)
       }
+      if (event.type === 'permission-drift' || event.type === 'permission-unverified') consultationTurns.end(event.sessionId)
       try {
         const actor: AuditActor = { listener: 'host' }
         if (event.type === 'permission-drift') {
@@ -6524,14 +6702,108 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return redactKnownSecrets(conversationRefs.page(ref, shownDetail(currentCaller, currentSource).messages, offset))
     }
 
+    async function callPersonalAgent(sessionId: string, runId: string, tool: string, args: unknown, signal: AbortSignal): Promise<string> {
+      const { caller, owner, requestId } = consultationTurns.forRun(sessionId, runId)
+      const authorize = () => {
+        signal.throwIfAborted()
+        const active = consultationTurns.forRun(sessionId, runId)
+        agentAccess(caller, true)
+        agentAccess(caller)
+        const chat = customAgents.chats()[owner]
+        if (
+          !chat
+          || ((chat.state !== 'ready' || chat.sessionId !== sessionId)
+            && !(chat.state === 'starting' && customAgents.knowsChatStart(owner, caller.device.id, requestId)))
+        )
+          throw consultDenied()
+        const grant = consultationGrant(owner)
+        if (!grant || hub!.automationOf(sessionId) || hub!.pageOriginOf(sessionId) || hub!.unattended(sessionId)) throw consultDenied()
+        if (agentMentions.wasDispatched(owner, requestId)) throw consultDenied()
+        return active.deepSeek === true && grant.deepSeek === true
+      }
+      authorize()
+      const detail = await harnessHub.detail(sessionId)
+      const prompt = detail.messages.findLast(message => message.role === 'user' && !message.steered && message.turnId === runId)
+      if (
+        detail.summary.mode !== 'agent'
+        || detail.summary.archived
+        || detail.summary.runId !== runId
+        || detail.summary.status !== 'running'
+        || prompt?.requestId !== requestId
+        || detail.permission?.drift
+        || detail.permission?.modeTiers?.[detail.permission.expectedMode ?? '']?.tier === 'plan'
+      )
+        throw consultDenied()
+      const localTargets = (allowDeepSeek: boolean, only?: string) => {
+        const eligible = (id: string, harnessId: string) =>
+          id !== owner
+          && (only === undefined || id === only)
+          && (allowDeepSeek || harnessId === STANDARD)
+          && consultationReceiver(harnessId) !== undefined
+        const general = eligible(GENERAL_AGENT_ID, STANDARD) ? [{ id: GENERAL_AGENT_ID, name: '通用', description: '' }] : []
+        const agents = customAgents.list().filter(agent => eligible(agent.id, agent.harnessId) && !agentPlans.unavailable(agent))
+        return [...general, ...agents]
+      }
+      authorize()
+      if (tool === LIST_AGENTS) {
+        // Names and duties may have been imported. Mark that material before the model sees it, as for a peer's answer.
+        await harnessHub.markOutsideContent(sessionId, 'agent-mention')
+        return JSON.stringify(
+          localTargets(authorize()).map(({ id, name, description }) => ({
+            id,
+            name: redactKnownSecrets(name),
+            description: redactKnownSecrets(description),
+          })),
+        )
+      }
+      const { agentId, question } = consultInput.parse(args)
+      const check = () => {
+        if (!localTargets(authorize(), agentId).length) throw consultDenied()
+      }
+      check()
+      // The receipt bounds agent-initiated dispatch to one target and one question per human turn, including parallel calls.
+      const body = {
+        requestId: sha256Hex(JSON.stringify(['agent-consult', sessionId, runId])),
+        target: { kind: 'agent', customAgentId: agentId },
+        text: question,
+      }
+      let mention = await consultationTurns.prompt(undefined, () =>
+        agentMentions.send(caller, owner, body, {
+          sessionId,
+          name: owner === GENERAL_AGENT_ID ? '通用' : customAgents.get(owner).name,
+          authorize: check,
+        }),
+      )
+      const deadline = Date.now() + 45_000
+      while ((mention.status === 'running' || mention.status === 'sending') && Date.now() < deadline) {
+        await delay(750, undefined, { signal })
+        check()
+        mention = await agentMentions.get(caller, owner, mention.id)
+      }
+      check()
+      if (mention.status === 'completed' && mention.reply) {
+        await harnessHub.markOutsideContent(sessionId, 'agent-mention')
+        check()
+        return JSON.stringify({
+          agentId,
+          status: mention.status,
+          reply: redactKnownSecrets(mention.reply.text),
+          more: !!mention.reply.more,
+        })
+      }
+      return JSON.stringify({
+        agentId,
+        status: mention.status,
+        note: 'This exchange is visible in the originating chat. Do not send the request again.',
+      })
+    }
+
     async function builtinMcpTools({
       sessionId,
       signal,
       runId,
       unattended,
     }: Parameters<NonNullable<HarnessHostOptions['mcpTools']>>[0]): Promise<ToolDefinition[]> {
-      // Each run's tools are listed anew: the last run's offer says nothing about this one.
-      referenceOffered.delete(sessionId)
       const summary = await hub!
         .detail(sessionId)
         .then(detail => detail.summary)
@@ -6640,8 +6912,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ]
         }),
       )
+      const owner = runId && consultationTurns.offeredTo(sessionId, runId)
+      if (runId && unattended === false && owner && consultationGrant(owner)) {
+        for (const tool of CONSULT_TOOLS) {
+          if (toolOwner(tool.name) !== undefined) continue
+          remote.push({
+            ...tool,
+            kind: tool.name === LIST_AGENTS ? 'read' : 'other',
+            requiresApproval: false,
+            execute: async (args, context) => ({ text: await callPersonalAgent(sessionId, runId, tool.name, args, context.signal) }),
+          })
+        }
+      }
       if (!runId || unattended !== false || !conversationRefs.has(sessionId) || toolOwner(REFERENCE_TOOL.name) !== undefined) return remote
-      referenceOffered.set(sessionId, runId)
       return [
         ...remote,
         {
@@ -9811,7 +10094,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ?? agentHarness
             ?? (input.customAgentId === GENERAL_AGENT_ID ? 'standard' : (input.harnessId ?? config.settings().defaults.harnessId)),
         )
-        return startSession(caller, input, res, dispatched)
+        return personChatTurn(input.customAgentId, caller, input.requestId, () => startSession(caller, input, res, dispatched))
       }
       const started = input.customAgentId ? await startAgentChat(caller, input, start) : await start()
       const chat = input.customAgentId && !customAgents.hasPending() ? customAgents.chats()[input.customAgentId] : undefined
@@ -10163,7 +10446,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function startSession(
       caller: DeviceCaller,
       start: SessionStart,
-      res: ServerResponse,
+      res: ServerResponse | undefined,
       dispatched?: () => void,
     ): Promise<{ sessionId: string }> {
       // A retry of a start this Host has in flight or accepted gets its original answer, window or not; only new starts
@@ -10186,11 +10469,23 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function startSessionChecked(
       caller: DeviceCaller,
       start: SessionStart,
-      res: ServerResponse,
+      res: ServerResponse | undefined,
       dispatched?: () => void,
     ): Promise<{ sessionId: string }> {
       // A plugin page's start carries no private context, as from a device without all data: its reply goes back to the page.
-      const { privateFrom, title, withoutPrivateContext, seed, pageStart, outsideStart, withoutDeviceGrant: _grant, ...requested } = start
+      const {
+        privateFrom,
+        title,
+        withoutPrivateContext,
+        seed,
+        pageStart,
+        outsideStart,
+        withoutDeviceGrant: _grant,
+        agentConsultation,
+        authorizeMention,
+        recordConsultationGuard,
+        ...requested
+      } = start
       let input = requested
       // A request's folder or worktree is its device's: another device naming the same request ID gets one of its own.
       const folderRequest = `${caller.device.id}:${input.requestId}`
@@ -10334,6 +10629,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 customAgentId,
                 harnessId,
                 withoutPrivateContext ? undefined : devices.get(caller.device.id)?.dataScope,
+                agentConsultation === 'dsh',
               )
             : generalContextFor(withoutPrivateContext ? undefined : devices.get(caller.device.id)?.dataScope, harnessId))
           ?? (fork && privateSession(fork.source)
@@ -10343,7 +10639,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ?? (privateFrom ? { instructions: '', revision: sha256Hex(canonicalJson(['handoff', privateFrom])) } : undefined)
         await rereadOutdated(harnessId)
         // A conversation with 通用 may propose memories, on a Harness that can.
-        const agentContext = generalChat ? agentPlans.generalChatContext(harnessId, baseContext) : baseContext
+        const selectedContext = generalChat ? agentPlans.generalChatContext(harnessId, baseContext) : baseContext
+        const agentContext =
+          agentConsultation === 'standard' && selectedContext ? { ...selectedContext, unattended: true as const } : selectedContext
         const harness = hub!.info(harnessId)
         if (!harness || !hub!.has(harnessId)) throw new AppError(409, 'harness-unavailable', `Harness ${harnessId} 未启用`)
         if (harness.status !== 'ready') {
@@ -10497,6 +10795,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         const task: HubCreateInput = {
           prompt,
+          ...(authorizeMention ? { authorizeMention } : {}),
+          ...(agentConsultation === 'dsh' ? { consultation: true, authorizeConsultation: authorizeMention, recordConsultationGuard } : {}),
           // A text rebuild waits for the person's first message, which carries it.
           ...(seed ? { seed } : {}),
           ...(fork
@@ -10572,6 +10872,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                     : {}),
         }
         const checkStart = () => {
+          authorizeMention?.()
           recheck(caller, 'run')
           if (input.worktree && input.worktree !== true && input.worktree.from === 'pr') {
             recheck(caller, 'view')
@@ -11051,17 +11352,30 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             || caller.device.dataScope !== 'all'
             || writers.narrower === true,
           async () =>
-            hub!.prompt(id, input.prompt, input.requestId, {
-              ...(agentTurn ? { agentContext: agentTurn } : {}),
-              ...(writers.followGuard ? { authorizeUnattended: await writers.followGuard() } : {}),
-              ...(fileRefs.length ? { fileRefs } : {}),
-              ...(input.model ? { model: input.model } : {}),
-              ...(attachments.length ? { attachments } : {}),
-              ...(input.freshContext ? { freshContext: true as const } : {}),
-              ...(input.teamRequest ? { teamRequest: true } : {}),
-              ...(outsideContent || mentionsConversationReference(input.prompt) ? { outsideContent: true as const } : {}),
-              ...(unattended ? { unattended: true as const } : {}),
-            }),
+            hub!.prompt(
+              id,
+              input.prompt,
+              input.requestId,
+              {
+                ...(agentTurn ? { agentContext: agentTurn } : {}),
+                ...(writers.consultation
+                  ? {
+                      consultation: true,
+                      authorizeConsultation: writers.authorizeMention,
+                      recordConsultationGuard: writers.recordConsultationGuard,
+                    }
+                  : {}),
+                ...(writers.followGuard ? { authorizeUnattended: await writers.followGuard() } : {}),
+                ...(fileRefs.length ? { fileRefs } : {}),
+                ...(input.model ? { model: input.model } : {}),
+                ...(attachments.length ? { attachments } : {}),
+                ...(input.freshContext ? { freshContext: true as const } : {}),
+                ...(input.teamRequest ? { teamRequest: true } : {}),
+                ...(outsideContent || mentionsConversationReference(input.prompt) ? { outsideContent: true as const } : {}),
+                ...(unattended ? { unattended: true as const } : {}),
+              },
+              writers.authorizeMention,
+            ),
         )
       } catch (cause) {
         if (cause instanceof AppError && refusedBeforeAccepting(cause.status, cause.code) && attachments.length)
@@ -11549,7 +11863,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           json(res, { accepted: true, ...(await startAgentChatRequest(req, res, caller, moved)) })
           return true
         }
-        const sent = await sendPrompt(caller, id, input)
+        const sent = await personChatTurn(input.queue || input.steer ? undefined : sessionOwner(id), caller, input.requestId, () =>
+          sendPrompt(caller, id, input),
+        )
         // A queued message proposes when it is sent from the queue, not now.
         const refused =
           input.prompt && typeof sent !== 'object' && sent !== 'replayed' && sent !== 'replayed-steered'
@@ -11654,12 +11970,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           authority()
         }
         // Before the change, and whether or not it lands: a page cannot drive a session whose mode a person touched.
-        if (input.configId === 'mode') await hub!.markOriginChanged(id)
-        else {
+        let changingMode = input.configId === MODE_CONFIG_ID
+        if (!changingMode) {
           // A session that cannot be read now is marked too: the driver's own answer to the change comes after this.
           const detail = await hub!.detail(id).catch(() => undefined)
-          if (!detail || detail.config?.find(item => item.id === input.configId)?.category === 'mode') await hub!.markOriginChanged(id)
+          changingMode = !detail || detail.config?.find(item => item.id === input.configId)?.category === 'mode'
         }
+        if (changingMode) await hub!.markOriginChanged(id)
         // A refusal here comes before anything reaches the Harness, so the change certainly did not apply.
         const stillAllowed = () => {
           try {
@@ -11740,6 +12057,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             prior = selectedOption.currentValue
           }
           const apply = async () => {
+            // A change, including an unconfirmed write, ends this turn's consultation authority. Receipt reads never reach here.
+            if (changingMode || change !== 'neutral') consultationTurns.end(id)
             await hub!.setConfig(id, input.configId, input.value, { authorize: authority })
             if (input.requestId) {
               authority()
@@ -13797,6 +14116,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           modelRequests.close()
           // First, while the engines still answer: a check made against a closing Host would pause on its way out.
           await automations.close()
+          await agentMentions.close()
           await handoffs.close()
           await reviewNotes.close()
           await sessionLifecycle.hostStopping()

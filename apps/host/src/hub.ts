@@ -59,6 +59,8 @@ import { RunSilence, SILENCE_THRESHOLDS, type LiveRun } from './run-silence.ts'
 export interface HubCreateInput extends CreateTaskInput {
   /** Host-only key of the registered authoring directory; never forwarded to a driver. */
   authoringSource?: string
+  /** Recheck the initiating turn and device immediately before a directed Agent message reaches a driver. */
+  authorizeMention?: () => void
   harnessId?: string
   /** The project the Host expanded `cwd` from; kept in the Host's session metadata. */
   workspaceId?: string
@@ -438,6 +440,16 @@ export class HarnessHub implements Bridge {
     return this.entries.get(harnessId)?.trust
   }
 
+  /** Read only from the mounted ACP driver. A missing or unavailable driver cannot receive a delegated run. */
+  supportsConsultation(harnessId: string): boolean {
+    try {
+      const member = this.member(harnessId)
+      return member?.trust.kind === 'acp' && member.bridge.canReceiveConsultation?.() === true
+    } catch {
+      return false
+    }
+  }
+
   /** Unknown harnesses count as L3, the level that allows the least. */
   levelOf(harnessId: string): 'L1' | 'L3' {
     return this.trustOf(harnessId)?.level ?? 'L3'
@@ -752,6 +764,7 @@ export class HarnessHub implements Bridge {
       automationId,
       generalChat,
       outsideStart,
+      authorizeMention,
       extensionReportReady: _extensionReportReady,
       ...rest
     } = input
@@ -781,6 +794,7 @@ export class HarnessHub implements Bridge {
           { workspaceId, agentId: input.agentContext?.agent?.customAgentId, automation: automationId !== undefined },
           () => {
             this.options.assertAgentWorksHere?.(input.agentContext?.agent?.customAgentId)
+            authorizeMention?.()
             return bridge.createTask(task)
           },
         ),
@@ -1213,7 +1227,13 @@ export class HarnessHub implements Bridge {
     return note ? `${note}\n\n${prompt}` : prompt
   }
 
-  async prompt(sessionId: string, prompt: string, requestId: string, options?: PromptOptions): Promise<void> {
+  async prompt(
+    sessionId: string,
+    prompt: string,
+    requestId: string,
+    options?: PromptOptions,
+    authorizeMention?: () => void,
+  ): Promise<void> {
     const member = await this.route(sessionId)
     // A driver that cannot record outside content would drop the mark: refused before anything is sent.
     if (options?.outsideContent && !member.bridge.markOutsideContent)
@@ -1228,6 +1248,7 @@ export class HarnessHub implements Bridge {
       await this.accept(member, bridge =>
         withHarnessPromptSource({ method: 'prompt', sessionId, requestId, text: prompt }, () => {
           this.options.assertAgentWorksHere?.(this.agentOf(sessionId)?.customAgentId)
+          authorizeMention?.()
           return options ? bridge.prompt(sessionId, text, requestId, options) : bridge.prompt(sessionId, text, requestId)
         }),
       )

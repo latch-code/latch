@@ -196,7 +196,7 @@ const toolDetailSchema = z.object({
   blocked: z.object({ by: z.string().max(200), source: z.enum(['model', 'rule']), reason: z.string().max(1000).optional() }).optional(),
 })
 const messageSchema = z.object({
-  origin: z.enum(['mcp-prompt', 'conversation-reference']).optional(),
+  origin: z.enum(['mcp-prompt', 'conversation-reference', 'agent-mention']).optional(),
   fileRefs: z.array(z.custom<FileMention>(isFileMention)).max(32).optional(),
   outputs: z.array(z.custom<FileChange>(isFileChange)).max(1000).optional(),
   outputsPending: z.literal(true).optional(),

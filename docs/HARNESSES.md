@@ -178,7 +178,7 @@ profile 的 `minimumVersion` 是它的命令支持的最低版本，用 `<命令
 
 每个预设的 `HarnessProfile` 只在 Host 上使用；浏览器只看到复制进 `TaskDetail.permission` 与 `HarnessInfo.permission` 的展示字段。
 
-- **`version` 计入启动指纹。** 改变 profile 的行为时递增它；已有会话因此停止接受输入，换新会话继续。
+- **`version` 计入启动指纹。** 改变 profile 的行为时递增它；已有会话因此停止接受输入，换新会话继续。DSH 的前台文字委托在普通会话指纹之上另绑定本轮运行 ID 和文字限制版本。更改仅用于委托的适配时递增该版本，已有人工聊天继续沿用原指纹。
 - **选择。** 按定义的 `presetId`，否则按命令的文件名匹配预设。选中预设后它的环境变量与模式规则就生效。
 - **已验证的预设。** 只有 `presetId` 与参数都与预设一致、命令就是预设的命令、且定义没有设置 profile 的 `configEnv` 变量时才算，否则显示「未验证的定义」。「就是预设的命令」指只写命令名，或写 Host 按该名字找到的那个文件（按真实路径比，指向它的链接也算）；其他目录里的同名文件不算。每次启动重新判断。
 - **`configEnv`。** 会改变 Agent 读取配置位置的变量，比较不区分大小写：OpenCode 是 `XDG_*`、`OPENCODE_*`、`USERPROFILE`，Grok Build 是 `GROK_*`。设置了其中之一的定义仍可保存和运行，会话权限说明里注明它可能覆盖 Latch 设置的询问规则。
@@ -377,7 +377,7 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 **`mcpServers`**（`session/new`、`session/resume`、`session/load` 与分叉）依次是：
 
 1. `latch-skills`（`skills-server.ts`）：会话带技能、或属于某个 Agent 或「和通用的对话」时有；Latch 内置的指引（如[操控这台 Mac](MCP.md#给-agent-的指引)）排在 Agent 的技能之后。后一种另有 `propose_memory` 与 `propose_schedule` 两个写工具；Host 给了 `workProposals` 的会话（Code 会话也是）另有看板的 `propose_todo`、`propose_todos`、`propose_card`（[ARCHITECTURE.md](ARCHITECTURE.md#agent-的提议)），为此没有技能的会话也接上它。写工具只往会话私有目录的 `proposals.jsonl` 追加提议（文件的规则见 [ARCHITECTURE.md](ARCHITECTURE.md#我的-agent-与定时)）；不联网。这些会话还带 `team` 模式：只在 Host 写下的 `team.json` 在时列出 `list_members` 与 `send_to_members`，派活写进单独的 `rounds.jsonl`（规则见 [ARCHITECTURE.md](ARCHITECTURE.md#团队与交接)）。
-2. `latch-browser`（`browser-server.ts`）：打开、恢复、载入或分叉会话的那一刻，这台 Mac 的桌面端已登记为浏览器提供者、且会话有项目时有。`initialize` 带几条 `instructions`：要看布局先 `browser_viewport` 再 `browser_read`；只用最新一次读到的引用；只开本机地址；登录与密码交给人；最后用截图与控制台错误验证。Codex 直连把它列为延迟加载的工具时，模型看不到这段文字（真实 CLI 核对，Claude Agent 与 OpenCode 能看到）。令牌 `lbt1.` 在网关目录的 0600 文件里，服务只拿到文件路径，读出即删，参数与 `env` 里没有它，每次换新。桌面端没开时打开的会话没有这个服务，同一进程里不会补上（工具与令牌的规则见 [ARCHITECTURE.md](ARCHITECTURE.md#设备与浏览器)）。
+2. `latch-browser`（`browser-server.ts`）：打开、恢复、载入或分叉有项目的会话时，已登记的桌面浏览器提供方可提供浏览器工具。个人 Agent 即使没有桌面提供方，也可获得仅限协作工具的连接；主动联系对方须开关开启且处于人直接发起的当前轮次。`initialize` 带几条 `instructions`：要看布局先 `browser_viewport` 再 `browser_read`；只用最新一次读到的引用；只开本机地址；登录与密码交给人；最后用截图与控制台错误验证。Codex 直连把它列为延迟加载的工具时，模型看不到这段文字（真实 CLI 核对，Claude Agent 与 OpenCode 能看到）。令牌 `lbt1.` 在网关目录的 0600 文件里，服务只拿到文件路径，读出即删，参数与 `env` 里没有它，每次换新。会话启动时没有桌面提供方，这个进程就不会获得浏览器工具。DSH 0.2.2-rc.5 的个人聊天已用 `deepseek-flash` 验证可以通过协作工具联系 Latch 内置 Agent，并在同一轮读到对方的答复（工具与令牌的规则见 [ARCHITECTURE.md](ARCHITECTURE.md#设备与浏览器)）。
 3. 会话「用在」的每个 Latch MCP 服务器各一个 `latch-mcp` 桥：命令是 Host 的 Node，参数只有网关套接字与令牌文件的路径，`env` 为空；坏掉的服务器不挡会话（见 [MCP.md](MCP.md)）。
 
 - 都没有时传空列表。pi 的预设写了 `skillServer: false`，三者都不给。
@@ -385,6 +385,8 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 - 会话归档后，同一进程上的浏览器工具回答要等会话恢复；取消归档后要等进程重新启动才回来。
 
 外部 Harness 的指令与记忆随话题的首轮块发送；记忆与定时提议的来源按当前上下文已送达的资料标记：导入的与读过外部内容之后存的记忆是资料，不是用户的话（见 [ARCHITECTURE.md](ARCHITECTURE.md#我的-agent-与定时)）。
+
+个人 Agent 受托回复时，Host 只接受本机已确认的 DeepSeek 预设，接单需要 DSH 0.2.2-rc.5 或更高版本。DSH 驱动为这个回合启动专用进程，复用目标聊天，通过 DSH 的工具服务禁止本轮的工具执行。驱动在 `session/prompt` 前核对进程、会话、权限模式、工具限制和发起方的授权。该进程不接收 Latch 工具桥，也不接受 ACP 工具审批，结算后退出。人的下一轮使用该聊天原先的权限设置。DSH 仍是以本机账户执行的 L3 程序。授权范围见[个人 Agent 主动协作](ARCHITECTURE.md#个人-agent-主动协作)。
 
 ## 经 Latch 使用模型服务
 

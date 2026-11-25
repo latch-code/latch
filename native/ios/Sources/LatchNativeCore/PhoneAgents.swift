@@ -200,7 +200,7 @@ public enum PhoneAgents {
     }
     public static let generalId = "general"
     public static let generalName = "通用"
-    public static let generalDuty = "没选别的 Agent 的会话都带上它"
+    public static let generalDuty = "未指定 Agent 时使用"
     public static func access(_ snapshot: NativeJSON, windowOpen: Bool = true, privateConfirmed: Bool = true, reading: Bool = false) -> PhoneAgentAccess {
         if snapshot == .null && reading { return .loading }
         guard snapshot["catalog"]["features"]["customAgents"].bool else { return .hidden }
@@ -451,6 +451,8 @@ public enum PhonePending {
     }
     public static func words(_ write: NativePendingWrite) -> String {
         if write.teamRound != nil { return "派给团队成员的结果待确认" }
+        if PhoneAgentMentions.owner(of: write) != nil { return "协作发送结果未知" }
+        if let fields = try? NativeJSON.decode(write.body), fields.object["canConsultAgents"] != nil { return "主动协作设置待确认" }
         if let action = PhoneQueueControl(write) { return action == .steer ? "追加结果待确认" : "队列顺序待确认" }
         if let words = PhoneHistory.pendingWords(write) { return words }
         switch kind(write) {

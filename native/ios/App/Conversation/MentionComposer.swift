@@ -46,6 +46,13 @@ struct MentionContext: Equatable {
     let context: MentionContext
     let enabled: Bool
     var sourceText: String? = nil
+    struct Personal {
+        let entries: [PhoneAgentEntry]
+        let blocked: String?
+        let select: (PhoneAgentEntry) -> Void
+    }
+    var personal: Personal?
+    var handlesToken: Bool { search != nil }
 
     static func project(_ choice: PhoneStartChoice) -> PhoneMentionScope? {
         guard let project = choice.workspaceId, project != "default", let harness = choice.harnessId else { return nil }
@@ -97,7 +104,8 @@ struct MentionContext: Equatable {
     fileprivate func options(_ search: MentionState.Search) -> [MentionOption] {
         let members = team?.matching(search.token.query).map(MentionOption.member) ?? []
         let picked = references
-        return members + (page(search)?.files ?? []).map { file in
+        let agents = personal?.entries.map { MentionOption.agent($0, blocked: personal?.blocked) } ?? []
+        return agents + members + (page(search)?.files ?? []).map { file in
             .file(file, limited: picked.count >= 32 && !picked.contains(where: { $0.id == file.id }))
         }
     }
@@ -109,6 +117,9 @@ struct MentionContext: Equatable {
         guard openSearch == search, let row = options(search).first(where: { $0.id == option.id }), !row.disabled else { return }
         let edit: (text: String, selection: NSRange)?
         switch row {
+        case let .agent(entry, _):
+            personal?.select(entry)
+            return
         case let .member(member):
             edit = search.token.inserting(marker: member.token, in: text.wrappedValue, selection: editor.selection)
         case let .file(file, _):
@@ -150,15 +161,17 @@ struct MentionContext: Equatable {
 }
 
 private enum MentionOption: Identifiable {
-    enum ID: Hashable { case member(String), file(Data) }
+    enum ID: Hashable { case agent(String), member(String), file(Data) }
+    case agent(PhoneAgentEntry, blocked: String?)
     case member(PhoneMemberMentions.Member)
     case file(PhoneFileMatches.Hit, limited: Bool)
     var id: ID {
-        switch self { case let .member(member): .member(member.id); case let .file(file, _): .file(file.id) }
+        switch self { case let .agent(entry, _): .agent(entry.id); case let .member(member): .member(member.id); case let .file(file, _): .file(file.id) }
     }
     var disabled: Bool {
-        switch self { case let .member(member): member.disabled != nil; case let .file(_, limited): limited }
+        switch self { case let .agent(entry, blocked): !entry.available || blocked != nil; case let .member(member): member.disabled != nil; case let .file(_, limited): limited }
     }
+    var isAgent: Bool { if case .agent = self { return true }; return false }
     var isMember: Bool { if case .member = self { return true }; return false }
 }
 
@@ -174,7 +187,7 @@ struct MentionSuggestions: View {
                     .task(id: search) { await load(search) }
                     .id(retry)
                     .accessibilityElement(children: .contain)
-                    .accessibilityLabel(search.team == nil ? "引用项目文件" : "提到成员或文件")
+                    .accessibilityLabel(input.personal != nil ? "选择协作 Agent 或引用" : search.team == nil ? "引用项目文件" : "提到成员或文件")
             }
         }
         .onChange(of: input.search) { _, now in
@@ -208,17 +221,20 @@ struct MentionSuggestions: View {
     }
     private func list(_ search: MentionState.Search) -> some View {
         let choices = input.options(search)
-        let members = choices.filter(\.isMember), files = choices.filter { !$0.isMember }
+        let agents = choices.filter(\.isAgent), members = choices.filter(\.isMember), files = choices.filter { !$0.isMember && !$0.isAgent }
         let active = input.active(search, choices: choices)
         let note = notice(search, choices: choices)
-        let groups = members.isEmpty ? 0 : (files.isEmpty && note == nil ? 1 : 2)
+        let fileHeader = (!agents.isEmpty || !members.isEmpty) && (!files.isEmpty || note != nil) && input.offersFiles
+        let groups = (agents.isEmpty ? 0 : 1) + (members.isEmpty ? 0 : 1) + (fileHeader ? 1 : 0)
         let height = CGFloat(choices.count + (note == nil ? 0 : 1)) * 44 + CGFloat(groups) * 24
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    if !agents.isEmpty { header("选择协作 Agent") }
+                    ForEach(agents) { row($0, search: search, active: active) }
                     if !members.isEmpty { header("成员") }
                     ForEach(members) { row($0, search: search, active: active) }
-                    if groups == 2 { header("文件") }
+                    if fileHeader { header("文件") }
                     ForEach(files) { row($0, search: search, active: active) }
                     if let note {
                         HStack {
@@ -244,6 +260,9 @@ struct MentionSuggestions: View {
         Button { input.choose(option, search: search) } label: {
             HStack(spacing: 8) {
                 switch option {
+                case let .agent(entry, blocked):
+                    AgentFace(avatar: entry.avatar, size: 28, face: entry.face)
+                    title(entry.name, detail: blocked ?? (entry.available ? entry.duty : "不可用"))
                 case let .member(member):
                     EngineTile(mark: input.model.engineMark(member.harnessId), size: 18)
                     title(member.name, detail: member.disabled ?? (member.title == member.name ? input.model.engineName(member.harnessId) : member.title))

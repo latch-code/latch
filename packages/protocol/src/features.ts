@@ -95,6 +95,8 @@ export interface HostFeatures {
   automations?: true
   /** `/handoffs` exists: hand chosen material to a code session and take its result back. */
   handoffs?: true
+  /** Explicit questions between this Host's personal Agents, with a reply scoped to the addressed turn. */
+  agentMentions?: true
   /** `/work/items`: 待办 with 0–16 sessions, started through the same path as `POST /tasks` (docs/ARCHITECTURE.md#待办). */
   workItems?: true
   /** A pending create can look up its original receipt without creating another item. */

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { prepareDshMode, readDshMode } from '../src/profiles/dsh-mode.ts'
+import { DSH_CONSULTATION_GUARD_VERSION, guardedDshSession, prepareDshMode, readDshMode } from '../src/profiles/dsh-mode.ts'
 import { AcpWire } from '../src/wires/acp.ts'
 
 const roots: string[] = []
@@ -18,6 +18,15 @@ async function directory() {
 }
 
 describe('the dsh permission service bridge', () => {
+  it('accepts only guard evidence bound to this launch, turn and guard version', () => {
+    const key = 'a'.repeat(64)
+    const actual = { sessionId: 'session-a', version: DSH_CONSULTATION_GUARD_VERSION, executionId: key }
+    expect(guardedDshSession(actual, key)).toBe('session-a')
+    expect(guardedDshSession(actual, 'b'.repeat(64))).toBeUndefined()
+    expect(guardedDshSession({ ...actual, version: 0 }, key)).toBeUndefined()
+    expect(guardedDshSession({ sessionId: 'session-a' }, key)).toBeUndefined()
+  })
+
   it('changes through the public service and reports its actual value, while a check never calls its setter', async () => {
     const root = await directory()
     await prepareDshMode(root, 'workspace-write')

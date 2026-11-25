@@ -36,6 +36,7 @@ import {
   type SessionConfigOption,
 } from '@latch/protocol'
 import type {
+  ConsultationGuardEvidence,
   HarnessHostOptions,
   HarnessDriver,
   HarnessSecurityEvent,
@@ -100,6 +101,7 @@ afterEach(async () => {
 })
 
 interface LogEntry {
+  textOnly?: boolean
   pid: number
   event: string
   method?: string | null
@@ -7338,18 +7340,153 @@ describe('sessions on a model service through the gateway', () => {
   }
   const CODEX = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'read-only,workspace-write', FAKE_ACP_INITIAL_MODE: 'read-only' }
 
-  async function dshCommand(): Promise<Partial<AgentRecord>> {
+  async function dshCommand(version = '0.2.2-rc.1'): Promise<Partial<AgentRecord> & { command: string }> {
     const bin = await mkdtemp(join(tmpdir(), 'latch-dsh-gateway-version-'))
     cleanups.push(() => rm(bin, { recursive: true, force: true }))
     const command = join(bin, 'dsh')
     await writeFile(
       command,
-      `#!/bin/sh\nif [ "$1" = --version ]; then echo 0.2.2-rc.1; exit 0; fi\nexec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"\n`,
+      `#!/bin/sh\nif [ "$1" = --version ]; then echo ${version}; exit 0; fi\nexec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"\n`,
     )
     await chmod(command, 0o755)
     setLoginPrograms(name => (name === 'dsh' ? command : undefined))
     return { command, args: [] }
   }
+
+  it('binds text-only DSH consultations to one process and cannot replay them as ordinary prompts', async () => {
+    const fake = await dshCommand('0.2.2-rc.5')
+    setCommandSearch(() => [dirname(fake.command)])
+    const fixture = await setup(
+      { FAKE_ACP_PROCESS_MODE: '1', FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'resume,close' },
+      {},
+      { ...fake, args: ['--profile', 'acp'], presetId: 'dsh', confirmedCommand: fake.command },
+    )
+    const bridge = await fixture.open()
+    expect(bridge.canReceiveConsultation?.()).toBe(true)
+    const agentContext = { agent: { customAgentId: `agt_${randomUUID()}` }, instructions: '', revision: 'a'.repeat(64) }
+    const evidence: ConsultationGuardEvidence[] = []
+    const recordConsultationGuard = async (value: ConsultationGuardEvidence) => {
+      evidence.push(value)
+    }
+    const guarded = { consultation: true as const, authorizeConsultation: () => {}, recordConsultationGuard }
+    const { sessionId } = await bridge.createTask({
+      ...guarded,
+      agentContext,
+      config: [
+        { configId: 'model', value: 'large' },
+        { configId: 'effort', value: 'high' },
+      ],
+      prompt: 'echo first',
+      requestId: rid(),
+    })
+    const first = await settled(bridge, sessionId)
+    expect(first.summary.status).toBe('idle')
+    expect(first.config?.find(item => item.id === 'model')?.currentValue).toBe('large')
+    expect(first.config?.find(item => item.id === 'effort')?.currentValue).toBe('high')
+    const requestId = rid()
+    await bridge.prompt(sessionId, 'only-always', requestId, guarded)
+    expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+    await bridge.prompt(sessionId, 'only-always', requestId, guarded)
+    await expect(bridge.prompt(sessionId, 'only-always', requestId)).rejects.toMatchObject({ code: 'request-conflict' })
+    await bridge.prompt(sessionId, 'echo human', rid())
+    expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+    const log = await fixture.log()
+    // Even a client request outside DSH's tool pipeline cannot reuse an always-allow choice.
+    expect(answers(log)).toEqual([{ outcome: 'cancelled' }])
+    const prompts = received(log, 'session/prompt')
+    expect(new Set(prompts.map(item => item.pid)).size).toBe(3)
+    expect(evidence).toHaveLength(2)
+    expect(new Set(evidence.map(item => item.executionId)).size).toBe(2)
+    for (const item of evidence)
+      expect(item).toMatchObject({ sessionId, version: 1, executionId: expect.stringMatching(/^[a-f0-9]{64}$/u) })
+
+    expect(log.filter(item => item.event === 'prompt-mode').map(item => item.textOnly)).toEqual([true, true, false])
+    for (const item of prompts.slice(0, 2)) {
+      const open = log.find(row => row.pid === item.pid && /session\/(?:new|load|resume)/u.test(row.method ?? ''))
+      expect(open?.params?.mcpServers).toEqual([])
+    }
+  })
+
+  it('does not open a DSH chat or send its prompt when authorization expires during initialize', async () => {
+    const fake = await dshCommand('0.2.2-rc.5')
+    setCommandSearch(() => [dirname(fake.command)])
+    const fixture = await setup(
+      { FAKE_ACP_PROCESS_MODE: '1', FAKE_ACP_INIT_DELAY: '300' },
+      {},
+      { ...fake, args: ['--profile', 'acp'], presetId: 'dsh', confirmedCommand: fake.command },
+    )
+    const bridge = await fixture.open()
+    let allowed = true
+    const { sessionId } = await bridge.createTask({
+      agentContext: { agent: { customAgentId: `agt_${randomUUID()}` }, instructions: '', revision: 'a'.repeat(64) },
+      consultation: true,
+      recordConsultationGuard: async () => {},
+      authorizeConsultation: () => {
+        if (!allowed) throw new Error('Consent expired')
+      },
+      prompt: 'echo after revocation',
+      requestId: rid(),
+    })
+    await vi.waitFor(async () => expect(received(await fixture.log(), 'initialize')).toHaveLength(1), { interval: 5 })
+    allowed = false
+    expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
+    const log = await fixture.log()
+    expect(received(log, 'session/new')).toHaveLength(0)
+    expect(received(log, 'session/prompt')).toHaveLength(0)
+  })
+
+  it.each(['failed audit', 'withdrawn consent'])('sends no DSH prompt after %s at the verified guard', async failure => {
+    const fake = await dshCommand('0.2.2-rc.5')
+    setCommandSearch(() => [dirname(fake.command)])
+    const fixture = await setup(
+      { FAKE_ACP_PROCESS_MODE: '1', FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'resume,close' },
+      {},
+      { ...fake, args: ['--profile', 'acp'], presetId: 'dsh', confirmedCommand: fake.command },
+    )
+    const bridge = await fixture.open()
+    let allowed = true
+    const record = vi.fn(async () => {
+      if (failure === 'failed audit') throw new Error('Audit unavailable')
+      allowed = false
+    })
+    const { sessionId } = await bridge.createTask({
+      agentContext: { agent: { customAgentId: 'agt_' + randomUUID() }, instructions: '', revision: 'a'.repeat(64) },
+      consultation: true,
+      recordConsultationGuard: record,
+      authorizeConsultation: () => {
+        if (!allowed) throw new Error('Consent withdrawn')
+      },
+      prompt: 'echo must not reach the model',
+      requestId: rid(),
+    })
+    expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
+    expect(record).toHaveBeenCalledOnce()
+    expect(received(await fixture.log(), 'session/prompt')).toHaveLength(0)
+  })
+
+  it.each(['missing', 'stale'])('withholds a DSH consultation with %s process guard evidence', async proof => {
+    const fake = await dshCommand('0.2.2-rc.5')
+    setCommandSearch(() => [dirname(fake.command)])
+    const fixture = await setup(
+      { FAKE_ACP_PROCESS_MODE: '1', FAKE_ACP_CONSULTATION_PROOF: proof, FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'resume,close' },
+      {},
+      { ...fake, args: ['--profile', 'acp'], presetId: 'dsh', confirmedCommand: fake.command },
+    )
+    const bridge = await fixture.open()
+    const agentContext = { agent: { customAgentId: `agt_${randomUUID()}` }, instructions: '', revision: 'a'.repeat(64) }
+    const recordConsultationGuard = vi.fn(async () => {})
+    const { sessionId } = await bridge.createTask({
+      agentContext,
+      consultation: true,
+      recordConsultationGuard,
+      authorizeConsultation: () => {},
+      prompt: 'echo withheld',
+      requestId: rid(),
+    })
+    expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
+    expect(received(await fixture.log(), 'session/prompt')).toHaveLength(0)
+    expect(recordConsultationGuard).not.toHaveBeenCalled()
+  })
 
   /** Stands in for the Host's gateway: the fake service itself, with a token that only it is told to expect. */
   function gateway(models: FakeModels, allowedModels = ['fake-model', 'fake-model-large']) {

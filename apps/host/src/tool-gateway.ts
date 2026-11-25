@@ -166,8 +166,8 @@ export interface McpGatewayHandlers {
 
 export interface ToolGatewayOptions {
   socketPath: string
-  /** Whether a session gets the tools when it opens now; false: no token, and its agent gets no server this time. */
-  admits?(sessionId: string): boolean
+  /** At process start: a full lease, no lease, or a lease restricted to these tools for its entire lifetime. */
+  admits?(sessionId: string): boolean | readonly string[]
   /** The listing takes the binding's session; without it this is the fixed set of names allowed on the wire. */
   tools(sessionId?: string): GatewayTool[]
   /** One call; the Host classifies, audits and runs it. Never rejects with the token or the arguments in its words. */
@@ -178,6 +178,8 @@ export interface ToolGatewayOptions {
 }
 
 interface Binding {
+  /** An assistant-only lease cannot call other gateway tools, even if it knows their names. */
+  onlyTools?: readonly string[]
   sessionId: string
   describe?: (tool: string, args: Record<string, unknown>) => ToolGatewayCallContext
   /** Calls in flight with this token. */
@@ -261,7 +263,9 @@ export class ToolGatewayServer implements ToolGateway {
   constructor(private readonly options: ToolGatewayOptions) {}
 
   hasToolLease(sessionId: string): boolean {
-    return [...this.bindings.values()].some(binding => binding.sessionId === sessionId && !binding.mcp && !binding.closed)
+    return [...this.bindings.values()].some(
+      binding => binding.sessionId === sessionId && !binding.mcp && !binding.onlyTools && !binding.closed,
+    )
   }
 
   get listening(): boolean {
@@ -308,9 +312,11 @@ export class ToolGatewayServer implements ToolGateway {
 
   open(input: { sessionId: string; describe?: Binding['describe'] }): ToolGatewayLease | undefined {
     if (!this.server) throw new AppError(503, 'tool-gateway-unavailable', 'Latch 的工具网关没有运行')
-    if (this.options.admits && !this.options.admits(input.sessionId)) return undefined
+    const allowed = this.options.admits?.(input.sessionId) ?? true
+    if (allowed === false) return undefined
     const { token, hash, binding } = this.bind({
       sessionId: input.sessionId,
+      ...(allowed === true ? {} : { onlyTools: allowed }),
       ...(input.describe ? { describe: input.describe } : {}),
     })
     return {
@@ -395,7 +401,7 @@ export class ToolGatewayServer implements ToolGateway {
     this.end(binding)
   }
 
-  private bind(input: Pick<Binding, 'sessionId' | 'describe' | 'mcp'>): { token: string; hash: string; binding: Binding } {
+  private bind(input: Pick<Binding, 'sessionId' | 'describe' | 'mcp' | 'onlyTools'>): { token: string; hash: string; binding: Binding } {
     const token = `${TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`
     const hash = hashOf(token)
     // The token goes to the server in a file only this user reads, created here and nowhere else; the server deletes it
@@ -409,6 +415,7 @@ export class ToolGatewayServer implements ToolGateway {
     }
     const binding: Binding = {
       sessionId: input.sessionId,
+      ...(input.onlyTools ? { onlyTools: input.onlyTools } : {}),
       ...(input.describe ? { describe: input.describe } : {}),
       ...(input.mcp ? { mcp: input.mcp } : {}),
       calls: new Set(),
@@ -632,7 +639,8 @@ export class ToolGatewayServer implements ToolGateway {
           continue
         }
         if (method === 'tools/list') {
-          reply({ id, result: { tools: this.options.tools(binding.sessionId) } })
+          const listed = this.options.tools(binding.sessionId).filter(tool => !binding.onlyTools || binding.onlyTools.includes(tool.name))
+          reply({ id, result: { tools: listed } })
           continue
         }
         if (method !== 'tools/call') {
@@ -645,7 +653,12 @@ export class ToolGatewayServer implements ToolGateway {
         }
         const name = isPlainObject(params) ? params.name : undefined
         const args = isPlainObject(params) ? (params.arguments ?? {}) : undefined
-        if (typeof name !== 'string' || !this.options.tools().some(tool => tool.name === name) || !isPlainObject(args)) {
+        if (
+          typeof name !== 'string'
+          || (binding.onlyTools && !binding.onlyTools.includes(name))
+          || !this.options.tools().some(tool => tool.name === name)
+          || !isPlainObject(args)
+        ) {
           refuse(id, -32602, 'Unknown tool or invalid arguments.')
           continue
         }

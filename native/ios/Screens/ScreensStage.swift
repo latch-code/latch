@@ -344,7 +344,16 @@ import UIKit
             model.sessionId = "ses_review"; model.detail = conversation()
             var store = PhoneProposalStore(); let token = store.begin(review); store.finish(review, token: token, list: json(proposalsText), windowOpen: true); model.proposals = store
             profile = name != "agent-chat"; profilePart = name == "agent-memory" ? .memory : .activity
-        case "agent-new":
+        case "agent-new", "agent-mentions", "agent-consultation":
+            if name == "agent-mentions" {
+                model.snapshot = patched(model.snapshot) { root in
+                    root["catalog"] = patched(root["catalog"]!) { catalog in
+                        catalog["features"] = patched(catalog["features"]!) { features in
+                            features["fileSearch"] = .bool(true); features["fileMentions"] = .bool(true)
+                        }
+                    }
+                }
+            }
             model.tab = .agents; model.agentPath = [review]; chat(model, owner: review, session: nil)
         case "agent-work-computer":
             let hostId = String(repeating: "b", count: 52)
@@ -365,6 +374,13 @@ import UIKit
             chat(model, owner: daily, session: "ses_brief")
             model.sessionId = "ses_brief"
             model.detail = json(approvalText.replacingOccurrences(of: "\"id\":\"ses_wait\",\"title\":\"升级 swift-nio 到 2.104\"", with: "\"id\":\"ses_brief\",\"title\":\"汇总本周依赖更新\""))
+        case "agent-consent":
+            model.tab = .agents; model.agentPath = [daily]; profile = true; profilePart = .runSettings
+            model.snapshot = patched(model.snapshot) { root in
+                root["customAgents"] = .array(model.snapshot["customAgents"].array.map { agent in
+                    agent["id"].string == daily ? patched(agent) { $0["mode"] = .string("agent") } : agent
+                })
+            }
         case "agent-schedules": model.tab = .agents; model.agentPath = [daily]; profile = true; profilePart = .activity
         case "agent-computer":
             // 每日简报 with two missed times of one schedule, kept awake for a schedule, and its 完成 notification off.
@@ -465,12 +481,29 @@ import UIKit
         if path.contains("/library") { return .ready(json(libraryText)) }
         if path.hasSuffix("/results") { return .ready(json(#"{"results":[]}"#)) }
         if path.hasSuffix("/computer") { return .ready(json(path.contains(daily) ? computerText : #"{"computer":{"desktop":true},"missed":[]}"#)) }
+        if path.hasSuffix("/mentions") {
+            if scene == "agent-consultation", path == PhoneAgentMentions.path(review) {
+                return .ready(json("""
+                    {"mentions":[{"id":"example","requestId":"example-0000000001","sourceAgentId":"\(review)","targetAgentId":"\(daily)",
+                      "initiator":"person","text":"把这次审阅的待办整理成三条。","status":"completed",
+                      "reply":{"messageId":"reply-1","text":"先补齐空列表测试，再核对重复提交，最后在手机上确认回复的显示。"}}]}
+                    """))
+            }
+            return .ready(json(#"{"mentions":[]}"#))
+        }
         if path.hasSuffix("/proposals") {
             return .ready(path.contains(review) ? json(proposalsText) : path.contains(daily) ? json(scheduleProposals) : json(#"{"proposals":[]}"#))
         }
         let id = String(path.split(separator: "/").last ?? "")
         if id == PhoneAgents.generalId { return .ready(json(general)) }
         if id == review { return .ready(json(reviewDetail)) }
+        if id == daily && scene == "agent-consent" {
+            return .ready(patched(json(dailyDetail)) { detail in
+                detail["agent"] = patched(detail["agent"] ?? .null) {
+                    $0["mode"] = .string("agent"); $0["canConsultAgents"] = .bool(true)
+                }
+            })
+        }
         if id == daily || id == docs { return .ready(json(dailyDetail.replacingOccurrences(of: daily, with: id))) }
         if id == checks { return .ready(json(runs)) }
         return .missing
@@ -691,7 +724,7 @@ import UIKit
     private static var snapshotText: String { """
     {"instanceId":"screens","revision":42,"hostName":"\(marker)","approvals":[],"hostTime":"{{0}}",
      "device":{"id":"dev_screens0000000000000000","status":"active","scopes":["view","run","approve:standard"],"dataScope":"all"},
-     "catalog":{"features":{"customAgents":true,"singleAgentChat":true,"automations":true,"appPages":1,"queue":true,"fork":true,"search":true},"harnesses":\(harnesses),
+     "catalog":{"features":{"customAgents":true,"agentMentions":true,"singleAgentChat":true,"automations":true,"appPages":1,"queue":true,"fork":true,"search":true},"harnesses":\(harnesses),
       "providers":[{"id":"deepseek","name":"DeepSeek","models":["deepseek-chat","deepseek-reasoner"]}],
       "workspaces":[{"id":"default","name":"默认文件夹","path":"/work"},{"id":"latch","name":"latch","path":"/work/latch"},{"id":"site","name":"官网","path":"/work/site"}],
       "defaults":{"harnessId":"standard","workspaceId":"latch","model":{"providerId":"deepseek","model":"deepseek-chat"}},

@@ -1,7 +1,16 @@
 import { openControlWhenShown } from '../composer/ComposerControl.tsx'
 import { requestLeave } from '../preview/editDrafts.ts'
 import { requestBoard } from '../board/requests.ts'
-import { readsProjectFiles, type AppSnapshot, type BoardGroup, type TerminalTarget, type WorkspaceInfo } from '@latch/protocol'
+import {
+  GENERAL_AGENT_ID,
+  escapeSecurityText,
+  readsProjectFiles,
+  type AgentMention,
+  type AppSnapshot,
+  type BoardGroup,
+  type TerminalTarget,
+  type WorkspaceInfo,
+} from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
 import type { PromptInput } from '../composer/PromptEditor.tsx'
 import { mentionMarker } from '../fileMentions.ts'
@@ -60,7 +69,8 @@ import {
 import { backRoute, initialRoute, readHomeShown, useSpaces, writeHomeShown } from './spaces.ts'
 import { visibleEntries, type AgentPageTarget, type AppTarget, type MyAgentTarget, type ShellEntry, type ShellRoute } from './routes.ts'
 import { useAgentRemoval, useDelegation } from '../agents/useAgentWrites.ts'
-import { openAgent, topicOwner, type ProfileSection } from '../agents/chat.ts'
+import { useAgentMentions } from '../agents/AgentMentions.tsx'
+import { openAgent, isPersonalChat, ownerName, personalChat, topicOwner, type ProfileSection } from '../agents/chat.ts'
 import type { SchedulePrefill } from '../agents/activity.ts'
 import { askDelegateFocus } from '../agents/delegateFocus.ts'
 import { readsAgents } from '../agents/model.ts'
@@ -124,7 +134,9 @@ const COPY = defineCopy(
     endingUnknown: '结束交接的结果未知，再点一次会重试同一请求',
     endHandoff: '结束交接',
     backToSessions: '返回会话列表',
+    backToAgent: (name: string) => `返回${name}`,
     originalTurnUnavailable: '原回合已不可用',
+    mentionUnavailable: '原协作记录已不可用',
   },
   {
     missingFolder: 'Can’t find the selected project’s folder',
@@ -136,7 +148,9 @@ const COPY = defineCopy(
     endingUnknown: 'Ending the handoff is unconfirmed. Click again to retry the same request.',
     endHandoff: 'End handoff',
     backToSessions: 'Back to sessions',
+    backToAgent: (name: string) => `Back to ${name}`,
     originalTurnUnavailable: 'The original turn is unavailable',
+    mentionUnavailable: 'The original exchange is no longer available',
   },
 )
 
@@ -170,6 +184,15 @@ function focusNextFrame(target: RefObject<PromptInput | null>) {
 export function useShellLayout({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
   const { selectedId, refresh, resync, connection } = harness
   const proposalWrites = useProposalWrites(refresh, snapshot)
+  const [mentionVisit, setMentionVisit] = useState<{
+    source: string
+    sourceSession: string | null
+    targetSession: string
+    replyMessageId?: string
+    mentionId: string
+    offset?: number
+    phase: 'target' | 'returning'
+  }>()
   const [itemVisit, setItemVisit] = useState<{
     itemId: string
     target: WorkItemSessionTarget
@@ -267,6 +290,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       const target = typeof next === 'function' ? next(routeRef.current) : next
       if (target.entry === 'marketplace') return
       if (!!target.start !== hasStart && !parkInput.current()) return
+      setMentionVisit(undefined)
       closeMarketplace()
       // 我的 Agent and 应用 are pages of 对话.
       if (target.entry !== 'sessions') leaveBoard()
@@ -285,6 +309,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       return place.entry === 'sessions' && place.start === true
     },
     onBeforeSelect: id => {
+      setMentionVisit(undefined)
       // A session opens in 对话, from a card, a notification, the palette or a key alike.
       if (id !== null) leaveBoard()
       clearTimeout(popTimer.current)
@@ -465,6 +490,13 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const agentRemovals = useAgentRemoval(snapshot, readsAgents(snapshot) && access.scopes.has('view') && access.scopes.has('run'), refresh)
   // Back on the conversation (from a page, or a tab shown again): its approval cards arm again before they take a press.
   const conversationVisible = route.entry === 'sessions' && !route.start && !board
+  const mentionSource =
+    route.entry === 'agents'
+      ? route.myAgent?.id
+      : conversationVisible && summary && summary.id === selectedId && isPersonalChat(snapshot, summary)
+        ? topicOwner(summary)
+        : undefined
+  const agentMentions = useAgentMentions(snapshot, mentionSource, connection === 'connected', access.scopes.has('run'))
   const wasConversationVisible = useRef(conversationVisible)
   const settingsOpen = settings !== null && entries.includes('settings')
   const wereSettingsOpen = useRef(settingsOpen)
@@ -1869,6 +1901,110 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     })
     return () => cancelAnimationFrame(frame)
   }, [activeContextRow, canRevealContextRow, conversationVisible, pageMode, infoPage, revealRow])
+  // AppShell is keyed by Host and device. This one visit lasts only while its originating private chat is accessible.
+  const sourceSlot = mentionVisit && personalChat(snapshot, mentionVisit.source)
+  const visitAuthorized =
+    !!mentionVisit
+    && readsAgents(snapshot)
+    && access.scopes.has('view')
+    && catalog?.features?.agentMentions === true
+    && (mentionVisit.source === GENERAL_AGENT_ID
+      || snapshot.customAgents?.some(agent => agent.id === mentionVisit.source && !agent.workComputer))
+    && !!sourceSlot
+    && (mentionVisit.sourceSession === null || (sourceSlot.state === 'ready' && sourceSlot.sessionId === mentionVisit.sourceSession))
+  const atMentionTarget =
+    visitAuthorized
+    && mentionVisit.phase === 'target'
+    && conversationVisible
+    && selectedId === mentionVisit.targetSession
+    && snapshot.tasks.some(task => task.id === mentionVisit.targetSession)
+  const returningToMention = visitAuthorized && mentionVisit.phase === 'returning' && agentMentions.source === mentionVisit.source
+  useEffect(() => {
+    if (mentionVisit && !atMentionTarget && !returningToMention) setMentionVisit(undefined)
+  }, [mentionVisit, atMentionTarget, returningToMention])
+
+  const openMentionTarget = useStableCallback((item: AgentMention) => {
+    const target = snapshot.tasks.find(task => task.id === item.targetSessionId)
+    if (agentMentions.source !== item.sourceAgentId || !target || topicOwner(target) !== item.targetAgentId) return
+    const sourceSession = route.entry === 'sessions' ? selectedId : null
+    const body = sourceSession ? reading.containerRef.current : appShell.current?.querySelector('.agent-chat-body')
+    const card = body?.querySelector(`[data-agent-mention-id="${CSS.escape(item.id)}"]`)
+    const offset = card && body ? card.getBoundingClientRect().top - body.getBoundingClientRect().top : undefined
+    choose(target.id, () => {
+      setMentionVisit({
+        source: item.sourceAgentId,
+        sourceSession,
+        targetSession: target.id,
+        replyMessageId: item.reply?.messageId,
+        mentionId: item.id,
+        offset,
+        phase: 'target',
+      })
+    })
+  })
+  const revealedMention = useRef<typeof mentionVisit>(undefined)
+  useLayoutEffect(() => {
+    if (!atMentionTarget) {
+      revealedMention.current = undefined
+      return
+    }
+    if (!mentionVisit.replyMessageId || current?.summary.id !== mentionVisit.targetSession || revealedMention.current === mentionVisit)
+      return
+    // An empty source page can cover an already-selected target. Reveal after that transcript is back on screen.
+    const id = mentionVisit.replyMessageId
+    const frame = requestAnimationFrame(() => {
+      const row = reading.contentRef.current?.querySelector(`[data-message-id="${CSS.escape(id)}"]`)
+      if (!row?.getClientRects().length) return
+      reading.show(mentionVisit.targetSession, id)
+      revealedMention.current = mentionVisit
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [atMentionTarget, mentionVisit, current, reading.contentRef, reading.show])
+  const returnToMention = useStableCallback(() => {
+    if (!atMentionTarget) return
+    const restoring = () => setMentionVisit({ ...mentionVisit, phase: 'returning' })
+    if (sourceSlot.state === 'ready') choose(sourceSlot.sessionId, restoring)
+    else {
+      const restorePage = () => {
+        setRoute({ entry: 'agents', myAgent: { id: mentionVisit.source } })
+        restoring()
+      }
+      if (!requestLeave(mentionVisit.targetSession, restorePage)) restorePage()
+    }
+  })
+  useLayoutEffect(() => {
+    if (!returningToMention) return
+    if (!agentMentions.rows.some(item => item.id === mentionVisit.mentionId)) {
+      if (agentMentions.loaded) {
+        setMentionVisit(undefined)
+        setToast({ text: COPY.mentionUnavailable, tone: 'error' })
+      }
+      return
+    }
+    const frame = requestAnimationFrame(() => {
+      const body =
+        route.entry === 'agents' ? appShell.current?.querySelector<HTMLElement>('.agent-chat-body') : reading.containerRef.current
+      const card = body?.querySelector<HTMLElement>(`[data-agent-mention-id="${CSS.escape(mentionVisit.mentionId)}"]`)
+      const control = card?.querySelector<HTMLElement>('[data-open-agent-mention]')
+      if (!body || !card || !control) return
+      if (route.entry === 'agents')
+        body.scrollTop += card.getBoundingClientRect().top - body.getBoundingClientRect().top - (mentionVisit.offset ?? 0)
+      else reveal(`agent-mention:${mentionVisit.mentionId}`, mentionVisit.offset, true)
+      control.focus({ preventScroll: true })
+      setMentionVisit(undefined)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [
+    returningToMention,
+    mentionVisit,
+    agentMentions.rows,
+    agentMentions.loaded,
+    current,
+    route.entry,
+    reading.containerRef,
+    reveal,
+    setToast,
+  ])
   const returnToWorkItem = useStableCallback(() => {
     if (!itemReturn) return
     const restore = () => {
@@ -2419,6 +2555,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     frameShortcut,
     delegation,
     agentRemovals,
+    agentMentions,
+    openMentionTarget,
+    mentionReturnLabel: atMentionTarget
+      ? COPY.backToAgent(escapeSecurityText(ownerName(snapshot.customAgents, mentionVisit.source)))
+      : undefined,
+    returnToMention,
     editingProject,
     openProjectEditor,
     closeProjectEditor,

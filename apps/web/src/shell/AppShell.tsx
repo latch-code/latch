@@ -201,6 +201,10 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     if (!pendingStartId || settings || document.activeElement !== document.body) return
     main.current?.querySelector<HTMLElement>(phone ? '.topbar-back' : '.transcript')?.focus({ preventScroll: true })
   }, [main, pendingStartId, phone, settings])
+  useLayoutEffect(() => {
+    if (shell.mentionReturnLabel && document.activeElement === document.body)
+      main.current?.querySelector<HTMLElement>('[data-mention-return]')?.focus({ preventScroll: true })
+  }, [main, shell.mentionReturnLabel])
   // The right panel's strip starts where the session's head ends, so the head's foot runs on as one line.
   useLayoutEffect(() => {
     const frame = appShell.current
@@ -466,6 +470,13 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     {/* Under the panel's page the conversation cannot be reached until the page is closed. */}
                     <div className="workspace-view" inert={(pageMode && infoPage) || undefined}>
                       <ConversationHeader shell={shell} starting={pendingStart || null} onStartBack={toPhoneList} />
+                      {shell.mentionReturnLabel && (
+                        <div className="item-conversation-back">
+                          <Button size="xs" variant="ghost" icon={ChevronLeftGlyph} data-mention-return="" onClick={shell.returnToMention}>
+                            {shell.mentionReturnLabel}
+                          </Button>
+                        </div>
+                      )}
                       {shell.itemReturn && !phone && (
                         <div className="item-conversation-back">
                           <Button size="xs" variant="ghost" icon={ChevronLeftGlyph} onClick={shell.returnToWorkItem}>
