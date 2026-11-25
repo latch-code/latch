@@ -748,8 +748,7 @@ export function PluginMarketplace({
           {canCreate && (
             <Button
               className="plugin-market-create"
-              variant="primary"
-              size="md"
+              variant="outline"
               icon={PlusGlyph}
               aria-describedby={createBlocked ? reasonId : undefined}
               disabled={!!createBlocked}
