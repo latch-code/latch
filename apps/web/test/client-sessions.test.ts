@@ -66,6 +66,20 @@ describe('session list', () => {
       ['project:docs', '文档', ['docs'], 'docs'],
       ['other', '无项目', ['app-new', 'elsewhere', 'history', 'app-old'], undefined],
     ])
+    const withPinnedShelf = groupSessions(
+      [
+        task('site', at(22), { cwd: '/Users/me/code/website' }),
+        task('pinned-old', at(2), { pinned: true, cwd: '/Users/me/code/website' }),
+        task('pinned-new', at(23), { pinned: true, cwd: '/Users/me/code/latch-app/docs/guide' }),
+      ],
+      workspaces,
+      { pinnedShelf: true },
+    )
+    expect(withPinnedShelf.map(group => [group.id, group.label, group.tasks.map(item => item.id)])).toEqual([
+      ['pinned', '置顶', ['pinned-new', 'pinned-old']],
+      ['project:docs', '文档', ['pinned-new']],
+      ['project:website', 'website', ['pinned-old', 'site']],
+    ])
   })
 
   it('omits empty groups, offers no new session in a project the Host disabled, and groups by directory on a Host without projects', () => {
@@ -447,6 +461,19 @@ describe('stepping through the list', () => {
   it('skips folded shelves', () => {
     expect(ids(['waiting'])).toEqual(['site', 'chat'])
     expect(ids(['project:site'])).toEqual(['asks', 'asks-archived', 'chat'])
+    const pinnedChat = { ...chat, pinned: true }
+    const treeIds = (folded: string[] = []) =>
+      listedSessions([site, pinnedChat], workspaces, {
+        filter: 'all',
+        search: '',
+        folded: new Set(folded),
+        projectTree: true,
+      }).map(item => item.id)
+    // Pinned sessions appear at the top under 置顶 and inside their own shelf, but stepping visits each session once.
+    expect(treeIds()).toEqual(['chat', 'site'])
+    expect(treeIds(['pinned'])).toEqual(['site', 'chat'])
+    expect(treeIds(['other'])).toEqual(['chat', 'site'])
+    expect(treeIds(['pinned', 'other'])).toEqual(['site'])
   })
 
   it('keeps sessions in place under the archive and a search, where nothing moves to 等你处理', () => {

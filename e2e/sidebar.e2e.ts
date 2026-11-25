@@ -7,6 +7,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import { backToPhoneSessions } from './helpers/layout.ts'
 
 /**
  * The sidebar from 1024px: dragging its edge, double-click reset, the keyboard steps and snapping shut (sliding, not
@@ -223,6 +224,28 @@ describe('resizable sidebar', () => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await handle().dblclick()
     await expect.poll(sidebarWidth).toBe(264)
+  })
+
+  it('opens the first pinned session with Alt+1 after resizing from a filtered phone list', async () => {
+    const { sessionId: pinned } = await testHost.host.bridge.createTask({ prompt: '置顶会话', mode: 'chat', requestId: randomUUID() })
+    const { sessionId: other } = await testHost.host.bridge.createTask({ prompt: '搜索目标', mode: 'chat', requestId: randomUUID() })
+    const owner = await testHost.enroll({ listener: 'unix' })
+    await owner.json(`tasks/${pinned}`, { method: 'PATCH', body: { pinned: true } })
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await backToPhoneSessions(page)
+    const phone = page.locator('.phone-list')
+    await phone.getByRole('searchbox', { name: '搜索会话', exact: true }).fill('搜索目标')
+    await phone.locator(`[data-task-id="${other}"]`).waitFor()
+    await phone.locator(`[data-task-id="${pinned}"]`).waitFor({ state: 'detached' })
+
+    await page.setViewportSize({ width: 1440, height: 900 })
+    const sidebar = page.locator('.sidebar')
+    const first = sidebar.locator('[data-shelf="pinned"] [data-task-id]').first()
+    expect(await first.getAttribute('data-task-id')).toBe(pinned)
+    await sidebar.locator(`[data-task-id="${other}"]`).click()
+    await page.keyboard.press('Alt+1')
+    await expect.poll(() => first.getAttribute('aria-current')).toBe('page')
   })
 })
 

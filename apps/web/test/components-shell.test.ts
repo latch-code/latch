@@ -382,6 +382,48 @@ describe('the sidebar foot and the computer name', () => {
     const local = foot(sidebar(snapshotOf('unix'), noop))
     expect(local.indexOf('添加项目')).toBeLessThan(local.indexOf('设置'))
   })
+
+  it('draws a pinned session in the 置顶 shelf above 项目 and at the head of its project shelf', () => {
+    const base = snapshotOf('unix')
+    const html = sidebar({
+      ...base,
+      catalog: {
+        ...base.catalog!,
+        workspaces: [{ id: 'agent', name: 'agent', path: '/Users/me/agent' }],
+      },
+      tasks: [
+        {
+          id: 't-unpinned',
+          harnessId: 'standard',
+          title: '普通会话',
+          status: 'idle',
+          updatedAt: '2026-10-20T12:00:00.000Z',
+          workspaceId: 'agent',
+        },
+        {
+          id: 't-pinned',
+          harnessId: 'standard',
+          title: '平台设计与评估',
+          status: 'idle',
+          updatedAt: '2026-10-19T12:00:00.000Z',
+          workspaceId: 'agent',
+          pinned: true,
+        },
+      ],
+    })
+    const pinnedShelf = html.indexOf('data-shelf="pinned"')
+    const projectsHead = html.indexOf('<div class="sidebar-group-label"><span>项目</span>')
+    const projectShelf = html.indexOf('data-shelf="project:agent"')
+    expect(pinnedShelf).toBeGreaterThan(-1)
+    expect(pinnedShelf).toBeLessThan(projectsHead)
+    expect(projectsHead).toBeLessThan(projectShelf)
+    expect(html.slice(pinnedShelf, projectsHead)).toContain('data-task-id="t-pinned"')
+    expect(html.slice(pinnedShelf, projectsHead)).not.toContain('session-pin')
+    const projectSection = html.slice(projectShelf)
+    expect(projectSection).toContain('data-task-id="t-pinned"')
+    expect(projectSection).toContain('session-pin')
+    expect(projectSection.indexOf('data-task-id="t-pinned"')).toBeLessThan(projectSection.indexOf('data-task-id="t-unpinned"'))
+  })
 })
 
 describe('the composer footer names where a session works', () => {
