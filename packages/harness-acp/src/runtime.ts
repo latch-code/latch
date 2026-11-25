@@ -2799,7 +2799,7 @@ export class AgentRuntime implements Bridge {
   }
 
   private consultationRefusal(): AppError {
-    return new AppError(409, 'agent-consultation-guard', '无法确认此 DeepSeek Harness 回合只能回复文字，未发送委托。')
+    return new AppError(409, 'agent-consultation-guard', '无法确认这次委托只能回复文字，未发送问题。')
   }
 
   async createTask(input: CreateTaskInput): Promise<{ sessionId: string }> {
@@ -2927,9 +2927,8 @@ export class AgentRuntime implements Bridge {
       ...(commandContext ? { commandContext } : {}),
       ...(scope ? { scope } : {}),
       ...(input.agentContext ? { agentContext: input.agentContext } : {}),
-      ...(input.consultation
-        ? { authorizeConsultation: input.authorizeConsultation, recordConsultationGuard: input.recordConsultationGuard }
-        : {}),
+      authorizeConsultation: input.authorizeConsultation,
+      ...(input.consultation ? { recordConsultationGuard: input.recordConsultationGuard } : {}),
       ...(config.length
         ? {
             startConfig: startChoices(config, this.state.catalogue, route ? this.routedOptions(route) : undefined),
@@ -3003,6 +3002,7 @@ export class AgentRuntime implements Bridge {
     }
     if (agentContext?.skillBodies?.length || this.proposing(agentContext) || create.workProposals)
       await writeSessionSkills(skillsDirectory(this.options.dataDir, sessionId), agentContext?.skillBodies ?? [])
+    create.authorizeConsultation?.()
     const run = this.reserve(sessionId, 1, context, create.userText)
     if (create.authorizeConsultation) {
       run.authorizeConsultation = create.authorizeConsultation
@@ -3222,11 +3222,10 @@ export class AgentRuntime implements Bridge {
     // A seeded session's first message carries its seed: sending it is what sends the seed.
     const seed = fresh ? '' : (task.acp.seed ?? '')
     context = seed + context
+    options.authorizeConsultation?.()
     const run = this.reserve(sessionId, task.acp.turnSeq + 1, context, userText)
-    if (options.consultation) {
-      run.authorizeConsultation = options.authorizeConsultation
-      run.recordConsultationGuard = options.recordConsultationGuard
-    }
+    run.authorizeConsultation = options.authorizeConsultation
+    if (options.consultation) run.recordConsultationGuard = options.recordConsultationGuard
     run.attachments = attachments
     // Shown as starting from now on (`preparing`), while the process starts.
     this.notify(sessionId)
@@ -5831,13 +5830,14 @@ export class AgentRuntime implements Bridge {
       this.assertGatewayThinking(task)
       if (run.attachments?.length) binding.live.receivedAttachments = true
       if (binding.live.receivedAttachments) run.sensitiveOutput = true
-      if (run.authorizeConsultation) {
+      if (run.recordConsultationGuard) {
         this.verifyConsultation(run.taskId, binding)
         const executionId = binding.live.consultationExecution
-        if (!executionId || !run.recordConsultationGuard) throw this.consultationRefusal()
+        if (!executionId) throw this.consultationRefusal()
         await run.recordConsultationGuard({ sessionId: run.taskId, runId: run.id, version: DSH_CONSULTATION_GUARD_VERSION, executionId })
         this.verifyConsultation(run.taskId, binding)
       }
+      run.authorizeConsultation?.()
       run.sent = true
       if (binding.live.gateway) {
         run.gatewayMark = binding.live.gateway.requests()
@@ -6305,7 +6305,7 @@ export class AgentRuntime implements Bridge {
       }
       const live = this.lives.get(key)
       const run = this.runs.get(key)
-      const consultationId = run?.authorizeConsultation ? run.id : undefined
+      const consultationId = run?.recordConsultationGuard ? run.id : undefined
       if (live?.initialized && !live.wire.stopping) {
         if (live.consultationRun === consultationId) return live
         await live.wire.stop('stop', this.limits.stopGraceMs)
@@ -6348,7 +6348,7 @@ export class AgentRuntime implements Bridge {
     // Every start reads the project configuration again: the agent loads it now, not when the session was confirmed.
     const first = await this.assertLaunch(cwd, confirmed)
     const run = this.runs.get(key)
-    const consultationRun = run?.authorizeConsultation ? run.id : undefined
+    const consultationRun = run?.recordConsultationGuard ? run.id : undefined
     const consultationExecution = consultationRun ? digest([first.hash, consultationRun, DSH_CONSULTATION_GUARD_VERSION]) : undefined
     if (consultationRun) {
       const gate = this.selection.profile?.minimumVersion
@@ -6429,7 +6429,7 @@ export class AgentRuntime implements Bridge {
       this.launchThinkingChanges.get(key)?.authorize?.()
       this.routeChanges.get(key)?.authorize?.()
       this.makeRoom(key)
-      if (consultationRun) this.authorizeConsultation(key, consultationRun)
+      if (run?.authorizeConsultation) this.authorizeConsultation(key, run.id)
     } catch (error) {
       gateway?.close()
       throw error
@@ -6865,6 +6865,7 @@ export class AgentRuntime implements Bridge {
     const setupMs = Math.min(this.limits.sessionSetupTimeoutMs, this.limits.requestTimeoutMs)
     const setup = (method: string, params: unknown): Promise<unknown> => {
       if (live.consultationRun) this.authorizeConsultation(taskId, live.consultationRun)
+      else this.runs.get(taskId)?.authorizeConsultation?.()
       this.processModeChanges.get(taskId)?.authorize?.()
       this.launchThinkingChanges.get(taskId)?.authorize?.()
       this.routeChanges.get(taskId)?.authorize?.()

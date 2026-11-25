@@ -717,7 +717,7 @@ import UIKit
     }
 
     private static let harnesses = """
-    [{"id":"standard","status":"ready","modes":["agent","chat"],"agentContext":"private","capabilities":{"display":{"label":"Latch","mark":"latch"},"models":{"owner":"latch"},"permission":{"enforcement":"latch"},"tools":{"fileMentions":true}}},
+    [{"id":"standard","status":"ready","modes":["agent","chat"],"agentContext":"private","textOnlyConsultations":true,"capabilities":{"display":{"label":"Latch","mark":"latch"},"models":{"owner":"latch"},"permission":{"enforcement":"latch"},"tools":{"fileMentions":true}}},
      {"id":"codex","status":"ready","modes":["agent"],"agentContext":"first-turn","capabilities":{"display":{"label":"Codex","mark":"codex"},"models":{"owner":"harness"},"permission":{"enforcement":"harness"},"tools":{"fileMentions":true}}},
      {"id":"qwen","status":"missing","modes":["agent"],"agentContext":"first-turn","capabilities":{"display":{"label":"Qwen Code","mark":"qwen"},"models":{"owner":"harness"},"permission":{"enforcement":"harness"}}}]
     """

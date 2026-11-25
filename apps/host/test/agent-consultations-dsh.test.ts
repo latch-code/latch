@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
 import { z } from 'zod'
-import type { AgentMention, CustomAgent, TaskDetail } from '@latch/protocol'
+import type { AgentConsultationSettings, AgentMention, CustomAgent, TaskDetail } from '@latch/protocol'
 import type { ModelProvider } from '@latch/sdk'
 import { DSH_CONSULTATION_GUARD_VERSION } from '@latch/harness-acp'
 import type { AuditRecord } from '../src/audit.ts'
@@ -112,7 +112,7 @@ test('only the source may grant DSH access; the reply returns to its human turn 
     expect(peer.canConsultAgents).toBeUndefined()
     peerId = peer.id
     const coordinator = await create('接待', 'standard', { model: { providerId: provider.id, model: provider.model }, tools: [] })
-    const change = (agent: CustomAgent, updates: Partial<Pick<CustomAgent, 'canConsultAgents' | 'canConsultDeepSeek'>>) =>
+    const change = (agent: CustomAgent, updates: AgentConsultationSettings) =>
       user.json<CustomAgent>('custom-agents/' + agent.id, {
         method: 'PATCH',
         body: { requestId: randomUUID(), baseRevision: agent.revision, ...updates },
@@ -139,6 +139,8 @@ test('only the source may grant DSH access; the reply returns to its human turn 
       await user.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { requestId: randomUUID(), prompt } })
       return settled(sessionId)
     }
+    // A legacy source cannot use the target's separate, wider grant.
+    const peerWithTools = await change(peer, { useOwnPermissionsForConsultations: true })
     const source = await ask()
     expect(lists.at(-1)).toContain(peerId)
     const records = await receipts()
@@ -178,6 +180,8 @@ test('only the source may grant DSH access; the reply returns to its human turn 
     await pending
     expect(await receipts()).toHaveLength(1)
 
+    await change(peerWithTools, { useOwnPermissionsForConsultations: false })
+    const localGrant = await change(grantedAgain, { canConsultAgents: true, canConsultLocalAgents: true })
     const followUp = await ask()
     expect(followUp.messages.findLast(m => m.role === 'assistant')?.text).toBe(updatedCaption)
     const second = (await receipts())[1]
@@ -229,7 +233,7 @@ test('only the source may grant DSH access; the reply returns to its human turn 
       expect(mount?.params?.mcpServers).toEqual([])
     }
 
-    const disabled = await change(grantedAgain, { canConsultAgents: false })
+    const disabled = await change(localGrant, { canConsultAgents: false })
     expect(disabled.canConsultDeepSeek).not.toBe(true)
     await change(disabled, { canConsultAgents: true })
     await ask()

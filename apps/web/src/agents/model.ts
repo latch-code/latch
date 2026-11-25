@@ -1,5 +1,6 @@
 import {
   GENERAL_AGENT_ID,
+  consultationScope,
   type AgentAvatar,
   type AutomationSummary,
   type AppSnapshot,
@@ -200,16 +201,13 @@ export function agentLiveWord(
   return personActivity(task?.live)
 }
 
-export type ConsultationScope = 'off' | 'builtin' | 'deepseek'
+export type ConsultationScope = ReturnType<typeof consultationScope>
 
-export function consultationScope(agent: Pick<CustomAgentPatch, 'canConsultAgents' | 'canConsultDeepSeek'>): ConsultationScope {
-  if (!agent.canConsultAgents) return 'off'
-  return agent.canConsultDeepSeek ? 'deepseek' : 'builtin'
-}
-
-/** Only changes made with the expanded consent copy can enable DeepSeek. */
+/** The current settings screen grants local peers. Older, narrower scopes survive unrelated edits. */
 export function consultationPatch(scope: ConsultationScope) {
-  return scope === 'off' ? { canConsultAgents: false } : { canConsultAgents: true, canConsultDeepSeek: scope === 'deepseek' }
+  if (scope === 'off') return { canConsultAgents: false }
+  if (scope === 'local') return { canConsultAgents: true, canConsultLocalAgents: true }
+  return { canConsultAgents: true, canConsultLocalAgents: false, canConsultDeepSeek: scope === 'legacy-dsh' }
 }
 
 /** What the form edits. */
@@ -224,6 +222,7 @@ export interface AgentDraft {
   defaultProjectId?: string
   skills: string[]
   consultation?: ConsultationScope
+  useOwnPermissionsForConsultations?: boolean
   /** Absent: every enabled plugin (no extra limit). */
   tools?: string[]
 }
@@ -240,6 +239,7 @@ export function draftOf(agent: CustomAgentDetail['agent']): AgentDraft {
     ...(agent.defaultProjectId ? { defaultProjectId: agent.defaultProjectId } : {}),
     skills: agent.skills,
     consultation: consultationScope(agent),
+    useOwnPermissionsForConsultations: !!agent.useOwnPermissionsForConsultations,
     ...(agent.tools ? { tools: agent.tools } : {}),
   }
 }
@@ -300,6 +300,8 @@ export function patchOf(base: AgentDraft, next: AgentDraft): Omit<CustomAgentPat
   if (base.instructions !== next.instructions) patch.instructions = next.instructions
   if (base.harnessId !== next.harnessId) patch.harnessId = next.harnessId
   if (base.consultation !== next.consultation) Object.assign(patch, consultationPatch(next.consultation ?? 'off'))
+  if (!!base.useOwnPermissionsForConsultations !== !!next.useOwnPermissionsForConsultations)
+    patch.useOwnPermissionsForConsultations = !!next.useOwnPermissionsForConsultations
   if (base.mode !== next.mode) patch.mode = next.mode
   if (!same(base.model, next.model)) patch.model = next.model ?? null
   if (!same(base.engineOptions, next.engineOptions)) patch.engineOptions = next.engineOptions ?? null
@@ -319,6 +321,7 @@ const DRAFT_FIELDS = [
   'engineOptions',
   'defaultProjectId',
   'consultation',
+  'useOwnPermissionsForConsultations',
   'skills',
   'tools',
 ] as const

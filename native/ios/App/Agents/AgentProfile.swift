@@ -105,9 +105,8 @@ struct AgentProfileSheet: View {
                 let agent = general ? value["general"] : value["agent"]
                 let engine = model.engineInfo(entry.harnessId)
                 let supported = general || (agent["mode"].string == "agent" && (entry.harnessId == "standard" || engine["skills"].string == "server"))
-                if supported || agent["canConsultAgents"].bool {
-                    ConsultationPermission(owner: id, agent: agent, supported: supported, saved: reload)
-                }
+                ConsultationPermission(owner: id, agent: agent, supported: supported,
+                                       textOnly: general || engine["textOnlyConsultations"].bool, external: engine["level"].string == "L3", saved: reload)
             }
         }
         section(entry.destination == .local ? "电脑" : "原电脑上的定时") { ComputerSection(id: id, agent: general ? .null : summary) }
@@ -463,41 +462,63 @@ private struct ConsultationPermission: View {
     let owner: String
     let agent: NativeJSON
     let supported: Bool
+    let textOnly: Bool
+    let external: Bool
     let saved: () -> Void
     @State private var state: PhoneAgentWrite?
     @State private var saving = false
     private var on: Bool { agent["canConsultAgents"].bool }
     private var held: NativePendingWrite? {
         model.pending.first { item in
-            item.method == "PATCH" && item.path == "/link/api/custom-agents/" + owner
-                && (try? NativeJSON.decode(item.body).object["canConsultAgents"]) != nil
+            guard item.method == "PATCH", item.path == "/link/api/custom-agents/" + owner,
+                  let fields = try? NativeJSON.decode(item.body).object else { return false }
+            return fields["canConsultAgents"] != nil || fields["useOwnPermissionsForConsultations"] != nil
         }
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Toggle("允许主动联系其他 Agent", isOn: Binding(get: { on }, set: setPermission))
-                .font(.body.weight(.medium))
-                .disabled(locked)
-            Text(!supported ? "当前运行方式不支持主动联系其他 Agent。" : legacy ? "当前只可联系内置 Agent。允许后，它也可在你发消息时询问同一台电脑上已确认的 DeepSeek Harness。DeepSeek 以你的电脑账户运行，只回复文字。"
-                        : "你直接发消息时，它每轮可询问同一台电脑上的一位 Agent。已确认的 DeepSeek Harness 以你的电脑账户运行，本轮只回复文字。")
-                .font(.caption).foregroundStyle(PhoneTheme.muted)
-            if legacy && supported {
-                Button("允许联系 DeepSeek Harness") { setPermission(true) }.disabled(locked)
+        VStack(alignment: .leading, spacing: 8) {
+            if supported || on {
+                Toggle("允许主动联系其他 Agent", isOn: Binding(get: { on }, set: setPermission))
+                    .font(.body.weight(.medium))
+                    .disabled(locked)
+                Text(!supported ? "当前运行方式不支持主动联系其他 Agent。" : legacy
+                     ? "当前沿用之前授权的联系范围。扩大后，它也可以联系按自身权限接单的本机 Agent。"
+                     : "你直接发消息时，它每轮可联系同一台电脑上的一位 Agent。对方使用自己的模型和接单设置。")
+                    .font(.caption).foregroundStyle(PhoneTheme.muted)
+                if legacy && supported {
+                    Button("允许联系其他本机 Agent") { setPermission(true) }.disabled(locked)
+                }
             }
+            Toggle("允许按自身权限接单", isOn: Binding(get: { agent["useOwnPermissionsForConsultations"].bool },
+                                             set: { write(["useOwnPermissionsForConsultations": .bool($0)]) }))
+                .font(.body.weight(.medium)).disabled(locked)
+            Text(receiveDetail)
+                .font(.caption).foregroundStyle(PhoneTheme.muted)
             if let outcome = held == nil ? state : .unknown {
                 WriteNotice(state: outcome, retry: held.map { write in { submit(write) } }, reload: saved, held: held, settled: saved)
             }
         }
     }
-    private var legacy: Bool { on && !agent["canConsultDeepSeek"].bool }
+    private var receiveDetail: String {
+        if !textOnly { return "这个 Harness 无法保证只回复文字。开启后，它可以接收委托，以你的电脑账户运行并使用聊天中允许的工具。" }
+        return external ? "这个 Harness 以你的电脑账户运行。默认只回复文字，开启后可使用聊天中允许的工具。"
+                        : "默认只回复文字。开启后，这位 Agent 接到委托时可以使用自己聊天中的工具和权限。"
+    }
+    private var legacy: Bool { on && !agent["canConsultLocalAgents"].bool }
     private var locked: Bool {
         !model.canRun || !model.transportReady || model.busy || saving || !model.pending.isEmpty || agent["revision"].integer == nil
     }
     private func setPermission(_ enabled: Bool) {
-        guard !locked, !enabled || supported, let revision = agent["revision"].integer else { return }
-        var fields: [String: NativeJSON] = ["baseRevision": .number(Double(revision)), "canConsultAgents": .bool(enabled)]
-        if enabled { fields["canConsultDeepSeek"] = .bool(true) }
-        guard let request = try? NativePendingWrite(method: .patch, path: "/link/api/custom-agents/" + owner, fields: fields) else { return }
+        guard !enabled || supported else { return }
+        var fields: [String: NativeJSON] = ["canConsultAgents": .bool(enabled)]
+        if enabled { fields["canConsultLocalAgents"] = .bool(true) }
+        write(fields)
+    }
+    private func write(_ fields: [String: NativeJSON]) {
+        guard !locked, let revision = agent["revision"].integer else { return }
+        var body = fields
+        body["baseRevision"] = .number(Double(revision))
+        guard let request = try? NativePendingWrite(method: .patch, path: "/link/api/custom-agents/" + owner, fields: body) else { return }
         submit(request)
     }
     private func submit(_ request: NativePendingWrite) {

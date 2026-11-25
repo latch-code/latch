@@ -223,6 +223,8 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 
 `LATCH_GATEWAY_EVIDENCE_DIR` 与 `LATCH_AGY_EVIDENCE_DIR` 收每一轮去掉正文的结果。
 
+个人 Agent 协作用 `apps/host/test/agent-consultations.test.ts` 核对内置文字回合没有工具、普通 ACP 按目标授权使用自己的模型，以及撤销后旧轮次不能发出委托。`agent-consultations-dsh.test.ts` 用假 DSH 核对旧授权与逐轮工具限制，`e2e/helper-chat.e2e.ts` 从设置页保存授权并检查协作回执。
+
 #### 单回合浏览器验收
 
 构建页面后从仓库根目录运行。默认使用本地 ACP 夹具走完报告面板与重启重入。实测时每次只选 `codex`、`claude-agent`、`pi`、`antigravity`、`grok`、`qwen` 或 `goose` 中的一项，程序路径使用已安装的预设命令。此例用 Codex 验收待办提议。

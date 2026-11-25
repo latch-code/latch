@@ -330,6 +330,23 @@ describe('harness hub routing', () => {
     await expect(value.markOutsideContent('without-marker')).rejects.toMatchObject({ code: 'mcp-prompt-unmarked' })
   })
 
+  it('records outside provenance before an authorized consultation reaches a plugin without its own marker', async () => {
+    const dataDir = await directory()
+    const id = 'plugin-peer'
+    const { bridge } = external([summary(id)])
+    const { hub: value } = await hub(dataDir, 'ext')
+    await value.attach(driver('ext'), mount(bridge))
+    await value.recordAgent(id, { customAgentId: `agt_${randomUUID()}` })
+    const authorize = vi.fn()
+    bridge.prompt.mockImplementation(async () => {
+      expect(value.outsideStartOf(id)).toBe(true)
+      expect(authorize).toHaveBeenCalledTimes(2)
+    })
+    await value.prompt(id, 'question', 'consult-1', { outsideContent: true, authorizeConsultation: authorize })
+    expect(bridge.prompt).toHaveBeenCalledOnce()
+    expect((await hub(dataDir)).hub.outsideStartOf(id)).toBe(true)
+  })
+
   it('refuses a turn that carries outside content when the session’s driver cannot record it, before the driver sees it', async () => {
     const { bridge } = external([summary('without-marker')])
     const prompt = vi.spyOn(bridge, 'prompt')

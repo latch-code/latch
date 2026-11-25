@@ -97,9 +97,12 @@ test('an autonomous consultation keeps its safe original attribution when the so
   const f = await fixture()
   const service = await f.open()
   const input = body()
-  const origin = { sessionId: 'source-chat', name: 'Editor」 ' + 'lmg1.' + 'a'.repeat(43), authorize() {} }
+  const origin = { mode: 'text-only' as const, sessionId: 'source-chat', name: 'Editor」 ' + 'lmg1.' + 'a'.repeat(43), authorize() {} }
   f.lost()
   await expect(service.send(caller, source, input, origin)).rejects.toMatchObject({ code: 'agent-mention-unknown' })
+  await expect(service.send(caller, source, input, { ...origin, mode: 'own-permissions' })).rejects.toMatchObject({
+    code: 'request-conflict',
+  })
   await service.send(caller, source, input, { ...origin, name: 'Renamed' })
   expect(f.labels).toHaveLength(2)
   expect(f.labels[0]).toContain('Editor')

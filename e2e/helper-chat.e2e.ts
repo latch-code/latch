@@ -180,17 +180,36 @@ it('shows a desktop Agent-initiated consultation in place and returns to the sam
     await page.getByRole('button', { name: '编辑 的资料', exact: true }).click()
     await profile.getByRole('button', { name: '设置', exact: true }).click()
     expect(await profile.getByRole('switch', { name: '允许主动联系其他 Agent', exact: true }).getAttribute('aria-checked')).toBe('true')
-    await profile.getByText(/当前只可联系内置 Agent/u).waitFor()
-    const expandConsent = profile.getByRole('button', { name: '允许联系 DeepSeek Harness', exact: true })
-    await expandConsent.scrollIntoViewIfNeeded()
-    await shoot(page, 'pc-consultation-permission-upgrade')
+    await profile.getByText(/当前沿用之前授权的联系范围/u).waitFor()
+    const expandConsent = profile.getByRole('button', { name: '允许联系其他本机 Agent', exact: true })
+    const receive = profile.getByRole('switch', { name: '允许按自身权限接单', exact: true })
+    expect(await receive.getAttribute('aria-checked')).toBe('false')
+    for (const [width, height, scheme] of [
+      [390, 844, 'dark'],
+      [834, 1112, 'light'],
+      [1440, 900, 'light'],
+    ] as const) {
+      await page.setViewportSize({ width, height })
+      await page.emulateMedia({ colorScheme: scheme })
+      await receive.scrollIntoViewIfNeeded()
+      expect(await receive.isVisible()).toBe(true)
+      await shoot(page, `consultation-settings-${width}-${scheme}`)
+    }
     await expandConsent.click()
+    await receive.click()
     await profile.getByRole('button', { name: '保存', exact: true }).click()
     await expect
       .poll(
-        async () => (await owner.json<CustomAgentList>('custom-agents')).agents.find(agent => agent.id === source.id)?.canConsultDeepSeek,
+        async () =>
+          (await owner.json<CustomAgentList>('custom-agents')).agents.find(agent => agent.id === source.id)?.canConsultLocalAgents,
       )
       .toBe(true)
+    expect(
+      (await owner.json<CustomAgentList>('custom-agents')).agents.find(agent => agent.id === source.id)?.useOwnPermissionsForConsultations,
+    ).toBe(true)
+    expect(
+      (await owner.json<CustomAgentList>('custom-agents')).agents.find(agent => agent.id === target.id)?.useOwnPermissionsForConsultations,
+    ).toBeUndefined()
     await profile.getByRole('button', { name: '关闭资料', exact: true }).click()
     const field = page.getByRole('textbox', { name: '给编辑发消息', exact: true })
     await field.fill(consultRequest)
@@ -1009,7 +1028,7 @@ it('creates a helper in two steps, talks to it as a person, and changes its mode
       .toEqual({ providerId: 'helper-fixture', model: 'fixture-two' })
     expect((await owner.json<CustomAgentList>('custom-agents')).agents.find(agent => agent.id === morning.id)).toMatchObject({
       canConsultAgents: true,
-      canConsultDeepSeek: true,
+      canConsultLocalAgents: true,
     })
     await panel.getByRole('button', { name: '关闭资料', exact: true }).click()
     // The existing chat uses the selected default for its next turn.

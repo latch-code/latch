@@ -214,6 +214,8 @@ export interface CatalogueRead {
 }
 
 export interface HarnessInfo {
+  /** The Host can enforce a text-only incoming personal Agent consultation on this Harness. */
+  textOnlyConsultations?: true
   /** What it really does; see `HarnessCapabilities`. */
   capabilities: HarnessCapabilities
   /** The same public preset card on every client; availability and actual capabilities still filter its abilities. */

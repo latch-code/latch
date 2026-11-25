@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { z } from 'zod'
 import { AppError } from '@latch/sdk'
-import { CUSTOM_AGENT_ID, GENERAL_AGENT_ID } from '@latch/protocol'
+import { CUSTOM_AGENT_ID, GENERAL_AGENT_ID, type consultationScope } from '@latch/protocol'
+import type { ConsultationChange } from './custom-agents.ts'
 import type { DeviceCaller } from './routes/registry.ts'
 
 export const LIST_AGENTS = 'list_personal_agents'
@@ -34,38 +35,49 @@ export const consultInput = z.strictObject({
 })
 
 interface PersonPrompt {
-  /** Set only when the person had already granted foreground DeepSeek consultations at submission. */
-  deepSeek?: true
+  scope: Exclude<ReturnType<typeof consultationScope>, 'off'>
   owner: string
   requestId: string
   caller: DeviceCaller
 }
 
-type BoundPrompt = PersonPrompt & { agentsGrant: symbol; deepSeekGrant?: symbol }
+type BoundPrompt = PersonPrompt & { agentsGrant: symbol; externalGrant: symbol; receiverGeneration: number }
 
 /** Only a person's actual prompt grants a turn. Starting a peer, retrying a receipt, or restoring a process grants nothing. */
 export class ConsultationTurns {
   private readonly input = new AsyncLocalStorage<BoundPrompt | undefined>()
   private readonly runs = new Map<string, BoundPrompt & { runId: string }>()
-  private readonly grants = new Map<string, { agents: symbol; deepSeek: symbol }>()
+  private readonly grants = new Map<string, { agents: symbol; external: symbol }>()
+
+  private receiverGeneration = 0
+  private readonly receiverChanges = new Map<string, number>()
 
   prompt<T>(person: PersonPrompt | undefined, start: () => T): T {
     if (!person) return this.input.run(undefined, start)
     let granted = this.grants.get(person.owner)
     if (!granted) {
-      granted = { agents: Symbol(), deepSeek: Symbol() }
+      granted = { agents: Symbol(), external: Symbol() }
       this.grants.set(person.owner, granted)
     }
-    return this.input.run({ ...person, agentsGrant: granted.agents, deepSeekGrant: person.deepSeek ? granted.deepSeek : undefined }, start)
+    return this.input.run(
+      { ...person, agentsGrant: granted.agents, externalGrant: granted.external, receiverGeneration: this.receiverGeneration },
+      start,
+    )
   }
 
   /** A re-enable applies to new human input, including when an older prompt has yet to acquire a run ID. */
-  restrict(owner: string, scope: 'all' | 'deepseek'): void {
-    if (scope === 'all') this.grants.delete(owner)
-    else {
+  changed(owner: string, { outgoing, receiverChanged }: ConsultationChange): void {
+    if (outgoing === 'all') this.grants.delete(owner)
+    if (outgoing === 'external') {
       const granted = this.grants.get(owner)
-      if (granted) granted.deepSeek = Symbol()
+      if (granted) granted.external = Symbol()
     }
+    if (receiverChanged) this.receiverChanges.set(owner, ++this.receiverGeneration)
+  }
+
+  forget(owner: string): void {
+    this.grants.delete(owner)
+    this.receiverChanges.delete(owner)
   }
 
   start(sessionId: string, runId: string): void {
@@ -87,7 +99,13 @@ export class ConsultationTurns {
     const person = this.runs.get(sessionId)
     const granted = person && this.grants.get(person.owner)
     if (person?.runId !== runId || person.agentsGrant !== granted?.agents) throw consultDenied()
-    return { ...person, deepSeek: person.deepSeekGrant === granted.deepSeek }
+    return {
+      owner: person.owner,
+      caller: person.caller,
+      requestId: person.requestId,
+      scope: person.externalGrant === granted.external ? person.scope : ('builtin' as const),
+      receiverUnchanged: (id: string) => (this.receiverChanges.get(id) ?? 0) <= person.receiverGeneration,
+    }
   }
 }
 

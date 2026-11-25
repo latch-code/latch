@@ -5,6 +5,8 @@ export interface AgentMentionCreate {
   text: string
 }
 
+export type AgentConsultationMode = 'text-only' | 'own-permissions'
+
 export interface AgentMention {
   id: string
   requestId: string
@@ -13,6 +15,8 @@ export interface AgentMention {
   targetAgentId: string
   targetSessionId?: string
   initiator: 'person' | 'agent'
+  /** Pinned by the Host on agent-initiated exchanges. Older records omit it. */
+  consultationMode?: AgentConsultationMode
   text: string
   createdAt: string
   status: 'sending' | 'running' | 'waiting-approval' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'unknown'

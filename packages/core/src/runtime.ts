@@ -314,7 +314,7 @@ interface Run {
   instructions?: string
   id: string
   sessionId: string
-  mode: TaskMode
+  mode: TaskMode | 'text-only'
   /** Model ID sent to the provider for every step of this run, and the service that provides it. */
   model: string
   providerId: string
@@ -342,6 +342,7 @@ interface Run {
   proposals?: ToolDefinition[]
   /** A scheduled run: nobody watched what it read, so all it proposes is external. */
   unattended?: boolean
+  authorizeConsultation?: () => void
   approvalDeadline?: number
   /** Tokens the model spent judging this run's calls (由模型判断), for the turn's record beside its steps'. */
   judgeUsage?: TokenUsage
@@ -1053,6 +1054,7 @@ class HarnessRuntime implements Bridge {
     const payloadHash = digest({
       prompt: input.prompt,
       ...(input.pluginCreation ? { pluginCreation: true } : {}),
+      ...(input.consultation ? { consultation: true } : {}),
       ...(agentContext?.agent ? { agent: agentContext.agent } : {}),
       ...(attachments.length ? { attachments } : {}),
       ...(fileRefs.length ? { fileRefs } : {}),
@@ -1084,6 +1086,7 @@ class HarnessRuntime implements Bridge {
           const legacyAgentReceipt =
             mode === 'agent'
             && !attachments.length
+            && !input.consultation
             && !fileRefs.length
             && !model
             && input.cwd === undefined
@@ -1105,7 +1108,7 @@ class HarnessRuntime implements Bridge {
           throw new AppError(400, 'file-reference-invalid', '文件引用无效。')
         }
         if (fileRefs.length && mode === 'chat') throw new AppError(415, 'file-references-unavailable', '只对话模式不能引用项目文件。')
-        run = this.allocateRun(sessionId, mode, selection, cwd, folders, agentContext, input.workProposals === true)
+        run = this.allocateRun(sessionId, mode, selection, cwd, folders, agentContext, input.workProposals === true, input)
         this.assertAttachments(run, attachments)
         const at = isoTime(run.clock.startedAt)
         draft.tasks[sessionId] = {
@@ -1169,13 +1172,14 @@ class HarnessRuntime implements Bridge {
     const fresh = options.freshContext === true
     // The new context joins the hash only when asked, so receipts written before it existed still match.
     const payloadHash = digest(
-      attachments.length || fileRefs.length || fresh
+      attachments.length || fileRefs.length || fresh || options.consultation
         ? {
             prompt,
             ...(model ? { model } : {}),
             ...(attachments.length ? { attachments } : {}),
             ...(fileRefs.length ? { fileRefs } : {}),
             ...(fresh ? { freshContext: true } : {}),
+            ...(options.consultation ? { consultation: true } : {}),
           }
         : model
           ? { prompt, model }
@@ -1221,7 +1225,7 @@ class HarnessRuntime implements Bridge {
           foldersOf(task.summary, recorded),
           agentContext,
           task.workProposals === true,
-          options.unattended ? options.authorizeUnattended?.() : undefined,
+          options,
         )
         let context: string
         try {
@@ -1307,12 +1311,15 @@ class HarnessRuntime implements Bridge {
     agentContext?: AgentExecutionContext,
     /** The session was created with `workProposals`: its runs offer the board's proposal tools. */
     workProposals = false,
-    followGrant?: ReturnType<NonNullable<PromptOptions['authorizeUnattended']>>,
+    options: Pick<PromptOptions, 'consultation' | 'authorizeConsultation' | 'unattended' | 'authorizeUnattended'> = {},
   ): Run {
+    options.authorizeConsultation?.()
+    const followGrant = options.unattended ? options.authorizeUnattended?.() : undefined
+    const runMode = options.consultation ? 'text-only' : mode
     if (this.closed) throw new AppError(503, 'runtime-closed', '运行节点已关闭')
     // Chat runs never use tools, so they must not pin tool plugins either.
     const lease = this.options.registry.acquire(selection.providerId, {
-      tools: mode === 'agent',
+      tools: runMode === 'agent',
       ...(agentContext?.pluginIds ? { pluginIds: agentContext.pluginIds } : {}),
       ...(agentContext?.skillIds ? { skillIds: agentContext.skillIds } : {}),
       ...(agentContext?.expectedRevisions ? { expectedRevisions: agentContext.expectedRevisions } : {}),
@@ -1350,12 +1357,13 @@ class HarnessRuntime implements Bridge {
     const run: Run = {
       id: randomUUID(),
       sessionId,
-      mode,
+      mode: runMode,
       model,
       providerId: selection.providerId,
       ...(effort ? { effort } : {}),
       userMessageId: randomUUID(),
       ...(agentContext?.instructions ? { instructions: agentContext.instructions } : {}),
+      authorizeConsultation: options.authorizeConsultation,
       clock,
       cwd,
       folders,
@@ -1369,7 +1377,7 @@ class HarnessRuntime implements Bridge {
     if (agentContext?.unattended || followGrant) run.unattended = true
     if (followGrant) run.approvalDeadline = run.clock.startedAt + followGrant.approvalTtlMs
     const board = workProposals && this.options.proposeWork !== undefined
-    if (agentContext?.proposals || board) {
+    if (!options.consultation && (agentContext?.proposals || board)) {
       // Memories, schedules and board proposals share the session's count, as they share the skills server's file.
       const session = {
         outside: () => this.state.tasks[run.sessionId]?.outsideRead === true,
@@ -1992,7 +2000,7 @@ class HarnessRuntime implements Bridge {
       // A model that cannot see images is not offered a tool that answers with them.
       const own = run.proposals ?? []
       const base =
-        run.mode === 'chat'
+        run.mode !== 'agent'
           ? own
           : own.length
             ? [...run.lease.tools.filter(tool => !own.some(item => item.name === tool.name)), ...own]
@@ -2044,6 +2052,8 @@ class HarnessRuntime implements Bridge {
         const skillMessage = task.skillContext ? { role: 'system' as const, content: task.skillContext } : undefined
         if (skillMessage) messages.unshift(skillMessage)
         if (run.instructions) messages.unshift({ role: 'system', content: run.instructions })
+        if (run.mode === 'text-only')
+          messages.unshift({ role: 'system', content: '本轮是另一位 Agent 发来的委托。请根据已有资料回复文字。' })
         messages.unshift({ role: 'system', content: BASE_PROMPT })
         const seen = new Set(messages.flatMap(message => message.toolCalls?.map(call => call.id) ?? []))
         const calls: ToolCall[] = []
@@ -2077,6 +2087,8 @@ class HarnessRuntime implements Bridge {
         context.at = isoTime(modelStartedAt)
         run.contextStep = context
         this.notify(run.sessionId)
+        run.authorizeConsultation?.()
+        delete run.authorizeConsultation
         const response = run.lease.provider.stream({
           messages,
           tools: [...availableTools],
@@ -2107,6 +2119,7 @@ class HarnessRuntime implements Bridge {
             this.output(run)
             this.notify(run.sessionId)
           } else if (delta.type === 'tool-call') {
+            if (run.mode === 'text-only') throw new AppError(502, 'chat-tools-disabled', '这轮委托只允许回复文字。')
             if (run.mode === 'chat' && !run.proposals?.some(tool => tool.name === delta.call.name))
               throw new AppError(502, 'chat-tools-disabled', '普通对话模式不允许调用工具；本次工具请求已拒绝，未执行任何操作。')
             const call = safeCall(delta.call)

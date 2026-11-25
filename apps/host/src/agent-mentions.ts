@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
 import { z } from 'zod'
-import { escapeSecurityText, refusedBeforeAccepting, type AgentMention, type TaskDetail } from '@latch/protocol'
+import { escapeSecurityText, refusedBeforeAccepting, type AgentConsultationMode, type AgentMention, type TaskDetail } from '@latch/protocol'
 import { redactKnownSecrets, sha256Hex } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
 import { mentionsConversationReference } from './conversation-references.ts'
@@ -24,6 +24,7 @@ const record = z.strictObject({
   sourceSessionId: z.string().optional(),
   targetAgentId: owner,
   initiator: z.enum(['person', 'agent']),
+  consultationMode: z.enum(['text-only', 'own-permissions']).optional(),
   text: request.shape.text,
   createdAt: z.string().datetime(),
   deviceId: z.string(),
@@ -59,7 +60,7 @@ interface MentionDeps {
   changed(): void
 }
 
-type AgentOrigin = { sessionId: string; name: string; authorize: () => void }
+type AgentOrigin = { mode: AgentConsultationMode; sessionId: string; name: string; authorize: () => void }
 
 function sourceLabel(name: string, fallback: string): string {
   // Keep the attribution on one line and keep a name from opening a quote or a conversation reference.
@@ -161,7 +162,7 @@ export class AgentMentions {
         deviceId: caller.device.id,
         dispatchId: randomUUID(),
         sourceAgentId,
-        ...(byAgent ? { sourceLabel: sourceLabel(byAgent.name, sourceAgentId) } : {}),
+        ...(byAgent ? { sourceLabel: sourceLabel(byAgent.name, sourceAgentId), consultationMode: byAgent.mode } : {}),
         targetAgentId,
         initiator,
         text: input.text,
@@ -194,7 +195,7 @@ export class AgentMentions {
       || item.sourceAgentId !== sourceAgentId
       || item.targetAgentId !== targetAgentId
       || item.initiator !== initiator
-      || (byAgent && byAgent.sessionId !== item.sourceSessionId)
+      || (byAgent && (byAgent.sessionId !== item.sourceSessionId || byAgent.mode !== (item.consultationMode ?? 'text-only')))
     )
       throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同的提及。')
     if (item.refusal) throw new AppError(item.refusal.status, item.refusal.code, item.refusal.message)
@@ -248,6 +249,7 @@ export class AgentMentions {
       id,
       requestId,
       initiator,
+      ...(item.consultationMode ? { consultationMode: item.consultationMode } : {}),
       sourceAgentId,
       targetAgentId,
       sourceSessionId,

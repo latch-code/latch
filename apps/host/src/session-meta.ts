@@ -323,7 +323,7 @@ export interface StoredMeta {
   workProposals?: true
   /** Hash of the device-bound request whose private authoring directory the allocator registered. */
   pluginCreation?: string
-  /** Started from a 待办 marked as from outside content (`WorkItemOrigin.external`). */
+  /** Host-recorded outside provenance from the start, or a delegated turn whose plugin lacks its own marker. */
   outsideStart?: true
   /** The plugin page that started the session, with the page's own request ID. */
   origin?: PageOrigin

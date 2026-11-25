@@ -76,7 +76,7 @@ export interface ConsultationGuardEvidence {
 }
 
 export interface CreateTaskInput {
-  /** Host-only. Receive a delegated question in a text-only process for this turn. */
+  /** Host-only. Enforce a tool-free turn for this delegated question. */
   consultation?: true
   /** Recheck the active foreground grant immediately before sending the delegated prompt. Never persisted. */
   authorizeConsultation?: () => void
@@ -151,7 +151,7 @@ export interface CreateTaskInput {
 export interface PromptOptions {
   /** This turn was explicitly submitted from the team panel to the Harness's own subagents. */
   teamRequest?: true
-  /** Host-only. Use the text-only delegated process for this turn, including when resuming a human chat. */
+  /** Host-only. Enforce a text-only reply for this turn, including when resuming a human chat. */
   consultation?: true
   /** Recheck the active foreground grant immediately before sending the delegated prompt. Never persisted. */
   authorizeConsultation?: () => void

@@ -105,6 +105,8 @@ export interface HarnessMount {
 }
 
 export interface HubOptions {
+  /** Whether the ACP definition still runs the locally confirmed, unmodified preset that its tool guard belongs to. */
+  confirmedConsultationPreset?: (harnessId: string) => boolean
   /** Checked immediately before giving a new request to its driver, including after an async prompt note. */
   assertAgentWorksHere?: (owner: string | undefined) => void
   /** Directory for `sessions-meta.json`. */
@@ -440,11 +442,16 @@ export class HarnessHub implements Bridge {
     return this.entries.get(harnessId)?.trust
   }
 
-  /** Read only from the mounted ACP driver. A missing or unavailable driver cannot receive a delegated run. */
+  /** Only the built-in runtime and mounted Latch ACP adapters can vouch for a tool-free turn. */
   supportsConsultation(harnessId: string): boolean {
     try {
       const member = this.member(harnessId)
-      return member?.trust.kind === 'acp' && member.bridge.canReceiveConsultation?.() === true
+      return (
+        (member?.trust.kind === 'builtin' && harnessId === 'standard')
+        || (member?.trust.kind === 'acp'
+          && member.bridge.canReceiveConsultation?.() === true
+          && this.options.confirmedConsultationPreset?.(harnessId) === true)
+      )
     } catch {
       return false
     }
@@ -950,7 +957,7 @@ export class HarnessHub implements Bridge {
     return this.meta.get(sessionId)?.pluginCreation
   }
 
-  /** Started from a 待办 whose 要求 came from outside content: what its context proposes is external. */
+  /** The Host knows this session contains outside content, including when its driver cannot persist the mark itself. */
   outsideStartOf(sessionId: string): boolean {
     const meta = this.meta.get(sessionId)
     // A session brought in from a CLI's own record holds whatever was ever in it.
@@ -1235,9 +1242,14 @@ export class HarnessHub implements Bridge {
     authorizeMention?: () => void,
   ): Promise<void> {
     const member = await this.route(sessionId)
-    // A driver that cannot record outside content would drop the mark: refused before anything is sent.
-    if (options?.outsideContent && !member.bridge.markOutsideContent)
-      throw new AppError(503, 'post-unmarked', '这个 Harness 不能把这次发送标为外部内容，没有发出。')
+    if (options?.outsideContent && !member.bridge.markOutsideContent) {
+      if (member.trust.kind !== 'plugin' || !options.authorizeConsultation || options.consultation || !this.agentOf(sessionId))
+        throw new AppError(503, 'post-unmarked', '这个 Harness 不能把这次发送标为外部内容，没有发出。')
+      // The person granted this plugin its own permissions. Pin the outside provenance on the Host before handing it
+      // the question, including in a chat the person originally started. Future proposals and forks inherit the mark.
+      options.authorizeConsultation()
+      if (!this.meta.get(sessionId)?.outsideStart) await this.meta.update(sessionId, current => ({ ...current, outsideStart: true }))
+    }
     // Before the turn is accepted, so the session is never readable as ordinary while the context is on its way.
     if (options?.agentContext && !options.agentContext.agent) await this.recordPrivate(sessionId)
     // Not a step of its own without a watched run: `accept` follows the route directly.
@@ -1248,7 +1260,8 @@ export class HarnessHub implements Bridge {
       await this.accept(member, bridge =>
         withHarnessPromptSource({ method: 'prompt', sessionId, requestId, text: prompt }, () => {
           this.options.assertAgentWorksHere?.(this.agentOf(sessionId)?.customAgentId)
-          authorizeMention?.()
+          const authorize = authorizeMention ?? options?.authorizeConsultation
+          authorize?.()
           return options ? bridge.prompt(sessionId, text, requestId, options) : bridge.prompt(sessionId, text, requestId)
         }),
       )
@@ -1825,6 +1838,7 @@ export class HarnessHub implements Bridge {
       id: driver.id,
       ...(driver.description ? { description: driver.description } : {}),
       capabilities: structuredClone(capabilities),
+      ...(this.supportsConsultation(driver.id) ? { textOnlyConsultations: true as const } : {}),
       ...(entry.trust.kind === 'acp' ? { editable: true as const } : {}),
       status,
       ...(statusMessage ? { statusMessage } : {}),

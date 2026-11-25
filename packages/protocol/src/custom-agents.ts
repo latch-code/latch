@@ -159,7 +159,24 @@ export interface AgentNotifications {
   /** 需要你处理: a request or a question waiting for the person. */
   waiting: boolean
 }
-export interface CustomAgent extends CustomAgentConfig {
+export interface AgentConsultationSettings {
+  /** Outgoing, only on a person's own turn. The oldest grant covers built-in recipients. */
+  canConsultAgents?: boolean
+  /** Legacy outgoing grant for text-only consultations of the confirmed DeepSeek preset. */
+  canConsultDeepSeek?: boolean
+  /** Outgoing grant for local recipients under each recipient's own consultation setting. */
+  canConsultLocalAgents?: boolean
+  /** Incoming, independently granted on this Agent. Absent means only verified text-only turns. */
+  useOwnPermissionsForConsultations?: boolean
+}
+
+export function consultationScope(agent: AgentConsultationSettings): 'off' | 'builtin' | 'legacy-dsh' | 'local' {
+  if (!agent.canConsultAgents) return 'off'
+  if (agent.canConsultLocalAgents) return 'local'
+  return agent.canConsultDeepSeek ? 'legacy-dsh' : 'builtin'
+}
+
+export interface CustomAgent extends CustomAgentConfig, AgentConsultationSettings {
   id: string
   /** Host-allocated path relative to its start directory. Clients cannot choose or change it. */
   home?: string
@@ -170,10 +187,6 @@ export interface CustomAgent extends CustomAgentConfig {
    * scheduled runs until the run settles, within a cap. Absent: off. It never wakes a Mac that already sleeps.
    */
   keepAwakeForSchedules?: true
-  /** Allow this Agent to consult a peer during a person's chat turn. Absent until enabled here. */
-  canConsultAgents?: boolean
-  /** The original switch only covered built-in peers. */
-  canConsultDeepSeek?: boolean
   /**
    * 「认识你」 turned off: this Agent's turns leave out what the person confirmed in 通用 (`generalFacts`). Absent: on.
    * Stored only as off.
@@ -202,37 +215,30 @@ export type CustomAgentSummary = Omit<CustomAgent, 'instructions' | 'skills' | '
 /** `avatar`: the face chosen while creating (never a picture); absent, the Host assigns an unused one. */
 export type CustomAgentCreate = CustomAgentConfig & { requestId: string; avatar?: AgentAvatar }
 /** `harnessId` may only repeat the Agent's own: another one is refused with 409 `agent-harness-fixed`. */
-export type CustomAgentPatch = Partial<
-  Omit<CustomAgentConfig, 'model' | 'tools' | 'defaultProjectId' | 'workComputer' | 'engineOptions'>
-> & {
-  requestId: string
-  baseRevision: number
-  /** A face: choosing one also puts the face back in a picture's place. A picture is set only by its upload. */
-  avatar?: AgentAvatar
-  /** Null: back to every notification. */
-  notifications?: AgentNotifications | null
-  canConsultAgents?: boolean
-  /** Explicit consent to consult a confirmed local DeepSeek Harness on a person's foreground turn. */
-  canConsultDeepSeek?: boolean
-  keepAwakeForSchedules?: boolean
-  /** 「认识你」: false leaves 通用's confirmed memories out of this Agent's turns; true puts them back. */
-  generalFacts?: boolean
-  model?: ModelRef | null
-  engineOptions?: Record<string, string> | null
-  tools?: string[] | null
-  defaultProjectId?: string | null
-  workComputer?: AgentWorkComputer | null
-}
+export type CustomAgentPatch = Partial<Omit<CustomAgentConfig, 'model' | 'tools' | 'defaultProjectId' | 'workComputer' | 'engineOptions'>>
+  & AgentConsultationSettings & {
+    requestId: string
+    baseRevision: number
+    /** A face: choosing one also puts the face back in a picture's place. A picture is set only by its upload. */
+    avatar?: AgentAvatar
+    /** Null: back to every notification. */
+    notifications?: AgentNotifications | null
+    keepAwakeForSchedules?: boolean
+    /** 「认识你」: false leaves 通用's confirmed memories out of this Agent's turns; true puts them back. */
+    generalFacts?: boolean
+    model?: ModelRef | null
+    engineOptions?: Record<string, string> | null
+    tools?: string[] | null
+    defaultProjectId?: string | null
+    workComputer?: AgentWorkComputer | null
+  }
 
 /**
  * 通用: the built-in agent. What you add applies to every session that picks no other agent; it has no engine of its
  * own, since those sessions choose one.
  */
-export interface GeneralAgent {
+export interface GeneralAgent extends AgentConsultationSettings {
   id: typeof GENERAL_AGENT_ID
-  canConsultAgents?: boolean
-  /** Explicit consent to consult a confirmed local DeepSeek Harness on a person's foreground turn. */
-  canConsultDeepSeek?: boolean
   /** The Host's fixed home for new Standard Agent topics; existing topics keep their original directory. */
   home?: string
   instructions: string
@@ -241,10 +247,7 @@ export interface GeneralAgent {
   revision: number
   updatedAt?: string
 }
-export interface GeneralAgentPatch {
-  canConsultAgents?: boolean
-  /** Explicit consent to consult a confirmed local DeepSeek Harness on a person's foreground turn. */
-  canConsultDeepSeek?: boolean
+export interface GeneralAgentPatch extends AgentConsultationSettings {
   requestId: string
   baseRevision: number
   instructions?: string

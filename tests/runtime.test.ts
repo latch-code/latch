@@ -1233,6 +1233,35 @@ describe('independent harness runtime', () => {
     expect((await restarted.detail(created.sessionId)).summary.mode).toBe('chat')
   })
 
+  it('refuses an unoffered tool in a text-only consultation and restores the same Agent chat’s tools on its next turn', async () => {
+    const root = await directory()
+    const execute = vi.fn(async () => ({ text: 'saved' }))
+    const provider = toolProvider('write_note')
+    const bridge = own(
+      createRuntime({ dataDir: root, workspaceRoot: root, providerId: provider.id, registry: registry(provider, [tool(execute, false)]) }),
+    )
+    const { sessionId } = await bridge.createTask({
+      prompt: 'Question from a peer',
+      requestId: 'limited-first',
+      mode: 'agent',
+      consultation: true,
+    })
+    await waitStatus(bridge, sessionId, 'failed')
+    expect(execute).not.toHaveBeenCalled()
+    expect((await bridge.detail(sessionId)).summary.mode).toBe('agent')
+    await bridge.prompt(sessionId, 'Write the note', 'human-follow-up')
+    await waitStatus(bridge, sessionId, 'idle')
+    expect(execute).toHaveBeenCalledTimes(1)
+    await bridge.prompt(sessionId, 'One more question from a peer', 'limited-again', { consultation: true })
+    await waitStatus(bridge, sessionId, 'failed')
+    expect(execute).toHaveBeenCalledTimes(1)
+    const authorize = vi.fn()
+    await bridge.prompt(sessionId, 'Write for the peer', 'own-permissions', { authorizeConsultation: authorize })
+    await waitStatus(bridge, sessionId, 'idle')
+    expect(authorize).toHaveBeenCalled()
+    expect(execute).toHaveBeenCalledTimes(2)
+  })
+
   it('fails closed if a provider sends a tool call in chat mode, including tools that normally need no approval', async () => {
     const dataDir = await directory()
     const execute = vi.fn(async () => ({ text: 'must not execute' }))

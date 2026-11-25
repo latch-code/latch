@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { expect, test } from 'vitest'
-import type { AgentMention, CustomAgent, TaskDetail } from '@latch/protocol'
+import type { AgentMention, CustomAgent, CustomAgentPatch, TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import type { ModelProvider } from '@latch/sdk'
 import { CONSULT_AGENT, LIST_AGENTS } from '../src/agent-consultations.ts'
@@ -129,6 +129,7 @@ test('a personal Agent chooses a peer on a human turn only while its own switch 
     expect(results[0]).toContain('Reviews proposals [redacted]')
     expect(results[0]).not.toContain(privateMarker)
     expect(results.at(-1)).toContain('Reviewed by the peer.')
+    expect(offers.get(peerQuestion)).toEqual([])
     expect(peerContext).toContain(peerQuestion)
     expect(peerContext.join(' ')).not.toContain('Review this together')
     const records = () => user.json<{ mentions: AgentMention[] }>('custom-agents/' + source.id + '/mentions')
@@ -156,6 +157,7 @@ test('a personal Agent chooses a peer on a human turn only while its own switch 
     for (const value of ['plan', 'ask']) {
       await user.json('tasks/' + sessionId + '/config', { method: 'POST', body: { requestId: randomUUID(), configId: 'mode', value } })
     }
+    expect(offers.get(heldQuestion)).toEqual([])
     releasePeer()
     await wait()
     expect(results.at(-1)).not.toContain('Reply after the permission change')
@@ -197,6 +199,128 @@ test('a personal Agent chooses a peer on a human turn only while its own switch 
     ])
   } finally {
     releasePeer()
+    resume()
+    await host.close()
+  }
+})
+
+test('a local grant delivers to an opted-in Agent on its own Harness and model, including follow-up turns', async () => {
+  let targetId = ''
+  const directories: string[] = []
+  let resume = () => {}
+  const pause = new Promise<void>(resolve => {
+    resume = resolve
+  })
+  const provider: ModelProvider = {
+    id: 'coordinator-model',
+    name: 'Coordinator',
+    model: 'coordinator',
+    async *stream({ messages }) {
+      const last = messages.at(-1)!
+      if (last.role === 'user') {
+        yield { type: 'tool-call', call: { id: 'list-' + randomUUID(), name: LIST_AGENTS, arguments: {} } }
+      } else if (last.toolCallId?.startsWith('list-')) {
+        directories.push(last.content)
+        if (messages.findLast(row => row.role === 'user')?.content === 'Pause') await pause
+        // A learned ID must pass the same checks as the directory.
+        yield { type: 'tool-call', call: { id: randomUUID(), name: CONSULT_AGENT, arguments: { agentId: targetId, question: 'Review' } } }
+      } else {
+        yield { type: 'text', text: last.content }
+        yield { type: 'finish', reason: 'stop' }
+        return
+      }
+      yield { type: 'finish', reason: 'tool-calls' }
+    },
+  }
+  const host = await startTestHost({
+    providerId: provider.id,
+    plugins: [
+      {
+        id: 'coordinator-provider',
+        name: 'Coordinator',
+        version: '1',
+        description: '',
+        activate(ctx) {
+          ctx.registerProvider(provider)
+        },
+      },
+    ],
+  })
+  try {
+    const user = await host.enroll({ listener: 'unix' })
+    const external = 'independent-acp'
+    await user.confirmedJson('agents', {
+      body: { id: external, name: 'Independent', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_CONFIG: 'options' } },
+    })
+    const create = (name: string, harnessId: string) =>
+      user.json<CustomAgent>('custom-agents', {
+        method: 'POST',
+        body: {
+          requestId: randomUUID(),
+          name,
+          harnessId,
+          mode: 'agent',
+          skills: [],
+          ...(harnessId === external
+            ? { engineOptions: { model: 'large' } }
+            : { model: { providerId: provider.id, model: provider.model } }),
+        },
+      })
+    const patch = (agent: CustomAgent, fields: Partial<CustomAgentPatch>) =>
+      user.json<CustomAgent>('custom-agents/' + agent.id, {
+        method: 'PATCH',
+        body: { requestId: randomUUID(), baseRevision: agent.revision, ...fields },
+      })
+    const source = await create('Coordinator', 'standard')
+    const target = await create('Writer', external)
+    const sibling = await create('Another writer', external)
+    targetId = target.id
+    const enabled = await patch(source, { canConsultAgents: true, canConsultDeepSeek: true })
+    let receiver = await patch(target, { useOwnPermissionsForConsultations: true })
+    const receipts = async () => (await user.json<{ mentions: AgentMention[] }>('custom-agents/' + source.id + '/mentions')).mentions
+    const { sessionId } = await user.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { customAgentId: source.id, requestId: randomUUID(), prompt: 'Legacy' },
+    })
+    const settled = () =>
+      expect.poll(async () => (await user.json<TaskDetail>('tasks/' + sessionId)).summary.status, { timeout: 15_000 }).toBe('idle')
+    const ask = async (prompt: string) => {
+      await user.json('tasks/' + sessionId + '/prompt', { method: 'POST', body: { requestId: randomUUID(), prompt } })
+      await settled()
+    }
+    await settled()
+    expect(directories.at(-1)).not.toContain(target.id)
+    expect(await receipts()).toHaveLength(0)
+    await patch(enabled, { canConsultAgents: true, canConsultLocalAgents: true })
+    const pending = ask('Pause')
+    await expect.poll(() => directories.length).toBe(2)
+    expect(directories.at(-1)).toContain(target.id)
+    receiver = await patch(receiver, { useOwnPermissionsForConsultations: false })
+    receiver = await patch(receiver, { useOwnPermissionsForConsultations: true })
+    resume()
+    await pending
+    expect(await receipts()).toHaveLength(0)
+
+    for (const prompt of ['First', 'Follow up']) await ask(prompt)
+    const records = await receipts()
+    expect(directories.at(-1)).not.toContain(sibling.id)
+    expect(records).toHaveLength(2)
+    for (const record of records)
+      expect(record).toMatchObject({
+        targetAgentId: target.id,
+        consultationMode: 'own-permissions',
+        status: 'completed',
+        targetSessionId: records[0]!.targetSessionId,
+      })
+    const chat = await user.json<TaskDetail>('tasks/' + records[0]!.targetSessionId)
+    expect(chat.summary.harnessId).toBe(external)
+    expect(chat.config?.find(option => option.id === 'model')?.currentValue).toBe('large')
+    expect(chat.messages.filter(message => message.role === 'user')).toHaveLength(2)
+    await patch(receiver, { useOwnPermissionsForConsultations: false })
+    await ask('Revoked')
+    expect(directories.at(-1)).not.toContain(target.id)
+    expect(await receipts()).toHaveLength(2)
+  } finally {
     resume()
     await host.close()
   }

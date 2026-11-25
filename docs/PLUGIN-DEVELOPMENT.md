@@ -451,7 +451,7 @@ ctx.registerHarness({
 - `create(options)` 同步返回尚未启动的 Bridge，异步初始化放进 `start()`。
 - `status()` 返回 `ready` 或 `unavailable` 与说明；命令已知太旧时带 `statusReason: 'outdated'`。
 
-- 前台文字委托只用于 Host 已确认的 DSH 驱动。`canReceiveConsultation(sessionId?)` 表示能否为新聊天或指定聊天建立受限回合。`CreateTaskInput` 与 `PromptOptions` 的 `consultation`、`authorizeConsultation` 都由 Host 提供。驱动通过 `recordConsultationGuard` 等待 Host 记录本轮工具限制的执行证据，在实际发送前再复核授权。无法确认限制或写入审计时拒绝投递。其他插件声明同名能力不会获准接单。
+- 个人 Agent 接受前台委托时沿用自己的模型。Host 向 `CreateTaskInput` 或 `PromptOptions` 提供 `authorizeConsultation`，驱动须在实际投递前复核。默认的文字回合另带 `consultation: true`，Standard 禁用全部工具。Host 自带的 ACP 适配器通过 `canReceiveConsultation(sessionId?)` 报告文字接单能力，逐轮核验工具限制并等待 `recordConsultationGuard` 写入审计。第三方驱动按自身权限接单需要人对目标 Agent 的单独授权。若驱动无法记录外部内容来源，Host 在投递前将该聊天持久标记为含外部内容，之后的提议与分叉继承这项标记。
 
 ### 第三方 Harness 的会话是 L3
 

@@ -452,7 +452,7 @@ public enum PhonePending {
     public static func words(_ write: NativePendingWrite) -> String {
         if write.teamRound != nil { return "派给团队成员的结果待确认" }
         if PhoneAgentMentions.owner(of: write) != nil { return "协作发送结果未知" }
-        if let fields = try? NativeJSON.decode(write.body), fields.object["canConsultAgents"] != nil { return "主动协作设置待确认" }
+        if let fields = try? NativeJSON.decode(write.body), fields.object["canConsultAgents"] != nil || fields.object["useOwnPermissionsForConsultations"] != nil { return "协作设置待确认" }
         if let action = PhoneQueueControl(write) { return action == .steer ? "追加结果待确认" : "队列顺序待确认" }
         if let words = PhoneHistory.pendingWords(write) { return words }
         switch kind(write) {

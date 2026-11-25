@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
+import { consultationScope } from '@latch/protocol'
 import type { CustomAgent, CustomAgentDetail, CustomAgentList, GeneralAgentDetail, HostCatalog } from '@latch/protocol'
 import {
   Button,
@@ -22,7 +23,6 @@ import { defineCopy } from '../core/i18n.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import {
   consultationPatch,
-  consultationScope,
   type ConsultationScope,
   draftOf,
   normalizedDraft,
@@ -40,11 +40,14 @@ import { AGENT_SPACE_COPY } from './spaceCopy.ts'
 const COPY = defineCopy(
   {
     consult: '允许主动联系其他 Agent',
-    consultDetail: '你直接发消息时，它每轮可询问同一台电脑上的一位 Agent。已确认的 DeepSeek Harness 以你的电脑账户运行，本轮只回复文字。',
-    consultLegacy:
-      '当前只可联系内置 Agent。允许后，它也可在你发消息时询问同一台电脑上已确认的 DeepSeek Harness。DeepSeek 以你的电脑账户运行，只回复文字。',
-    consultUpgrade: '允许联系 DeepSeek Harness',
+    consultDetail: '你直接发消息时，它每轮可联系同一台电脑上的一位 Agent。对方使用自己的模型和接单设置。',
+    consultLegacy: '当前沿用之前授权的联系范围。扩大后，它也可以联系按自身权限接单的本机 Agent。',
+    consultUpgrade: '允许联系其他本机 Agent',
     consultUnavailable: '当前运行方式不支持主动联系其他 Agent。',
+    receive: '允许按自身权限接单',
+    receiveDetail: '默认只回复文字。开启后，这位 Agent 接到委托时可以使用自己聊天中的工具和权限。',
+    receiveTextExternal: '这个 Harness 以你的电脑账户运行。默认只回复文字，开启后可使用聊天中允许的工具。',
+    receiveExternal: '这个 Harness 无法保证只回复文字。开启后，它可以接收委托，以你的电脑账户运行并使用聊天中允许的工具。',
     effect: '何时生效',
     effectDetail:
       '内置 Harness 从下一轮起读取所选模型、指令和记忆。外部 Harness 在首次聊天或清空上下文后读取指令和记忆。要修改外部 Harness 的模型或权限，请使用当前聊天中的可用选项。',
@@ -89,11 +92,18 @@ const COPY = defineCopy(
   {
     consult: 'Allow this Agent to contact other Agents',
     consultDetail:
-      'When you message this Agent directly, it can ask one local Agent per turn, including a confirmed DeepSeek Harness running under your computer account for a text reply.',
+      'When you message this Agent directly, it can contact one Agent on this computer per turn. The recipient uses its own model and consultation settings.',
     consultLegacy:
-      'Only built-in Agents are currently allowed. You can also allow this Agent to contact DeepSeek Harness during your chat. The confirmed local Harness runs under your computer account and replies in text.',
-    consultUpgrade: 'Allow contacting DeepSeek Harness',
+      'This Agent still has its previous contact permissions. Expanding them also lets it contact local Agents that accept requests with their own permissions.',
+    consultUpgrade: 'Allow contacting other local Agents',
     consultUnavailable: 'The current mode or Harness does not support contacting other Agents.',
+    receive: 'Accept requests with this Agent’s own permissions',
+    receiveDetail:
+      'Replies are text-only by default. Turn this on to let this Agent use the tools and permissions available in its chat when another Agent asks.',
+    receiveTextExternal:
+      'This Harness runs under your computer account. It replies in text by default. Turn this on to allow the tools available in its chat.',
+    receiveExternal:
+      'This Harness cannot enforce a text-only reply. Turn this on to let it accept requests, run under your computer account, and use the tools allowed in its chat.',
     effect: 'When changes take effect',
     effectDetail:
       'The built-in Harness reads the selected model, instructions, and memory from the next turn. An external Harness reads instructions and memory when you first start a chat or clear its context. Use the options in the current chat to change an external Harness’s model or permissions.',
@@ -142,29 +152,50 @@ const COPY = defineCopy(
 function ConsultationSetting({
   scope,
   supported = true,
+  textOnly,
+  external = false,
+  ownPermissions,
   disabled,
   onChange,
+  onReceiveChange,
 }: {
   scope: ConsultationScope
   supported?: boolean
+  textOnly: boolean
+  external?: boolean
+  ownPermissions: boolean
   disabled: boolean
   onChange(scope: ConsultationScope): void
+  onReceiveChange(value: boolean): void
 }) {
+  const legacy = scope === 'builtin' || scope === 'legacy-dsh'
+  const receiveDetail = external ? COPY.receiveTextExternal : COPY.receiveDetail
   return (
-    <div>
-      <SwitchRow
-        title={COPY.consult}
-        description={supported ? (scope === 'builtin' ? COPY.consultLegacy : COPY.consultDetail) : COPY.consultUnavailable}
-        checked={scope !== 'off'}
-        disabled={disabled || (!supported && scope === 'off')}
-        onCheckedChange={on => onChange(on ? 'deepseek' : 'off')}
-      />
-      {supported && scope === 'builtin' && (
-        <Button type="button" disabled={disabled} onClick={() => onChange('deepseek')}>
-          {COPY.consultUpgrade}
-        </Button>
+    <>
+      {(supported || scope !== 'off') && (
+        <div>
+          <SwitchRow
+            title={COPY.consult}
+            description={supported ? (legacy ? COPY.consultLegacy : COPY.consultDetail) : COPY.consultUnavailable}
+            checked={scope !== 'off'}
+            disabled={disabled}
+            onCheckedChange={on => onChange(on ? 'local' : 'off')}
+          />
+          {supported && legacy && (
+            <Button type="button" disabled={disabled} onClick={() => onChange('local')}>
+              {COPY.consultUpgrade}
+            </Button>
+          )}
+        </div>
       )}
-    </div>
+      <SwitchRow
+        title={COPY.receive}
+        description={textOnly ? receiveDetail : COPY.receiveExternal}
+        checked={ownPermissions}
+        disabled={disabled}
+        onCheckedChange={onReceiveChange}
+      />
+    </>
   )
 }
 
@@ -541,10 +572,14 @@ export function AgentForm({
           />
         </div>
       </Section>
-      {catalog.features?.agentMentions && !agent.workComputer && (agent.canConsultAgents || canInitiateConsultation) && (
+      {catalog.features?.agentMentions && !agent.workComputer && (
         <ConsultationSetting
           supported={canInitiateConsultation}
           scope={draft.consultation ?? 'off'}
+          textOnly={harness?.textOnlyConsultations === true}
+          external={harness?.level === 'L3'}
+          ownPermissions={!!draft.useOwnPermissionsForConsultations}
+          onReceiveChange={value => update({ useOwnPermissionsForConsultations: value })}
           disabled={locked}
           onChange={scope => update({ consultation: scope })}
         />
@@ -638,17 +673,23 @@ export function GeneralForm({
   const general = detail.general
   const [instructions, setInstructions] = useState(general.instructions)
   const [canConsult, setCanConsult] = useState(consultationScope(general))
+  const [ownPermissions, setOwnPermissions] = useState(!!general.useOwnPermissionsForConsultations)
   const [skills, setSkills] = useState<string[] | undefined>(general.skills)
   useEffect(() => {
     setInstructions(general.instructions)
     setCanConsult(consultationScope(general))
+    setOwnPermissions(!!general.useOwnPermissionsForConsultations)
     setSkills(general.skills)
   }, [general.revision])
   const state = writeFor(writes.state, 'agent:general')
   const locked = disabled || writes.saving || writes.held
   const consultChanged = canConsult !== consultationScope(general)
+  const receiveChanged = ownPermissions !== !!general.useOwnPermissionsForConsultations
   const changed =
-    consultChanged || instructions !== general.instructions || JSON.stringify(skills ?? null) !== JSON.stringify(general.skills ?? null)
+    consultChanged
+    || receiveChanged
+    || instructions !== general.instructions
+    || JSON.stringify(skills ?? null) !== JSON.stringify(general.skills ?? null)
   return (
     <form
       className="agent-form"
@@ -659,6 +700,7 @@ export function GeneralForm({
         void writes.run('agent:general', 'custom-agents/general', 'PATCH', {
           baseRevision: general.revision,
           ...(consultChanged ? consultationPatch(canConsult) : {}),
+          ...(receiveChanged ? { useOwnPermissionsForConsultations: ownPermissions } : {}),
           ...(instructions !== general.instructions ? { instructions } : {}),
           ...(JSON.stringify(skills ?? null) !== JSON.stringify(general.skills ?? null) ? { skills: skills ?? null } : {}),
         })
@@ -673,7 +715,16 @@ export function GeneralForm({
           setInstructions(event.target.value)
         }}
       />
-      {catalog.features?.agentMentions && <ConsultationSetting scope={canConsult} onChange={setCanConsult} disabled={locked} />}
+      {catalog.features?.agentMentions && (
+        <ConsultationSetting
+          scope={canConsult}
+          onChange={setCanConsult}
+          textOnly
+          ownPermissions={ownPermissions}
+          onReceiveChange={setOwnPermissions}
+          disabled={locked}
+        />
+      )}
       <Section title={COPY.skills} aside={<TakesEffect />}>
         <SkillChoice catalog={catalog} value={skills} allowAll disabled={locked} onChange={setSkills} />
       </Section>

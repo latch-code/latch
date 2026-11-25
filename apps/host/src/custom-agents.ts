@@ -8,6 +8,7 @@ import {
   AGENT_FILE_SCHEDULES,
   AGENT_FILE_VERSION,
   AGENT_HUES,
+  consultationScope,
   GENERAL_AGENT_ID,
   CUSTOM_AGENT_ID,
   GENERAL_FACT_LIMITS,
@@ -125,6 +126,11 @@ const avatar = z.discriminatedUnion('kind', [
 ])
 const notifications = z.strictObject({ completed: z.boolean(), failed: z.boolean(), waiting: z.boolean() })
 const createSchema = config.extend({ requestId, avatar: faceAvatar.optional() })
+function consultationFields<T extends z.ZodType>(flag: T) {
+  return { canConsultAgents: flag, canConsultDeepSeek: flag, canConsultLocalAgents: flag, useOwnPermissionsForConsultations: flag }
+}
+const consultationSettings = consultationFields(z.boolean().optional())
+const storedConsultationSettings = consultationFields(z.literal(true).optional())
 const patchSchema = z.strictObject({
   workComputer: workComputer.nullable().optional(),
   name: name.optional(),
@@ -143,44 +149,57 @@ const patchSchema = z.strictObject({
   defaultProjectId: projectId.nullable().optional(),
   avatar: faceAvatar.optional(),
   notifications: notifications.nullable().optional(),
-  canConsultAgents: z.boolean().optional(),
-  canConsultDeepSeek: z.boolean().optional(),
+  ...consultationSettings,
   keepAwakeForSchedules: z.boolean().optional(),
   generalFacts: z.boolean().optional(),
   requestId,
   baseRevision: revision,
 })
 const generalPatchSchema = z.strictObject({
-  canConsultAgents: z.boolean().optional(),
-  canConsultDeepSeek: z.boolean().optional(),
+  ...consultationSettings,
   instructions: instructions.optional(),
   skills: skills.nullable().optional(),
   requestId,
   baseRevision: revision,
 })
 // Turning off a grant must still work if the audit cannot be written. Other edits keep their own audit requirement.
-type ConsultationPatch = Pick<CustomAgentPatch, 'canConsultAgents' | 'canConsultDeepSeek'>
+type ConsultationPatch = Pick<CustomAgentPatch, keyof typeof consultationSettings>
+type StoredConsultation = { [K in keyof ConsultationPatch]?: true }
+
+export interface ConsultationChange {
+  outgoing?: 'all' | 'external'
+  receiverChanged?: boolean
+}
 
 function removesConsultationOnly(patch: ConsultationPatch): boolean {
   const changes = Object.entries(patch).filter(([key]) => key !== 'requestId' && key !== 'baseRevision')
-  return (
-    changes.length > 0 && changes.every(([key, value]) => (key === 'canConsultAgents' || key === 'canConsultDeepSeek') && value === false)
-  )
+  return changes.length > 0 && changes.every(([key, value]) => Object.hasOwn(consultationSettings, key) && value === false)
 }
 
-function applyConsultationPatch(target: { canConsultAgents?: true; canConsultDeepSeek?: true }, patch: ConsultationPatch) {
-  if (patch.canConsultDeepSeek && patch.canConsultAgents !== true)
-    throw new AppError(400, 'agent-consultation-consent', '请为这位 Agent 一并开启主动协作并确认可联系本机 DeepSeek Harness。')
-  const reduced =
-    target.canConsultAgents && patch.canConsultAgents === false
-      ? 'all'
-      : target.canConsultDeepSeek && patch.canConsultDeepSeek === false
-        ? 'deepseek'
-        : undefined
-  if (patch.canConsultAgents !== undefined) assign(target, 'canConsultAgents', patch.canConsultAgents ? true : null)
-  if (patch.canConsultAgents === false) delete target.canConsultDeepSeek
-  else if (patch.canConsultDeepSeek !== undefined) assign(target, 'canConsultDeepSeek', patch.canConsultDeepSeek ? true : null)
-  return reduced
+function applyConsultationPatch(target: StoredConsultation, patch: ConsultationPatch): ConsultationChange {
+  if ((patch.canConsultDeepSeek || patch.canConsultLocalAgents) && patch.canConsultAgents !== true)
+    throw new AppError(400, 'agent-consultation-consent', '请同时开启主动联系其他 Agent 并确认联系范围。')
+  const before = consultationScope(target)
+  const receiverWasOn = !!target.useOwnPermissionsForConsultations
+  for (const key of Object.keys(consultationSettings) as (keyof ConsultationPatch)[]) {
+    const value = patch[key]
+    if (value !== undefined) assign(target, key, value ? true : null)
+  }
+  if (patch.canConsultAgents === false) {
+    delete target.canConsultDeepSeek
+    delete target.canConsultLocalAgents
+  } else if (patch.canConsultLocalAgents) {
+    delete target.canConsultDeepSeek
+  } else if (patch.canConsultDeepSeek !== undefined && patch.canConsultLocalAgents === undefined) {
+    // An older client editing the contact scope can grant only what its screen described.
+    delete target.canConsultLocalAgents
+  }
+  const after = consultationScope(target)
+  const change: ConsultationChange = { receiverChanged: receiverWasOn !== !!target.useOwnPermissionsForConsultations }
+  if (before === after) return change
+  if (after === 'off') change.outgoing = 'all'
+  else if (before === 'local' || (before === 'legacy-dsh' && after === 'builtin')) change.outgoing = 'external'
+  return change
 }
 const content = z
   .string()
@@ -208,8 +227,7 @@ const agentSchema = config.extend({
   home: z.string().regex(HELPER_HOME_NAME).optional(),
   avatar,
   notifications: notifications.optional(),
-  canConsultAgents: z.literal(true).optional(),
-  canConsultDeepSeek: z.literal(true).optional(),
+  ...storedConsultationSettings,
   keepAwakeForSchedules: z.literal(true).optional(),
   generalFactsOff: z.literal(true).optional(),
   revision,
@@ -352,8 +370,7 @@ const recallSchema = z.strictObject({
   count: z.number().int().min(1).max(1000),
 })
 const generalSchema = z.strictObject({
-  canConsultAgents: z.literal(true).optional(),
-  canConsultDeepSeek: z.literal(true).optional(),
+  ...storedConsultationSettings,
   id: z.literal(GENERAL_AGENT_ID),
   home: z
     .string()
@@ -435,7 +452,7 @@ interface Options {
   dataDir: string
   audit: Pick<AuditLog, 'append'>
   now?: () => number
-  consultationReduced?: (owner: string, scope: 'all' | 'deepseek') => void
+  consultationChanged?: (owner: string, change: ConsultationChange) => void
   atomicFs?: AtomicWriteFs
 }
 
@@ -790,6 +807,8 @@ export class CustomAgents {
           notifications: nextNotifications,
           canConsultAgents: consult,
           canConsultDeepSeek: deepSeek,
+          canConsultLocalAgents: local,
+          useOwnPermissionsForConsultations: ownPermissions,
           keepAwakeForSchedules: wake,
           generalFacts: knows,
           ...rest
@@ -797,7 +816,12 @@ export class CustomAgents {
         Object.assign(found, stripUndefined(rest), { revision: found.revision + 1, updatedAt: this.at() })
         assign(found, 'notifications', nextNotifications)
         // Off is the default, so it is stored only as on.
-        const reduced = applyConsultationPatch(found, { canConsultAgents: consult, canConsultDeepSeek: deepSeek })
+        const consultation = applyConsultationPatch(found, {
+          canConsultAgents: consult,
+          canConsultDeepSeek: deepSeek,
+          canConsultLocalAgents: local,
+          useOwnPermissionsForConsultations: ownPermissions,
+        })
         assign(found, 'keepAwakeForSchedules', wake === undefined ? undefined : wake ? true : null)
         // On is the default, so it is stored only as off.
         assign(found, 'generalFactsOff', knows === undefined ? undefined : knows ? null : true)
@@ -813,7 +837,7 @@ export class CustomAgents {
         return {
           target: id,
           customAgentId: id,
-          consultationReduced: moves ? 'all' : reduced,
+          consultationChange: moves ? { outgoing: 'all', receiverChanged: true } : consultation,
           ...(moves && pauseSchedules ? { beforeCommit: pauseSchedules } : {}),
         }
       },
@@ -896,11 +920,11 @@ export class CustomAgents {
       state => {
         if (state.general.revision !== parsed.baseRevision) throw changed()
         if (parsed.instructions !== undefined) state.general.instructions = parsed.instructions
-        const reduced = applyConsultationPatch(state.general, parsed)
+        const consultation = applyConsultationPatch(state.general, parsed)
         assign(state.general, 'skills', parsed.skills)
         state.general.revision++
         state.general.updatedAt = this.at()
-        return { target: GENERAL_AGENT_ID, consultationReduced: reduced }
+        return { target: GENERAL_AGENT_ID, consultationChange: consultation }
       },
       removesConsultationOnly(parsed),
     ).then(result => ({ ...result, value: this.general() }))
@@ -1571,7 +1595,7 @@ export class CustomAgents {
       target: string
       customAgentId?: string
       via?: 'proposal' | 'undo' | 'own'
-      consultationReduced?: 'all' | 'deepseek'
+      consultationChange?: ConsultationChange
       /** A scope reduction that must be durable before this agent change becomes visible. */
       beforeCommit?: () => Promise<void>
       /** The audit record in place of `agent.changed`. */
@@ -1623,8 +1647,13 @@ export class CustomAgents {
         const stored = { hash: payload, target: result.target, audited }
         state.receipts[key] = stored
         keep(state.receipts)
-        const reduced = result.consultationReduced
-        return { value: stored, ...(reduced ? { afterPublish: () => this.options.consultationReduced?.(result.target, reduced) } : {}) }
+        const change = result.consultationChange
+        return {
+          value: stored,
+          ...(change && (change.outgoing || change.receiverChanged)
+            ? { afterPublish: () => this.options.consultationChanged?.(result.target, change) }
+            : {}),
+        }
       },
       actor.authorize,
     )
@@ -1723,7 +1752,7 @@ function upgradeState(raw: unknown): unknown {
 }
 
 export interface AgentDelivery {
-  /** The first message is a foreground, text-only consultation to DSH. */
+  /** The first message is a foreground, text-only consultation. */
   consultation?: boolean
   /** 「通用」, or the agent's name. */
   agentName: string

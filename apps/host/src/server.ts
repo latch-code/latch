@@ -34,6 +34,8 @@ import {
   modeScopes,
   type BuiltinMode,
   GENERAL_AGENT_ID,
+  consultationScope,
+  type AgentConsultationMode,
   outsideMemory,
   BOARD_SETTLE_CHARS,
   boardSettleOf,
@@ -173,7 +175,6 @@ import {
 import { MODE_CONFIG_ID, PluginRegistry, modeChange } from '@latch/core'
 import { canonicalJson, sha256Hex, redactKnownSecrets, syncDirectory } from '@latch/core/node-kit'
 import {
-  DSH_CONSULTATION_GUARD_VERSION,
   assertCommandVersion,
   createAcpAgentPlugin,
   loginShellValues,
@@ -590,8 +591,8 @@ type SessionStart = z.infer<typeof createTaskSchema> & {
   outsideStart?: true
   /** Its first message holds words of a device the Host cannot name (a handoff's user message): no simulator grant. */
   withoutDeviceGrant?: true
-  /** Standard applies per-turn unattended approvals. Confirmed DSH runs a foreground, text-only process. */
-  agentConsultation?: 'standard' | 'dsh'
+  /** Host-pinned receiver permissions for this one delegated turn. */
+  agentConsultation?: AgentConsultationMode
   authorizeMention?: () => void
   recordConsultationGuard?: PromptOptions['recordConsultationGuard']
 }
@@ -599,7 +600,7 @@ type SessionStart = z.infer<typeof createTaskSchema> & {
 type TurnWriters = {
   coauthors?: readonly string[]
   narrower?: boolean
-  consultation?: true
+  agentConsultation?: AgentConsultationMode
   authorizeMention?: () => void
   recordConsultationGuard?: PromptOptions['recordConsultationGuard']
   followGuard?: () => Promise<NonNullable<PromptOptions['authorizeUnattended']>>
@@ -1374,7 +1375,7 @@ function programOf(agent: Pick<AgentRecord, 'presetId' | 'command' | 'args'>): s
 
 /**
  * The official DeepSeek preset exactly as the Host defines it, without variables, bound to a locally confirmed program.
- * The Host uses that identity for CLI quota/usage reads and foreground text consultations.
+ * The Host uses that identity for CLI quota/usage reads and legacy DeepSeek-only consultation grants.
  */
 function confirmedDshPreset(agent: AgentRecord): boolean {
   return agent.presetId === 'dsh' && agent.confirmedCommand !== undefined && runsPresetCommand(agent)
@@ -2316,7 +2317,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       dataDir,
       audit,
       now,
-      consultationReduced: (owner, scope) => consultationTurns.restrict(owner, scope),
+      consultationChanged: (owner, change) => consultationTurns.changed(owner, change),
     })
     // A deleted memory's text goes when its undo window ends, whether or not anything is written meanwhile.
     const purgeMemories = () => void customAgents.purgeExpired().catch(error => log(`过期的已删除记忆没有清除：${errorText(error)}`))
@@ -2746,6 +2747,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     if (workItems.fromFile) await workThreads.prune(itemId => workItems.get(itemId) !== undefined)
     startupCleanup.push(() => workThreads.flush())
     const harnessHub = await HarnessHub.open({
+      confirmedConsultationPreset(id) {
+        const record = config.settings().agents.find(agent => agent.id === id)
+        return !!record?.enabled && runsPresetCommand(record) && versionReadable(record)
+      },
       dataDir,
       assertAgentWorksHere: id => customAgents.assertWorksHere(id),
       defaultId: defaultHarnessId,
@@ -3768,7 +3773,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         // Only once it is really gone: a deletion still being confirmed keeps its budget.
         removed: async id => {
           if (customAgents.list().some(agent => agent.id === id)) return
-          consultationTurns.restrict(id, 'all')
+          consultationTurns.forget(id)
           await agentMentions.forget('agent', id).catch(error => log(`清理已删除 Agent 的提及失败：${errorText(error)}`))
           await modelSpend.forget('agent', id).catch(error => log(`清除预算失败：${errorText(error)}`))
         },
@@ -4260,30 +4265,36 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     function privateAccess(caller: Caller, summary: Pick<TaskSummary, 'personal' | 'agent' | 'agentPrivate'> | undefined): void {
       if (privateSession(summary)) agentAccess(caller)
     }
-    function consultationGrant(owner: string): { deepSeek?: true } | undefined {
+    function consultationGrant(owner: string) {
       if (customAgents.hasPending()) return undefined
       const agent =
         owner === GENERAL_AGENT_ID ? customAgents.general() : customAgents.list().find(item => item.id === owner && !item.workComputer)
-      if (agent?.canConsultAgents !== true) return undefined
-      return agent.canConsultDeepSeek === true ? { deepSeek: true } : {}
+      if (!agent) return undefined
+      const scope = consultationScope(agent)
+      return scope === 'off' ? undefined : scope
     }
 
-    /** The normal unattended ceiling applies only to Standard. Foreground delegation to DSH needs a separate source grant. */
-    function consultationReceiver(harnessId: string): SessionStart['agentConsultation'] {
+    function consultationReceiver(
+      target: { id: string; harnessId: string; useOwnPermissionsForConsultations?: boolean },
+      grant: ReturnType<ConsultationTurns['forRun']>,
+    ): AgentConsultationMode | undefined {
+      const { harnessId } = target
       const trust = hub!.trustOf(harnessId)
-      if (harnessId === STANDARD)
-        return trust?.kind === 'builtin' && levelAtMost(trust.level, policy.get().unattended.maxLevel) ? 'standard' : undefined
-      if (trust?.kind !== 'acp' || trust.level !== 'L3') return undefined
-      const record = config.settings().agents.find(item => item.id === harnessId)
-      return record?.enabled && confirmedDshPreset(record) && versionReadable(record) && hub!.supportsConsultation(harnessId)
-        ? 'dsh'
-        : undefined
+      if (!trust || !hub!.has(harnessId)) return undefined
+      const record = trust.kind === 'acp' ? config.settings().agents.find(item => item.id === harnessId) : undefined
+      if (trust.kind === 'acp' && (!record?.enabled || !versionReadable(record))) return undefined
+      if (grant.scope === 'local' && target.useOwnPermissionsForConsultations && grant.receiverUnchanged(target.id))
+        return 'own-permissions'
+      if (trust.kind === 'builtin' && harnessId === STANDARD)
+        return levelAtMost(trust.level, policy.get().unattended.maxLevel) ? 'text-only' : undefined
+      if (grant.scope === 'builtin' || (grant.scope === 'legacy-dsh' && (!record || !confirmedDshPreset(record)))) return undefined
+      return hub!.supportsConsultation(harnessId) ? 'text-only' : undefined
     }
 
     /** Bind only a directly submitted personal-chat prompt. A peer's run has no authority to contact another peer. */
     function personChatTurn<T>(owner: string | undefined, caller: DeviceCaller, requestId: string, start: () => T): T {
-      const grant = owner && consultationGrant(owner)
-      return consultationTurns.prompt(owner && grant ? { owner, caller, requestId, ...grant } : undefined, start)
+      const scope = owner && consultationGrant(owner)
+      return consultationTurns.prompt(owner && scope ? { owner, caller, requestId, scope } : undefined, start)
     }
     function enabledPluginInfo() {
       return registry
@@ -4839,6 +4850,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             sourceAgentId: item.sourceAgentId,
             targetAgentId: item.targetAgentId,
             initiator: item.initiator,
+            ...(item.consultationMode ? { consultationMode: item.consultationMode } : {}),
             textHash: sha256Hex(item.text),
           },
         })
@@ -4848,11 +4860,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const agent = item.targetAgentId === GENERAL_AGENT_ID ? undefined : customAgents.get(item.targetAgentId)
         const automated = item.initiator === 'agent'
         const harnessId = agent?.harnessId ?? STANDARD
-        const receiver = automated ? consultationReceiver(harnessId) : undefined
+        const receiver = automated ? (item.consultationMode ?? 'text-only') : undefined
         const authorizeDelivery = () => {
           authorize()
-          if (automated && (!receiver || consultationReceiver(harnessId) !== receiver))
-            throw new AppError(409, 'agent-consultation-harness', '这位 Agent 的 Harness 不能逐轮限制自主咨询。')
           if (
             item.destination
             && (sessionOwner(item.destination) !== item.targetAgentId || (automated && hub!.ownerOf(item.destination) !== harnessId))
@@ -4865,11 +4875,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const recordConsultationGuard: NonNullable<PromptOptions['recordConsultationGuard']> = async evidence => {
           authorizeDelivery()
           if (
-            receiver !== 'dsh'
-            || evidence.version !== DSH_CONSULTATION_GUARD_VERSION
+            receiver !== 'text-only'
+            || !Number.isSafeInteger(evidence.version)
+            || evidence.version < 1
             || (item.destination && evidence.sessionId !== item.destination)
           )
-            throw new AppError(409, 'agent-consultation-guard', '未能核对此次 DeepSeek 工具限制，委托未发出。')
+            throw new AppError(409, 'agent-consultation-guard', '未能核对这次文字委托的工具限制，委托未发出。')
           await audited({
             action: 'agent.consultation.guard-verified',
             actor: actorOf(caller),
@@ -4886,19 +4897,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const prompt = automated && item.sourceLabel ? `来自个人 Agent「${item.sourceLabel}」的委托\n\n${item.text}` : item.text
         const input = { requestId: item.dispatchId, prompt }
         if (item.destination) {
-          await sendPrompt(
-            caller,
-            item.destination,
-            input,
-            false,
-            true,
-            {
-              narrower: true,
-              authorizeMention: authorizeDelivery,
-              ...(receiver === 'dsh' ? { consultation: true, recordConsultationGuard } : {}),
-            },
-            receiver === 'standard',
-          )
+          await sendPrompt(caller, item.destination, input, false, true, {
+            narrower: true,
+            authorizeMention: authorizeDelivery,
+            ...(receiver ? { agentConsultation: receiver } : {}),
+            ...(receiver === 'text-only' && harnessId !== STANDARD ? { recordConsultationGuard } : {}),
+          })
           return item.destination
         }
         const record = config.settings().agents.find(each => each.id === agent?.harnessId)
@@ -4913,7 +4917,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               outsideStart: true,
               withoutDeviceGrant: true,
               authorizeMention: authorizeDelivery,
-              ...(receiver === 'dsh' ? { recordConsultationGuard } : {}),
+              ...(receiver === 'text-only' && harnessId !== STANDARD ? { recordConsultationGuard } : {}),
               ...(receiver ? { agentConsultation: receiver } : {}),
             },
             res,
@@ -6853,7 +6857,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const grant = consultationGrant(owner)
         if (!grant || hub!.automationOf(sessionId) || hub!.pageOriginOf(sessionId) || hub!.unattended(sessionId)) throw consultDenied()
         if (agentMentions.wasDispatched(owner, requestId)) throw consultDenied()
-        return active.deepSeek === true && grant.deepSeek === true
+        if (grant === 'local' || active.scope === 'builtin') return active
+        return { ...active, scope: grant }
       }
       authorize()
       const detail = await harnessHub.detail(sessionId)
@@ -6868,22 +6873,23 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         || detail.permission?.modeTiers?.[detail.permission.expectedMode ?? '']?.tier === 'plan'
       )
         throw consultDenied()
-      const localTargets = (allowDeepSeek: boolean, only?: string) => {
-        const eligible = (id: string, harnessId: string) =>
-          id !== owner
-          && (only === undefined || id === only)
-          && (allowDeepSeek || harnessId === STANDARD)
-          && consultationReceiver(harnessId) !== undefined
-        const general = eligible(GENERAL_AGENT_ID, STANDARD) ? [{ id: GENERAL_AGENT_ID, name: '通用', description: '' }] : []
-        const agents = customAgents.list().filter(agent => eligible(agent.id, agent.harnessId) && !agentPlans.unavailable(agent))
-        return [...general, ...agents]
+      const localTargets = (only?: string) => {
+        const grant = authorize()
+        const general = { ...customAgents.general(), harnessId: STANDARD, name: '通用', description: '' }
+        return [general, ...customAgents.list()].flatMap(agent => {
+          if (agent.id === owner || (only !== undefined && agent.id !== only)) return []
+          if ('mode' in agent && agentPlans.unavailable(agent)) return []
+          const mode = consultationReceiver(agent, grant)
+          return mode ? [{ id: agent.id, name: agent.name, description: agent.description, mode }] : []
+        })
       }
       authorize()
       if (tool === LIST_AGENTS) {
         // Names and duties may have been imported. Mark that material before the model sees it, as for a peer's answer.
         await harnessHub.markOutsideContent(sessionId, 'agent-mention')
         return JSON.stringify(
-          localTargets(authorize()).map(({ id, name, description }) => ({
+          localTargets().map(({ id, name, description, mode }) => ({
+            mode,
             id,
             name: redactKnownSecrets(name),
             description: redactKnownSecrets(description),
@@ -6891,10 +6897,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         )
       }
       const { agentId, question } = consultInput.parse(args)
+      const mode = localTargets(agentId)[0]?.mode
+      if (!mode) throw consultDenied()
       const check = () => {
-        if (!localTargets(authorize(), agentId).length) throw consultDenied()
+        if (localTargets(agentId)[0]?.mode !== mode) throw consultDenied()
       }
-      check()
       // The receipt bounds agent-initiated dispatch to one target and one question per human turn, including parallel calls.
       const body = {
         requestId: sha256Hex(JSON.stringify(['agent-consult', sessionId, runId])),
@@ -6905,6 +6912,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         agentMentions.send(caller, owner, body, {
           sessionId,
           name: owner === GENERAL_AGENT_ID ? '通用' : customAgents.get(owner).name,
+          mode,
           authorize: check,
         }),
       )
@@ -10810,7 +10818,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 customAgentId,
                 harnessId,
                 withoutPrivateContext ? undefined : devices.get(caller.device.id)?.dataScope,
-                agentConsultation === 'dsh',
+                agentConsultation === 'text-only',
               )
             : generalContextFor(withoutPrivateContext ? undefined : devices.get(caller.device.id)?.dataScope, harnessId))
           ?? (fork && privateSession(fork.source)
@@ -10820,9 +10828,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ?? (privateFrom ? { instructions: '', revision: sha256Hex(canonicalJson(['handoff', privateFrom])) } : undefined)
         await rereadOutdated(harnessId)
         // A conversation with 通用 may propose memories, on a Harness that can.
-        const selectedContext = generalChat ? agentPlans.generalChatContext(harnessId, baseContext) : baseContext
-        const agentContext =
-          agentConsultation === 'standard' && selectedContext ? { ...selectedContext, unattended: true as const } : selectedContext
+        const agentContext = generalChat ? agentPlans.generalChatContext(harnessId, baseContext) : baseContext
         const harness = hub!.info(harnessId)
         if (!harness || !hub!.has(harnessId)) throw new AppError(409, 'harness-unavailable', `Harness ${harnessId} 未启用`)
         if (harness.status !== 'ready') {
@@ -10981,7 +10987,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const task: HubCreateInput = {
           prompt,
           ...(authorizeMention ? { authorizeMention } : {}),
-          ...(agentConsultation === 'dsh' ? { consultation: true, authorizeConsultation: authorizeMention, recordConsultationGuard } : {}),
+          ...(agentConsultation ? { authorizeConsultation: authorizeMention } : {}),
+          ...(agentConsultation === 'text-only' ? { consultation: true, recordConsultationGuard } : {}),
           // A text rebuild waits for the person's first message, which carries it.
           ...(seed ? { seed } : {}),
           ...(fork
@@ -11547,12 +11554,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               input.requestId,
               {
                 ...(agentTurn ? { agentContext: agentTurn } : {}),
-                ...(writers.consultation
-                  ? {
-                      consultation: true,
-                      authorizeConsultation: writers.authorizeMention,
-                      recordConsultationGuard: writers.recordConsultationGuard,
-                    }
+                ...(writers.agentConsultation ? { authorizeConsultation: writers.authorizeMention } : {}),
+                ...(writers.agentConsultation === 'text-only'
+                  ? { consultation: true, recordConsultationGuard: writers.recordConsultationGuard }
                   : {}),
                 ...(writers.followGuard ? { authorizeUnattended: await writers.followGuard() } : {}),
                 ...(fileRefs.length ? { fileRefs } : {}),

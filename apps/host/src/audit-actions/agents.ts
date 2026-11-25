@@ -46,7 +46,7 @@ export const AGENT_ACTIONS = {
     entries: count,
     bytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   }),
-  /** The live DSH guard was verified before sending this mention's prompt; this does not attest delivery or completion. */
+  /** The live Harness guard was verified before sending this mention's prompt; this does not attest delivery or completion. */
   'agent.consultation.guard-verified': z.strictObject({
     harnessId: opaqueId,
     sessionId: opaqueId,
@@ -58,6 +58,7 @@ export const AGENT_ACTIONS = {
     sourceAgentId: opaqueId,
     targetAgentId: opaqueId,
     initiator: z.enum(['agent', 'person']),
+    consultationMode: z.enum(['text-only', 'own-permissions']).optional(),
     textHash: hex64,
   }),
   /**

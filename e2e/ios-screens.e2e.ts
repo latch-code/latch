@@ -283,6 +283,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
         chosen.some(scene =>
           [
             'inbox-first-rows',
+            'agent-consent',
             'usage-empty',
             'prompt-queue',
             'steer',
@@ -411,10 +412,22 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
                 { timeout: 20_000, interval: 500 },
               )
               await copyFile(frame, shot)
-            } else if (scene === 'usage-empty' || scene === 'prompt-queue' || scene === 'steer' || scene === 'conversation-sending') {
+            } else if (
+              scene === 'agent-consent'
+              || scene === 'usage-empty'
+              || scene === 'prompt-queue'
+              || scene === 'steer'
+              || scene === 'conversation-sending'
+            ) {
               await vi.waitFor(
                 async () => {
                   await simctl('io', udid, 'screenshot', shot)
+                  if (scene === 'agent-consent') {
+                    const words = ['允许主动联系', '允许按自身权限接单']
+                    const positions = JSON.parse((await run(textReader, [shot, '--settled', ...words])).stdout) as Record<string, number[]>
+                    for (const word of words) expect(positions[word], word).toHaveLength(1)
+                    return
+                  }
                   if (scene === 'conversation-sending') {
                     const words = ['再看一下发送回执', '正在发送', '回复 Codex', '重试这次提交'] as const
                     const positions = JSON.parse((await run(textReader, [shot, '--vertical', ...words])).stdout) as Record<

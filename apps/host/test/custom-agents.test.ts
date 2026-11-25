@@ -284,6 +284,43 @@ test('DeepSeek consent is per Agent, survives restart and must be renewed after 
   expect(restored.general().canConsultDeepSeek).toBe(true)
 })
 
+test('receiving with own permissions is independent, persists locally, and can be revoked when audit is down', async () => {
+  const { store, open: reopen, audit } = await fixture()
+  const agent = (await store.create(definition(), actor)).value
+  const grant = { requestId: randomUUID(), baseRevision: agent.revision, useOwnPermissionsForConsultations: true }
+  audit.append.mockRejectedValueOnce(new Error('audit down'))
+  await expect(store.patch(agent.id, grant, actor)).rejects.toThrow('audit down')
+  expect(store.get(agent.id).useOwnPermissionsForConsultations).toBeUndefined()
+  const receiver = (await store.patch(agent.id, grant, actor)).value
+  expect(receiver.canConsultAgents).toBeUndefined()
+  const general = (
+    await store.patchGeneral({ requestId: randomUUID(), baseRevision: 1, canConsultAgents: true, canConsultLocalAgents: true }, actor)
+  ).value
+  expect(general.useOwnPermissionsForConsultations).toBeUndefined()
+  expect(store.exportFile(agent.id, []).file.agent).not.toHaveProperty('useOwnPermissionsForConsultations')
+  await store.close()
+  const restored = await reopen()
+  stores.push(restored)
+  expect(restored.get(agent.id).useOwnPermissionsForConsultations).toBe(true)
+  expect(restored.general().canConsultLocalAgents).toBe(true)
+  const olderClient = (
+    await restored.patchGeneral(
+      { requestId: randomUUID(), baseRevision: general.revision, canConsultAgents: true, canConsultDeepSeek: true },
+      actor,
+    )
+  ).value
+  expect(olderClient.canConsultLocalAgents).toBeUndefined()
+  expect(olderClient.canConsultDeepSeek).toBe(true)
+  audit.append.mockRejectedValueOnce(new Error('audit down'))
+  const revoked = await restored.patch(
+    agent.id,
+    { requestId: randomUUID(), baseRevision: receiver.revision, useOwnPermissionsForConsultations: false },
+    actor,
+  )
+  expect(revoked.audited).toBe(false)
+  expect(revoked.value.useOwnPermissionsForConsultations).toBeUndefined()
+})
+
 test('a deletion proceeds when the audit fails; a change does not', async () => {
   const { store, audit } = await fixture()
   const { id } = (await store.create(definition(), actor)).value
