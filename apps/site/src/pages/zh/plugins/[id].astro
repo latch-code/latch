@@ -1,0 +1,9 @@
+---
+import PluginPage from '../../../components/PluginPage.astro'
+import { marketplaceDownloads } from '../../../marketplace'
+
+export async function getStaticPaths() {
+  return (await marketplaceDownloads()).map((d) => ({ params: { id: d.entry.id } }))
+}
+---
+<PluginPage lang="zh" id={Astro.params.id!} />
