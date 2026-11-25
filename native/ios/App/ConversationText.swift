@@ -158,7 +158,10 @@ struct LocalTextEditor: UIViewRepresentable {
         if view.isFirstResponder {
             // During a SwiftUI update the binding can still be a snapshot taken before UIKit's last edit.
             // Read the live binding after this render before replacing a focused editor's document or caret.
-            if !view.draft.source.utf8.elementsEqual(text.utf8) || referenceDraft?.wrappedValue != coordinator.shownWire
+            let wireChanged = referenceDraft.map { draft in
+                coordinator.shownWire?.utf8.elementsEqual(draft.wrappedValue.utf8) != true
+            } ?? (coordinator.shownWire != nil)
+            if !view.draft.source.utf8.elementsEqual(text.utf8) || wireChanged
                 || selectionRequest?.wrappedValue != nil || !mentionMarkers.isEmpty || view.hasMentionChips { coordinator.queueSync(view) }
         } else {
             coordinator.sync(view)
@@ -344,8 +347,11 @@ struct LocalTextEditor: UIViewRepresentable {
                 replaceSource(in: view, from: wire, to: next, caret: NSRange(location: start, length: after(NSMaxRange(selected)) - start))
             }
             let draft = view.draft
+            let matches: [PromptMentionDocument.Match]? = document.quotes.isEmpty ? nil : PromptMentionDocument.matches(parent.mentionMarkers, in: wire).compactMap { match in
+                document.displayRange(forWire: match.range).map { PromptMentionDocument.Match(range: $0, chip: match.chip) }
+            }
             let offsets = view.displayDraft(document.display, chips: parent.mentionMarkers, document: draft,
-                changed: !document.display.utf8.elementsEqual(draft.source.utf8), completing: false)
+                changed: !document.display.utf8.elementsEqual(draft.source.utf8), completing: false, sourceMatches: matches)
             view.displaySources(document, offsets: offsets)
             let count = document.display.utf16.count, start = min(selection?.location ?? count, count)
             let caret = offsets.displayRange(for: NSRange(location: start, length: min(selection?.length ?? 0, count - start)))
@@ -391,7 +397,7 @@ private extension PhoneInputReferences.Quote {
     var isTerminalBlock: Bool { kind == .hook || kind == .terminal }
 }
 
-private final class PromptSourceAttachment: NSTextAttachment {
+final class PromptSourceAttachment: NSTextAttachment {
     let source: PhoneInputReferences.Quote
     @MainActor init(_ quote: PhoneInputReferences.Quote, font: UIFont, width: CGFloat, traits: UITraitCollection) {
         source = quote
@@ -524,9 +530,9 @@ final class LocalPromptView: LocalTextView {
     private var chipFont: UIFont?
 
     func displayDraft(_ source: String, chips: [PromptMentionChip], document: PromptMentionDocument,
-                      changed: Bool, completing: Bool) -> PhoneMentionOffsets {
+                      changed: Bool, completing: Bool, sourceMatches: [PromptMentionDocument.Match]? = nil) -> PhoneMentionOffsets {
         if markedTextRange != nil, !changed { return document.offsets }
-        let matches = PromptMentionDocument.matches(chips, in: source)
+        let matches = sourceMatches ?? PromptMentionDocument.matches(chips, in: source)
         let offsets = PhoneMentionOffsets(markers: matches.map(\.range), in: source)
         let font = font ?? .preferredFont(forTextStyle: .body)
         let width = max(36, bounds.width - textContainerInset.left - textContainerInset.right)
@@ -608,7 +614,7 @@ final class LocalPromptView: LocalTextView {
             let at = sourceOffsets.displayRange(for: quote.range)
             guard at.length == 1, at.location < textStorage.length, (textStorage.string as NSString).character(at: at.location) == 0xfffc else { continue }
             let existing = textStorage.attribute(.attachment, at: at.location, effectiveRange: nil) as? PromptSourceAttachment
-            if changed || existing?.source.wire != quote.wire {
+            if changed || existing?.source.wire.utf8.elementsEqual(quote.wire.utf8) != true {
                 let attachment = PromptSourceAttachment(quote, font: textFont, width: width, traits: traitCollection)
                 textStorage.addAttribute(.attachment, value: attachment, range: at)
             }
@@ -681,7 +687,12 @@ final class LocalPromptView: LocalTextView {
                 button.accessibilityIdentifier = "remove-terminal-reference"
                 button.tintColor = .secondaryLabel
                 button.accessibilityHint = PhoneConversation.visible(quote.title)
-                button.addAction(UIAction { [weak self] _ in self?.removeTerminal?(quote) }, for: .touchUpInside)
+                button.addAction(UIAction { [weak self] _ in
+                    guard let self, let current = references?.quotes.first(where: {
+                        $0.isTerminalBlock && sourceOffsets.displayRange(for: $0.range).location == offset && $0.wire.utf8.elementsEqual(quote.wire.utf8)
+                    }) else { return }
+                    removeTerminal?(current)
+                }, for: .touchUpInside)
                 addSubview(button)
                 terminalButtons[offset] = (quote.wire, button)
             }

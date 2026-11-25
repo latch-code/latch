@@ -5,7 +5,8 @@ public func phonePromptWhitespace(_ unit: UInt16) -> Bool {
     [9, 10, 11, 12, 13, 32, 160, 5760, 8232, 8233, 8239, 8287, 12288, 65279].contains(unit) || (8192...8202).contains(unit)
 }
 
-func phonePromptTrim(_ text: String) -> String {
+public func phonePromptTrim(_ text: String) -> String {
+    guard text.utf16.first.map(phonePromptWhitespace) == true || text.utf16.last.map(phonePromptWhitespace) == true else { return text }
     let units = Array(text.utf16), start = units.firstIndex { !phonePromptWhitespace($0) } ?? units.count
     let end = units.lastIndex { !phonePromptWhitespace($0) }.map { $0 + 1 } ?? start
     return String(decoding: units[start..<end], as: UTF16.self)

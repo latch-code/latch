@@ -320,13 +320,16 @@ struct QueueChips: View {
         .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 14)).padding(.horizontal, 12)
         .sheet(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
             NavigationStack {
-                LocalTextEditor(text: $text, placeholder: "编辑待发送内容", maximumLines: nil).padding().navigationTitle("编辑待发送内容").navigationBarTitleDisplayMode(.inline)
+                VStack(alignment: .leading, spacing: 8) {
+                    LocalTextEditor(text: $text, placeholder: "编辑待发送内容", maximumLines: nil)
+                    if let issue = PhoneConversation.promptLengthIssue(text) { Text(issue).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber) }
+                }.padding().navigationTitle("编辑待发送内容").navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) { Button("取消") { editing = nil } }
                         ToolbarItem(placement: .confirmationAction) { Button("保存") {
                             if let id = editing { change(.patch, id: id, fields: ["text": .string(text)]) }
                             editing = nil
-                        }.disabled(writing || !items.contains { $0["id"].string == editing && editable($0) } || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+                        }.disabled(writing || PhoneConversation.promptLengthIssue(text) != nil || !items.contains { $0["id"].string == editing && editable($0) } || phonePromptTrim(text).isEmpty) }
                     }
             }.presentationDetents([.medium, .large])
         }

@@ -45,7 +45,7 @@ extension PhoneModel {
     func startFork(_ draft: PhoneForkDraft, plan: PhoneForkPlan, prompt: String, fileRefs: [PhoneFileMatches.Hit] = []) async -> Bool {
         let current = generation
         do {
-            guard canFork, prompt.count <= 16_000 else { throw NativeFailure.forbidden }
+            guard canFork, PhoneConversation.promptLengthIssue(prompt) == nil else { throw NativeFailure.forbidden }
             try await ensureVerified()
             guard current == generation else { return false }
             guard pending.isEmpty else { throw NativeFailure.resultUnknown }

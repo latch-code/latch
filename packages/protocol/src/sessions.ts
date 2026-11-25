@@ -11,6 +11,9 @@ import type { TurnSpend } from './model-usage.ts'
 import type { BoardPlace, BoardPriority } from './board.ts'
 import type { TeamMembership } from './teams.ts'
 
+/** The Host measures a trimmed session prompt in UTF-16 code units, including inline reference source text. */
+export const SESSION_PROMPT_CHARS = 16_000
+
 export interface SessionCommand {
   name: string
   description?: string

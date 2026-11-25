@@ -16,6 +16,7 @@ import {
   TextAreaField,
   TrashGlyph,
 } from '@latch/ui'
+import { promptLengthError } from './promptLength.ts'
 import { api, inlineError } from '../core/api.ts'
 import { defineCopy, formatNumber } from '../core/i18n.ts'
 import { VisibleText, escapeHiddenCharacters } from '../components/VisibleText.tsx'
@@ -141,6 +142,8 @@ function QueueEditor({
   const [text, setText] = useState(item.text),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('')
+  const lengthError = promptLengthError(text)
+  const canSave = writable && !!text.trim() && text !== item.text && !lengthError
   return (
     <Dialog
       open
@@ -154,7 +157,7 @@ function QueueEditor({
           <Button onClick={close} disabled={busy}>
             {COPY.cancel}
           </Button>
-          <Button variant="primary" form={form} type="submit" loading={busy} disabled={!writable || !text.trim() || text === item.text}>
+          <Button variant="primary" form={form} type="submit" loading={busy} disabled={!canSave}>
             {COPY.save}
           </Button>
         </>
@@ -165,7 +168,7 @@ function QueueEditor({
         onSubmit={event => {
           event.preventDefault()
           event.stopPropagation()
-          if (busy || !writable || !text.trim()) return
+          if (busy || !canSave) return
           setBusy(true)
           setError('')
           void save(text.trim()).then(close, error => {
@@ -173,7 +176,8 @@ function QueueEditor({
             setBusy(false)
           })
         }}>
-        <TextAreaField label={COPY.message} value={text} rows={5} maxLength={16_000} onChange={event => setText(event.target.value)} />
+        <TextAreaField label={COPY.message} value={text} rows={5} onChange={event => setText(event.target.value)} />
+        {lengthError && <InlineNotice>{lengthError}</InlineNotice>}
         {error && <InlineNotice tone="error">{error}</InlineNotice>}
       </form>
     </Dialog>

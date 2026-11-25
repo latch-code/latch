@@ -49,8 +49,9 @@ func phoneMentionRecipientsFixture(_ data: Data) throws -> [String: Any] {
         return ["rows": rows.map { [$0.label, $0.disabled] }, "matches": matches, "text": edit?.text ?? "", "caret": edit?.selection.location ?? -1]
     }
     guard let team = PhoneMemberMentions(snapshot: snapshot, session: "lead") else { return [:] }
-    let rounds: [Any] = input["drafts"].array.map {
-        guard let round = team.round(in: $0["text"].string ?? "", hasMaterials: $0["materials"].bool) else { return NSNull() }
+    let rounds: [Any] = try input["drafts"].array.map { item in
+        let files = item["fileRefs"] == .null ? [] : try PhoneFileMatches(item["fileRefs"], forMentions: true).files
+        guard let round = team.round(in: item["text"].string ?? "", hasMaterials: item["materials"].bool, fileRefs: files) else { return NSNull() }
         return ["ids": round.itemIds, "prompt": round.prompt, "reason": round.reason as Any] as [String: Any]
     }
     return ["team": team.teamId, "rows": team.members.map { [$0.token, $0.disabled] }, "rounds": rounds,

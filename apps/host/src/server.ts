@@ -378,7 +378,7 @@ import { HostComputer, KEEP_AWAKE_HOLD_MS, desktopReportSchema } from './compute
 import { TrafficMeter, type FrameKind, type StreamMeter } from './traffic.ts'
 import { TaskDeltaCache, TaskDeltaStream } from './task-delta.ts'
 import { allApproval, allTaskContent, filesApproval, filesTaskContent, workApproval, workTaskContent } from './task-content.ts'
-import { TASK_DELTA_HEADER, TASK_DELTA_PROTOCOL } from '@latch/protocol'
+import { SESSION_PROMPT_CHARS, TASK_DELTA_HEADER, TASK_DELTA_PROTOCOL } from '@latch/protocol'
 import { DiagnosticLog, diagnosticsBundle, type DiagnosticCategory } from './diagnostics.ts'
 import {
   checkProvider,
@@ -484,7 +484,7 @@ const modelId = z.string().trim().min(1).max(200)
 const modelRefSchema = z.object({ providerId: z.string().min(1).max(64), model: modelId, effort: modelEffort.optional() })
 const promptSchema = z.object({
   fileRefs: fileMentionsSchema,
-  prompt: z.string().trim().max(16_000),
+  prompt: z.string().trim().max(SESSION_PROMPT_CHARS),
   attachmentIds: z
     .array(z.string().regex(/^[A-Za-z0-9_-]{22}$/u))
     .max(8)
@@ -514,7 +514,7 @@ const removeWorktreeSchema = z.strictObject({
 })
 
 const createTaskSchema = promptSchema.extend({
-  prompt: z.string().trim().max(16_000).default(''),
+  prompt: z.string().trim().max(SESSION_PROMPT_CHARS).default(''),
   /** 让 Agent 做: an Agent session in its own folder, where the Host writes a page draft's skeleton before the first input. */
   appDraft: z.literal(true).optional(),
   pluginCreation: z.literal(true).optional(),
@@ -11287,7 +11287,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       await authorize()
       if (method === 'PATCH' && !match[3]) {
-        const input = z.strictObject({ text: z.string().trim().min(1).max(16_000) }).parse(await jsonBody(req, TASK_BODY_LIMIT))
+        const input = z
+          .strictObject({ text: z.string().trim().min(1).max(SESSION_PROMPT_CHARS) })
+          .parse(await jsonBody(req, TASK_BODY_LIMIT))
         await assertQueueable(sessionId, input.text)
         await audited({ action: 'task.prompt.edited', actor: actorOf(caller), detail: { sessionId, itemId } })
         await promptQueues.edit(sessionId, itemId, input.text, queueActor(caller), authorize)

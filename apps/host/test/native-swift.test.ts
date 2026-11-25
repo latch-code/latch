@@ -648,8 +648,12 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     }
     const quote = '[引用回复 ses/m@0]\n> output:  @查-接口-2  +  @检查输出'
     const terminal = 'Terminal 1\n```text\nlogs:  @查-接口-2  keep\n```'
+    const filename = 'file @查-接口-2 notes.md'
+    const fileRefs = { files: [{ root: 'default', path: filename, name: filename }], truncated: false }
     const drafts = [
+      { text: `@default:${filename} 看看这个文件`, materials: true, fileRefs },
       { text: quote },
+      { text: '> 日志里提到了 @查-接口 随后退出' },
       { text: terminal },
       { text: `@查-接口 修复\n${quote}\n\n${terminal}` },
       { text: 'email@查-接口 再试' },
@@ -671,6 +675,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       ],
       matches: ['b'],
       rounds: [
+        null,
+        null,
         null,
         null,
         { ids: ['a'], prompt: `修复\n${quote}\n\n${terminal}`, reason: null },
@@ -2611,6 +2617,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.delivery).toBe('Mac 已收到')
     expect(result.hasFiles).toEqual([true, false])
     expect(result.noteTooLong).toEqual([false, true, false])
+    expect(result.promptTooLong).toEqual([true, false, true, true])
     // Backing out of Face ID is quiet; a sheet that failed says so, and neither reads as a lost connection.
     expect(result.faceId).toEqual([true, true, false, true, false, false])
     // Trust is set once when the phone is connected: signing a content window never asks for the person by itself.

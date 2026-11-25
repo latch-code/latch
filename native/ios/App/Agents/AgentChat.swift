@@ -210,6 +210,7 @@ private struct NewTopicView: View {
         if !catalog["features"]["singleAgentChat"].bool { return "Mac 需要更新后才能开始聊天" }
         let chat = PhoneAgentChat.slot(model.snapshot, owner: frame.owner)
         if chat["state"].string != "empty" { return readyChat == nil ? "正在确认聊天" : nil }
+        if PhoneSlash.actionOf(prompt) == nil, let issue = PhoneConversation.promptLengthIssue(prompt) { return issue }
         if general { return PhoneAgentChat.generalBlocker(catalog, choice: choice, connected: model.connected, canRun: model.canRun) }
         return PhoneAgents.blocker(catalog, agent: agent, choice: choice, connected: model.connected, canRun: model.canRun)
     }
@@ -218,7 +219,7 @@ private struct NewTopicView: View {
         if PhoneSlash.actionOf(prompt) != nil {
             if case .open = PhoneSlash.action(prompt, context: slashContext) { return !slash.composing }; return false
         }
-        return model.transportReady && blocker == nil && mine.isEmpty && !sending && !model.busy && !slash.composing && (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.tray(attachKey).isEmpty)
+        return model.transportReady && blocker == nil && mine.isEmpty && !sending && !model.busy && !slash.composing && (!phonePromptTrim(prompt).isEmpty || !model.tray(attachKey).isEmpty)
     }
     /** Cards of runs that settled while the Agent had no topic: here until the next topic keeps them. */
     private var waiting: [PhoneScheduleResult] { model.agentResults[frame.owner] ?? [] }
@@ -282,7 +283,7 @@ private struct NewTopicView: View {
                 }.padding(.horizontal, 16)
             }
             if let readyChat, mine.isEmpty {
-                Button(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "打开聊天" : "带上草稿打开聊天") {
+                Button(phonePromptTrim(prompt).isEmpty ? "打开聊天" : "带上草稿打开聊天") {
                     let prior = model.takeDraft(for: readyChat) ?? ""
                     model.holdDraft(PhonePending.joined(prior, prompt), for: readyChat)
                     prompt = ""
@@ -364,7 +365,7 @@ private struct NewTopicView: View {
         }
         sending = true
         let refs = mentions.references
-        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = phonePromptTrim(prompt)
         let host = model.generation, content = model.privateSnapshot.epoch, reading = model.contentGeneration
         let owner = frame.owner, chosenAgent = agent, chosen = choice, key = attachKey
         Task {

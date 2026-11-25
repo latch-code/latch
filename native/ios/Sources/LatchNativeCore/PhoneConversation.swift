@@ -647,6 +647,12 @@ public enum PhoneConversation {
         return PhoneApprovalGate(heading: heading, riskClause: clause, allowOption: allow?["id"].string, canAllow: true, refusal: nil,
             allowLabel: allow.map { optionLabel($0, advisory: advisory) } ?? "允许", more: more, hidden: hidden)
     }
+    /** The Host applies JavaScript trim(), then counts the UTF-16 units of the submitted prompt. */
+    public static func promptLengthIssue(_ wire: String) -> String? {
+        guard wire.utf16.count > 16_000, phonePromptTrim(wire).utf16.count > 16_000 else { return nil }
+        return "消息过长（最多 16,000 个字符），请缩短正文或引用。"
+    }
+
     /** What the Host would refuse in a rejection's note, said before sending. The Host also refuses invisible characters, and its word stands. */
     public static let rejectionNoteLimit = 500
     public static func rejectionNoteTooLong(_ text: String) -> Bool {

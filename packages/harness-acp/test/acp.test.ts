@@ -6231,6 +6231,11 @@ describe('ACP steering', () => {
     } finally {
       request.mockRestore()
     }
+    await bridge.cancel(sessionId)
+    await bridge.prompt(sessionId, 'elicit', rid())
+    const next = await settled(bridge, sessionId)
+    expect(systemText(next)).toContain('elicitation/create')
+    expect(systemText(next)).not.toContain('How should I approach this?')
   })
 
   it.each(['direct', 'queued'])('keeps an unrecognized %s steer reply unknown on retry', async mode => {

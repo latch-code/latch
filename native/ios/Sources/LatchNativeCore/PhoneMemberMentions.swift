@@ -62,10 +62,11 @@ public struct PhoneMemberMentions: Equatable, Sendable {
         }
     }
 
-    public func round(in text: String, hasMaterials: Bool = false) -> Round? {
+    public func round(in text: String, hasMaterials: Bool = false, fileRefs: [PhoneFileMatches.Hit] = []) -> Round? {
         let materials = PhoneInputReferences.materialRanges(in: text)
+        let excluded = materials + fileRefs.flatMap { PhoneFileMentionToken.ranges(marker: "@\($0.root):\($0.path)", in: text, excluding: materials) }
         let marks = members.flatMap { member in
-            PhoneFileMentionToken.ranges(marker: member.token, in: text, excluding: materials).map { (member.id, $0) }
+            PhoneFileMentionToken.ranges(marker: member.token, in: text, excluding: excluded).map { (member.id, $0) }
         }.sorted { $0.1.location < $1.1.location }
         guard !marks.isEmpty else { return nil }
         var ids = [String]()
