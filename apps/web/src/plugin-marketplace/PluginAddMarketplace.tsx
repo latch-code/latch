@@ -245,6 +245,7 @@ export function usePluginAddMarketplace({
   records,
   onStage,
   onManage,
+  onReview,
 }: {
   active: boolean
   connected?: boolean
@@ -255,6 +256,8 @@ export function usePluginAddMarketplace({
   records: readonly PluginPackageSummary[]
   onStage: () => void
   onManage: (id: string) => void
+  /** Reviews and applies a draft just saved here, without leaving the marketplace. */
+  onReview: (id: string) => void
 }) {
   const sourceKey = `${storageKey}:source`
   const stageKey = `${storageKey}:stage`
@@ -684,6 +687,7 @@ export function usePluginAddMarketplace({
               external={external}
               disabled={!connected || stageBusy}
               onManage={onManage}
+              onReview={onReview}
               browseFocus={() => {
                 const target =
                   external.lastLookup && 'pluginId' in external.lastLookup
@@ -697,7 +701,7 @@ export function usePluginAddMarketplace({
             />
           )}
           {stagedId && (
-            <InlineNotice action={<Button onClick={() => onManage(stagedId)}>{COPY.review}</Button>}>{COPY.staged}</InlineNotice>
+            <InlineNotice action={<Button onClick={() => onReview(stagedId)}>{COPY.review}</Button>}>{COPY.staged}</InlineNotice>
           )}
           {loading && <Loading label={COPY.loading} />}
           {lookupError && (

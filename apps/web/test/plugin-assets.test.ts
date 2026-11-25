@@ -320,15 +320,16 @@ it('separates locally installed plugins sharing a bundled ID from confirmed bund
       [...parent.querySelectorAll('.plugin-market-versions > span')].map(element => element.textContent)
     const card = (title: string) =>
       [...element.querySelectorAll('.plugin-market-card')].find(item => item.querySelector('h3')?.textContent === title)!
-    const collision = ['随附 v1.0.0', '这台 Mac 上的同标识插件 · v2.0.0']
+    const collision = ['v1.0.0', '这台 Mac 上的同标识插件 · v2.0.0']
     expect(versions(card('交接清单'))).toEqual(collision)
-    expect(versions(card('发布清单面板'))).toEqual(['随附 v1.0.0', '已安装 v2.0.0', '草稿 v3.0.0'])
+    expect(versions(card('发布清单面板'))).toEqual(['v1.0.0', '已安装 v2.0.0', '草稿 v3.0.0'])
     const explicitConflict = card('上下文')
     expect(versions(explicitConflict)).toEqual(collision)
     await act(async () => explicitConflict.querySelector('button')?.click())
-    expect(versions(element)).toEqual(collision)
-    expect(element.textContent).toContain('查看已有插件')
-    expect(element.textContent).not.toContain('审阅并安装')
+    const dialog = element.querySelector('dialog.plugin-market-dialog')!
+    expect(versions(dialog)).toEqual(collision)
+    expect(dialog.textContent).toContain('查看已有插件')
+    expect(dialog.textContent).not.toContain('审阅并安装')
   } finally {
     act(() => root.unmount())
     element.remove()
@@ -372,6 +373,7 @@ it.each(['source', 'stage'] as const)('retains the npm %s receipt after downgrad
       records: [],
       onStage,
       onManage,
+      onReview: onManage,
     }).content
   }
   const render = (editable: boolean) => act(async () => root.render(createElement(Market, { editable })))
