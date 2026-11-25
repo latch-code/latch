@@ -449,7 +449,7 @@ export type PluginMutationTarget = {
 
 const packagePath = (id: string) => `plugin-packages/${encodeURIComponent(id)}`
 
-type InstalledPluginReview = PluginPackageReview & { installId: string }
+export type InstalledPluginReview = PluginPackageReview & { installId: string }
 
 function isInstalledPluginReview(value: unknown, revision: string): value is InstalledPluginReview {
   return isPluginPackageReview(value, revision) && typeof value.installId === 'string' && /^[A-Za-z0-9_-]{22}$/u.test(value.installId)
@@ -482,24 +482,79 @@ export function PluginMutationDialog(props: PluginMutationDialogProps) {
   return <MutationReview key={JSON.stringify([id, operation, revision])} {...props} />
 }
 
-function MutationReview({ target, onConfirm, onClose }: PluginMutationDialogProps) {
-  const [result, setResult] = useState<{ review: InstalledPluginReview } | { error: string } | null>(null)
+/**
+ * The Host's review of one exact revision for one operation, read when the target changes. `review` is set only when the
+ * Host described that revision with its install identity; a result for an earlier target is never returned.
+ */
+export function usePluginMutationReview(target: PluginMutationTarget | null) {
+  const id = target?.id
+  const operation = target?.operation
+  const revision = target?.revision
+  const key = target ? JSON.stringify([id, operation, revision]) : ''
+  const [state, setState] = useState<{ key: string; result: { review: InstalledPluginReview } | { error: string } } | null>(null)
   const [retry, setRetry] = useState(0)
-  const { id, operation, revision } = target
   useEffect(() => {
+    if (id === undefined || operation === undefined || revision === undefined) return undefined
     const controller = new AbortController()
     const query = new URLSearchParams({ operation, revision })
+    const settle = (result: { review: InstalledPluginReview } | { error: string }) => {
+      if (!controller.signal.aborted) setState({ key, result })
+    }
     void api<{ review: unknown }>(`${packagePath(id)}/review?${query}`, { signal: controller.signal }).then(
-      ({ review }) => {
-        if (!controller.signal.aborted) setResult(isInstalledPluginReview(review, revision) ? { review } : { error: COPY.changed })
-      },
-      cause => {
-        if (!controller.signal.aborted) setResult({ error: inlineError(cause) })
-      },
+      ({ review }) => settle(isInstalledPluginReview(review, revision) ? { review } : { error: COPY.changed }),
+      cause => settle({ error: inlineError(cause) }),
     )
     return () => controller.abort()
-  }, [id, operation, revision, retry])
-  const review = result && 'review' in result ? result.review : null
+  }, [id, operation, revision, key, retry])
+  const result = state?.key === key ? state.result : null
+  return {
+    review: result && 'review' in result ? result.review : null,
+    error: result && 'error' in result ? result.error : '',
+    retry: () => {
+      setState(null)
+      setRetry(count => count + 1)
+    },
+  }
+}
+
+/** What the Host said about the revision: its risk facts and the local confirmation still to come, or why it is missing. */
+export function PluginMutationReviewBody({
+  name,
+  review,
+  error,
+  onRetry,
+}: {
+  name?: string
+  review: InstalledPluginReview | null
+  error: string
+  onRetry: () => void
+}) {
+  return (
+    <div className="plugin-risk-facts">
+      {name !== undefined && (
+        <p className="plugin-review-name">
+          <VisibleText text={name} />
+        </p>
+      )}
+      {review ? (
+        <>
+          <PluginRiskFacts review={review} />
+          {review.confirmationRequired && <InlineNotice tone="warn">{COPY.onMac}</InlineNotice>}
+        </>
+      ) : error ? (
+        <InlineNotice tone="error" action={<Button onClick={onRetry}>{COPY.retry}</Button>}>
+          {error}
+        </InlineNotice>
+      ) : (
+        <Loading label={COPY.loading} />
+      )}
+    </div>
+  )
+}
+
+function MutationReview({ target, onConfirm, onClose }: PluginMutationDialogProps) {
+  const { review, error, retry } = usePluginMutationReview(target)
+  const { operation } = target
   return (
     <Dialog
       open
@@ -524,33 +579,7 @@ function MutationReview({ target, onConfirm, onClose }: PluginMutationDialogProp
           </Button>
         </>
       }>
-      <div className="plugin-risk-facts">
-        <p className="plugin-review-name">
-          <VisibleText text={target.name} />
-        </p>
-        {review ? (
-          <>
-            <PluginRiskFacts review={review} />
-            {review.confirmationRequired && <InlineNotice tone="warn">{COPY.onMac}</InlineNotice>}
-          </>
-        ) : result && 'error' in result ? (
-          <InlineNotice
-            tone="error"
-            action={
-              <Button
-                onClick={() => {
-                  setResult(null)
-                  setRetry(count => count + 1)
-                }}>
-                {COPY.retry}
-              </Button>
-            }>
-            {result.error}
-          </InlineNotice>
-        ) : (
-          <Loading label={COPY.loading} />
-        )}
-      </div>
+      <PluginMutationReviewBody name={target.name} review={review} error={error} onRetry={retry} />
     </Dialog>
   )
 }

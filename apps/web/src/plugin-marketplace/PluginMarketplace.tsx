@@ -1,20 +1,23 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import type { AppSnapshot, PluginCatalogUpdateStatus, PluginPackageSummary } from '@latch/protocol'
-import { Button, EmptyState, Icon, InlineNotice, PlusGlyph, SearchField, Tabs } from '@latch/ui'
-import { ArrowLeft, ArrowRight, LibraryBig, Package } from 'lucide-react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import type { AppSnapshot, PluginCatalogPreview, PluginCatalogUpdateStatus, PluginPackageSummary } from '@latch/protocol'
+import { Button, CheckGlyph, Collapse, Dialog, EmptyState, FoldHeader, Icon, InlineNotice, PlusGlyph, SearchField, Tabs } from '@latch/ui'
+import { ArrowRight, LibraryBig, Package } from 'lucide-react'
 import type { CatalogEntry } from '../../../../examples/marketplace/bundles.ts'
 import { plugins as catalog } from '../../../../examples/latch.catalog.json'
 import releasePreview from '../../../../examples/marketplace/release-check-preview.webp?url'
 import { api, inlineError } from '../core/api.ts'
 import { defineCopy, formatNumber, plural, useLocale } from '../core/i18n.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
+import { VisibleText } from '../components/VisibleText.tsx'
 import { Loading } from '../settings/common.tsx'
+import { PluginFileViewer } from '../settings/CreatorPluginReview.tsx'
 import { PluginRiskFacts } from '../settings/PluginMutationReview.tsx'
 import { canEditPluginPackages } from '../settings/pluginAssets.ts'
 import { SHELL_COPY } from '../shell/copy.ts'
 import { BundledPluginPreview } from './BundledPluginPreview.tsx'
 import { PluginMarketIcon } from './PluginArtwork.tsx'
 import { usePluginAddMarketplace } from './PluginAddMarketplace.tsx'
+import { usePluginInstallReview } from './PluginInstallReview.tsx'
 import { usePluginCatalog } from './usePluginCatalog.ts'
 
 declare const LATCH_CATALOG_MANIFESTS: Record<string, { name: string; version: string }>
@@ -36,11 +39,17 @@ const COPY = defineCopy(
     access: '运行权限',
     publisher: '发布者',
     identity: '安装名称与标识',
-    back: '返回市场',
+    back: '返回',
+    cancel: '取消',
+    done: '完成',
+    about: '能做什么与能访问什么',
+    files: '文件与源码',
     review: '审阅并安装',
     reviewUpdate: '审阅更新',
+    reviewDraft: '审阅草稿',
+    apply: '应用',
+    buildInSettings: '在插件设置中构建',
     manage: '查看已有插件',
-    catalogVersion: (version: string) => `随附 v${version}`,
     installedVersion: (version: string) => `已安装 v${version}`,
     draftVersion: (version: string) => `草稿 v${version}`,
     availableVersion: (version: string) => `可更新到 v${version}`,
@@ -82,11 +91,17 @@ const COPY = defineCopy(
     access: 'Access',
     publisher: 'Publisher',
     identity: 'Local name and ID',
-    back: 'Back to marketplace',
+    back: 'Back',
+    cancel: 'Cancel',
+    done: 'Done',
+    about: 'What it does and can access',
+    files: 'Files and source',
     review: 'Review and install',
     reviewUpdate: 'Review update',
+    reviewDraft: 'Review draft',
+    apply: 'Apply',
+    buildInSettings: 'Build in plugin settings',
     manage: 'View local plugin',
-    catalogVersion: (version: string) => `Bundled v${version}`,
     installedVersion: (version: string) => `Installed v${version}`,
     draftVersion: (version: string) => `Draft v${version}`,
     availableVersion: (version: string) => `Update to v${version} available`,
@@ -159,7 +174,7 @@ function CatalogVersions({
   const local = applied ?? record?.version
   return (
     <div className="plugin-market-versions">
-      <span>{status === 'available' ? <strong>{COPY.availableVersion(version)}</strong> : COPY.catalogVersion(version)}</span>
+      <span>{status === 'available' ? <strong>{COPY.availableVersion(version)}</strong> : `v${version}`}</span>
       {status === 'different-source' ? (
         <span>{local ? COPY.localMatchVersion(local) : COPY.localMatch}</span>
       ) : (
@@ -168,6 +183,95 @@ function CatalogVersions({
           {draft && <span>{COPY.draftVersion(draft)}</span>}
         </>
       )}
+    </div>
+  )
+}
+
+/**
+ * A bundled plugin before anything is saved: what it is for, its cover, what it does and can access, its files, and — on
+ * a device that may install it — the Host's risk facts for the exact catalog revision.
+ */
+function CatalogOverview({
+  entry,
+  record,
+  status,
+  preview,
+  version,
+  manifestName,
+  children,
+}: {
+  entry: CatalogEntry
+  record: PluginPackageSummary | undefined
+  status: PluginCatalogUpdateStatus | undefined
+  preview: PluginCatalogPreview | null
+  version: string | undefined
+  manifestName: string | undefined
+  children: ReactNode
+}) {
+  const lang = useLocale() === 'en' ? 'en' : 'zh'
+  const listing = entry[lang]
+  const [about, setAbout] = useState(true)
+  const [files, setFiles] = useState(false)
+  const aboutId = useId()
+  const filesId = useId()
+  return (
+    <div className="plugin-market-dialog-body">
+      <div className="plugin-market-dialog-identity">
+        <PluginMarketIcon id={entry.id} size={20} bundled framed />
+        <div className="plugin-market-dialog-meta">
+          <span>{COPY.publisher} · Latch</span>
+          {version && <CatalogVersions record={record} version={version} status={status} />}
+        </div>
+      </div>
+      <PluginTags entry={entry} />
+      <p className="plugin-market-dialog-summary">{listing.summary}</p>
+      {entry.id === 'release-check' ? (
+        <img className="plugin-market-detail-image" src={releasePreview} alt={COPY.preview} width={734} height={541} />
+      ) : (
+        <BundledPluginPreview id={entry.id} />
+      )}
+      <div className="plugin-market-dialog-fold">
+        <FoldHeader open={about} onOpenChange={setAbout} aria-controls={aboutId}>
+          {COPY.about}
+        </FoldHeader>
+        <Collapse open={about} id={aboutId}>
+          <dl className="plugin-market-facts">
+            <div>
+              <dt>{COPY.use}</dt>
+              <dd>{listing.use}</dd>
+            </div>
+            <div>
+              <dt>{COPY.agent}</dt>
+              <dd>{listing.agent}</dd>
+            </div>
+            <div>
+              <dt>{COPY.access}</dt>
+              <dd>{listing.access}</dd>
+            </div>
+            {manifestName && (
+              <div>
+                <dt>{COPY.identity}</dt>
+                <dd>
+                  {manifestName} · <code>{entry.id}</code>
+                </dd>
+              </div>
+            )}
+          </dl>
+        </Collapse>
+      </div>
+      {preview && (
+        <div className="plugin-market-dialog-fold">
+          <FoldHeader open={files} onOpenChange={setFiles} aria-controls={filesId} meta={formatNumber(preview.bundle.files.length + 1)}>
+            {COPY.files}
+          </FoldHeader>
+          <Collapse open={files} id={filesId} lazy>
+            <div className="creator-plugin-review">
+              <PluginFileViewer bundle={preview.bundle} />
+            </div>
+          </Collapse>
+        </div>
+      )}
+      {children}
     </div>
   )
 }
@@ -203,6 +307,8 @@ export function PluginMarketplace({
   const showAdd = canAdd && (source === 'add' || !showBundled)
   const showTabs = canAdd && showBundled
   const [selected, setSelected] = useState<CatalogEntry | null>(null)
+  // The saved draft the dialog reviews, then what was applied.
+  const [review, setReview] = useState<{ id: string; done?: { name: string; version: string } } | null>(null)
   const [query, setQuery] = useState('')
   const [facet, setFacet] = useState<Facet>('all')
   const [records, setRecords] = useState<PluginPackageSummary[] | null>(null)
@@ -217,20 +323,13 @@ export function PluginMarketplace({
   const addResults = useRef<HTMLDivElement>(null)
   const addPosition = useRef(0)
   const searchField = useRef<HTMLInputElement>(null)
-  const detailHeading = useRef<HTMLHeadingElement>(null)
-  const lastCard = useRef<{ id: string; scrollTop: number } | null>(null)
+  const dialogFor = useRef<string | undefined>(undefined)
   useLayoutEffect(() => {
-    if (!open) return
-    if (selected && !showAdd) {
-      detailHeading.current?.focus({ preventScroll: true })
-    } else if (!showAdd && bundledResults.current) {
-      bundledResults.current.scrollTop = lastCard.current?.scrollTop ?? bundledPosition.current
-      if (lastCard.current) {
-        document.getElementById(titleId + lastCard.current.id)?.focus({ preventScroll: true })
-        lastCard.current = null
-      }
-    }
-  }, [open, selected, showAdd, titleId])
+    dialogFor.current = selected?.id
+  })
+  useLayoutEffect(() => {
+    if (open && !showAdd && bundledResults.current) bundledResults.current.scrollTop = bundledPosition.current
+  }, [open, showAdd])
 
   useEffect(() => {
     if (!canEdit) {
@@ -263,7 +362,8 @@ export function PluginMarketplace({
     storageKey: `latch:catalog-market:${storageKey}`,
     onStage: id => {
       reloadRecords()
-      if (open && !showAdd) onManage(id)
+      // Only the dialog that asked moves on to the draft; a retry from the list stays on the list.
+      if (dialogFor.current === id) setReview({ id })
     },
   })
   const addView = usePluginAddMarketplace({
@@ -276,6 +376,21 @@ export function PluginMarketplace({
     records: records ?? [],
     onStage: reloadRecords,
     onManage,
+    onReview: id => {
+      setSelected(null)
+      setReview({ id })
+    },
+  })
+  const appPages = snapshot.catalog?.features?.appPages === 1
+  const installReview = usePluginInstallReview({
+    id: review?.id,
+    active: open && canEdit && connected && review !== null && review.done === undefined,
+    revisionHint: records?.find(item => item.id === review?.id)?.revision,
+    pageBuilds: appPages,
+    onApplied: done => {
+      reloadRecords()
+      setReview(current => (current ? { ...current, done } : current))
+    },
   })
 
   useLayoutEffect(() => {
@@ -324,35 +439,116 @@ export function PluginMarketplace({
   const installedId = catalogPreview?.installed?.id ?? local?.id
   const status = catalogStatus(local, catalogPreview?.updateStatus)
   const canStage = catalogPreview && status !== 'different-source' && (!catalogPreview.installed || catalogPreview.updateAvailable === true)
+  // This catalog version is already saved as a draft: the dialog reviews that draft instead of saving another.
+  const savedDraft =
+    !canStage && status === 'current' && local?.catalog !== undefined && local.revision !== local.appliedRevision ? local : undefined
   const targetManifest = catalogPreview?.bundle.manifest ?? (selected ? LATCH_CATALOG_MANIFESTS[selected.id] : undefined)
   const listing = selected?.[lang]
   const canCreate = showBundled && !showAdd && canEdit && onCreatePlugin !== undefined
   const createBlocked = connected ? creatorBlockedReason : COPY.createOffline
-  return (
-    <section className="plugin-market" aria-labelledby={titleId}>
-      {showBundled && !showAdd && selected && listing ? (
-        <div className="plugin-market-scroll">
-          <h1 id={titleId} className="sr-only">
-            {SHELL_COPY.marketplace}
-          </h1>
-          <div className="plugin-market-back">
-            <Button variant="ghost" icon={ArrowLeft} disabled={bundledView.stageBusy} onClick={() => setSelected(null)}>
-              {COPY.back}
+  const step = review ? (review.done ? 'done' : 'review') : selected && listing ? 'overview' : null
+  const dialogLocked = bundledView.stageBusy || installReview.locked
+  const closeDialog = () => {
+    if (dialogLocked) return
+    setSelected(null)
+    setReview(null)
+  }
+  const manage = (id: string) => {
+    setSelected(null)
+    setReview(null)
+    onManage(id)
+  }
+  const reviewName = installReview.name ?? records?.find(item => item.id === review?.id)?.name
+  const dialogTitle =
+    listing && (step === 'overview' || review?.id === selected?.id) ? (
+      listing.name
+    ) : review?.done ? (
+      <VisibleText text={review.done.name} />
+    ) : reviewName ? (
+      <VisibleText text={reviewName} />
+    ) : (
+      COPY.reviewDraft
+    )
+  const cancel = (
+    <Button size="md" disabled={dialogLocked} onClick={closeDialog}>
+      {COPY.cancel}
+    </Button>
+  )
+  const dialogFooter =
+    step === 'overview' ? (
+      <>
+        {canEdit && installedId && (
+          <Button size="md" variant="ghost" disabled={!connected || dialogLocked} onClick={() => manage(installedId)}>
+            {COPY.manage}
+          </Button>
+        )}
+        {cancel}
+        {canEdit && canStage && (
+          <Button
+            size="md"
+            variant="primary"
+            loading={bundledView.stageBusy}
+            disabled={!connected || bundledView.stagePending !== null}
+            onClick={bundledView.stageSelected}>
+            {catalogPreview.installed ? COPY.reviewUpdate : COPY.review}
+          </Button>
+        )}
+        {canEdit && savedDraft && (
+          <Button size="md" variant="primary" disabled={!connected} onClick={() => setReview({ id: savedDraft.id })}>
+            {COPY.reviewDraft}
+          </Button>
+        )}
+      </>
+    ) : step === 'review' && review ? (
+      <>
+        {selected && (
+          <Button size="md" variant="ghost" disabled={dialogLocked} onClick={() => setReview(null)}>
+            {COPY.back}
+          </Button>
+        )}
+        {cancel}
+        {installReview.pageBuild ? (
+          <Button size="md" variant="primary" disabled={!connected} onClick={() => manage(review.id)}>
+            {COPY.buildInSettings}
+          </Button>
+        ) : (
+          !installReview.applied && (
+            <Button
+              size="md"
+              variant="primary"
+              loading={installReview.busy}
+              disabled={!connected || !installReview.ready}
+              onClick={installReview.apply}>
+              {installReview.retrying ? COPY.retrySame : COPY.apply}
             </Button>
-          </div>
-          <header className="plugin-market-detail-heading">
-            <div className="plugin-market-detail-identity">
-              <PluginMarketIcon id={selected.id} size={24} bundled framed />
-              <div>
-                <PluginTags entry={selected} />
-                <h2 className="plugin-market-title" ref={detailHeading} tabIndex={-1}>
-                  {listing.name}
-                </h2>
-              </div>
-            </div>
-          </header>
-          {targetManifest && <CatalogVersions record={local} version={targetManifest.version} status={status} />}
-          <p className="plugin-market-introduction">{listing.summary}</p>
+          )
+        )}
+      </>
+    ) : (
+      <Button size="md" variant="primary" onClick={closeDialog}>
+        {COPY.done}
+      </Button>
+    )
+  const dialog = (
+    <Dialog
+      open={open && step !== null}
+      size="xl"
+      className="plugin-market-dialog"
+      secure={step === 'review'}
+      dismissible={!dialogLocked}
+      title={dialogTitle}
+      onClose={closeDialog}
+      {...(step === 'overview' && canEdit && canStage ? { note: COPY.stageHint } : {})}
+      footer={dialogFooter}>
+      {step === 'overview' && selected ? (
+        <CatalogOverview
+          key={selected.id}
+          entry={selected}
+          record={local}
+          status={status}
+          preview={catalogPreview}
+          version={targetManifest?.version}
+          manifestName={targetManifest?.name}>
           {bundledView.previewError && (
             <InlineNotice tone="error" action={<Button onClick={bundledView.retryPreview}>{COPY.retry}</Button>}>
               {bundledView.previewError}
@@ -361,242 +557,199 @@ export function PluginMarketplace({
           {canEdit && connected && !catalogPreview && !bundledView.previewError && <Loading label={COPY.bundleLoading} />}
           {!canEdit && <InlineNotice>{COPY.local}</InlineNotice>}
           {canEdit && !connected && <InlineNotice>{COPY.offline}</InlineNotice>}
-          <div className="plugin-market-detail-content">
-            {selected.id === 'release-check' ? (
-              <img className="plugin-market-detail-image" src={releasePreview} alt={COPY.preview} width={734} height={541} />
-            ) : (
-              <BundledPluginPreview id={selected.id} />
-            )}
-            <div>
-              <dl className="plugin-market-facts">
-                <div>
-                  <dt>{COPY.use}</dt>
-                  <dd>{listing.use}</dd>
-                </div>
-                <div>
-                  <dt>{COPY.agent}</dt>
-                  <dd>{listing.agent}</dd>
-                </div>
-                <div>
-                  <dt>{COPY.access}</dt>
-                  <dd>{listing.access}</dd>
-                </div>
-                {targetManifest && (
-                  <div>
-                    <dt>{COPY.identity}</dt>
-                    <dd>
-                      {targetManifest.name} · <code>{selected.id}</code>
-                    </dd>
-                  </div>
-                )}
-                <div>
-                  <dt>{COPY.publisher}</dt>
-                  <dd>Latch</dd>
-                </div>
-              </dl>
-            </div>
-          </div>
-          {canEdit && (
-            <div className="plugin-market-review">
-              {catalogPreview && <PluginRiskFacts review={catalogPreview.review} />}
-              {status && status !== 'available' && <InlineNotice>{COPY.updateStatus[status]}</InlineNotice>}
-              {stageNotice}
-              {canStage && <p className="plugin-market-note">{COPY.stageHint}</p>}
-              <div className="plugin-market-actions">
-                {installedId && (
-                  <Button disabled={!connected || bundledView.stageBusy} onClick={() => onManage(installedId)}>
-                    {COPY.manage}
-                  </Button>
-                )}
-                {canStage && (
-                  <Button
-                    variant="primary"
-                    loading={bundledView.stageBusy}
-                    disabled={!connected || bundledView.stagePending !== null}
-                    onClick={bundledView.stageSelected}>
-                    {catalogPreview.installed ? COPY.reviewUpdate : COPY.review}
-                  </Button>
-                )}
-              </div>
-            </div>
+          {canEdit && catalogPreview && <PluginRiskFacts review={catalogPreview.review} />}
+          {canEdit && status && status !== 'available' && !savedDraft && <InlineNotice>{COPY.updateStatus[status]}</InlineNotice>}
+          {canEdit && stageNotice}
+        </CatalogOverview>
+      ) : step === 'review' ? (
+        <div className="plugin-market-dialog-body">
+          {!connected && <InlineNotice>{COPY.offline}</InlineNotice>}
+          {installReview.body}
+        </div>
+      ) : review?.done ? (
+        <div className="plugin-market-dialog-done" role="status">
+          <Icon icon={CheckGlyph} size={20} />
+          <span>{COPY.installedVersion(review.done.version)}</span>
+        </div>
+      ) : null}
+    </Dialog>
+  )
+  return (
+    <section className="plugin-market" aria-labelledby={titleId}>
+      {dialog}
+      <header className="plugin-market-header">
+        <div className="plugin-market-heading">
+          <h1 id={titleId} className="plugin-market-title">
+            {showBundled ? SHELL_COPY.marketplace : SHELL_COPY.addPlugin}
+          </h1>
+          {canCreate && (
+            <Button
+              className="plugin-market-create"
+              variant="primary"
+              size="md"
+              icon={PlusGlyph}
+              aria-describedby={createBlocked ? reasonId : undefined}
+              disabled={!!createBlocked}
+              onClick={() => onCreatePlugin(query.trim() || undefined)}>
+              {COPY.create}
+            </Button>
           )}
         </div>
-      ) : (
-        <>
-          <header className="plugin-market-header">
-            <div className="plugin-market-heading">
-              <h1 id={titleId} className="plugin-market-title">
-                {showBundled ? SHELL_COPY.marketplace : SHELL_COPY.addPlugin}
-              </h1>
-              {canCreate && (
-                <Button
-                  className="plugin-market-create"
-                  variant="primary"
-                  size="md"
-                  icon={PlusGlyph}
-                  aria-describedby={createBlocked ? reasonId : undefined}
-                  disabled={!!createBlocked}
-                  onClick={() => onCreatePlugin(query.trim() || undefined)}>
-                  {COPY.create}
-                </Button>
-              )}
-            </div>
-            {showBundled && <p className="plugin-market-introduction">{COPY.introduction}</p>}
-            {canCreate && createBlocked && (
-              <p className="plugin-market-note" id={reasonId}>
-                {createBlocked}
-              </p>
-            )}
-          </header>
-          {showTabs && (
-            <Tabs
-              className="plugin-market-source"
-              label={COPY.source}
-              value={source}
-              options={[
-                { value: 'bundled', label: COPY.bundled, icon: LibraryBig, id: bundledId + '-tab', controls: bundledId },
-                { value: 'add', label: SHELL_COPY.addPlugin, icon: Package, id: addId + '-tab', controls: addId },
-              ]}
-              onValueChange={onSourceChange}
-              disabled={connected && addView.sourceBusy}
-            />
-          )}
-          <div
-            className="plugin-market-panel"
-            id={bundledId}
-            role={showTabs ? 'tabpanel' : undefined}
-            aria-labelledby={showTabs ? bundledId + '-tab' : undefined}
-            hidden={!showBundled || showAdd}>
-            {showBundled && !showAdd && (
-              <>
-                <div className="plugin-market-controls">
-                  <SearchField
-                    ref={searchField}
-                    className="plugin-market-search"
-                    label={COPY.search}
-                    value={query}
-                    onValueChange={value => {
+        {showBundled && <p className="plugin-market-introduction">{COPY.introduction}</p>}
+        {canCreate && createBlocked && (
+          <p className="plugin-market-note" id={reasonId}>
+            {createBlocked}
+          </p>
+        )}
+      </header>
+      {showTabs && (
+        <Tabs
+          className="plugin-market-source"
+          label={COPY.source}
+          value={source}
+          options={[
+            { value: 'bundled', label: COPY.bundled, icon: LibraryBig, id: bundledId + '-tab', controls: bundledId },
+            { value: 'add', label: SHELL_COPY.addPlugin, icon: Package, id: addId + '-tab', controls: addId },
+          ]}
+          onValueChange={onSourceChange}
+          disabled={connected && addView.sourceBusy}
+        />
+      )}
+      <div
+        className="plugin-market-panel"
+        id={bundledId}
+        role={showTabs ? 'tabpanel' : undefined}
+        aria-labelledby={showTabs ? bundledId + '-tab' : undefined}
+        hidden={!showBundled || showAdd}>
+        {showBundled && !showAdd && (
+          <>
+            <div className="plugin-market-controls">
+              <SearchField
+                ref={searchField}
+                className="plugin-market-search"
+                label={COPY.search}
+                value={query}
+                onValueChange={value => {
+                  resetResults()
+                  setQuery(value)
+                }}
+              />
+              <div className="plugin-market-filters" role="group" aria-label={COPY.filter}>
+                {FILTERS.map(value => (
+                  <button
+                    type="button"
+                    key={value}
+                    className="plugin-market-filter"
+                    aria-pressed={facet === value}
+                    onClick={() => {
                       resetResults()
-                      setQuery(value)
-                    }}
-                  />
-                  <div className="plugin-market-filters" role="group" aria-label={COPY.filter}>
-                    {FILTERS.map(value => (
-                      <button
-                        type="button"
-                        key={value}
-                        className="plugin-market-filter"
-                        aria-pressed={facet === value}
-                        onClick={() => {
-                          resetResults()
-                          setFacet(value)
-                        }}>
-                        {FILTER_NAMES[value]}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <section
-                  className="plugin-market-list plugin-market-scroll"
-                  aria-labelledby={titleId + '-featured'}
-                  ref={bundledResults}
-                  tabIndex={0}
-                  onScroll={event => {
-                    bundledPosition.current = event.currentTarget.scrollTop
-                  }}>
-                  <div className="plugin-market-list-heading">
-                    <h2 id={titleId + '-featured'}>{COPY.featured}</h2>
-                    <span role="status">{filtered ? COPY.results(matches.length) : ''}</span>
-                  </div>
-                  {stageNotice}
-                  {matches.length > 0 ? (
-                    <ul className="plugin-market-gallery">
-                      {matches.map(item => {
-                        const record = records?.find(entry => entry.id === item.id)
-                        const available = record?.catalogUpdate
-                        return (
-                          <li key={item.id} className="plugin-market-card">
-                            <BundledPluginPreview id={item.id} />
-                            <div className="plugin-market-card-body">
-                              <h3>
-                                <button
-                                  type="button"
-                                  className="plugin-market-card-heading"
-                                  id={titleId + item.id}
-                                  aria-describedby={`${titleId}${item.id}-description ${titleId}${item.id}-kind`}
-                                  onClick={() => {
-                                    lastCard.current = { id: item.id, scrollTop: bundledResults.current?.scrollTop ?? 0 }
-                                    setSelected(item)
-                                  }}>
-                                  <PluginMarketIcon id={item.id} size={20} bundled />
-                                  <span>{item[lang].name}</span>
-                                  <Icon className="plugin-market-card-arrow" icon={ArrowRight} size={16} />
-                                </button>
-                              </h3>
-                              <p id={titleId + item.id + '-description'}>{item[lang].summary}</p>
-                              <div className="plugin-market-card-meta" id={titleId + item.id + '-kind'}>
-                                <PluginTags entry={item} />
-                                <CatalogVersions
-                                  record={record}
-                                  version={available?.version ?? LATCH_CATALOG_MANIFESTS[item.id]!.version}
-                                  status={catalogStatus(record)}
-                                />
-                              </div>
-                            </div>
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  ) : (
-                    <EmptyState
-                      title={COPY.empty}
-                      action={
-                        <Button
-                          onClick={() => {
-                            resetResults()
-                            setFacet('all')
-                            setQuery('')
-                            searchField.current?.focus()
-                          }}>
-                          {COPY.clear}
-                        </Button>
-                      }
-                    />
-                  )}
-                </section>
-              </>
-            )}
-          </div>
-          {canAdd && (
-            <div
-              className="plugin-market-panel"
-              role={showTabs ? 'tabpanel' : undefined}
-              id={addId}
-              aria-labelledby={showTabs ? addId + '-tab' : undefined}
-              hidden={!showAdd}>
-              {showAdd && (
-                <>
-                  {addView.controls && <div className="plugin-market-controls plugin-market-npm">{addView.controls}</div>}
-                  <div
-                    className="plugin-market-scroll"
-                    ref={addResults}
-                    role="region"
-                    aria-label={COPY.addResults}
-                    tabIndex={0}
-                    onScroll={event => {
-                      if (addView.browsing) addPosition.current = event.currentTarget.scrollTop
+                      setFacet(value)
                     }}>
-                    <div className="plugin-market-npm">
-                      {!connected && <InlineNotice>{COPY.offline}</InlineNotice>}
-                      {addView.content}
-                      {recordStatus}
-                    </div>
-                  </div>
-                </>
-              )}
+                    {FILTER_NAMES[value]}
+                  </button>
+                ))}
+              </div>
             </div>
+            <section
+              className="plugin-market-list plugin-market-scroll"
+              aria-labelledby={titleId + '-featured'}
+              ref={bundledResults}
+              tabIndex={0}
+              onScroll={event => {
+                bundledPosition.current = event.currentTarget.scrollTop
+              }}>
+              <div className="plugin-market-list-heading">
+                <h2 id={titleId + '-featured'}>{COPY.featured}</h2>
+                <span role="status">{filtered ? COPY.results(matches.length) : ''}</span>
+              </div>
+              {step === null && stageNotice}
+              {matches.length > 0 ? (
+                <ul className="plugin-market-gallery">
+                  {matches.map(item => {
+                    const record = records?.find(entry => entry.id === item.id)
+                    const available = record?.catalogUpdate
+                    return (
+                      <li key={item.id} className="plugin-market-card">
+                        <BundledPluginPreview id={item.id} />
+                        <div className="plugin-market-card-body">
+                          <h3>
+                            <button
+                              type="button"
+                              className="plugin-market-card-heading"
+                              id={titleId + item.id}
+                              aria-describedby={`${titleId}${item.id}-description ${titleId}${item.id}-kind`}
+                              aria-haspopup="dialog"
+                              onClick={() => {
+                                setReview(null)
+                                setSelected(item)
+                              }}>
+                              <PluginMarketIcon id={item.id} size={20} bundled />
+                              <span>{item[lang].name}</span>
+                              <Icon className="plugin-market-card-arrow" icon={ArrowRight} size={16} />
+                            </button>
+                          </h3>
+                          <p id={titleId + item.id + '-description'}>{item[lang].summary}</p>
+                          <div className="plugin-market-card-meta" id={titleId + item.id + '-kind'}>
+                            <PluginTags entry={item} />
+                            <CatalogVersions
+                              record={record}
+                              version={available?.version ?? LATCH_CATALOG_MANIFESTS[item.id]!.version}
+                              status={catalogStatus(record)}
+                            />
+                          </div>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              ) : (
+                <EmptyState
+                  title={COPY.empty}
+                  action={
+                    <Button
+                      onClick={() => {
+                        resetResults()
+                        setFacet('all')
+                        setQuery('')
+                        searchField.current?.focus()
+                      }}>
+                      {COPY.clear}
+                    </Button>
+                  }
+                />
+              )}
+            </section>
+          </>
+        )}
+      </div>
+      {canAdd && (
+        <div
+          className="plugin-market-panel"
+          role={showTabs ? 'tabpanel' : undefined}
+          id={addId}
+          aria-labelledby={showTabs ? addId + '-tab' : undefined}
+          hidden={!showAdd}>
+          {showAdd && (
+            <>
+              {addView.controls && <div className="plugin-market-controls plugin-market-npm">{addView.controls}</div>}
+              <div
+                className="plugin-market-scroll"
+                ref={addResults}
+                role="region"
+                aria-label={COPY.addResults}
+                tabIndex={0}
+                onScroll={event => {
+                  if (addView.browsing) addPosition.current = event.currentTarget.scrollTop
+                }}>
+                <div className="plugin-market-npm">
+                  {!connected && <InlineNotice>{COPY.offline}</InlineNotice>}
+                  {addView.content}
+                  {recordStatus}
+                </div>
+              </div>
+            </>
           )}
-        </>
+        </div>
       )}
     </section>
   )

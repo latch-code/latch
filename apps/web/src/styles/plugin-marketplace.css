@@ -457,36 +457,14 @@
   flex: none;
 }
 
-.plugin-market-back {
-  margin-bottom: var(--sp-16);
-}
-
-.plugin-market-review {
-  display: grid;
-  gap: var(--sp-16);
-  margin-block-start: var(--sp-24);
-}
-
-.plugin-market-detail-heading + .plugin-market-versions {
-  margin-block-start: var(--sp-8);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-}
-
 .plugin-market-list > .ui-inline-notice {
   margin-block-end: var(--sp-12);
 }
 
-.plugin-market-detail-heading,
 .plugin-market-detail-identity {
   display: flex;
   align-items: center;
   gap: var(--sp-16);
-}
-
-.plugin-market-detail-heading {
-  justify-content: space-between;
-  flex-wrap: wrap;
 }
 
 .plugin-market-detail-identity .plugin-market-tags {
@@ -524,37 +502,139 @@
   line-height: var(--lh-caption);
 }
 
-.plugin-market-detail-content {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-  align-items: start;
-  gap: var(--sp-32);
-  margin-top: var(--sp-24);
+/*
+ * A plugin's dialog: identity and version, tags, summary, cover, folds for what it does and its files, then the review.
+ * It sits inside .plugin-market so the cover's tone tokens apply; on a phone it is a sheet at full height.
+ */
+.ui-sheet.plugin-market-dialog > .ui-sheet-surface {
+  height: 92dvh;
+  max-height: 92dvh;
 }
 
-.plugin-market-detail-content .plugin-market-preview,
+.ui-sheet.plugin-market-dialog .ui-dialog-footer {
+  flex-wrap: wrap;
+}
+
+.ui-sheet.plugin-market-dialog .ui-dialog-note {
+  flex-basis: 100%;
+  padding-inline-start: 0;
+}
+
+.plugin-market-dialog-body {
+  display: grid;
+  gap: var(--sp-16);
+  min-width: 0;
+}
+
+.plugin-market-dialog-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  min-width: 0;
+}
+
+.plugin-market-dialog-identity .plugin-market-icon {
+  width: var(--sp-40);
+  height: var(--sp-40);
+  border-radius: var(--r-8);
+}
+
+.plugin-market-dialog-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-4) var(--sp-8);
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+
+.plugin-market-dialog-meta > span::after {
+  content: '·';
+  margin-inline-start: var(--sp-8);
+  color: var(--muted);
+}
+
+.plugin-market-dialog .plugin-market-tags {
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+
+.plugin-market-dialog-summary {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-prose);
+  line-height: var(--lh-prose);
+}
+
+.plugin-market-dialog .plugin-market-preview,
 .plugin-market-detail-image {
   width: 100%;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-12);
 }
 
-.plugin-market-detail-content .plugin-market-preview {
-  min-height: 260px;
+.plugin-market-dialog .plugin-market-preview {
+  min-height: 200px;
 }
 
-.plugin-market-detail-content .market-feature {
+.plugin-market-dialog .market-feature {
   --feature-small: var(--fs-caption);
   --feature-text: var(--fs-ui);
 }
 
-.plugin-market-detail-content .market-feature-content {
+.plugin-market-dialog .market-feature-content {
   width: min(100%, 280px);
 }
 
 .plugin-market-detail-image {
   display: block;
   height: auto;
+}
+
+.plugin-market-dialog-fold {
+  border-block: 1px solid var(--line);
+  padding-block: var(--sp-4);
+}
+
+.plugin-market-dialog-fold + .plugin-market-dialog-fold {
+  border-block-start: 0;
+}
+
+.plugin-market-dialog-fold .ui-fold-header {
+  min-height: var(--sp-40);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.plugin-market-dialog-fold .plugin-market-facts,
+.plugin-market-dialog-fold .creator-plugin-review {
+  padding-block: var(--sp-4) var(--sp-12);
+}
+
+.plugin-market-dialog-fold .plugin-market-facts div:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.plugin-install-review {
+  display: grid;
+  gap: var(--sp-16);
+  min-width: 0;
+}
+
+.plugin-market-dialog-done {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+
+.plugin-market-dialog-done .ui-icon {
+  color: var(--accent-ink);
 }
 
 .plugin-market-facts {
@@ -599,12 +679,6 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--sp-8);
-}
-
-@container (max-width: 740px) {
-  .plugin-market-detail-content {
-    grid-template-columns: 1fr;
-  }
 }
 
 @container (max-width: 475px) {

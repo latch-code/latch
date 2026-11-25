@@ -262,13 +262,15 @@ describe('page drafts from a session, built by the Host (browser)', () => {
         const handoff = catalog.getByRole('button', { name: '交接清单', exact: true })
         expect(await catalog.getByRole('button', { name: '发布清单面板', exact: true }).count()).toBe(0)
         await handoff.click()
-        await catalog.getByRole('heading', { name: '交接清单', exact: true }).waitFor()
-        await catalog.getByText('运行权限', { exact: true }).waitFor()
-        await catalog.getByText('安装名称与标识', { exact: true }).waitFor()
-        await catalog.getByText('请在这台 Mac 的 Latch 桌面端安装插件。', { exact: true }).waitFor()
-        expect(await catalog.getByRole('button', { name: '审阅并安装', exact: true }).count()).toBe(0)
+        const details = page.getByRole('dialog', { name: '交接清单', exact: true })
+        await details.waitFor()
+        await details.getByText('运行权限', { exact: true }).waitFor()
+        await details.getByText('安装名称与标识', { exact: true }).waitFor()
+        await details.getByText('请在这台 Mac 的 Latch 桌面端安装插件。', { exact: true }).waitFor()
+        expect(await details.getByRole('button', { name: '审阅并安装', exact: true }).count()).toBe(0)
         await noHorizontalOverflow(page, catalog)
-        await catalog.getByRole('button', { name: '返回市场', exact: true }).click()
+        await details.getByRole('button', { name: '取消', exact: true }).click()
+        await details.waitFor({ state: 'hidden' })
         expect(await search.inputValue()).toBe('交接')
         expect(await skills.getAttribute('aria-pressed')).toBe('true')
         await expect.poll(() => handoff.evaluate(element => element === document.activeElement)).toBe(true)
@@ -321,7 +323,6 @@ describe('page drafts from a session, built by the Host (browser)', () => {
         }
         await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
         const marketEntry = page.getByRole('button', { name: '插件市场', exact: true })
-        const browse = page.getByRole('button', { name: '浏览插件', exact: true })
         const market = page.getByRole('region', { name: '插件市场', exact: true })
         const packageRequests: string[] = []
         page.on('request', request => {
@@ -332,7 +333,6 @@ describe('page drafts from a session, built by the Host (browser)', () => {
         if (viewport.width < 768) await phoneStartScreen(page)
         const composer = page.getByRole('textbox', { name: '新会话消息', exact: true })
         await composer.waitFor()
-        expect(await browse.count()).toBe(0)
 
         const settings = await openSettings(page)
         const loadingPlugins = page.waitForResponse(response => new URL(response.url()).pathname === '/link/api/plugins')
@@ -348,7 +348,6 @@ describe('page drafts from a session, built by the Host (browser)', () => {
         expect(await market.count()).toBe(0)
         expect(await marketEntry.count()).toBe(0)
         await composer.waitFor()
-        expect(await browse.count()).toBe(0)
         const handoff = '把交接事项整理成下一步。'
         await composer.fill(handoff)
         const sent = page.waitForResponse(
@@ -565,7 +564,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('page drafts on t
         await expect.poll(() => promptValue(prompt)).toBe(request)
         await switchMode('常规')
         await expect.poll(() => promptValue(prompt)).toBe(regular)
-        const browsePlugins = home.getByRole('button', { name: '浏览插件', exact: true })
+        const browsePlugins = window.locator('#session-navigation').getByRole('button', { name: '插件市场', exact: true })
         await browsePlugins.press('Enter')
         const marketplace = window.getByRole('region', { name: '插件市场', exact: true })
         const marketSearch = marketplace.getByRole('searchbox', { name: '搜索任务或插件', exact: true })

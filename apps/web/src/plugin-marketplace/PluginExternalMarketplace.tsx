@@ -277,11 +277,13 @@ export function PluginExternalMarketplace({
   external,
   disabled,
   onManage,
+  onReview,
   browseFocus,
 }: {
   external: ReturnType<typeof usePluginExternalMarketplace>
   disabled: boolean
   onManage: (id: string) => void
+  onReview: (id: string) => void
   browseFocus: () => void
 }) {
   const { found, preview, loading, busy, error, pending, stagedId } = external
@@ -300,7 +302,7 @@ export function PluginExternalMarketplace({
   const canStage = preview && (!installed || preview.updateAvailable === true)
   return (
     <>
-      {stagedId && <InlineNotice action={<Button onClick={() => onManage(stagedId)}>{COPY.review}</Button>}>{COPY.stageHint}</InlineNotice>}
+      {stagedId && <InlineNotice action={<Button onClick={() => onReview(stagedId)}>{COPY.review}</Button>}>{COPY.stageHint}</InlineNotice>}
       {loading && <Loading label={COPY.loading} />}
       {error && (
         <InlineNotice

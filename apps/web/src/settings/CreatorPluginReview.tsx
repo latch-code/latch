@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { escapeSecurityText, type PluginPackageBundle, type PluginPackageSummary } from '@latch/protocol'
 import { Button, InlineNotice, ValuePicker } from '@latch/ui'
-import { hasHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { handDraft } from '../core/draftHandoff.ts'
+import { HighlightedCode } from '../preview/HighlightedCode.tsx'
+import { languageForPath } from '../preview/highlight-protocol.ts'
 import { defineCopy } from '../core/i18n.ts'
 import { SettingsGroup } from './common.tsx'
 import { PluginReachGroup } from './PluginAssetsSettings.tsx'
@@ -44,6 +45,37 @@ const COPY = defineCopy(
   },
 )
 
+/**
+ * Every shipped file and the manifest, one at a time: the source is text with syntax colours from the shared highlighter
+ * (role spans, hidden characters made visible), never markup.
+ */
+export function PluginFileViewer({ bundle }: { bundle: PluginPackageBundle }) {
+  const { manifest, files } = bundle
+  const manifestPath = 'latch-plugin.json'
+  const paths = [...files.map(file => file.path), manifestPath]
+  const [selected, setSelected] = useState(manifest.host?.[0] ?? manifest.panels?.[0]?.entry ?? manifest.skills?.[0]?.file ?? manifestPath)
+  const path = paths.includes(selected) ? selected : manifestPath
+  const sourceText = path === manifestPath ? JSON.stringify(manifest, null, 2) : (files.find(file => file.path === path)?.content ?? '')
+  return (
+    <>
+      <ValuePicker
+        label={COPY.file}
+        value={path}
+        options={paths.map(file => ({ value: file, label: escapeSecurityText(file) }))}
+        onValueChange={setSelected}
+      />
+      <pre
+        className="creator-plugin-source"
+        tabIndex={0}
+        aria-label={escapeSecurityText(path)}
+        dir="ltr"
+        data-path={escapeSecurityText(path)}>
+        <HighlightedCode key={path} code={sourceText} language={languageForPath(path)} />
+      </pre>
+    </>
+  )
+}
+
 /** Source is displayed as text. Only the Host can activate this exact revision after the person chooses Apply. */
 export function CreatorPluginReview({
   bundle,
@@ -62,13 +94,7 @@ export function CreatorPluginReview({
   onUpdate?: () => void
   onOpenSession?: () => void
 }) {
-  const { manifest, files } = bundle
-  const manifestPath = 'latch-plugin.json'
-  const paths = [...files.map(file => file.path), manifestPath]
-  const [selected, setSelected] = useState(manifest.host?.[0] ?? manifest.panels?.[0]?.entry ?? manifest.skills?.[0]?.file ?? manifestPath)
-  const path = paths.includes(selected) ? selected : manifestPath
-  const pathLabel = escapeSecurityText(path)
-  const sourceText = path === manifestPath ? JSON.stringify(manifest, null, 2) : (files.find(file => file.path === path)?.content ?? '')
+  const { manifest } = bundle
   const source = record.source
   const canReturn = source && onOpenSession
   const title = record.npm
@@ -82,15 +108,7 @@ export function CreatorPluginReview({
     <SettingsGroup title={title} bare>
       <div className="creator-plugin-review">
         <PluginReachGroup reach={packageReach(manifest, record)} />
-        <ValuePicker
-          label={COPY.file}
-          value={path}
-          options={paths.map(file => ({ value: file, label: escapeSecurityText(file) }))}
-          onValueChange={setSelected}
-        />
-        <pre className="creator-plugin-source" tabIndex={0} aria-label={pathLabel}>
-          {hasHiddenCharacters(sourceText) ? <VisibleText text={sourceText} /> : sourceText}
-        </pre>
+        <PluginFileViewer bundle={bundle} />
         {error && (
           <InlineNotice
             tone="error"

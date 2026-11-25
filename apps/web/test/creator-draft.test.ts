@@ -74,12 +74,14 @@ describe('drafts delivered by a creator chat', () => {
     bundle.manifest.host = [path]
     bundle.files[0] = { path, content: plain }
     const render = () => renderToStaticMarkup(createElement(CreatorPluginReview, { bundle, record: summary, locked: false, error: '' }))
-    expect(render()).toContain('>' + plain + '</pre>')
+    // The highlighter reads line endings as \n; every other character is shown as written.
+    const shown = plain.replace('\r\n', '\n')
+    expect(render()).toContain('>' + shown + '</pre>')
     bundle.files[0].content = marked
     const page = render()
     expect(page).toContain('aria-label="host-\\u{200B}\\u{0009}.mjs"')
     expect(page).toContain('>host-\\u{200B}\\u{0009}.mjs<')
-    expect(page).toContain(plain + '\n\t// Inspect <span class="hidden-char"')
+    expect(page).toContain(shown + '\n\t// Inspect <span class="hidden-char"')
     expect(page).toContain('>\\u{202E}</span>this comment')
     expect(page).not.toMatch(/[\u200B\u202E]/u)
     expect(bundle.files[0]).toEqual({ path, content: marked })

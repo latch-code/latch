@@ -90,7 +90,6 @@ const COMPOSER_COPY = defineCopy(
     pickProject: '选一个项目',
     place: '在哪里开始',
     purpose: '模式',
-    browsePlugins: '浏览插件',
     regular: '常规',
     creation: '创造模式',
     creatorTitle: '想为 Latch 做什么？',
@@ -117,7 +116,6 @@ const COMPOSER_COPY = defineCopy(
     pickProject: 'Choose a project',
     place: 'Where it starts',
     purpose: 'Mode',
-    browsePlugins: 'Browse plugins',
     regular: 'Standard',
     creation: 'Creation mode',
     creatorTitle: 'What should we make for Latch?',
@@ -806,11 +804,6 @@ export function SessionComposer({
             ]}
           />
         </span>
-      )}
-      {base.canBrowseMarketplace && !base.board && (
-        <Button variant="ghost" size="xs" data-marketplace-nav="" onClick={base.openMarketplace}>
-          {COMPOSER_COPY.browsePlugins}
-        </Button>
       )}
       {!base.creator && worktreeOffer && (
         <FolderControl
