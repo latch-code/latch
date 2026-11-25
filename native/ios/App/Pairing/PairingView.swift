@@ -29,18 +29,26 @@ struct PairingView: View {
     @ViewBuilder private var content: some View {
         switch model.pairing {
         case nil: PairingScanner(close: close)
-        case .connecting:
+        case .connecting, .reconnecting:
             PairingStep {
                 ProgressView().controlSize(.large)
                 Text("正在连接 Mac…").font(.title3.weight(.semibold))
                 Button("取消") { model.cancelPairing(); close() }
             }
-        case .confirming:
+        case let .confirming(comparisonCode):
             PairingStep {
-                Image(systemName: "laptopcomputer").font(.system(size: 44)).foregroundStyle(.secondary)
-                Text("在 Mac 上确认").font(.title2.weight(.semibold))
-                Text("在 Mac 的系统窗口中，用 Touch ID 或登录密码允许这台设备。").foregroundStyle(.secondary).multilineTextAlignment(.center)
-                Button("取消") { model.cancelPairing(); close() }
+                if let code = comparisonCode {
+                    Text("核对 Mac 上的数字").font(.title2.weight(.semibold))
+                    Text(verbatim: code).font(.largeTitle.monospacedDigit().weight(.semibold)).privacySensitive()
+                        .accessibilityLabel("核对码 \(code.map(String.init).joined(separator: " "))")
+                    Text("仅当 Mac 的系统窗口也显示这六位数字时，才在 Mac 上允许连接。").foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Button("数字不一致，取消连接", role: .cancel) { model.cancelPairing(); close() }
+                } else {
+                    Image(systemName: "laptopcomputer").font(.system(size: 44)).foregroundStyle(.secondary)
+                    Text("在 Mac 上确认").font(.title2.weight(.semibold))
+                    Text("在 Mac 的系统窗口中，用 Touch ID 或登录密码允许这台设备。").foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Button("取消") { model.cancelPairing(); close() }
+                }
             }
         case let .connected(name):
             PairingStep {

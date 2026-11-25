@@ -21,7 +21,7 @@ import { json, jsonBody, KIB, optionalJsonBody, safeDecode } from '../http-util.
 import type { HostIdentity } from '../identity.ts'
 import type { ListenerContext } from '../listeners.ts'
 import { NATIVE_BULK, startNativeHost, type NativeOpening } from '../native.ts'
-import { NativeNetwork } from '../native-network.ts'
+import { NativeNetwork, type NativePairingProof } from '../native-network.ts'
 import { MacNetworkBackend, type NativeNetworkBackend } from '../native-network-backend.ts'
 import { NativeNetworks } from '../native-networks.ts'
 import { NativeSettings } from '../native-settings.ts'
@@ -82,7 +82,7 @@ export interface NativeRoutes extends RouteModule {
   /** The LAN addresses address books offer phones. */
   lan(): readonly NativeLanAddress[]
   /** The proximity gate for a phone's pairing request, on the socket it came over. */
-  pairingNearby(opening: NativeOpening, gatewayHash: Uint8Array): Promise<string | false>
+  pairingNearby(opening: NativeOpening, gatewayHash: Uint8Array | undefined, compareCode: boolean): Promise<NativePairingProof>
   /** Marks a network known, once a phone proven on it has paired. */
   rememberNetwork(networkHash: string): void
   /** Makes the network watcher look again, after a revocation or a discovery-key rotation. */
@@ -832,10 +832,10 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
     enabled: () => nativeHost?.enabled ?? false,
     port: () => nativeHost?.port,
     lan: () => nativeNetwork?.lan() ?? [],
-    async pairingNearby(opening, gatewayHash) {
+    async pairingNearby(opening, gatewayHash, compareCode) {
       if (opening.listener.listener !== 'native-direct' || !opening.pairing) return false
-      if (options.nativeNearby) return (await options.nativeNearby(opening, gatewayHash)) ? '' : false
-      return nativeNetwork?.pairingNearby(opening, gatewayHash) ?? false
+      if (options.nativeNearby) return gatewayHash && (await options.nativeNearby(opening, gatewayHash)) ? '' : false
+      return nativeNetwork?.pairingNearby(opening, gatewayHash, compareCode) ?? false
     },
     rememberNetwork(networkHash) {
       void nativeNetwork?.remember(networkHash).catch(() => {})

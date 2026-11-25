@@ -57,6 +57,8 @@ import {
 } from '@latch/protocol'
 import { startTestHost } from './helpers/host.ts'
 import { startNativeHost } from '../src/native.ts'
+import { NativeNetwork } from '../src/native-network.ts'
+import { nativeComparisonCode } from '../src/auth.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
 import { base32 } from '../src/crypto.ts'
 import { shapeContent, textShape } from '../src/files/edit.ts'
@@ -1550,6 +1552,35 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     const v6 = Buffer.from(await gatewayHash(nodeCrypto, 'fd00::2', 64, 'fe80::1')).toString('hex')
     expect(await gateway({ peer: 'fd00::2', interfaces: [{ address: 'fd00::9', mask: v6Mask }], routers: ['fe80::1'] })).toBe(v6)
   })
+  it('matches the Mac pairing comparison code using the phone keys and fresh enrollment', async () => {
+    const { pairing } = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/link-v1.json'), 'utf8')) as {
+      pairing: { connectionSpki: string; verificationSpki: string }
+    }
+    const { connectionSpki, verificationSpki } = pairing
+    const request = { host: 'host_fixture', enrollment: 'enr_fixture', nonce: 'nonce_fixture_90000', connectionSpki, verificationSpki }
+    const codes = []
+    for (const update of [
+      {},
+      { host: 'another_Mac' },
+      { enrollment: 'another_enrollment' },
+      { nonce: 'another_nonce' },
+      { connectionSpki: verificationSpki },
+      { verificationSpki: connectionSpki },
+    ]) {
+      const input = { ...request, ...update }
+      const mac = nativeComparisonCode(
+        input.host,
+        input.enrollment,
+        input.nonce,
+        Buffer.from(input.connectionSpki, 'hex').toString('base64url'),
+        Buffer.from(input.verificationSpki, 'hex').toString('base64url'),
+      )
+      expect(await invoke({ ...input, operation: 'pairingComparison' })).toEqual({ code: mac })
+      codes.push(mac)
+    }
+    expect(codes[0]).toBe('036278')
+    expect(new Set(codes).size).toBe(codes.length)
+  })
   it('accepts a root proof only for the pinned root, nonce, actual transport key and system clock', async () => {
     const rootKey = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }),
       transport = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
@@ -1580,6 +1611,48 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     ])
       await expect(invoke({ ...input, ...patch })).rejects.toThrow('rejected')
   })
+  it('compares the routed Swift enrollment with the Mac prompt before approval and reconnects with the enrolled device certificate', async () => {
+    // The physical route is simulated; the QR, TLS sockets, enrollment, confirmation and registered connection are real protocol flows.
+    const gate = vi
+      .spyOn(NativeNetwork.prototype, 'pairingNearby')
+      .mockImplementation(async (opening, gateway, compareCode) =>
+        opening.pairing && opening.listener.listener === 'native-direct' && gateway === undefined && compareCode
+          ? { compareCode: true }
+          : false,
+      )
+    const host = await startTestHost({
+      native: { host: '127.0.0.1', port: 0 },
+      nativeNearby: undefined,
+      nativeNetwork: async () => {
+        throw new Error('No physical network in this fixture')
+      },
+    })
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+      host.presence.mode = 'manual'
+      const marker = join(host.root, 'swift-comparison-digest')
+      const compareOnMac = async () => {
+        await vi.waitFor(() => expect(existsSync(marker)).toBe(true), { timeout: 8_000 })
+        const preview = host.presence.requests.at(-1)!.preview
+        expect(preview.subject.form).toBe('device.enroll-native-compare')
+        const code = /^核对手机上的 ([0-9]{6})，相同才允许连接这台 Mac$/u.exec(preview.reason)?.[1]
+        expect(code).toBeDefined()
+        expect((await readFile(marker)).equals(createHash('sha256').update(code!).digest())).toBe(true)
+        host.presence.approveNext()
+      }
+      const [result] = await Promise.all([
+        invoke({ operation: 'nativePair', payload: invitation.payload, port: host.host.nativePort, comparisonMarker: marker }),
+        compareOnMac(),
+      ])
+      expect(gate).toHaveBeenCalledOnce()
+      expect(result.registeredSnapshot).toBe(200)
+      expect(host.host.security.devices.get(String(result.deviceId))).toMatchObject({ status: 'active', listener: 'native-direct' })
+    } finally {
+      gate.mockRestore()
+      await host.close()
+    }
+  }, 20_000)
   it.each([0, 8])(
     'performs the native lifecycle and recovers a signed tombstone after %i days',
     async days => {
@@ -2515,6 +2588,47 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       await expect(invoke({ operation: 'relayFrames', chunks: [hex] })).rejects.toThrow('rejected')
     }
   })
+  it('admits a routed private direct hint on a live LAN while excluding local, broadcast, link-local, shared and public destinations', async () => {
+    const lan = { address: '0a000004', mask: 'ffffff00' }
+    const targets = [
+      '0a00000a', // Same LAN.
+      '0a01000a', // Another private subnet.
+      '0a01000b', // Another address of this phone.
+      '0a000000',
+      '0a0000ff',
+      '7f000001',
+      'a9fe0101',
+      '64400001',
+      '08080808',
+      'e00000fb',
+    ]
+    const round = { operation: 'directPeers', rows: [lan], own: [lan.address, '0a01000b'], targets }
+    expect(await invoke(round)).toEqual({
+      local: [true, false, false, false, false, false, false, false, false, false],
+      routed: [true, true, false, false, false, false, false, false, false, false],
+    })
+    expect(await invoke({ ...round, rows: [], targets: ['0a01000a'] })).toEqual({ local: [false], routed: [false] })
+    expect(
+      await invoke({
+        ...round,
+        rows: [{ address: 'fd000000000000010000000000000004', mask: 'ffffffffffffffff0000000000000000' }],
+        targets: ['fd000000000000020000000000000005', 'fe800000000000000000000000000001', 'fd000ec2000000000000000000000254'],
+      }),
+    ).toEqual({ local: [false, false, false], routed: [true, false, false] })
+  })
+  it('reuses an installed direct hint only on the current network, within the signed deadline and without renewing it on a retry', async () => {
+    expect(await invoke({ operation: 'directHintLifetime' })).toEqual({
+      sameRequest: true,
+      confirmed: 600,
+      retry: 600,
+      onlyQR: 120,
+      shortBook: 60,
+      removedFromBook: true,
+      expired: true,
+      newNetwork: true,
+      wrongPort: true,
+    })
+  })
   it('matches the anonymous discovery and gateway vectors without historical or textual address ambiguity', async () => {
     const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/link-v1.json'), 'utf8')) as {
       discovery: {
@@ -2978,6 +3092,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       )
       expect(result).toMatchObject({
         lateDirectWins: true,
+        rememberedInstalledDirectOnly: true,
         emptyBrowseLeavesNoMemory: true,
         relayStartsAtOnce: true,
         relayCooldown: { ordinaryDialSkipsCooling: true, readyRelayPreferred: true, onlyRelayRetried: true, directStillCools: true },

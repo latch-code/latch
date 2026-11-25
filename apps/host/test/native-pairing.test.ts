@@ -225,6 +225,59 @@ it('asks for one confirmation naming the escaped device, and grants the fixed re
   })
 })
 
+it.each(['approve', 'deny'] as const)(
+  'binds the routed comparison to this enrollment and both device keys when the person chooses %s',
+  async decision => {
+    const t = await host()
+    const invited = await qr(t)
+    const device = phone()
+    const request = device.body(invited.code)
+    const enrollments = t.host.security.enrollments
+    const connection = DIRECT(t)
+    const context = { nearby: vi.fn(async () => ({ compareCode: true as const })), budget() {}, auditFailed() {} }
+    await expect(enrollments.create(request, connection, undefined, context)).rejects.toMatchObject({ code: 'pairing-not-nearby' })
+    expect(t.presence.requests).toHaveLength(0)
+    const enrollment = await enrollments.create({ ...request, compareCode: true }, connection, undefined, context)
+    const nonce = enrollment.nonce!
+    const statement = [
+      'latch-native-compare-v1',
+      t.host.hostId,
+      enrollment.id,
+      nonce,
+      request.publicKey,
+      request.native.verificationKey,
+    ].join('\n')
+    const code = String(createHash('sha256').update(statement).digest().readUInt32BE() % 1_000_000).padStart(6, '0')
+    expect(enrollment).toMatchObject({ compareCode: true, status: 'pending' })
+    expect(enrollment.reason).toBeUndefined()
+    expect(enrollments.waiting().find(item => item.id === enrollment.id)?.reason).toBeUndefined()
+    expect(enrollments.status(enrollment.id, connection).reason).toBeUndefined()
+    expect(t.presence.requests.at(-1)!.preview.reason).toBe(`核对手机上的 ${code}，相同才允许连接这台 Mac`)
+    const signature = device.signature(t, { id: enrollment.id, nonce })
+    expect(() => enrollments.prepareNative(enrollment.id, signature, connection)).toThrow()
+    const otherConnection = await open(t, invited)
+    expect((await otherConnection.request('GET', '/link/api/native/pairing')).body).toEqual({ enrollment: null })
+    expect((await otherConnection.request('GET', `/link/api/enrollments/${enrollment.id}`)).status).toBe(401)
+    if (decision === 'deny') {
+      t.presence.denyNext()
+      await vi.waitFor(() => expect(enrollments.status(enrollment.id, connection).status).toBe('denied'))
+      await expect(enrollments.complete(enrollment.id, signature, connection)).rejects.toMatchObject({ code: 'enrollment-denied' })
+      expect(t.host.security.devices.list().filter(item => item.listener === 'native-direct')).toEqual([])
+      const log = (await auditLines(t)).join('\n')
+      expect(log).not.toContain('核对手机上的')
+      expect(log).not.toContain(JSON.stringify(code))
+      return
+    }
+    t.presence.approveNext()
+    await vi.waitFor(() => expect(enrollments.status(enrollment.id, connection).status).toBe('approved'))
+    const result = await enrollments.complete(enrollment.id, signature, connection)
+    expect(result.network).toBeUndefined()
+    expect(result.device.status).toBe('active')
+    await t.host.security.devices.revoke(result.device.id, 'manual', { listener: 'host' })
+    await expect(enrollments.complete(enrollment.id, signature, connection)).rejects.toMatchObject({ code: 'unauthorized' })
+  },
+)
+
 it('pairs while a saved relay address is outside the address-book grammar, signing a book with the other relays', async () => {
   // Built-in entries reach relays.json through the saved schema, like a file written before the shared grammar.
   const good = { relayId: 'a'.repeat(32), kind: 'self' as const, url: 'https://relay.example/', spkiHash: 'b'.repeat(64) }

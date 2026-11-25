@@ -34,6 +34,10 @@ export const REASON_FORMS: Readonly<Record<PresenceReasonForm, ReasonForm>> = {
   /** A device that is not pairing as a phone, by the name it gave: the desktop app, a browser on any listener. */
   'device.enroll-named': { actions: ['device.enroll'], segments: DEVICE_CONNECTS },
   'device.enroll-native': { actions: ['device.enroll-native'], segments: DEVICE_CONNECTS },
+  'device.enroll-native-compare': {
+    actions: ['device.enroll-native'],
+    segments: ['核对手机上的 ', { slot: 'code', max: 6 }, '，相同才允许连接这台 Mac'],
+  },
   'device.grant': { actions: ['device.grant'], segments: ['为「', DEVICE, '」增加权限：', { slot: 'change', max: 40 }] },
   /** A model-service address, or one address a policy change adds: either way Latch may then connect to it. */
   'origin.confirm': {

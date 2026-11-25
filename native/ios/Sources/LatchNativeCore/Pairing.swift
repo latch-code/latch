@@ -200,6 +200,8 @@ public struct NativeEnrollment: Sendable {
     public let expiresAt: Date
     /** Cancelled because another device presented a QR of the same pairing sheet. */
     public let contended: Bool
+    /** Computed with this phone's own keys for a routed enrollment. Never taken from the Host's display text. */
+    public let comparisonCode: String?
 }
 public struct PreparedNativeDevice: Codable, Sendable {
     public let hostId: String
@@ -222,6 +224,7 @@ public actor NativePairing {
     private let invitation: PairingInvitation
     private let keys: any NativeIdentityProvider
     private var busy = false
+    private var started: NativeEnrollment?
     /** What the Mac calls itself, read while completing. */
     public private(set) var hostName: String?
     public init(invitation: PairingInvitation, keys: any NativeIdentityProvider) throws {
@@ -233,19 +236,32 @@ public actor NativePairing {
      * Presents this phone's keys. The Host answers with the phone's own enrollment when it already has one, so the same
      * request is how a resumed draft finds its place; other keys on a spent QR burn it.
      */
-    public func begin(on connection: NativeHTTPConnection, name: String, gatewayHash: Data) async throws -> NativeEnrollment {
+    public func begin(on connection: NativeHTTPConnection, name: String, gatewayHash: Data?, allowComparison: Bool = false) async throws -> NativeEnrollment {
         guard !busy else { throw NativeFailure.unavailable }; busy = true; defer { busy = false }
-        guard !name.isEmpty, name.count <= 80, !name.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }), gatewayHash.count == 32 else { throw NativeFailure.invalidRecord }
+        guard !name.isEmpty, name.count <= 80, !name.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }),
+              gatewayHash.map({ $0.count == 32 }) ?? allowComparison else { throw NativeFailure.invalidRecord }
         let identity = try keys.identity()
-        let body: [String: Any] = ["name": name, "publicKey": LinkBytes.base64url(keys.connectionSpki), "invitation": invitation.invitation,
-            "gatewayHash": LinkBytes.hex(gatewayHash),
+        var body: [String: Any] = ["name": name, "publicKey": LinkBytes.base64url(keys.connectionSpki), "invitation": invitation.invitation,
             "native": ["certificate": identity.pem, "verificationKey": LinkBytes.base64url(keys.verificationSpki)]]
+        if allowComparison { body["compareCode"] = true }
+        if let gatewayHash { body["gatewayHash"] = LinkBytes.hex(gatewayHash) }
         let response: NativeHTTPResponse
         do { response = try await connection.request(.post, path: "/link/api/enrollments", body: JSONSerialization.data(withJSONObject: body)) }
         catch { throw NativeFailure.resultUnknown }
         guard response.status == 202 else { throw refusal(response) }
         guard let enrollment = try object(response)["enrollment"] as? [String: Any] else { throw NativeFailure.resultUnknown }
-        return try view(enrollment)
+        let current = try view(enrollment)
+        guard gatewayHash != nil || current.comparisonCode != nil else { throw NativePairingFailure.notNearby }
+        guard allowComparison || current.comparisonCode == nil else { throw NativeFailure.identityMismatch }
+        started = current
+        return current
+    }
+    /** The Host chooses its enrollment nonce after receiving the two phone keys. */
+    public static func comparisonCode(hostId: String, enrollmentId: String, nonce: String, connectionSpki: Data, verificationSpki: Data) -> String {
+        let text = ["latch-native-compare-v1", hostId, enrollmentId, nonce, LinkBytes.base64url(connectionSpki),
+            LinkBytes.base64url(verificationSpki)].joined(separator: "\n")
+        let number = LinkBytes.hash(Data(text.utf8)).prefix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+        return String(format: "%06u", number % 1_000_000)
     }
     private func refusal(_ response: NativeHTTPResponse) -> Error {
         switch (try? object(response))?["error"] as? String {
@@ -267,6 +283,7 @@ public actor NativePairing {
         guard let value = try await own(connection) else { throw NativeFailure.unavailable }
         let enrollment = try view(value)
         guard ["approved", "completed"].contains(enrollment.status) else { throw NativeFailure.unavailable }
+        try Task.checkCancellation()
         let text = Data("latch-enroll-v1\n\(invitation.hostId)\n\(enrollment.id)\n\(enrollment.nonce)".utf8)
         let signature = try LinkBytes.fixed(keys.signEnrollment(text), 64)
         let body = try JSONSerialization.data(withJSONObject: ["signature": LinkBytes.base64url(signature)])
@@ -282,6 +299,7 @@ public actor NativePairing {
             signedAddressBook: encoded, bookGeneration: book.generation, bookHash: book.payloadHash)
         hostName = prepared["hostName"] as? String
         try await persist(device)
+        try Task.checkCancellation()
         let completed: NativeHTTPResponse
         do { completed = try await connection.request(.post, path: "/link/api/enrollments/\(enrollment.id)/complete", body: body) }
         catch { throw NativeFailure.resultUnknown }
@@ -305,13 +323,21 @@ public actor NativePairing {
         return item
     }
     private func view(_ value: [String: Any]) throws -> NativeEnrollment {
-        guard Set(value.keys).isSubset(of: ["id", "status", "fingerprint", "nonce", "expiresAt", "hashDisplay", "reason", "contended", "scopes", "dataScope"]),
+        guard Set(value.keys).isSubset(of: ["id", "status", "fingerprint", "nonce", "expiresAt", "hashDisplay", "reason", "contended", "scopes", "dataScope", "compareCode"]),
               let id = value["id"] as? String, LinkBytes.matches(id, "[A-Za-z0-9_-]{1,64}"),
               let status = value["status"] as? String, ["pending", "approved", "completed", "denied", "expired", "cancelled"].contains(status),
               let nonce = value["nonce"] as? String, LinkBytes.matches(nonce, "[A-Za-z0-9_-]{16,128}"),
               let deadline = value["expiresAt"] as? String, let expires = ISO8601DateFormatter.latch.date(from: deadline),
               expires.timeIntervalSinceNow <= 300 else { throw NativeFailure.invalidRecord }
-        return NativeEnrollment(id: id, status: status, nonce: nonce, expiresAt: expires, contended: value["contended"] as? Bool == true)
+        var code: String?
+        if let marker = value["compareCode"] {
+            guard let flag = marker as? NSNumber, CFGetTypeID(flag) == CFBooleanGetTypeID(), flag.boolValue else { throw NativeFailure.invalidRecord }
+            code = Self.comparisonCode(hostId: invitation.hostId, enrollmentId: id, nonce: nonce,
+                connectionSpki: keys.connectionSpki, verificationSpki: keys.verificationSpki)
+        }
+        if let started, started.id != id || started.nonce != nonce || started.comparisonCode != code { throw NativeFailure.identityMismatch }
+        return NativeEnrollment(id: id, status: status, nonce: nonce, expiresAt: expires,
+            contended: value["contended"] as? Bool == true, comparisonCode: code)
     }
     private func object(_ response: NativeHTTPResponse) throws -> [String: Any] {
         guard response.body.count <= 131_072, let value = try JSONSerialization.jsonObject(with: response.body) as? [String: Any] else { throw NativeFailure.invalidRecord }; return value

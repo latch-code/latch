@@ -267,7 +267,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     private var transportWatch: Task<Void, Never>?
     private(set) var generation = UUID() { didSet { submittingPromptId = nil } }
     private(set) var networkGeneration = UUID()
-    var freshPairings: [String: (PairingInvitation, UUID)] = [:]
+    private var directHints: [String: NativeDirectHints] = [:]
     private var eventTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var streamGeneration = UUID()
@@ -283,6 +283,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     private var reconnectBookChanged = false
     private var offlineTask: Task<Void, Never>?
     var pairingTask: Task<Void, Never>?
+    var pairingCleanup: Task<Void, Never>?
     var pairingConnection: NativeHTTPConnection?
     private var monitor: NWPathMonitor?
     private var monitorGeneration = UUID()
@@ -311,6 +312,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         generation == current && store == nil && storageAvailable && !Task.isCancelled
     }
     private func prepareStore(_ current: UUID) async {
+        await pairingCleanup?.value
         guard canOpenStore(current) else { return }
         storeState = .opening
         PreviewFiles.purgeAbandoned()
@@ -354,6 +356,8 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
      * revocation, a dead connection, a network change, a computer switch or the time running out tear everything down.
      */
     func enterBackground() {
+        // The default path may look identical after moving to another Wi-Fi while the process was suspended.
+        networkGeneration = UUID(); directHints.removeAll()
         guard workspace != nil, transportReady, store != nil, pairing == nil, draft == nil, !protectedDataLocked,
               UIApplication.shared.isProtectedDataAvailable else { lock(); return }
         hold.enter(withdraw: { withdrawForHold() }, finish: { [weak self] in
@@ -441,11 +445,11 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         hold.release(); transportWatch?.cancel(); transportWatch = nil; cancelUpgrade()
         if let sessionId, !workPath.contains(where: { $0.openedSession == sessionId }) { resumeSession = sessionId }
         if let selectedHost { lastHostId = selectedHost.id }
-        generation = UUID(); eventTask?.cancel(); refreshTask?.cancel(); expiryTask?.cancel(); initialListTask?.cancel(); cancelReconnect(); pairingTask?.cancel()
+        generation = UUID(); eventTask?.cancel(); refreshTask?.cancel(); expiryTask?.cancel(); initialListTask?.cancel(); cancelReconnect(); pairingTask?.cancel(); pairingTask = nil
         monitorGeneration = UUID(); monitor?.cancel(); monitor = nil
         currentNetworkPath = nil; proximityTask?.cancel(); proximityTask = nil
         resetBookRefresh(); stopWatching(forget: true)
-        discovery.stop(); freshPairings.removeAll()
+        discovery.stop(); networkGeneration = UUID(); directHints.removeAll()
         let previous = workspace, link = pairingConnection, previousStore = store, previousHost = selectedHost?.id
         if previous != nil || link != nil || previousStore != nil {
             storageOpening.close {
@@ -465,7 +469,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         await paths.close()
         if let previous, !(await previous.closeOpening()), let hostId { offlineCacheBlocked.insert(hostId) }
     }
-    func connect(_ host: RegisteredHost, resumePreviousSession: Bool = true) async {
+    func connect(_ host: RegisteredHost, resumePreviousSession: Bool = true, requested: NativeDirectHints? = nil) async {
         guard let store, !busy, storageAvailable, !forgettingComputers.contains(host.id),
               hosts.contains(where: { $0.id == host.id }) else { return }
         hold.release(); transportWatch?.cancel(); transportWatch = nil; cancelUpgrade()
@@ -510,7 +514,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                 guard generation == current, self.store === store, storageAvailable else { return }
                 if let cached, installedTransport == nil, !offlineCacheBlocked.contains(host.id) { displaySnapshot(cached, live: false) }
             }
-            if !connected { try await dialRound(host, workspace: next, current: current) }
+            if !connected { try await dialRound(host, workspace: next, current: current, requested: requested) }
             guard generation == current, storageAvailable else { return }
             await refreshControlPending()
             if generation == current, storageAvailable, contentGeneration == initialSelection, sessionId == nil, let resume,
@@ -1162,7 +1166,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
 #endif
             if self.hold.holding { self.lock(); return }
             self.proximityTask?.cancel(); self.proximityTask = nil
-            self.networkGeneration = UUID(); self.freshPairings.removeAll(); self.discovery.stop()
+            self.networkGeneration = UUID(); self.directHints.removeAll(); self.discovery.stop()
             if path.status == .satisfied, let host = self.selectedHost { try? self.startDiscovery(host) }
             self.othersNetworkChanged()
             let network = self.networkGeneration
@@ -1242,10 +1246,11 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
      * One dial round: known direct candidates and the relay, or, while browsing has no result yet, a direct candidate that
      * waits up to its deadline. On recovery the relay starts immediately. On first connect, direct can have a head start.
      */
-    private func dialRound(_ host: RegisteredHost, workspace: NativeWorkspace, current: UUID, recovering: Bool = false, changedBook: Bool = false) async throws {
+    private func dialRound(_ host: RegisteredHost, workspace: NativeWorkspace, current: UUID, recovering: Bool = false, changedBook: Bool = false,
+        requested: NativeDirectHints? = nil) async throws {
         let latest = hosts.first { $0.id == host.id } ?? host
         try? startDiscovery(latest)
-        let available = try await candidates(latest)
+        let available = try await candidates(latest, requested: requested)
         guard generation == current, storageAvailable, !hold.holding, self.workspace === workspace, !Task.isCancelled else { throw NativeFailure.unavailable }
         if changedBook, reconnectTask != nil {
             // The active recovery can finish its attempt, then use the newly verified book.
@@ -1289,7 +1294,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                 guard let self, self.generation == current, self.transportReady, !self.hold.holding, self.storageAvailable,
                       self.workspace === workspace, await workspace.installedPathKind() == .relay else { return }
                 let latest = self.hosts.first { $0.id == host.id } ?? host
-                let directs = (try? await self.discovery.candidates(device: latest.device, keys: PhoneKeys.provider(latest.keys))) ?? []
+                let directs = (try? await self.directCandidates(latest, browser: self.discovery)) ?? []
                 if !directs.isEmpty, await self.paths.upgrade(directs, workspace: workspace) {
                     guard self.generation == current, self.workspace === workspace else { return }
                     self.winners.record(.direct, gateway: self.currentGateway())
@@ -1308,23 +1313,11 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             nowMs: UInt64(max(0, Date().timeIntervalSince1970 * 1000)), priorGeneration: host.device.bookGeneration, priorHash: host.device.bookHash)
         NativeRelayWarmup.warm(book)
     }
-    func candidates(_ host: RegisteredHost) async throws -> [NativePathCandidate] {
+    func candidates(_ host: RegisteredHost, requested: NativeDirectHints? = nil) async throws -> [NativePathCandidate] {
         let host = hosts.first { $0.id == host.id } ?? host
         let now = UInt64(Date().timeIntervalSince1970 * 1000)
-        let book = try? AddressBookCodec.verify(host.device.signedAddressBook, rootSpki: host.device.rootSpki,
-            deviceId: host.device.deviceId, nowMs: now, priorGeneration: host.device.bookGeneration, priorHash: host.device.bookHash)
-        let keys = PhoneKeys.provider(host.keys)
-        // LAN entries are hints only. Direct candidates are supplied by current-network discovery, never old private IPs.
-        var result = try await discovery.candidates(device: host.device, keys: keys)
-        if let (invitation, network) = freshPairings[host.id], network == networkGeneration, invitation.expiresAt > Date() {
-            for (index, address) in invitation.lan.enumerated() {
-                result.append(try NativePathCandidate(id: "pair-\(index)", kind: .direct) { [weak self] in
-                    guard let self, await self.freshRoute(host.id, network: network) else { throw NativeFailure.unavailable }
-                    return try await NativeHTTPConnection.open(host: address.host, port: address.port, rootSpki: host.device.rootSpki,
-                        knockKey: host.device.knockKey, identity: keys.identity())
-                })
-            }
-        }
+        let book = host.device.currentAddressBook()
+        var result = try await directCandidates(host, browser: discovery, requested: requested)
         for endpoint in NativeRelayOrder.available(book) {
             let expiresAt = book?.expiresAt ?? 0
             guard (try? NativeRelayAdmission.current(endpoint: endpoint, bookExpiresAt: expiresAt, nowMs: now)) != nil else { continue }
@@ -1333,8 +1326,100 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         }
         return Array(result.prefix(12))
     }
-    private func freshRoute(_ id: String, network: UUID) -> Bool {
-        network == networkGeneration && (freshPairings[id]?.0.expiresAt ?? .distantPast) > Date()
+    func rememberPairingAddress(_ address: PairingInvitation.Address, invitation: PairingInvitation, host: RegisteredHost) {
+        directHints[host.id] = NativeDirectHints(addresses: [.init(host: address.host, port: address.port)], network: networkGeneration,
+            expiresAt: invitation.expiresAt, justPaired: true, fromQR: true)
+    }
+    func reconnectScannedHost(_ invitation: PairingInvitation, resumingDraft: Bool) async -> Bool {
+        guard let host = RegisteredHost.forPairingScan(in: hosts, rootSpki: invitation.rootSpki, resumingDraft: resumingDraft,
+            lastID: selectedHost?.id ?? lastHostId) else { return false }
+        guard pairingTask == nil else { return true }
+        let hints = NativeDirectHints(addresses: invitation.lan.map { .init(host: $0.host, port: $0.port) },
+            network: networkGeneration, expiresAt: invitation.expiresAt, fromQR: true)
+        pairing = .reconnecting
+        clearPastedPairing()
+        pairingTask = Task {
+            defer { if !Task.isCancelled { pairingTask = nil } }
+            if !(selectedHost?.id == host.id && transportReady) {
+                guard await readyForDirectAttempt(hints) else {
+                    if !Task.isCancelled, storageAvailable { pairing = .failed(invitation.expiresAt <= Date() ? .expired : .unreachable) }
+                    return
+                }
+                if !(selectedHost?.id == host.id && transportReady) { await connect(host, requested: hints) }
+            }
+            guard !Task.isCancelled, storageAvailable else { return }
+            guard selectedHost?.id == host.id, transportReady else {
+                if host.prepared, let draft, draft.keys.connectionTag == host.keys.connectionTag,
+                   draft.keys.verificationTag == host.keys.verificationTag {
+                    // A lost reply may precede the Host commit. Resume the original enrollment and keys at the freshly scanned address.
+                    let current = generation
+                    Task { @MainActor in
+                        guard generation == current, pairing == .reconnecting, storageAvailable else { return }
+                        resumePairing(addresses: invitation.lan)
+                    }
+                } else { pairing = .failed(.unreachable) }
+                return
+            }
+            pairing = .connected(computerName(host))
+            try? await Task.sleep(for: .seconds(1))
+            if !Task.isCancelled { pairing = nil }
+        }
+        return true
+    }
+    func reconnectUsingBook(_ host: RegisteredHost) async -> Bool {
+        guard let book = host.device.currentAddressBook() else { return false }
+        let hints = NativeDirectHints(addresses: NativeDirectEndpoint.signed(book), network: networkGeneration,
+            expiresAt: Date(timeIntervalSince1970: Double(book.expiresAt) / 1_000))
+        guard await readyForDirectAttempt(hints) else { return false }
+        if !(selectedHost?.id == host.id && transportReady) { await connect(host, requested: hints) }
+        return selectedHost?.id == host.id && transportReady
+    }
+    private func readyForDirectAttempt(_ hints: NativeDirectHints) async -> Bool {
+        // A tap or scan may arrive during the automatic opening of the last computer.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+        while busy && storageAvailable && hints.network == networkGeneration && hints.expiresAt > Date() && ContinuousClock.now < deadline {
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { return false }
+        }
+        return !Task.isCancelled && !busy && storageAvailable && hints.network == networkGeneration && hints.expiresAt > Date()
+    }
+    func directCandidates(_ host: RegisteredHost, browser: NativeDiscovery?, requested: NativeDirectHints? = nil) async throws -> [NativePathCandidate] {
+        let keys = PhoneKeys.provider(host.keys)
+        let discovered = try await browser?.candidates(device: host.device, keys: keys) ?? []
+        guard let hints = requested ?? directHints[host.id], hints.network == networkGeneration, hints.expiresAt > Date() else { return discovered }
+        let current = generation
+        let routes = try hints.addresses.filter { directRoute(to: $0, hints: hints) != nil }.prefix(2).enumerated().map { index, address in
+            try NativePathCandidate(id: "address-\(index)", kind: .direct, didInstall: { [weak self] in
+                guard let self, generation == current, selectedHost?.id == host.id else { return }
+                let book = hosts.first { $0.id == host.id }?.device.currentAddressBook()
+                let signedUntil = book.flatMap { NativeDirectEndpoint.signed($0).contains(address) ? Date(timeIntervalSince1970: Double($0.expiresAt) / 1_000) : nil }
+                if let confirmed = hints.installed(address, network: networkGeneration, signedUntil: signedUntil) { directHints[host.id] = confirmed }
+            }) { [weak self] in
+                guard let route = await self?.reopenDirectRoute(to: address, hints: hints, host: host.id) else { throw NativeFailure.unavailable }
+                return try await NativeHTTPConnection.open(host: address.host, port: address.port, rootSpki: host.device.rootSpki,
+                    knockKey: host.device.knockKey, identity: keys.identity(), interface: route.interface)
+            }
+        }
+        return requested == nil ? discovered + routes : routes + discovered
+    }
+    private enum DirectRoute {
+        case physical(NWInterface), hotspot
+        var interface: NWInterface? { if case let .physical(value) = self { return value }; return nil }
+    }
+    private func reopenDirectRoute(to address: NativeDirectEndpoint, hints: NativeDirectHints, host: String) -> DirectRoute? {
+        guard hints.network == networkGeneration, let registered = hosts.first(where: { $0.id == host }) else { return nil }
+        let active: NativeDirectHints
+        if let installed = directHints[host], installed.request == hints.request, installed.addresses == [address] {
+            active = installed
+        } else { active = hints }
+        if active.requiresSignedEndpoint && !NativeDirectEndpoint.signed(registered.device.currentAddressBook()).contains(address) { return nil }
+        return directRoute(to: address, hints: active)
+    }
+    private func directRoute(to endpoint: NativeDirectEndpoint, hints: NativeDirectHints) -> DirectRoute? {
+        guard hints.network == networkGeneration, hints.expiresAt > Date(), storageAvailable else { return nil }
+        // iOS can keep a cellular default while the Mac is on the iPhone's own point-to-point hotspot.
+        if hints.justPaired && NativeDiscoveryWire.isHotspotPeer(endpoint.host) { return .hotspot }
+        if let interface = NativeDiscoveryWire.directInterface(to: endpoint.host, path: currentNetworkPath) { return .physical(interface) }
+        return nil
     }
     func retire(_ host: RegisteredHost, proof: VerifiedNativeRevocation, retiredStore: PhoneStore? = nil, removedHere: Bool = false) async {
         guard let currentStore = retiredStore ?? store, currentStore === store, !forgettingComputers.contains(host.id) else { return }
@@ -1363,7 +1448,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         let isCurrent = selectedHost?.id == host.id
         let old = isCurrent ? workspace : nil
         offlineCacheBlocked.insert(host.id)
-        freshPairings.removeValue(forKey: host.id)
+        directHints.removeValue(forKey: host.id)
         if pendingOther?.computer == host.id { pendingOther = nil }
         if isCurrent {
             generation = UUID(); cancelReconnect(); initialListTask?.cancel(); eventTask?.cancel(); expiryTask?.cancel(); refreshTask?.cancel()

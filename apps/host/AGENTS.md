@@ -3,7 +3,7 @@
 | 路径 | 职责 |
 | --- | --- |
 | `src/{server,task-delta,task-content}.ts`、`routes/` | HTTP/SSE、认证、投影与限速（route-guards.test） |
-| `src/native*.ts`、`relay/` | 原生连接、发现、墓碑与目录 |
+| `src/native*.ts`、`relay/` | 原生连接与发现（跨网配对见 RELAY.md）、墓碑、目录 |
 | `src/auth.ts`、`presence*.ts`、`agent-probes.ts`、`audit.ts`、`policy.ts`、`egress.ts`、`model-*.ts`、`model-gateway/`、`risk.ts`、`paths.ts` | 登记、设备与本机确认；审计；`policy.json`；出站与模型网关；风险分级；路径 |
 | `src/{host-state,crypto,identity,hub,session-meta,prompt-queues,questions,config,providers}.ts`、`src/agent-*.ts` | 状态、锁、加密与回执 |
 | `src/plugins/<种类>/<id>/` | `providers/`、`tools/`、`standard`、`workspace/marketplace` |
@@ -11,7 +11,7 @@
 | `test/` | 夹具：`test/helpers/host.ts` |
 
 不变量：
-- 请求只信 `ListenerContext`，不信代理头（server.test）。
+- 请求只信 `ListenerContext`，不信代理头。
 - 授权与执行先写审计，失败即拒绝；撤销、拒绝、取消、删除与收紧照常（永久删除 Agent 的家除外），响应带 `x-latch-audit: failed`。审计 detail 只含 ID、哈希、枚举、布尔与计数（`test/server.test.ts`）。
 - 审计前后复核附言的 `run` 与私有权限。
 - 出站经注入的 `fetch` 和策略，限预置、已确认或固定的地址；密钥限绑定的源和路径，更新前与锁内复核所见目标（`test/providers.test.ts`）。

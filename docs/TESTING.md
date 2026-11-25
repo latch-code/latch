@@ -237,6 +237,10 @@ pnpm exec vitest run --config e2e/vitest.config.ts e2e/harness-acceptance.e2e.ts
 
 `e2e/native-swift-throughput.e2e.ts` 在 Swift 夹具与本地自建中继之间放一个注入 RTT 与带宽的 TCP 代理（只整形手机一腿，中继不设配额），测显式下载（经大块连接的连续 1 MiB 读取）与控制连接读取的吞吐、单元数与哑单元比例，经中继的附件分段上传的吞吐，以及控制连接上小请求的往返时间（连接静默后与连续发），结果写入 `test-results/native-throughput/rows.json`。默认一组短用例；`LATCH_TRANSFER_MATRIX=1` 跑 RTT 50/150/300 ms × 20/50/100 Mbit/s 的 8 MiB 矩阵，`LATCH_TRANSFER_CASE=<rtt>,<mbps>,<bytes>` 只跑一组，`LATCH_TRANSFER_DIRECTION=download|upload|control` 只跑一类，`LATCH_TRANSFER_LEGACY=1` 去掉 `nativeBulkUpload`，按没有大块上传连接时测上传。代理的延迟不经过端点的 TCP 拥塞控制，测的是窗口、填充节奏与请求往返决定的上限。
 
+### 跨子网配对的真机验收
+
+用独立数据目录和临时工作区启动 Host。在能互访的两个私网子网上分别连接 Mac 与 iPhone。USB 线可用于安装 App，验收办公 Wi‑Fi 时关闭个人热点。两端先看见六位数字，取消一次并确认 Mac 未增加设备。用新二维码重试，逐位核对后在 Mac 系统窗口批准，再确认手机能打开该测试 Host。登记后重新打开 App，用「用 Mac 的局域网地址重连」或扫新的二维码，检查仍是原来的一条设备记录。若首次只出现设备名，验收覆盖的是同网快捷配对。只记录流程结果，配对二维码不截图。
+
 ### iOS 模拟器用例
 
 会话列表和输入栏的截图可用 `LATCH_IOS_SCENES=workspace,work-list,conversation-reading` 筛选。`workspace-offline` 与 `work-list-offline` 展示同一台电脑断线后的两个列表。`conversation-reading` 提供超过一屏的回复，供滚动和软键盘验收。`project-files` 场景可从会话进入项目文件夹、按文件名查找。设置 `LATCH_IOS_LIVE_WORK=1` 会在 Live 夹具的临时 Host 建立一个项目、一条待办和一个关联会话。模拟器配对后可验证创建、发言、状态变更和文件预览。

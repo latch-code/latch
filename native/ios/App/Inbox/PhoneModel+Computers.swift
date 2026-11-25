@@ -108,15 +108,7 @@ extension PhoneModel {
     /** Bonjour for that computer's own key, a fresh pairing's LAN hints, then its own relay; never the selected computer's ways in. */
     private func watchCandidates(_ host: RegisteredHost) async throws -> [NativePathCandidate] {
         let keys = PhoneKeys.provider(host.keys)
-        var result = try await watchDiscoveries[host.id]?.candidates(device: host.device, keys: keys) ?? []
-        if let (invitation, network) = freshPairings[host.id], network == networkGeneration, invitation.expiresAt > Date() {
-            for (index, address) in invitation.lan.prefix(2).enumerated() {
-                result.append(try NativePathCandidate(id: "pair-\(index)", kind: .direct) {
-                    try await NativeHTTPConnection.open(host: address.host, port: address.port, rootSpki: host.device.rootSpki,
-                        knockKey: host.device.knockKey, identity: keys.identity())
-                })
-            }
-        }
+        let result = try await directCandidates(host, browser: watchDiscoveries[host.id])
         return result + NativeListWatcher.relayCandidates(device: host.device, keys: keys)
     }
     private func receive(_ reading: NativeWatchReading) async {

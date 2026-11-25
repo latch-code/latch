@@ -31,6 +31,7 @@ import type { AuditActor, AuditLog, StepupMethod } from './audit.ts'
 import { constantTimeEqualHex, deviceFingerprint, parseP256Spki, randomCode, randomId, randomNonce, verifyP256 } from './crypto.ts'
 import { enrollmentSubject, paramsHash, type PresenceService } from './presence.ts'
 import { validateNativeIdentity, type NativeIdentityInput, type NativeRegistrationIdentity } from './native-identity.ts'
+import type { NativePairingProof } from './native-network.ts'
 import { nativeKnockSecret } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
 
@@ -1479,16 +1480,23 @@ export interface EnrollmentRequest {
   native?: NativeIdentityInput
   /** The phone's current network, as `gatewayHash` (link-wire) gives it. */
   gatewayHash?: string
+  compareCode?: true
 }
 
 /** What only the route knows about a phone's pairing request: the socket it arrived on and that QR's own budget. */
 export interface NativePairingContext {
-  /** The proof that the peer of this socket is on the Mac's network: the network to remember if it pairs, else false. */
-  nearby(gatewayHash: Uint8Array): Promise<string | false>
+  /** Only this socket's observed addresses can qualify it for the routed comparison. */
+  nearby(gatewayHash: Uint8Array | undefined, compareCode: boolean): Promise<NativePairingProof>
   /** Spends this QR's budget. Reached only by a request that would ask for a new confirmation. */
   budget(): void
   /** A contention's audit record could not be written; the burn went ahead. */
   auditFailed(): void
+}
+
+/** The phone calculates the same display from its own keys and this Host's fresh enrollment challenge. */
+export function nativeComparisonCode(hostId: string, id: string, nonce: string, connectionKey: string, verificationKey: string): string {
+  const digest = sha256Hex(['latch-native-compare-v1', hostId, id, nonce, connectionKey, verificationKey].join('\n'))
+  return String(Number.parseInt(digest.slice(0, 8), 16) % 1_000_000).padStart(6, '0')
 }
 
 /**
@@ -1546,6 +1554,7 @@ interface Enrollment {
   completedAt?: number
   /** The network the proximity proof named, remembered only once this phone is actually paired. */
   network?: string
+  compareCode?: true
   session?: NativeSession
 }
 
@@ -1739,7 +1748,8 @@ export class EnrollmentService {
       // The result is fixed, so a phone asking for anything is not asking this Host.
       if (request.scopes !== undefined || request.dataScope !== undefined)
         throw new AppError(400, 'scope-not-grantable', '该权限在此连接方式下不可授予')
-    } else if (request.gatewayHash !== undefined) throw new AppError(400, 'invalid-request', '连接请求无效')
+    } else if (request.gatewayHash !== undefined || request.compareCode !== undefined)
+      throw new AppError(400, 'invalid-request', '连接请求无效')
     const action = isNativeListener(connection.listener) ? 'device.enroll-native' : 'device.enroll'
     const legacyDevice =
       connection.listener === 'loopback-tcp' && legacy?.kind === 'legacy-cookie' ? this.devices.legacyMatch(legacy.value) : undefined
@@ -1776,6 +1786,7 @@ export class EnrollmentService {
     let session: NativeSession | undefined
     let keysHash = ''
     let network: string | undefined
+    let compareCode = false
 
     if (request.offlineCode !== undefined) {
       // Offline codes skip the local confirmation, so only the desktop app's socket takes them.
@@ -1810,7 +1821,8 @@ export class EnrollmentService {
         const own = this.ownEnrollment(session, keysHash)
         if (own) return own
         const proof = await this.proveNearby(request, session, codeHash, pairing!)
-        network = proof
+        if (typeof proof === 'string') network = proof
+        else compareCode = true
         // Other keys that passed the gate burn the sheet here, before anything a QR holder could have spent.
         const held = await this.checkClaim(session, keysHash, connection, pairing!)
         if (held) return held
@@ -1895,6 +1907,7 @@ export class EnrollmentService {
       completing: false,
       ...(native ? { native, reservedNativeId: randomId('dev') } : {}),
       ...(network ? { network } : {}),
+      ...(compareCode ? { compareCode: true } : {}),
       ...(session ? { session } : {}),
       ...(invitation?.inviterDeviceId ? { inviterDeviceId: invitation.inviterDeviceId } : {}),
       ...(invitation ? { invitationId: invitation.id } : {}),
@@ -1933,9 +1946,11 @@ export class EnrollmentService {
           { label: '数据范围', value: DATA_SCOPE_LABELS[dataScope] },
           ...(invitation ? [{ label: '邀请来源', value: invitation.inviterName ?? '命令行' }] : []),
         ]
-    const warnings = nativeRequest
-      ? ['只有在你正在连接这台手机时才确认。']
-      : ['只有在你正在连接这台设备、并且两边显示的指纹完全一致时才确认。']
+    const warnings = compareCode
+      ? ['请核对手中手机显示的六位数字，相同才确认。']
+      : nativeRequest
+        ? ['只有在你正在连接这台手机时才确认。']
+        : ['只有在你正在连接这台设备、并且两边显示的指纹完全一致时才确认。']
     if (scopes.includes('admin')) warnings.push('该设备将可以管理此 Host（模型服务、插件、项目和其他设备）。')
     const binding = paramsHash(action, {
       enrollmentId: id,
@@ -1953,7 +1968,13 @@ export class EnrollmentService {
       confirmation = await this.presence.request({
         action,
         requester: { deviceName: name, listener: connection.listener, remoteAddress: local ? LOCAL_SOURCE : connection.remoteAddress },
-        subject: enrollmentSubject(connection.listener, name),
+        subject:
+          compareCode && native
+            ? {
+                form: 'device.enroll-native-compare',
+                slots: { code: nativeComparisonCode(this.hostId, id, enrollment.nonce, request.publicKey, native.verificationKey) },
+              }
+            : enrollmentSubject(connection.listener, name),
         lines,
         warnings,
         paramsHash: binding,
@@ -1967,7 +1988,8 @@ export class EnrollmentService {
     }
     enrollment.confirmationId = confirmation.id
     enrollment.hashDisplay = confirmation.hashDisplay
-    enrollment.reason = confirmation.reason
+    // The phone derives this code with its own keys. Never echo the Mac's copy in an enrollment response.
+    if (!compareCode) enrollment.reason = confirmation.reason
     this.enrollments.set(id, enrollment)
     if (session?.claim) {
       session.claim.inFlight = false
@@ -2034,13 +2056,14 @@ export class EnrollmentService {
     session: NativeSession,
     codeHash: string,
     pairing: NativePairingContext,
-  ): Promise<string> {
+  ): Promise<Exclude<NativePairingProof, false>> {
     const gateway =
       typeof request.gatewayHash === 'string' && /^[a-f0-9]{64}$/u.test(request.gatewayHash)
         ? Buffer.from(request.gatewayHash, 'hex')
         : undefined
-    const proof = gateway ? await pairing.nearby(gateway).catch(() => false as const) : false
-    if (proof === false) {
+    const compares = request.compareCode === true
+    const proof = gateway || compares ? await pairing.nearby(gateway, compares).catch(() => false as const) : false
+    if (proof === false || (typeof proof !== 'string' && !compares)) {
       const sheet = this.nativeSheets.get(session.codes.get(codeHash) ?? '')
       if (sheet) sheet.offNetwork = true
       throw notNearby()
@@ -2347,6 +2370,7 @@ export class EnrollmentService {
       ...(enrollment.hashDisplay ? { hashDisplay: enrollment.hashDisplay } : {}),
       ...(enrollment.reason ? { reason: enrollment.reason } : {}),
       ...(enrollment.contended ? { contended: true } : {}),
+      ...(enrollment.compareCode ? { compareCode: true } : {}),
       scopes: [...enrollment.scopes],
       dataScope: enrollment.dataScope,
     }

@@ -419,6 +419,7 @@ let deviceConnects: [Segment] = [.text("允许「"), deviceSlot, .text("」连�
 let reasonForms: [String: ReasonForm] = [
   "device.enroll-named": ReasonForm(actions: ["device.enroll"], segments: deviceConnects),
   "device.enroll-native": ReasonForm(actions: ["device.enroll-native"], segments: deviceConnects),
+  "device.enroll-native-compare": ReasonForm(actions: ["device.enroll-native"], segments: [.text("核对手机上的 "), slot("code", 6), .text("，相同才允许连接这台 Mac")]),
   "device.grant": ReasonForm(actions: ["device.grant"], segments: [.text("为「"), deviceSlot, .text("」增加权限："), slot("change", 40)]),
   "origin.confirm": ReasonForm(actions: ["provider.confirm-origin", "policy.change"], segments: [
     .text("允许 Latch 连接 "), slot("target", 48, keepEnd: true),

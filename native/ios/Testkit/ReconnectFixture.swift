@@ -366,17 +366,19 @@ func livenessRules() throws -> [String: Any] {
         let workspace = try paired.workspace(prefetch: false)
         timeline.begin()
         let started = ContinuousClock.now
-        let relay = try NativePathCandidate(id: "relay", kind: .relay) {
+        var remembered: [NativePathCandidate.Kind] = []
+        let relay = try NativePathCandidate(id: "relay", kind: .relay, didInstall: { remembered.append(.relay) }) {
             await box.started(elapsedMs(since: started))
             try await Task.sleep(for: .milliseconds(400)); return try await paired.open()
         }
-        let late = try NativePathCandidate(id: "lan-late", kind: .direct) { try await paired.open() }
+        let late = try NativePathCandidate(id: "lan-late", kind: .direct, didInstall: { remembered.append(.direct) }) { try await paired.open() }
         let later = NativeLateDirects {
             try? await Task.sleep(for: .milliseconds(150))
             return [late]
         }
         _ = try await paths.migrate([relay], later: later, relayDelay: NativeReconnectPolicy.relayDelay(directKnown: false, lastWinner: nil), workspace: workspace)
         let kind = await workspace.installedPathKind()
+        result["rememberedInstalledDirectOnly"] = remembered == [.direct]
         timings["lateDirectRoundMs"] = elapsedMs(since: started)
         let entries = timeline.entries()
         let relayStarted = await box.starts.first ?? 1000

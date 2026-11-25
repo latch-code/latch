@@ -275,6 +275,11 @@ do {
         guard let rows = input["interfaces"] as? [[String: String]], let routers = input["routers"] as? [String], let peer = input["peer"] as? String else { throw NativeFailure.invalidRecord }
         let hash = NativeDiscoveryWire.pairingGatewayHash(peer: peer, interfaces: try rows.map { (address: $0["address"] ?? "", mask: try LinkBytes.unhex($0["mask"] ?? "")) }, routers: routers)
         result["hash"] = hash.map { LinkBytes.hex($0) }
+    case "pairingComparison":
+        guard let host = input["host"] as? String, let enrollment = input["enrollment"] as? String, let nonce = input["nonce"] as? String,
+              let connection = input["connectionSpki"] as? String, let verification = input["verificationSpki"] as? String else { throw NativeFailure.invalidRecord }
+        result["code"] = try NativePairing.comparisonCode(hostId: host, enrollmentId: enrollment, nonce: nonce,
+            connectionSpki: LinkBytes.unhex(connection), verificationSpki: LinkBytes.unhex(verification))
     case "nativeRelayLifecycle", "nativeRelayFailover", "nativeRelayTransferNormal", "nativeRelayTransferAfterCancel", "nativeRelayBulkNormal", "nativeRelayBulkLegacy", "nativeRelayBulkReauthenticate", "nativeRelayBulkAfterCancel", "nativeRelayBulkCancel", "nativeRelayBulkEarlyCancel", "nativeDirectTransfer", "nativeRelayThroughput", "nativeRelayUploadThroughput", "nativeRelayUpload", "nativeRelayControlLatency":
         stage = "relay-pairing"
         let invitation = try PairingInvitation.parse(input["payload"] as? String ?? "", privateOnly: false), keys = try FixtureKeys()
@@ -725,7 +730,13 @@ do {
         let keys = try FixtureKeys(), pairing = try NativePairing(invitation: invitation, keys: keys)
         let temporary = try await NativeHTTPConnection.open(host: "127.0.0.1", port: port, rootSpki: invitation.rootSpki, knockKey: invitation.knockKey)
         stage = "begin-pairing"
-        _ = try await pairing.begin(on: temporary, name: "Swift fixture", gatewayHash: Data(repeating: 0, count: 32))
+        let comparisonMarker = input["comparisonMarker"] as? String
+        let started = try await pairing.begin(on: temporary, name: "Swift fixture",
+            gatewayHash: comparisonMarker == nil ? Data(repeating: 0, count: 32) : nil, allowComparison: comparisonMarker != nil)
+        if let comparisonMarker {
+            guard let code = started.comparisonCode, started.status == "pending" else { throw NativeFailure.identityMismatch }
+            try LinkBytes.hash(Data(code.utf8)).write(to: URL(fileURLWithPath: comparisonMarker), options: .atomic)
+        }
         stage = "wait-pairing"
         var approved = false
         for _ in 0..<60 {
@@ -749,6 +760,12 @@ do {
         stage = "mtls"
         let connection = try await NativeHTTPConnection.open(host: "127.0.0.1", port: port, rootSpki: device.rootSpki,
             knockKey: device.knockKey, identity: keys.identity())
+        if comparisonMarker != nil {
+            let snapshot = try await connection.request(.get, path: "/link/api/snapshot")
+            await connection.close()
+            result = ["deviceId": device.deviceId, "registeredSnapshot": snapshot.status]
+            break
+        }
         stage = "expired-leaf"
         let expiredCertificate = try P256Certificate.create(spki: keys.connectionSpki, now: Date().addingTimeInterval(-7200), lifetime: 3600) {
             try SecureDeviceKeys.signDER(keys.connection, $0)
@@ -998,6 +1015,14 @@ do {
         let draft = try JSONDecoder().decode(NativePairingDraft.self, from: JSONSerialization.data(withJSONObject: input["draft"] ?? [:]))
         try await store.saveDraft(draft)
         guard try await store.draft()?.payload == draft.payload else { throw NativeFailure.storageUnavailable }
+        var pending = profiles[0], registered = profiles[1]
+        pending.prepared = true; registered.prepared = false
+        let saved = [pending, registered]
+        for sameDraft in [false, true] {
+            guard NativeRegisteredHost.forPairingScan(in: saved, rootSpki: registered.device.rootSpki, resumingDraft: sameDraft, lastID: pending.id)?.id == registered.id else { throw NativeFailure.identityMismatch }
+        }
+        guard NativeRegisteredHost.forPairingScan(in: saved, rootSpki: pending.device.rootSpki, resumingDraft: true) == nil,
+              NativeRegisteredHost.forPairingScan(in: saved, rootSpki: pending.device.rootSpki, resumingDraft: false)?.id == pending.id else { throw NativeFailure.identityMismatch }
         var changedDraftDenied = false
         do { try await store.saveDraft(NativePairingDraft(payload: draft.payload, keys: draft.keys, name: "changed")) }
         catch { changedDraftDenied = (error as? NativeFailure) == .resultUnknown }
@@ -1041,6 +1066,28 @@ do {
         result = ["sameDeviceIdIsolated": true, "concurrentSave": true, "encryptedRecovery": true, "lockClosedCache": true,
             "immutableDraft": true, "rootBoundRetirement": true, "otherCachePreserved": true, "retirementRetry": true,
             "ciphertextProtected": true, "confirmedLocalRemoval": true]
+    case "directPeers":
+        let rows = try (input["rows"] as? [[String: String]] ?? []).map {
+            (try LinkBytes.unhex($0["address"] ?? ""), try LinkBytes.unhex($0["mask"] ?? ""))
+        }
+        let own = try (input["own"] as? [String] ?? []).map { try LinkBytes.unhex($0) }
+        let targets = try (input["targets"] as? [String] ?? []).map { try LinkBytes.unhex($0) }
+        result = ["local": targets.map { NativeDiscoveryWire.permitsPeer($0, rows: rows, own: own, allowRouted: false) },
+            "routed": targets.map { NativeDiscoveryWire.permitsPeer($0, rows: rows, own: own, allowRouted: true) }]
+    case "directHintLifetime":
+        let now = Date(timeIntervalSince1970: 1_000), network = UUID(), address = NativeDirectEndpoint(host: "10.3.168.26", port: 443)
+        let qr = NativeDirectHints(addresses: [address], network: network, expiresAt: now.addingTimeInterval(120), fromQR: true)
+        let later = now.addingTimeInterval(3_600)
+        guard let checked = qr.installed(address, network: network, signedUntil: later, now: now),
+              let again = checked.installed(address, network: network, signedUntil: later, now: now.addingTimeInterval(59)),
+              let onlyQR = qr.installed(address, network: network, signedUntil: nil, now: now),
+              let short = qr.installed(address, network: network, signedUntil: now.addingTimeInterval(60), now: now) else { throw NativeFailure.invalidRecord }
+        result = ["sameRequest": checked.request == qr.request, "confirmed": checked.expiresAt.timeIntervalSince(now),
+            "retry": again.expiresAt.timeIntervalSince(now), "onlyQR": onlyQR.expiresAt.timeIntervalSince(now), "shortBook": short.expiresAt.timeIntervalSince(now),
+            "removedFromBook": checked.installed(address, network: network, signedUntil: nil, now: now) == nil,
+            "expired": checked.installed(address, network: network, signedUntil: later, now: checked.expiresAt) == nil,
+            "newNetwork": qr.installed(address, network: UUID(), signedUntil: later, now: now) == nil,
+            "wrongPort": qr.installed(.init(host: address.host, port: 444), network: network, signedUntil: later, now: now) == nil]
     case "discovery":
         let key = try LinkBytes.unhex(input["key"] as? String ?? ""), day = (input["day"] as? NSNumber)?.uint64Value ?? 0
         let names = try NativeDiscoveryWire.names(key: key, day: day)
