@@ -378,7 +378,8 @@ export function useSessionController({
       onForegroundSent()
       reading.show(sessionId)
     },
-    onRefused: (sessionId, cause, resent) => stopSession(sessionId, cause, { from: 'send', ...(resent ? { prompt: resent } : {}) }),
+    onRefused: (sessionId, cause, resent) =>
+      stopSession(sessionId, cause, { from: 'send', ...(resent ? { prompt: resent.prompt, teamRequest: resent.teamRequest } : {}) }),
     // Not delivered, for certain: the text goes back where it was written, and the released rows say so.
     onReleased: (sent, restored) => {
       released.current?.(COPY.released)
@@ -869,7 +870,13 @@ export function useSessionController({
     })
   }, [snapshot])
 
-  const [queuedRetry, setQueuedRetry] = useState<{ id: string; runId?: string; updatedAt: string; prompt: string } | null>(null)
+  const [queuedRetry, setQueuedRetry] = useState<{
+    id: string
+    runId?: string
+    updatedAt: string
+    prompt: string
+    teamRequest?: true
+  } | null>(null)
   const consumedRetry = useRef<typeof queuedRetry>(null)
   const choose = useStableCallback((id: string | null, afterSelect?: () => void, intent?: SessionSelectionIntent): void => {
     if (intent && (submission.pending !== null || submission.sending)) return
@@ -1549,22 +1556,22 @@ export function useSessionController({
     stopCode === undefined || stopLocksInput(stopCode)
       ? undefined
       : retryOfRefused(refusedInput, { draft: submission.draft, attachments: attachmentDraft.items.length })
-  const resend = async (prompt: string) => {
+  const resend = async (prompt: string, teamRequest?: true) => {
     if (selectedId === null) return
     clearUnverified(selectedId)
     await settingsLanded()
-    await submission.resend(prompt)
+    await submission.send({ prompt, ...(teamRequest ? { teamRequest } : {}) })
   }
-  /** A message to the open session that never sat in the input, sent as the input sends it: queued while it runs. */
-  const sendPrompt = async (prompt: string) => {
+  /** A team request gets a turn of its own, including while another turn runs. */
+  const sendTeamPrompt = async (prompt: string) => {
     if (inputId === null) return false
     clearUnverified(inputId)
     await settingsLanded()
-    return submission.send(prompt, active && canQueue ? 'queue' : undefined)
+    return submission.send({ prompt, teamRequest: true }, active && canQueue ? 'queue' : undefined)
   }
   const retryStopped = () => {
     if (stopRetry?.kind === 'draft') void sendDraft()
-    else if (stopRetry?.kind === 'prompt') void resend(stopRetry.prompt)
+    else if (stopRetry?.kind === 'prompt') void resend(stopRetry.prompt, stopRetry.teamRequest)
   }
   const homeCode = selectedId === null ? undefined : homeRefused.get(selectedId)
   /** A short state above an Agent chat's input: the reason behind its hover, and 重试 for what was refused. */
@@ -1574,7 +1581,7 @@ export function useSessionController({
     const again = retryOfRefused(refusedInput, { draft: submission.draft, attachments: attachmentDraft.items.length })
     clearHomeRefused(selectedId)
     if (again?.kind === 'draft') void sendDraft()
-    else if (again?.kind === 'prompt') void submission.resend(again.prompt)
+    else if (again?.kind === 'prompt') void submission.send({ prompt: again.prompt, ...(again.teamRequest ? { teamRequest: true } : {}) })
   }
   // Rebuilt as text into another session: this one stays to read, and links there.
   const rebuiltInto = summary ? rebuiltFrom(snapshot.tasks, summary.id) : undefined
@@ -1715,18 +1722,20 @@ export function useSessionController({
     && submission.pending === null
     && !submission.sending
       ? {
-          onResend: (prompt: string) => {
-            void resend(prompt)
+          onResend: (prompt: string, teamRequest?: true) => {
+            void resend(prompt, teamRequest)
           },
         }
       : undefined
   const retryFromWorkbench = (detail: TaskDetail) => {
-    const prompt = detail.messages.findLast(message => message.role === 'user' && !message.steered)?.text
+    const user = detail.messages.findLast(message => message.role === 'user' && !message.steered)
     const failure = detail.messages.findLast(message => message.role === 'system' && message.state === 'failed')
-    if (!prompt || failureAction(failure?.errorCode) !== 'retry' || (detail.summary.runEnd?.unknownResultCount ?? 0) > 0) return
+    if (!user?.text || failureAction(failure?.errorCode) !== 'retry' || (detail.summary.runEnd?.unknownResultCount ?? 0) > 0) return
     const { id, runId, updatedAt } = detail.summary
     // Selecting still passes the unsaved-editor and draft guards; the one sender acts only after its target arrives.
-    choose(id, () => setQueuedRetry({ id, ...(runId ? { runId } : {}), updatedAt, prompt }))
+    choose(id, () =>
+      setQueuedRetry({ id, ...(runId ? { runId } : {}), updatedAt, prompt: user.text, ...(user.teamRequest ? { teamRequest: true } : {}) }),
+    )
   }
   useEffect(() => {
     if (!queuedRetry || consumedRetry.current === queuedRetry || inputId !== queuedRetry.id || current?.summary.id !== queuedRetry.id)
@@ -1750,7 +1759,7 @@ export function useSessionController({
       })
       return
     }
-    void resend(queuedRetry.prompt)
+    void resend(queuedRetry.prompt, queuedRetry.teamRequest)
   }, [queuedRetry, inputId, current, retry, harness.connection])
   const askedQuestion = current?.questions?.[0]?.state === 'answering' ? undefined : current?.questions?.[0]
   const startWords = mode === 'chat' ? COPY.ask : COPY.prompt
@@ -1912,7 +1921,7 @@ export function useSessionController({
     setSubmissionDraft,
     mentionChoice,
     sendDraft,
-    sendPrompt,
+    sendTeamPrompt,
     retryDraft,
     abandonPending,
     abandoning,

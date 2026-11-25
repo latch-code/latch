@@ -3102,13 +3102,14 @@ export class AgentRuntime implements Bridge {
     const fresh = options.freshContext === true
     // The new context joins the hash only when asked, so receipts written before it existed still match.
     const payloadHash = digest(
-      attachments.length || fileRefs.length || fresh
+      attachments.length || fileRefs.length || fresh || options.teamRequest
         ? {
             prompt,
             ...(options.model ? { model: options.model } : {}),
             ...(attachments.length ? { attachments } : {}),
             ...(fileRefs.length ? { fileRefs } : {}),
             ...(fresh ? { freshContext: true } : {}),
+            ...(options.teamRequest ? { teamRequest: true } : {}),
           }
         : options.model
           ? { prompt, model: options.model }
@@ -3191,6 +3192,7 @@ export class AgentRuntime implements Bridge {
           role: 'user',
           text: seed + prompt,
           ...(freshContext ? { freshContext: true as const } : {}),
+          ...(options.teamRequest ? { teamRequest: true } : {}),
           turnId: run.id,
           requestId,
           ...(options.queuedAt ? { queuedAt: options.queuedAt } : {}),
@@ -4318,8 +4320,8 @@ export class AgentRuntime implements Bridge {
       .filter(item => item.taskId === taskId && !item.claimed)
       .map(({ approval, child }) => {
         const row = task && child ? this.childRow(task, child) : undefined
-        // A member can ask before its parent reports the spawn. Link it once the same row has both facts.
-        return row?.subagent?.team ? { ...approval, subagent: row.subagent.title, subagentId: row.id } : approval
+        // The pending request names its tracked child. Equal display names can belong to different rows.
+        return row?.subagent ? { ...approval, subagent: row.subagent.title, subagentId: row.id } : approval
       })
   }
 
@@ -6435,7 +6437,7 @@ export class AgentRuntime implements Bridge {
       if (live.wire.hasActiveCodexMember && task) {
         const at = this.now()
         let changed = false
-        for (const message of task.messages) if (message.subagent?.team) changed = settleSubagent(message, at, true) || changed
+        for (const message of task.messages) if (message.subagent) changed = settleSubagent(message, at, true) || changed
         if (changed) {
           this.touch(task)
           this.mark()
@@ -8456,20 +8458,20 @@ export class AgentRuntime implements Bridge {
    * session's own messages or, for a subagent's own subagent, among that subagent's steps.
    */
   private announceChild(live: Live, task: AcpTask, run: Run | undefined, parent: Child | undefined, update: SubagentUpdate): void {
-    const evidence =
-      this.selection.profile?.wire === 'codex' && update.team && live.sessions.get(update.team.rootThreadId) === task.summary.id
-        ? update.team
-        : undefined
-    const evidenceId = evidence ? sha256Hex(JSON.stringify([task.summary.id, evidence.rootThreadId, update.sessionId])) : undefined
-    const teamRowId = evidenceId ? `subagent:${evidenceId}` : undefined
-    const existingTeamRow = evidenceId ? task.messages.find(item => item.subagent?.team?.memberId === evidenceId) : undefined
-    if (update.team && !evidence) return
-    if (evidence && !evidence.parentTurnId && !existingTeamRow) return
+    const codexRoot = this.selection.profile?.wire === 'codex' ? task.acp.acpSessionId : undefined
+    const evidence = update.team
+    if (evidence && (evidence.rootThreadId !== codexRoot || live.sessions.get(evidence.rootThreadId) !== task.summary.id)) return
+    // A call or approval can arrive before its delegation. The same native thread keeps the same Latch row.
+    const memberId = codexRoot ? sha256Hex(JSON.stringify([task.summary.id, codexRoot, update.sessionId])) : undefined
+    const rowId = memberId ? `subagent:${memberId}` : undefined
+    const siblings = parent ? this.childRow(task, parent)?.subagent?.steps : task.messages
+    const existingRow = memberId ? siblings?.find(item => item.id === rowId || item.subagent?.team?.memberId === memberId) : undefined
+    if (evidence && !existingRow && !evidence.parentTurnId && (!evidence.childTurnId || evidence.recovered)) return
     if (
       evidence?.recovered
-      && (!evidenceId
+      && (!memberId
         || !evidence.childTurnId
-        || task.acp.codexMemberTurns?.[evidenceId] !== codexMemberTurnHash(evidenceId, evidence.childTurnId))
+        || task.acp.codexMemberTurns?.[memberId] !== codexMemberTurnHash(memberId, evidence.childTurnId))
     )
       return
     let child = live.children.get(update.sessionId)
@@ -8484,7 +8486,7 @@ export class AgentRuntime implements Bridge {
       if (shown) {
         if (evidence?.recovered && shown.subagent?.status && shown.subagent.status !== 'unknown') delete update.state
         patchSubagent(shown, update, this.redact)
-        this.addTeamEvidence(shown, evidence, evidenceId, task, run)
+        this.addTeamEvidence(shown, evidence, memberId, task, run)
         child.title = shown.subagent!.title
         return
       }
@@ -8503,21 +8505,21 @@ export class AgentRuntime implements Bridge {
         depth: (parent?.depth ?? 0) + 1,
         tools: new Map(),
         loose: new Map(),
-        ...(existingTeamRow ? { messageId: existingTeamRow.id } : {}),
+        ...(existingRow ? { messageId: existingRow.id } : {}),
         ...(parent ? { parent } : {}),
         ...(update.capabilities?.cancel ? { cancellable: true } : {}),
       }
       live.children.set(update.sessionId, child)
     }
-    if (existingTeamRow) {
-      if (evidence?.recovered && existingTeamRow.subagent?.status && existingTeamRow.subagent.status !== 'unknown') delete update.state
-      patchSubagent(existingTeamRow, update, this.redact)
-      this.addTeamEvidence(existingTeamRow, evidence, evidenceId, task, run)
+    if (existingRow) {
+      if (evidence?.recovered && existingRow.subagent?.status && existingRow.subagent.status !== 'unknown') delete update.state
+      patchSubagent(existingRow, update, this.redact)
+      this.addTeamEvidence(existingRow, evidence, memberId, task, run)
       return
     }
     // It has no row yet: one is placed if there is room, else only its requests reach the person.
-    const row = subagentRow(teamRowId ?? `subagent:${randomUUID()}`, update, this.redact, this.now(), child)
-    this.addTeamEvidence(row, evidence, evidenceId, task, run)
+    const row = subagentRow(rowId ?? `subagent:${randomUUID()}`, update, this.redact, this.now(), child)
+    this.addTeamEvidence(row, evidence, memberId, task, run)
     child.title = row.subagent!.title
     if (row.subagent!.status) child.status = row.subagent!.status
     else delete child.status
@@ -8558,8 +8560,18 @@ export class AgentRuntime implements Bridge {
         ...(run?.userMessageId ? { userMessageId: run.userMessageId } : {}),
       }
     const team = row.subagent.team
-    if (!team) return
     if (!evidence.childTurnId) return
+    if (!team) {
+      const report = evidence.result ?? evidence.failure
+      if (report)
+        upsertStep(row, {
+          id: `result:${codexMemberTurnHash(memberId, evidence.childTurnId)}`,
+          role: 'assistant',
+          text: clip(this.redact(report), 16_000),
+          state: evidence.failure ? 'failed' : 'completed',
+        })
+      return
+    }
     const turns = (task.acp.codexMemberTurns ??= {})
     const work = codexMemberTurnHash(memberId, evidence.childTurnId)
     if (!evidence.recovered && turns[memberId] !== work) {

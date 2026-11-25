@@ -62,6 +62,7 @@ const recordSchema = z.strictObject({
   steerRunId: z.string().min(1).max(128).optional(),
   hash: z.string().regex(/^[a-f0-9]{64}$/u),
   text: z.string().max(16_000).optional(),
+  teamRequest: z.literal(true).optional(),
   attachmentIds: z
     .array(z.string().regex(/^[A-Za-z0-9_-]{22}$/u))
     .min(1)
@@ -139,6 +140,7 @@ export interface QueueOptions {
       attachmentIds?: string[]
       attachmentRequestId?: string
       queuedAt?: string
+      teamRequest?: true
       itemId?: string
       editor?: QueueActor
       coauthors?: readonly string[]
@@ -281,7 +283,14 @@ export class PromptQueues {
   submit(
     actor: QueueActor,
     sessionId: string,
-    input: { prompt: string; requestId: string; model?: ModelRef; coauthors?: readonly string[]; attachmentIds?: string[] },
+    input: {
+      prompt: string
+      requestId: string
+      model?: ModelRef
+      coauthors?: readonly string[]
+      attachmentIds?: string[]
+      teamRequest?: true | undefined
+    },
     existingOnly = false,
   ): Promise<{ accepted: true } | { queued: { id: string } }> {
     return this.lock(async () => {
@@ -289,7 +298,8 @@ export class PromptQueues {
       const coauthors = checkedCoauthors(input.coauthors)
       const files = input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}
       if (!input.prompt && !files.attachmentIds) throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
-      const hash = sha256Hex(canonicalJson({ text: input.prompt, ...(input.model ? { model: input.model } : {}), ...files }))
+      const team = input.teamRequest ? { teamRequest: true as const } : {}
+      const hash = sha256Hex(canonicalJson({ text: input.prompt, ...(input.model ? { model: input.model } : {}), ...files, ...team }))
       const prior = [...this.entries.values()].find(
         item => item.sessionId === sessionId && item.deviceId === actor.deviceId && item.requestId === input.requestId,
       )
@@ -317,6 +327,7 @@ export class PromptQueues {
           sendRequestId: input.requestId,
           hash,
           ...files,
+          ...team,
           text: input.prompt,
           queuedAt: new Date(this.now()).toISOString(),
           waitRunId: detail.summary.runId ?? '',
@@ -335,6 +346,7 @@ export class PromptQueues {
             requestId: input.requestId,
             itemId: immediate.id,
             ...files,
+            ...team,
             ...(immediate.coauthors ? { coauthors: immediate.coauthors } : {}),
             ...(model ? { model } : {}),
             ...(binding ? { binding } : {}),
@@ -381,6 +393,7 @@ export class PromptQueues {
         sendRequestId: input.requestId,
         hash,
         ...files,
+        ...team,
         text: input.prompt,
         queuedAt: new Date(this.now()).toISOString(),
         waitRunId: detail.summary.runId ?? '',
@@ -527,6 +540,7 @@ export class PromptQueues {
     return (
       (item.state === 'parked' || item.state === 'waiting')
       && !item.attachmentIds
+      && !item.teamRequest
       && !mentionsConversationReference(item.text ?? '')
       && !item.model
       && !item.binding
@@ -708,6 +722,7 @@ export class PromptQueues {
         requestId: item.sendRequestId,
         queuedAt: item.queuedAt,
         itemId: item.id,
+        ...(item.teamRequest ? { teamRequest: true } : {}),
         ...(item.attachmentIds ? { attachmentIds: item.attachmentIds, attachmentRequestId: item.requestId } : {}),
         ...(item.editor ? { editor: item.editor } : {}),
         ...(item.coauthors ? { coauthors: item.coauthors } : {}),

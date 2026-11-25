@@ -29,7 +29,7 @@ import { useHarnessCommands } from '../hooks/useHarnessCommands.ts'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
 import { ConversationReferencePicker, REFERENCE_COPY } from '../conversation/ConversationReferencePicker.tsx'
 import { Composer } from '../composer/Composer.tsx'
-import { CodexTeam } from '../composer/CodexTeam.tsx'
+import { TeamEntry } from '../teams/TeamEntry.tsx'
 import { canStartTeam } from '../teams/model.ts'
 import { draftRound, leadTeamOf, memberChoices, useTeamRound } from '../teams/rounds.ts'
 import { MemberTile } from '../teams/TeamGraph.tsx'
@@ -346,7 +346,7 @@ export function SessionComposer({
     setSubmissionDraft,
     mentionChoice,
     sendDraft,
-    sendPrompt,
+    sendTeamPrompt,
     retryDraft,
     abandonPending,
     abandoning,
@@ -378,7 +378,6 @@ export function SessionComposer({
     approvals,
     approvalIndex,
     setApprovalIndex,
-    selectApproval,
     gateFor,
     approvalBusy,
     statuses,
@@ -1068,34 +1067,31 @@ export function SessionComposer({
           ) : undefined
         }
         vitalsLead={
-          !seedService && current && selectedId === current.summary.id ? (
-            <CodexTeam
+          !seedService
+          && current
+          && selectedId === current.summary.id
+          && shell.catalog?.features?.teams
+          && access.scopes.has('run')
+          && canStartTeam(current.summary, shell.snapshot.teams) ? (
+            <TeamEntry
               key={current.summary.id}
-              detail={current}
-              onApproval={selectApproval}
-              run={run}
-              team={
-                shell.catalog?.features?.teams && access.scopes.has('run') && canStartTeam(current.summary, shell.snapshot.teams)
-                  ? {
-                      summary: current.summary,
-                      catalog: shell.catalog,
-                      deviceId: shell.snapshot.device.id,
-                      access,
-                      refresh: shell.refresh,
-                      onManageModels: manageProviders,
-                      computer,
-                      prepare: {
-                        draft: submission.draft,
-                        open: teamPrepare,
-                        put: value => {
-                          setSubmissionDraft(value)
-                          requestAnimationFrame(() => composerRef.current?.focus())
-                        },
-                      },
-                      send: { open: teamSend, go: sendPrompt },
-                    }
-                  : undefined
-              }
+              summary={current.summary}
+              catalog={shell.catalog}
+              codexAvailable={current.codexTeam === 'available'}
+              deviceId={shell.snapshot.device.id}
+              access={access}
+              refresh={shell.refresh}
+              onManageModels={manageProviders}
+              computer={computer}
+              prepare={{
+                draft: submission.draft,
+                open: teamPrepare,
+                put: value => {
+                  setSubmissionDraft(value)
+                  requestAnimationFrame(() => composerRef.current?.focus())
+                },
+              }}
+              send={{ open: teamSend, go: sendTeamPrompt }}
             />
           ) : undefined
         }

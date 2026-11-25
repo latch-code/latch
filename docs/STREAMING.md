@@ -543,7 +543,7 @@ Harness 的进程级换档在空闲时结束旧进程并恢复同一外部会话
 ### 子 Agent
 
 - Harness 启动的子 Agent 是会话记录里的一行工具消息，带 `Message.subagent`（名字、说明、状态、步骤）。它的状态只来自它自己的报告；所在的一轮结束时仍未报告停止的记为 `unknown`。
-- 它请求的审批在会话的 `approvals` 里，`Approval.subagent` 是它的名字，没有 `toolCallId`。一轮结束后才到或仍在等的这类审批让会话处于 `waiting-approval`，详情里没有 `activity`；答复后会话回到这一轮结束时的状态。
+- 它请求的审批在会话的 `approvals` 里，`Approval.subagent` 是它的名字，`Approval.subagentId` 指向已记录的成员行（含嵌套成员），没有 `toolCallId`。一轮结束后才到或仍在等的这类审批让会话处于 `waiting-approval`，详情里没有 `activity`；答复后会话回到这一轮结束时的状态。
 - 能单独停止的子 Agent 带 `Subagent.stoppable`；停止之后带 `stopping`，直到它报告结果或这一轮结束，页面在此之前不说已停止。
 
 机制见 [HARNESSES.md](./HARNESSES.md#子-agent)。
@@ -553,6 +553,7 @@ Harness 的进程级换档在空闲时结束旧进程并恢复同一外部会话
 Codex 的原生委派在同一会话的详情里沿用 `Message.subagent`。
 
 - 有父轮与直接父关系证据的行带 `Subagent.team`；待处理的 `Approval.subagentId` 指向发起审批的 Latch 消息。客户端只提交原有会话与审批的标识。
+- 显式从 Web 或桌面的团队面板发给 Codex 的一轮，在用户消息上保存 `teamRequest: true`。排队或重试沿用标记，排队的分工独立成轮。概要按 `Subagent.team.userMessageId` 找对应用户消息，只有带标记的直接委派归入「团队成员」。刷新与重连仍按同一条消息归组。
 - Team 的变化随完整的 `task-state` 传输，正文追加帧不承载它。
 - Host 丢失进程时保存的成员留在原行；只有验证过的官方读回能补上缺失的状态，正文重连不自动派发工作。
 

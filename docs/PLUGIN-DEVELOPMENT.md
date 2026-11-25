@@ -558,6 +558,8 @@ ACP 的 `ToolGatewayCallContext.runId` 由 Driver 在收到工具调用时取自
 
 ### 清空上下文
 
+Host 向 Codex 直连 Driver 提交显式团队分工时会带 `PromptOptions.teamRequest: true`。该选项参与请求去重并随用户消息保存，供界面识别这一轮的分工来源。
+
 `PromptOptions.freshContext: true` 要求这一轮在新的上下文里开始：Harness 看不到之前的消息，消息留在记录里，这一轮的用户消息带 `freshContext`。
 
 - 只有在详情里声明 `clearContext: true` 的 Driver 收到它；它计入请求的幂等哈希。

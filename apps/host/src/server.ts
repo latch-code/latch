@@ -188,6 +188,7 @@ import {
   presetRouteAfterVersion,
   commandName,
   resolveCommand,
+  selectProfile,
   setCommandSearch,
   setLoginPrograms,
   validateAgentDefinition,
@@ -493,6 +494,7 @@ const promptSchema = z.object({
 })
 /** `steer`: add it to the running turn when the harness takes that, and queue it otherwise. */
 const queuedPromptSchema = promptSchema.extend({
+  teamRequest: z.literal(true).optional(),
   queue: z.boolean().optional(),
   steer: z.boolean().optional(),
   /** This turn starts a new context: the agent sees none of the earlier messages, which stay in the history. */
@@ -3267,6 +3269,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               ...(agentContext ? { agentContext } : {}),
               ...(input.model ? { model: input.model } : {}),
               ...(input.queuedAt ? { queuedAt: input.queuedAt } : {}),
+              ...(input.teamRequest ? { teamRequest: true } : {}),
               ...(attachments ? { attachments } : {}),
               ...(reference ? { outsideContent: true as const } : {}),
             }),
@@ -3368,6 +3371,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
           ...(input.fileRefs?.length ? { fileRefs: input.fileRefs } : {}),
           ...(input.freshContext ? { freshContext: true } : {}),
+          ...(input.teamRequest ? { teamRequest: true } : {}),
           ...(input.queue ? { queue: true } : {}),
           ...(input.steer ? { steer: true } : {}),
         }),
@@ -10048,7 +10052,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       id: string,
       input: z.infer<typeof queuedPromptSchema>,
     ): Promise<z.infer<typeof createTaskSchema> | undefined> {
-      if (input.queue || input.steer) return undefined
+      if (input.queue || input.steer || input.teamRequest) return undefined
       const owner = hub!.agentOf(id)?.customAgentId ?? (hub!.generalChatOf(id) ? GENERAL_AGENT_ID : undefined)
       if (!owner || customAgents.hasPending()) return undefined
       const slot = customAgents.chats()[owner]
@@ -10873,6 +10877,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         if (
           prior.text !== input.prompt
+          || prior.teamRequest !== input.teamRequest
           || canonicalJson(prior.attachments?.map(ref => ref.id) ?? []) !== canonicalJson(input.attachmentIds ?? [])
           || canonicalJson(prior.fileRefs ?? []) !== canonicalJson(input.fileRefs ?? [])
           || (elsewhere && Boolean(prior.freshContext) !== Boolean(input.freshContext))
@@ -10884,6 +10889,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return 'replayed'
       }
       customAgents.assertWorksHere(hub!.agentOf(id)?.customAgentId)
+      if (input.teamRequest) {
+        const harnessId = await hub!.harnessOf(id)
+        const agent = config.settings().agents.find(item => item.id === harnessId)
+        if (!agent || selectProfile(agent).profile?.wire !== 'codex')
+          throw new AppError(409, 'team-request-unsupported', '这个会话不支持 Codex 原生团队分工。')
+      }
       if (!input.queue && !input.steer) await healAgentHome(caller, id, input)
       await assertSessionWorkspace(id)
       if (input.model) {
@@ -10902,7 +10913,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (writers.narrower && (input.queue || input.steer))
         throw new AppError(409, 'queue-writers-unknown', '这条消息带有无法核对来源的内容，不能排队或追加，请等本轮结束后发送。')
       if (input.queue || input.steer) await assertQueueable(id, input.prompt)
-      if (input.steer && !input.model && input.prompt && !mentionsConversationReference(input.prompt)) {
+      if (input.steer && !input.teamRequest && !input.model && input.prompt && !mentionsConversationReference(input.prompt)) {
         recheck(caller, 'run')
         const steered = await hub!.steer(
           id,
@@ -10974,6 +10985,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               ...(input.model ? { model: input.model } : {}),
               ...(attachments.length ? { attachments } : {}),
               ...(input.freshContext ? { freshContext: true as const } : {}),
+              ...(input.teamRequest ? { teamRequest: true } : {}),
               ...(outsideContent || mentionsConversationReference(input.prompt) ? { outsideContent: true as const } : {}),
               ...(unattended ? { unattended: true as const } : {}),
             }),

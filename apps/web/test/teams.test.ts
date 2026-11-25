@@ -16,6 +16,7 @@ import {
 import { testHarness } from '@latch/testkit'
 import { withServicePick } from '../src/composerChoice.ts'
 import { groupSessions, listedSessions, nestMembers } from '../src/sessions.ts'
+import { overviewAgents } from '../src/shell/overviewAgents.ts'
 import { CODEX_TEAM_REQUEST } from '../src/teams/copy.ts'
 import { memberChoice, memberModel, memberStart, withPick } from '../src/teams/memberModel.ts'
 import {
@@ -115,6 +116,31 @@ describe('the list a person writes', () => {
       ],
     })
   })
+})
+
+it('groups native delegation by its marked parent request, even when old messages have the same text and name', () => {
+  const request: Message = { id: 'old', role: 'user', text: CODEX_TEAM_REQUEST }
+  const worker = (id: string, userMessageId: string, steps: Message[] = []): Message => ({
+    id,
+    role: 'tool',
+    text: '',
+    subagent: { title: 'Scout', steps, team: { id: 'group', memberId: id, userMessageId } },
+  })
+  const { members, children } = overviewAgents(
+    'lead',
+    [team(), team({ leadSessionId: 'elsewhere' })],
+    [
+      request,
+      { ...request, id: 'explicit', teamRequest: true },
+      worker('autonomous', request.id),
+      worker('direct', 'explicit', [worker('nested', 'explicit')]),
+      worker('unlinked', 'missing'),
+    ],
+    [],
+  )
+  expect(members.map(row => row.id)).toEqual(['a', 'b', 'direct'])
+  expect(children.map(row => row.id)).toEqual(['autonomous', 'nested', 'unlinked'])
+  expect(children.find(row => row.id === 'nested')).toMatchObject({ parent: 'Scout' })
 })
 
 describe('where a team stands', () => {

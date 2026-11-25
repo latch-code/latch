@@ -6413,7 +6413,12 @@ describe('ACP subagents', () => {
     const { sessionId } = await bridge.createTask({ prompt: 'delegate ask', requestId: rid() })
     const waiting = await until(bridge, sessionId, detail => detail.approvals.length === 1)
     const [approval] = waiting.approvals
-    expect(approval).toMatchObject({ sessionId, subagent: 'Test runner', toolName: expect.any(String) })
+    expect(approval).toMatchObject({
+      sessionId,
+      subagent: 'Test runner',
+      subagentId: subagents(waiting)[0]?.id,
+      toolName: expect.any(String),
+    })
     expect(approval!.toolCallId).toBeUndefined()
     expect(waiting.summary.status).toBe('waiting-approval')
     expect(subagents(waiting)[0]).toMatchObject({ state: 'awaiting-approval', subagent: { status: 'waiting' } })

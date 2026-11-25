@@ -134,6 +134,8 @@ export interface CreateTaskInput {
 }
 
 export interface PromptOptions {
+  /** This turn was explicitly submitted from the team panel to the Harness's own subagents. */
+  teamRequest?: true
   /** The agent's context as it stands for this turn; never accepted from an HTTP body. */
   agentContext?: AgentExecutionContext
   /** Host queue time, for the accepted user message. */

@@ -1806,12 +1806,24 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     const { width: _width, ...rest } = preferences.rightPanel
     setPreference('rightPanel', rest)
   }
-  type ContextRow = { sessionId: string; kind: 'turn' | 'tool'; messageId: string; resultId: string | undefined }
+  type ContextRow = { sessionId: string; kind: 'turn' | 'tool' | 'subagent'; messageId: string; resultId: string | undefined }
   const [contextRow, setContextRow] = useState<ContextRow | null>(null)
   const canViewContext = access.scopes.has('view')
   if (contextRow && (!canViewContext || contextRow.sessionId !== selectedId)) setContextRow(null)
   const readContextRow = useStableCallback((sessionId: string, kind: ContextRow['kind'], messageId: string) => {
     if (!canViewContext || current?.summary.id !== sessionId) return undefined
+    if (kind === 'subagent') {
+      const findAgent = (messages: typeof current.messages): (typeof current.messages)[number] | undefined => {
+        for (const message of messages) {
+          if (!message.subagent) continue
+          if (message.id === messageId) return message
+          const nested = findAgent(message.subagent.steps)
+          if (nested) return nested
+        }
+        return undefined
+      }
+      return findAgent(current.messages)
+    }
     const index = current.messages.findIndex(message => message.id === messageId)
     if (index < 0 || index !== current.messages.findLastIndex(message => message.id === messageId)) return undefined
     const message = current.messages[index]

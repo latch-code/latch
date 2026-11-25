@@ -164,7 +164,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | 待办投递、来源与证据 | `work-threads.test.ts`（原请求、同轮提问与私有范围）、`native.test.ts`（正文窗口、PR 评论响应字节预算）、`apps/web/test/workbench-evidence.test.ts`（SHA）、`e2e/task-flow.e2e.ts`（浏览器、假 ACP 与假 GitHub CLI） |
 | 会话文件与预览 | `files.test.ts`、`file-content.test.ts`、`file-outside.test.ts`、`file-tree.test.ts` |
 | 输入框（块、原子删除、撤销、输入法、粘贴与拖入） | `apps/web/test/prompt-editor.test.ts`、`prompt-tokens.test.ts`、`e2e/prompt-marks.e2e.ts`（Chromium 与 WebKit）；成员块见 `e2e/teams.e2e.ts` |
-| 团队（开始、停止、交回与页面） | `apps/host/test/teams.test.ts`、`apps/web/test/teams.test.ts`、`e2e/teams.e2e.ts`；改 Codex 委派入口时加 `e2e/codex-team.e2e.ts` |
+| 团队（开始、停止、交回与页面） | `apps/host/test/teams.test.ts`、`apps/web/test/teams.test.ts`、`e2e/teams.e2e.ts`；概要的独立团队与嵌套子 Agent 由同一用例检查。Codex 委派入口、显式与自主派出的同名成员、重载后结果和审批定位另跑 `e2e/codex-team.e2e.ts` |
 | 插件页面框 | `app-frame.test.ts`、`app-pages.test.ts`（Host 与 `apps/web/test/` 各一份）、`apps/desktop/test/desktop-frames.test.ts`、`e2e/app-pages.e2e.ts` |
 | 会话上下文图表 | `tests/runtime.test.ts`、`tests/agent-context.test.ts`、`packages/harness-acp/test/acp.test.ts`、`apps/web/test/components-panel.test.ts`、`apps/web/test/context-tools.test.ts` 与 `e2e/context.e2e.ts`；两轮多步输入的组成、历史选择、原对话定位与外部窗口分别验收 |
 | 插件资产与生命周期 | `plugin-assets.test.ts`、`plugin-packages.test.ts`、`tests/registry.test.ts` |

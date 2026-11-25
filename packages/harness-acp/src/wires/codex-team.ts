@@ -108,6 +108,10 @@ export class CodexTeam {
     private readonly publish: (id: string, update: CodexMemberUpdate) => void,
   ) {}
 
+  parentOf(id: string): string | undefined {
+    return this.members.get(id)?.parentId
+  }
+
   owns(id: string): boolean {
     return this.members.has(id)
   }
@@ -148,7 +152,12 @@ export class CodexTeam {
     const title = thread.agentNickname ?? thread.agentRole ?? undefined
     if (title && title !== member.title) {
       member.title = title
-      if (member.parentTurnId && member.parentId === this.rootId) this.publish(thread.id, { title, parentTurnId: member.parentTurnId })
+      if (member.parentTurnId || member.childTurnId)
+        this.publish(thread.id, {
+          title,
+          ...(member.parentTurnId ? { parentTurnId: member.parentTurnId } : {}),
+          ...(member.childTurnId ? { childTurnId: member.childTurnId } : {}),
+        })
     }
     return true
   }
@@ -181,12 +190,12 @@ export class CodexTeam {
     delete member.terminal
     delete member.result
     delete member.failure
-    if (member.parentTurnId || member.restored)
-      this.publish(id, {
-        ...(member.parentTurnId ? { parentTurnId: member.parentTurnId } : {}),
-        childTurnId: turnId,
-        state: { state: 'running' },
-      })
+    this.publish(id, {
+      ...(member.title ? { title: member.title } : {}),
+      ...(member.parentTurnId ? { parentTurnId: member.parentTurnId } : {}),
+      childTurnId: turnId,
+      state: { state: 'running' },
+    })
   }
 
   finish(id: string, turnId: string, status: string, failure?: string): void {
@@ -198,14 +207,14 @@ export class CodexTeam {
     member.terminal = state
     delete member.active
     if (status === 'failed' && failure) member.failure = failure
-    if (member.parentTurnId || member.restored)
-      this.publish(id, {
-        ...(member.parentTurnId ? { parentTurnId: member.parentTurnId } : {}),
-        childTurnId: turnId,
-        state,
-        ...(member.result ? { result: member.result } : {}),
-        ...(member.failure ? { failure: member.failure } : {}),
-      })
+    this.publish(id, {
+      ...(member.title ? { title: member.title } : {}),
+      ...(member.parentTurnId ? { parentTurnId: member.parentTurnId } : {}),
+      childTurnId: turnId,
+      state,
+      ...(member.result ? { result: member.result } : {}),
+      ...(member.failure ? { failure: member.failure } : {}),
+    })
   }
 
   output(id: string, turnId: string, text: string): void {
@@ -280,10 +289,11 @@ export class CodexTeam {
   private reportResult(id: string, member: Member, text: string): void {
     if (!text.trim() || text === member.result) return
     member.result = text.slice(0, 16_000)
-    if (member.childTurnId && (member.parentTurnId || member.restored))
+    if (member.childTurnId)
       this.publish(id, {
         ...(member.parentTurnId ? { parentTurnId: member.parentTurnId } : {}),
         childTurnId: member.childTurnId,
+        ...(member.title ? { title: member.title } : {}),
         result: member.result,
       })
   }

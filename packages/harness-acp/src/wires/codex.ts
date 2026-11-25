@@ -965,8 +965,9 @@ export class CodexWire implements AgentWire {
     if (this.team?.rootId !== this.threadId) {
       const rootThreadId = this.threadId
       this.team = new CodexTeam(rootThreadId, (id, { parentTurnId, childTurnId, result, failure, recovered, ...update }) => {
-        if (this.threadId !== rootThreadId || this.stopping) return
-        this.update({
+        const parent = this.team?.parentOf(id)
+        if (!parent || this.threadId !== rootThreadId || this.stopping) return
+        this.emit(parent, {
           sessionUpdate: 'subagent_update',
           sessionId: id,
           ...update,
@@ -1912,7 +1913,7 @@ export class CodexWire implements AgentWire {
   private marked<T extends Record<string, unknown>>(value: T, child: string | undefined): T {
     if (!child || !this.threadId) return value
     const meta = isRecord(value._meta) ? value._meta : {}
-    return { ...value, _meta: { ...meta, [CODEX_CHILD_META]: { id: child, parentID: this.threadId } } }
+    return { ...value, _meta: { ...meta, [CODEX_CHILD_META]: { id: child, parentID: this.team?.parentOf(child) ?? this.threadId } } }
   }
 
   /**

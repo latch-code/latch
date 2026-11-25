@@ -449,6 +449,8 @@ export interface PendingSubmission {
   /** 从这里编辑 on a session's first message: the Host makes the new session from that session (`editOf`). */
   editOf?: { taskId: string }
   queue?: true
+  /** This session's team panel asked the Harness to delegate this turn. */
+  teamRequest?: true
   /** Into the running turn when its harness takes that, queued otherwise. */
   steer?: true
   /** This turn starts a new context in the session. */
@@ -558,6 +560,7 @@ export function readPending(key: string): PendingSubmission | null {
       return null
     if (item.model !== undefined && modelRef(item.model) === undefined) return null
     if (item.queue !== undefined && item.queue !== true) return null
+    if (item.teamRequest !== undefined && (item.teamRequest !== true || typeof item.sessionId !== 'string' || item.steer)) return null
     if (item.stay !== undefined && (item.stay !== true || item.sessionId !== undefined)) return null
     if (item.steer !== undefined && item.steer !== true) return null
     if (item.resent !== undefined && (item.resent !== true || typeof item.sessionId !== 'string')) return null
@@ -604,6 +607,7 @@ export function readPending(key: string): PendingSubmission | null {
       ...(typeof item.itemId === 'string' ? { itemId: item.itemId, itemRevision: item.itemRevision as number } : {}),
       ...(model ? { model } : {}),
       ...(item.queue === true ? { queue: true as const } : {}),
+      ...(item.teamRequest === true ? { teamRequest: true } : {}),
       ...(item.stay === true ? { stay: true as const } : {}),
       ...(item.steer === true ? { steer: true as const } : {}),
       ...(item.resent === true ? { resent: true as const } : {}),
@@ -652,6 +656,7 @@ export function submissionRequest(submission: PendingSubmission): { path: string
         requestId,
         ...(model ? { model } : {}),
         ...(submission.queue ? { queue: true } : {}),
+        ...(submission.teamRequest ? { teamRequest: true } : {}),
         ...(submission.steer ? { steer: true } : {}),
         ...(submission.freshContext ? { freshContext: true } : {}),
         ...attachments,

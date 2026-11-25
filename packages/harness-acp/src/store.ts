@@ -347,6 +347,7 @@ const message = z.object({
   text: z.string(),
   requestId: z.string().optional(),
   queuedAt: z.string().optional(),
+  teamRequest: z.literal(true).optional(),
   steered: z.literal(true).optional(),
   freshContext: z.literal(true).optional(),
   nativeFork: z.literal(true).optional(),

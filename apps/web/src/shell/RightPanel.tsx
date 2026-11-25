@@ -169,7 +169,9 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
       onCloseTab={shell.closePanelTabKey}
       addTrigger={shell.panelAdd}
       addShortcut={shortcutKeys('panel-add', currentShell() !== null)}
-      {...(summary && shell.panelAvailable('overview') ? { overview: <SessionOverview shell={shell} summary={summary} /> } : {})}
+      {...(summary && shell.panelAvailable('overview')
+        ? { overview: <SessionOverview key={summary.id} shell={shell} summary={summary} /> }
+        : {})}
       {...(summary && canViewChanges
         ? {
             changes: (

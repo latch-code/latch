@@ -5,7 +5,7 @@
 | 路径 | 职责 |
 | --- | --- |
 | `src/core/` | API、流与同步、阅读位置、身份与权限、确认、桌面桥 |
-| `src/shell/` | 壳层：`AppShell`、`routes.ts`、`panelLayout.ts`、`slots.ts`、`useSessionController` |
+| `src/shell/` | 壳层、路由、会话控制；概要分列团队成员与子 Agent |
 | `src/agents/` | 我的 Agent：总览按 Host 记录开原聊天、运行或工作电脑 |
 | `src/handoffs/` | 交接 |
 | `src/markdown/` | 流式 Markdown |
