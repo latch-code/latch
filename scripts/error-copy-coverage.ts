@@ -16,6 +16,8 @@ const DECLARATION = /\.d\.[cm]?ts$/u
  * re-wrapped error, a model service's own code, the board tags' check. Any other site this scan cannot name fails it.
  */
 export const PASSED_ON: Readonly<Record<string, readonly string[]>> = {
+  // The original delivery error, replayed from the receipt or returned immediately after recording it.
+  'apps/host/src/agent-mentions.ts': ['item.refusal.code', 'outcome.refusal.code'],
   'apps/host/src/attachment-uploads.ts': ['failed.code'],
   'apps/host/src/config-requests.ts': ['error.code'],
   'apps/host/src/routes/work-proposals.ts': ['normalized.problem'],

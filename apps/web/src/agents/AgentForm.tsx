@@ -40,9 +40,9 @@ import { AGENT_SPACE_COPY } from './spaceCopy.ts'
 const COPY = defineCopy(
   {
     consult: '允许主动联系其他 Agent',
-    consultDetail: '你直接发消息时，它每轮可询问一位本机 Agent。已确认的 DeepSeek Harness 以你的电脑账户运行，本轮只回复文字。',
+    consultDetail: '你直接发消息时，它每轮可询问同一台电脑上的一位 Agent。已确认的 DeepSeek Harness 以你的电脑账户运行，本轮只回复文字。',
     consultLegacy:
-      '当前只可联系内置 Agent。允许后，它也可在你的聊天回合询问本机已确认的 DeepSeek Harness。DeepSeek 以你的电脑账户运行，只回复文字。',
+      '当前只可联系内置 Agent。允许后，它也可在你发消息时询问同一台电脑上已确认的 DeepSeek Harness。DeepSeek 以你的电脑账户运行，只回复文字。',
     consultUpgrade: '允许联系 DeepSeek Harness',
     consultUnavailable: '当前运行方式不支持主动联系其他 Agent。',
     effect: '何时生效',
