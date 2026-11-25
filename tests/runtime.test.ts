@@ -1670,7 +1670,12 @@ describe('sessions with chosen models, workspaces, and structured output', () =>
     expect(approval.tool).toEqual({ kind: 'edit', title: '写入 example', diffs })
     expect(preview).toHaveBeenCalledWith(
       { text: 'example' },
-      { workspaceRoot: dataDir, workspaceFolders: [{ id: 'default', path: dataDir, primary: true }], signal: expect.any(AbortSignal) },
+      {
+        sessionId,
+        workspaceRoot: dataDir,
+        workspaceFolders: [{ id: 'default', path: dataDir, primary: true }],
+        signal: expect.any(AbortSignal),
+      },
     )
     const waiting = await bridge.detail(sessionId)
     expect(waiting.approvals[0]).toEqual(approval)

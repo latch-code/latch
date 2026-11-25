@@ -283,8 +283,8 @@ it('keeps one profile, unsaved defaults, focus and an unknown write across deskt
       await expect.poll(() => page.evaluate(element => element?.isConnected === true, textarea)).toBe(true)
       expect(await panel.getByLabel('名称', { exact: true }).inputValue()).toBe('尚未保存')
       expect(await panel.getByLabel('指令', { exact: true }).inputValue()).toBe('跨断点仍然保留这份草稿')
-      expect(await form.locator('button.model-picker').innerText()).toContain('Large')
-      expect(await form.locator('button.chip-permission').innerText()).toContain('plan')
+      await expect.poll(() => form.locator('button.model-picker').innerText()).toContain('Large')
+      await expect.poll(() => form.locator('button.chip-permission').innerText()).toContain('plan')
       await expect
         .poll(() =>
           page.evaluate(element => {
