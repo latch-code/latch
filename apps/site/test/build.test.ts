@@ -92,15 +92,18 @@ afterAll(async () => {
 it('builds every page in both languages with no SEO or link problems', () => {
   const { pages, problems } = checkSeo(dist)
   expect(problems).toEqual([])
-  expect(pages.map(page => [page.path, page.lang])).toEqual([
-    ['/404.html', 'en'],
-    ['/download/', 'en'],
-    ['/', 'en'],
-    ['/plugins/', 'en'],
-    ['/zh/download/', 'zh-CN'],
-    ['/zh/', 'zh-CN'],
-    ['/zh/plugins/', 'zh-CN'],
-  ])
+  // One page per plugin in the catalog, in both languages.
+  const ids = Object.keys(catalogPackages()).toSorted()
+  const listed = (lang: string, prefix: string) => [
+    [`${prefix}/`, lang],
+    [`${prefix}/download/`, lang],
+    [`${prefix}/plugins/`, lang],
+    ...ids.map(id => [`${prefix}/plugins/${id}/`, lang]),
+  ]
+  const byPath = (a: string[], b: string[]) => a[0]!.localeCompare(b[0]!)
+  expect(pages.map(page => [page.path, page.lang]).toSorted(byPath)).toEqual(
+    [['/404.html', 'en'], ...listed('en', ''), ...listed('zh-CN', '/zh')].toSorted(byPath),
+  )
 })
 
 it('derives canonical links, the sitemap and robots.txt from SITE_URL', async () => {
@@ -108,14 +111,19 @@ it('derives canonical links, the sitemap and robots.txt from SITE_URL', async ()
   expect(home).toContain(`<link rel="canonical" href="${ORIGIN}/zh/download/"`)
   const sitemap = await readFile(join(dist, 'sitemap.xml'), 'utf8')
   const listed = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/gu)].map(match => match[1])
-  expect(listed.toSorted()).toEqual([
-    `${ORIGIN}/`,
-    `${ORIGIN}/download/`,
-    `${ORIGIN}/plugins/`,
-    `${ORIGIN}/zh/`,
-    `${ORIGIN}/zh/download/`,
-    `${ORIGIN}/zh/plugins/`,
-  ])
+  const plugins = Object.keys(catalogPackages())
+  expect(listed.toSorted()).toEqual(
+    [
+      `${ORIGIN}/`,
+      `${ORIGIN}/download/`,
+      `${ORIGIN}/plugins/`,
+      ...plugins.map(id => `${ORIGIN}/plugins/${id}/`),
+      `${ORIGIN}/zh/`,
+      `${ORIGIN}/zh/download/`,
+      `${ORIGIN}/zh/plugins/`,
+      ...plugins.map(id => `${ORIGIN}/zh/plugins/${id}/`),
+    ].toSorted(),
+  )
   expect(await readFile(join(dist, 'robots.txt'), 'utf8')).toContain(`Sitemap: ${ORIGIN}/sitemap.xml`)
   expect(await readFile(join(dist, '404.html'), 'utf8')).toMatch(/name="robots" content="noindex"/u)
 })
@@ -131,10 +139,10 @@ it('publishes the package a marketplace visitor actually downloads at its advert
   }
   expect(catalog.formatVersion).toBe(1)
   expect(index.plugins).toEqual(catalog.plugins.map(({ bundle, ...plugin }) => ({ ...plugin, url: '/plugins/' + bundle })))
-  const page = await readFile(join(dist, 'zh/plugins/index.html'), 'utf8')
   expect(index.plugins.map(plugin => plugin.id)).toContain('context-insights')
   for (const { id, version, sha256, url } of index.plugins) {
-    expect(page).toContain(`href="${url}"`)
+    // Each plugin's own page offers the download.
+    expect(await readFile(join(dist, 'zh/plugins', id, 'index.html'), 'utf8')).toContain(`href="${url}"`)
     const bytes = await readFile(join(dist, url))
     expect(createHash('sha256').update(bytes).digest('hex')).toBe(sha256)
     expect(JSON.parse(bytes.toString())).toMatchObject({ manifest: { id, version }, files: expect.any(Array) })
@@ -223,12 +231,14 @@ it('reports a page that breaks the invariants', async () => {
 
 it('derives what each plugin can access from its own manifest', async () => {
   const page = await readFile(join(dist, 'plugins/index.html'), 'utf8')
-  const article = (id: string) => page.match(new RegExp(`<article\\b[^>]*\\bid="${id}"[^>]*>(.*?)</article>`, 'su'))?.[1] ?? ''
-  expect(article('shift-handoff')).toContain('data-tier="text"')
-  expect(article('shift-handoff')).not.toContain('confirmation on the Mac')
-  expect(article('release-review')).toContain('data-tier="host"')
-  expect(article('context-insights')).toContain('data-tier="panel"')
-  const page4 = article('release-check')
+  const card = (id: string) => page.match(new RegExp(`<article\\b[^>]*\\bid="${id}"[^>]*>(.*?)</article>`, 'su'))?.[1] ?? ''
+  const detail = (id: string) => readFile(join(dist, 'plugins', id, 'index.html'), 'utf8')
+  expect(card('shift-handoff')).toContain('data-tier="text"')
+  expect(card('shift-handoff')).toContain('href="/plugins/shift-handoff/"')
+  expect(await detail('shift-handoff')).not.toContain('Applying it asks for confirmation on the Mac.')
+  expect(card('release-review')).toContain('data-tier="host"')
+  expect(card('context-insights')).toContain('data-tier="panel"')
+  const page4 = await detail('release-check')
   expect(page4).toContain('data-tier="page"')
   for (const capability of [
     'Read session summaries',

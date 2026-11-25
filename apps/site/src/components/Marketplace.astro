@@ -66,11 +66,11 @@ const WAY_ICONS = [
       </div>
 
       <div class="details">
-        {downloads.map(({ entry, name, version, href: bundle, facets: provides, access }) => (
+        {downloads.map(({ entry, version, facets: provides, access }) => (
           <article id={entry.id} class="plugin" data-facets={provides.join(' ')}>
             <div class="plugin__cover"><MarketplaceCover id={entry.id} lang={lang} /></div>
             <div class="plugin__body">
-              <h3 class="plugin__name">{entry[lang].name}</h3>
+              <h3 class="plugin__name"><a class="plugin__link" href={href(lang, `/plugins/${entry.id}/`)}>{entry[lang].name}</a></h3>
               <p class="plugin__summary">{entry[lang].summary}</p>
               <ul class="chips">{provides.map((f) => <li>{t.facets[f]}</li>)}</ul>
               <p class="plugin__tier" data-tier={access.tier}>
@@ -79,25 +79,6 @@ const WAY_ICONS = [
                 <span class="plugin__version">v{version}</span>
               </p>
             </div>
-            <details class="plugin__more">
-              <summary><span>{t.more}</span><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.25 8 10.25l4-4" /></svg></summary>
-              <div class="access" data-tier={access.tier}>
-                <p class="access__note">{t.tiers[access.tier].note}</p>
-                {access.capabilities.length > 0 && (
-                  <ul class="access__caps">{access.capabilities.map((c) => <li><Fragment set:html={check} />{capability(c)}</li>)}</ul>
-                )}
-                <p class="access__text">{entry[lang].access}</p>
-                {access.confirm && <p class="access__confirm"><Fragment set:html={shield} />{t.confirm}</p>}
-              </div>
-              <dl class="plugin__facts">
-                <dt>{t.use}</dt><dd>{entry[lang].use}</dd>
-                <dt>{t.agent}</dt><dd>{entry[lang].agent}</dd>
-                <dt>{t.source}</dt><dd><a href={`${LINKS.github}/tree/main/examples/${entry.folder}`} rel="noopener">examples/{entry.folder}</a></dd>
-              </dl>
-              <a class="btn btn--quiet plugin__download" href={bundle} download={name + '.latch-plugin.json'} aria-label={`${t.download} · ${entry[lang].name}`}>
-                <Fragment set:html={download} /><span>{t.download}</span>
-              </a>
-            </details>
           </article>
         ))}
       </div>
@@ -211,34 +192,11 @@ const WAY_ICONS = [
   .plugin__tier[data-tier='host'] .i,
   .plugin__tier[data-tier='panel'] .i { color: var(--color-wait); }
   .plugin__version { margin-left: auto; color: var(--color-faint); font-variant-numeric: tabular-nums; }
-  .plugin__more { border-top: 1px solid var(--color-rule); }
-  .plugin__more summary {
-    display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm);
-    min-height: 44px; padding: 0 var(--space-md);
-    color: var(--color-ink-2); font-size: var(--text-sm); font-weight: 500; cursor: pointer; list-style: none;
-  }
-  .plugin__more summary::-webkit-details-marker { display: none; }
-  .plugin__more summary:hover { color: var(--color-ink); }
-  .plugin__more summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; border-radius: var(--radius-chip); }
-  .plugin__more summary .i { width: 14px; height: 14px; transition: transform var(--dur-short) var(--ease-out); }
-  .plugin__more[open] summary .i { transform: rotate(180deg); }
-  .plugin__more > :not(summary) { margin-inline: var(--space-md); }
-  .plugin__more > :last-child { margin-bottom: var(--space-md); }
-  .access { display: grid; gap: var(--space-xs); font-size: var(--text-sm); }
-  .access__note { color: var(--color-ink-2); }
-  .access__caps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2xs); }
-  .access__caps li { display: flex; gap: var(--space-xs); align-items: baseline; color: var(--color-ink); }
-  .access__caps .i { flex: none; width: 14px; height: 14px; transform: translateY(2px); color: var(--color-ink-2); }
-  .access__text { color: var(--color-muted); line-height: 1.55; }
-  .access__confirm { display: flex; gap: var(--space-xs); align-items: baseline; color: var(--color-ink-2); }
-  .access__confirm .i { flex: none; width: 14px; height: 14px; transform: translateY(2px); }
-  .plugin__facts { margin: var(--space-md) 0 0; display: grid; gap: var(--space-2xs); font-size: var(--text-sm); }
-  .plugin__facts dt { font-weight: 600; color: var(--color-ink); margin-top: var(--space-xs); }
-  .plugin__facts dt:first-child { margin-top: 0; }
-  .plugin__facts dd { margin: 0; color: var(--color-muted); overflow-wrap: anywhere; }
-  .plugin__facts a { color: inherit; text-decoration-color: var(--color-rule-strong); }
-  .plugin__facts a:hover { text-decoration-color: currentColor; }
-  .plugin__download { display: flex; margin-top: var(--space-md); }
+  .plugin { position: relative; }
+  .plugin:has(.plugin__link:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: 3px; }
+  .plugin__link { color: inherit; text-decoration: none; }
+  .plugin__link:focus-visible { outline: none; }
+  .plugin__link::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
 
   /* Three ways in, then making one. */
   .section-title {

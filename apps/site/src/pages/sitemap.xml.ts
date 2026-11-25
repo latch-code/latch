@@ -1,7 +1,8 @@
 import type { APIRoute } from 'astro'
 import { href, LANGS, type Lang } from '../i18n'
+import catalog from '../../../../examples/latch.catalog.json'
 
-const PAGES = ['/', '/download/', '/plugins/']
+const PAGES = ['/', '/download/', '/plugins/', ...catalog.plugins.map(plugin => `/plugins/${plugin.id}/`)]
 const LANG_LIST: Lang[] = ['en', 'zh']
 
 export const GET: APIRoute = ({ site }) => {
