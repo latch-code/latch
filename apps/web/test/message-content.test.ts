@@ -10,6 +10,18 @@ function render(text: string, streaming = false) {
 }
 
 describe('message markdown', () => {
+  it.each([false, true])('renders quoted bold text touching Chinese words (streaming=%s)', streaming => {
+    expect(render('明显的**“皮相规整（纯视觉 8.0 分），但骨相割裂”**的特征', streaming)).toContain(
+      '明显的<strong>“皮相规整（纯视觉 8.0 分），但骨相割裂”</strong>的特征',
+    )
+  })
+
+  it('keeps Markdown inside quoted emphasis and literal asterisks in escapes and code', () => {
+    const html = render('看**「[网页](https://example.org)」**与 `的**“代码”**的`、\\*\\*“原样”\\*\\*。')
+    expect(html).toMatch(/看<strong>「<a [^>]*href="https:\/\/example\.org"[^>]*>网页<\/a>」<\/strong>与/u)
+    expect(html).toContain('<code>的**“代码”**的</code>、**“原样”**。')
+  })
+
   it('renders common text structures and GFM without preserving layout whitespace', () => {
     const html = render(
       '# 标题\n\n正文 **重点**，`inline()`。\n\n> 一段引用\n\n1. 第一步\n2. 第二步\n\n- [x] 完成\n- [ ] 待办\n\n~~旧内容~~\n\n| 名称 | 结果 |\n| --- | --- |\n| 工具 | 正常 |',

@@ -75,6 +75,21 @@ function mount(initial: string, overrides: Partial<PromptEditorProps> = {}) {
 }
 
 describe('the prompt editor', () => {
+  it('colours a web address as editable text, preserving code and undo', () => {
+    const address = 'https://example.com/sets/42'
+    const text = ['查看 ' + address + '。', '```text', address, '```'].join('\n')
+    const { view, input, key } = mount(text)
+    const highlights = () => [...view.contentDOM.querySelectorAll('.prompt-url')].map(mark => mark.textContent)
+    expect(highlights()).toEqual([address])
+    expect(view.contentDOM.querySelector('a')).toBeNull()
+    act(() => input().setSelectionRange(text.indexOf('。'), text.indexOf('。')))
+    key('Backspace')
+    expect(highlights()).toEqual([address.slice(0, -1)])
+    expect(input().value).toBe(text.replace('42。', '4。'))
+    key('z', mod)
+    expect(input().value).toBe(text)
+  })
+
   it('keeps a terminal error editable with its indentation and literal tokens, while hiding its Markdown delimiters', () => {
     const draft = [
       '请用 $lark-apps 检查',

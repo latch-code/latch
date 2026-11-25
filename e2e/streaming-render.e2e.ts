@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Message, TaskDetail } from '@latch/protocol'
 import { browserLaunchOptions } from './helpers/browser.ts'
 import { recordClipboardWrites } from './helpers/clipboard.ts'
+import { noHorizontalOverflow } from './helpers/layout.ts'
 
 /**
  * The transcript under a long session and a stream, on the real worker and the real reading position, with no Host: a
@@ -655,6 +656,40 @@ describe('streaming render', () => {
       expect(await preview.locator('pre').evaluate(el => getComputedStyle(el).overflowX)).toBe('auto')
       if (width === 390) expect(await preview.locator('pre').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
       await page.screenshot({ path: `test-results/sent-terminal/${width}-${colorScheme}.png`, animations: 'disabled' })
+    }
+  })
+
+  it('wraps a highlighted URL in a sent message and renders quoted bold in the reply', async () => {
+    const url = 'https://review.example.org/regression/sets/00000000-1111-4222-8333-444444444444'
+    const prompt = `请用 ${url} 重新评估界面。`
+    const quote = '“界面规整，但交互仍需调整”'
+    const turn = detail([
+      { id: 'user-url', role: 'user', text: prompt },
+      { id: 'reply-quote', role: 'assistant', text: `这次评估呈现出明显的**${quote}**的特征。` },
+    ])
+    await mkdir('test-results/message-links', { recursive: true })
+    for (const [width, height] of [
+      [390, 844],
+      [768, 1024],
+      [1440, 900],
+    ] as const) {
+      await open(width, height, { isMobile: width < 1000, hasTouch: width < 1000 })
+      await show(turn)
+      const bubble = page.locator('.user-bubble-text')
+      const link = bubble.getByRole('link', { name: url, exact: true })
+      const reply = page.locator('[data-message-id="reply-quote"] .message-content')
+      expect(await link.getAttribute('href')).toBe(url)
+      expect(await bubble.innerText()).toBe(prompt)
+      expect(await reply.locator('strong').innerText()).toBe(quote)
+      expect(await reply.innerText()).not.toContain('**')
+      for (const colorScheme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme })
+        await page.evaluate(() => document.fonts.ready)
+        expect(await link.evaluate(element => getComputedStyle(element).textDecorationLine)).toBe('underline')
+        await noHorizontalOverflow(page, bubble)
+        if (width === 390) expect(await link.evaluate(element => element.getClientRects().length)).toBeGreaterThan(1)
+        await page.screenshot({ path: `test-results/message-links/${width}-${colorScheme}.png`, animations: 'disabled' })
+      }
     }
   })
 
