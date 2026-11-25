@@ -1,8 +1,8 @@
 import { useContext, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { ChangeList, ChangeReceipt, Message, TurnChanges } from '@latch/protocol'
-import { Button, Collapse, Hint, ICON_STROKE, ChevronDownGlyph, WarningGlyph, UndoGlyph } from '@latch/ui'
-import { OutputNotes, ProducedFiles } from '../components/FileOutputs.tsx'
+import { Button, Collapse, Hint, ICON_STROKE, WarningGlyph, UndoGlyph } from '@latch/ui'
+import { FileListToggle, OutputNotes, ProducedFiles } from '../components/FileOutputs.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import type { Turn } from '../conversation.ts'
 import { api, isUncertain, newRequestId } from '../core/api.ts'
@@ -40,7 +40,6 @@ const COPY = defineCopy(
     cancel: '取消',
     changedFiles: '这一轮改动的文件',
     changed: (count: number) => `改动了 ${formatNumber(count)} 个文件`,
-    showFiles: '显示文件',
     openChanges: '打开改动',
   },
   {
@@ -60,7 +59,6 @@ const COPY = defineCopy(
     cancel: 'Cancel',
     changedFiles: 'Files changed in this turn',
     changed: (count: number) => plural(count, { one: 'Changed {n} file', other: 'Changed {n} files' }),
-    showFiles: 'Show files',
     openChanges: 'Open changes',
   },
 )
@@ -438,17 +436,7 @@ export function TurnCards({
         <div className="changed-files-head">
           <span className="changed-files-title">{COPY.changed(count)}</span>
           <Stat add={summary.add} del={summary.del} />
-          <button
-            type="button"
-            className="changed-files-toggle"
-            aria-label={COPY.showFiles}
-            aria-expanded={open}
-            onClick={() => {
-              setOpen(!open)
-            }}>
-            <span className="changed-files-toggle-word">{COPY.showFiles}</span>
-            <ChevronDownGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-          </button>
+          <FileListToggle expanded={open} onToggle={() => setOpen(!open)} />
           <span className="process-fill" />
           {undoControl}
           {link && openable && (

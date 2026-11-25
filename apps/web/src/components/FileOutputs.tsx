@@ -1,7 +1,19 @@
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { FileAudio, FileImage, FileVideo, Presentation, Sheet } from 'lucide-react'
 import type { FileChange } from '@latch/protocol'
-import { Button, Hint, ICON_STROKE, Icon, Tooltip, type IconComponent, PageGlyph, GlobeGlyph, WarningGlyph } from '@latch/ui'
+import {
+  Button,
+  ChevronDownGlyph,
+  Collapse,
+  Hint,
+  ICON_STROKE,
+  Icon,
+  Tooltip,
+  type IconComponent,
+  PageGlyph,
+  GlobeGlyph,
+  WarningGlyph,
+} from '@latch/ui'
 import { FileOpenContext } from '../preview/fileContext.ts'
 import { resolveFileImage } from '../preview/fileImages.ts'
 import { FileSession } from './FileChip.tsx'
@@ -17,6 +29,7 @@ const COPY = defineCopy(
     outputs: '这一轮生成的文件',
     generated: '生成了 ',
     files: ' 个文件',
+    showFiles: '显示文件',
     bytes: (value1: string) => `${value1} 字节`,
     openFile: (value1: string) => `打开 ${value1}`,
     open: '打开',
@@ -29,6 +42,7 @@ const COPY = defineCopy(
     outputs: 'Files created this turn',
     generated: 'Created ',
     files: ' files',
+    showFiles: 'Show files',
     bytes: (value1: string) => `${value1} bytes`,
     openFile: (value1: string) => `Open ${value1}`,
     open: 'Open',
@@ -47,7 +61,7 @@ const KIND_ICONS: Record<string, IconComponent> = {
   audio: FileAudio,
   video: FileVideo,
 }
-function OutputThumbnail({ file }: { file: FileChange }) {
+function OutputThumbnail({ file, active }: { file: FileChange; active: boolean }) {
   const session = useContext(FileSession),
     open = useContext(FileOpenContext)
   const anchor = useRef<HTMLSpanElement>(null)
@@ -55,7 +69,7 @@ function OutputThumbnail({ file }: { file: FileChange }) {
   const [value, setValue] = useState<{ key: string; url: string; width: number; height: number }>(),
     [failureKey, setFailureKey] = useState('')
   useEffect(() => {
-    if (!session || !open || !anchor.current) return
+    if (!active || !session || !open || !anchor.current) return
     const controller = new AbortController()
     let started = false
     const load = () => {
@@ -83,7 +97,7 @@ function OutputThumbnail({ file }: { file: FileChange }) {
       controller.abort()
       observer?.disconnect()
     }
-  }, [key, session?.id, open, file.path, file.root])
+  }, [active, key, session?.id, open, file.path, file.root])
   if (failureKey === key || !session || !open) return null
   return (
     <span ref={anchor} className={value?.key === key ? 'file-output-picture' : 'file-output-picture-pending'}>
@@ -112,6 +126,15 @@ export function OutputNotes({ truncated, unavailable }: { truncated?: boolean | 
   )
 }
 
+export function FileListToggle({ expanded, onToggle }: { expanded: boolean; onToggle: () => void }) {
+  return (
+    <button type="button" className="changed-files-toggle" aria-label={COPY.showFiles} aria-expanded={expanded} onClick={onToggle}>
+      <span className="changed-files-toggle-word">{COPY.showFiles}</span>
+      <ChevronDownGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+    </button>
+  )
+}
+
 /**
  * 「生成了 2 个文件」: what the turn made for the person to open. These come from watching the folders, which sees other
  * writers too, so the card says what exists rather than who wrote it.
@@ -119,50 +142,63 @@ export function OutputNotes({ truncated, unavailable }: { truncated?: boolean | 
 export function ProducedFiles({ files, actions }: { files: FileChange[]; actions?: ReactNode }) {
   const session = useContext(FileSession)
   const open = useContext(FileOpenContext)
+  const [expanded, setExpanded] = useState(false)
   if (!files.length) return null
   return (
-    <section className="file-outputs" aria-label={COPY.outputs}>
-      <div className="file-outputs-heading">
-        <span>
+    <section className="file-outputs" aria-label={COPY.outputs} data-open={expanded ? '' : undefined}>
+      <div className="changed-files-head">
+        <span className="changed-files-title">
           {COPY.generated}
           {files.length}
           {COPY.files}
         </span>
+        <FileListToggle expanded={expanded} onToggle={() => setExpanded(!expanded)} />
+        <span className="process-fill" />
         {actions}
       </div>
-      <ul>
-        {files.map(file => {
-          const Glyph = KIND_ICONS[file.kind ?? ''] ?? PageGlyph
-          const name = file.path.slice(file.path.lastIndexOf('/') + 1)
-          return (
-            <li key={`${file.root}\n${file.path}`}>
-              {file.kind === 'image' ? <OutputThumbnail file={file} /> : <Icon icon={Glyph} size={16} className="file-output-icon" />}
-              <span className="file-output-name" title={file.path}>
-                <VisibleText text={name} />
-              </span>
-              {file.size !== undefined && (
-                <Tooltip content={COPY.bytes(file.size.toLocaleString())}>
-                  <span className="file-output-size" tabIndex={0}>
-                    {outputSize(file.size)}
-                  </span>
-                </Tooltip>
-              )}
-              {session && open && (
-                <Button
-                  size="xs"
-                  variant="secondary"
-                  className="file-output-open"
-                  aria-label={COPY.openFile(name)}
-                  onClick={() => {
-                    open({ sessionId: session.id, reference: file.path, rootId: file.root })
-                  }}>
-                  {COPY.open}
-                </Button>
-              )}
-            </li>
-          )
-        })}
-      </ul>
+      <Collapse
+        open={expanded}
+        onReveal={() => {
+          setExpanded(true)
+        }}>
+        <ul>
+          {files.map(file => {
+            const Glyph = KIND_ICONS[file.kind ?? ''] ?? PageGlyph
+            const name = file.path.slice(file.path.lastIndexOf('/') + 1)
+            return (
+              <li key={`${file.root}\n${file.path}`}>
+                {file.kind === 'image' ? (
+                  <OutputThumbnail file={file} active={expanded} />
+                ) : (
+                  <Icon icon={Glyph} size={16} className="file-output-icon" />
+                )}
+                <span className="file-output-name" title={file.path}>
+                  <VisibleText text={name} />
+                </span>
+                {file.size !== undefined && (
+                  <Tooltip content={COPY.bytes(file.size.toLocaleString())}>
+                    <span className="file-output-size" tabIndex={0}>
+                      {outputSize(file.size)}
+                    </span>
+                  </Tooltip>
+                )}
+                {session && open && (
+                  <Button
+                    size="xs"
+                    variant="secondary"
+                    className="file-output-open"
+                    aria-label={COPY.openFile(name)}
+                    onClick={() => {
+                      open({ sessionId: session.id, reference: file.path, rootId: file.root })
+                    }}>
+                    {COPY.open}
+                  </Button>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      </Collapse>
     </section>
   )
 }

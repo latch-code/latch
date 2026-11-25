@@ -89,12 +89,21 @@ describe('files observed during real Harness runs', () => {
         await openSession(page, sessionId)
         const outputs = page.getByRole('region', { name: '这一轮生成的文件', exact: true })
         const changed = page.getByRole('region', { name: '这一轮改动的文件', exact: true })
-        await changed.getByRole('button', { name: '显示文件', exact: true }).click()
+        const showOutputs = outputs.getByRole('button', { name: '显示文件', exact: true })
+        const showChanges = changed.getByRole('button', { name: '显示文件', exact: true })
+        await showOutputs.scrollIntoViewIfNeeded()
+        expect(await showOutputs.getAttribute('aria-expanded')).toBe('false')
+        expect(await outputs.getByRole('list').count()).toBe(0)
+        await page.screenshot({ path: `test-results/file-outputs/${width}-${theme}-collapsed.png`, animations: 'disabled' })
+        await showChanges.click()
         // A removed file is listed for the record, with nothing to open.
         const removed = changed.locator('.summary-file', { hasText: 'gone.txt' })
         await removed.getByText('已删除', { exact: true }).waitFor()
         expect(await removed.evaluate(element => element.tagName)).toBe('DIV')
         expect(await changed.getByText('unrelated.tmp').count()).toBe(0)
+        expect(await showOutputs.getAttribute('aria-expanded')).toBe('false')
+        expect(contentRequests).toHaveLength(0)
+        await showOutputs.click()
         await outputs.getByRole('button', { name: '预览产物图片：pixel.png', exact: true }).waitFor()
         await expect
           .poll(() =>
@@ -114,6 +123,10 @@ describe('files observed during real Harness runs', () => {
           await outputs.getByRole('button', { name: '预览产物图片：pixel.png', exact: true }).click()
           await page.getByRole('region', { name: '文件预览', exact: true }).getByRole('img', { name: 'pixel.png', exact: true }).waitFor()
         }
+        await showOutputs.press('Enter')
+        await outputs.getByRole('list').waitFor({ state: 'hidden' })
+        expect(await showOutputs.getAttribute('aria-expanded')).toBe('false')
+        expect(await showChanges.getAttribute('aria-expanded')).toBe('true')
         await changed.locator('button.summary-file', { hasText: 'report.txt' }).click()
         // A connected browser reads project files (200b8c6d), so the turn's file opens in 改动 (as in file-history).
         const changes = page.locator('.changes-panel').filter({ visible: true })

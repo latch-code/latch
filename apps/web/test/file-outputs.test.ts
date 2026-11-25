@@ -21,6 +21,8 @@ describe('produced files', () => {
       }),
     )
     expect(html).toContain('生成了 2 个文件')
+    expect(html).toContain('aria-label="显示文件" aria-expanded="false"')
+    expect(html).toContain('data-state="closed"')
     expect(html).toContain('&lt;report&gt;.pptx')
     expect(html).toContain('2 KB')
     expect(html).not.toContain('<a ')
