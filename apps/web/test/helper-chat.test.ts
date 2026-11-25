@@ -323,12 +323,12 @@ describe('a helper’s frame on an open topic', () => {
       canAutomate: false,
     }
     const shell = {
-      snapshot: { tasks: [summary], approvals: [], customAgents: [agent], catalog: catalog() },
+      snapshot: { tasks: [summary], approvals: [], customAgents: [agent], catalog: catalog(), device: { dataScope: 'all' } },
       catalog: catalog(),
       connection: 'connected',
       phone: false,
       preferences: { workbenchLayout: 'overview' },
-      access: { scopes: new Set(['run']), local: true, legacy: false },
+      access: { scopes: new Set(['view', 'run']), local: true, legacy: false },
       current: {
         summary,
         messages: [],

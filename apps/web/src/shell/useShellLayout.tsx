@@ -1152,19 +1152,23 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const openProfile = (owner: string, section?: ProfileSection, prefill?: SchedulePrefill) => {
     setProfile(previous => ({ owner, ...(section ? { section } : {}), ...(prefill ? { prefill } : {}), nonce: (previous?.nonce ?? 0) + 1 }))
   }
-  /** Closing gives focus back to the face that opened it. */
+  /** Closing gives focus back to the Agent's profile button. */
   const closeProfile = () => {
     setProfile(null)
     requestAnimationFrame(() => {
-      const face = [...document.querySelectorAll<HTMLElement>('.agent-frame-who')].find(
+      const button = [...document.querySelectorAll<HTMLButtonElement>('button.agent-frame-who')].find(
         button => button.checkVisibility() && !button.closest('[inert]'),
       )
-      face?.focus({ preventScroll: true })
+      button?.focus({ preventScroll: true })
     })
   }
   const toggleProfile = (owner: string) => {
-    if (profileShown) closeProfile()
-    else openProfile(owner)
+    if (profileShown) {
+      closeProfile()
+      return
+    }
+    if (!phone && route.entry === 'sessions' && placed.kind === 'sheet') setFindOpen(false)
+    openProfile(owner)
   }
   /** 全部话题: every topic of 我的 Agent grouped by its Agent; `archived` opens it on the archived ones. */
   const openAgentTopics = (archived = false) => {

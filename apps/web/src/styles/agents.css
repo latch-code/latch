@@ -547,10 +547,7 @@ button.agent-memory-topic:hover {
   color: var(--ink);
 }
 
-/*
- * A conversation with an Agent: its frame stands where a session's title stands. The face (24, 28 on phones), the name
- * and the state word open the profile; 话题 ▾ and the panel's toggles sit at the end.
- */
+/* The profile entry sits beside the session's own controls. */
 .agent-frame {
   display: flex;
   align-items: center;
@@ -564,22 +561,28 @@ button.agent-memory-topic:hover {
   gap: var(--sp-8);
   min-width: 0;
   max-width: 320px;
-  height: 32px;
+  min-height: 44px;
   padding: 0 var(--sp-8) 0 var(--sp-4);
   border: 0;
   border-radius: var(--r-6);
   background: transparent;
   color: var(--ink);
   text-align: left;
-  transition: background-color var(--m-micro) var(--e-micro);
 }
-/* No fill while the profile is open: the profile beside it says so, and a held fill read as a stuck selection. */
+button.agent-frame-who {
+  cursor: pointer;
+  transition: background-color var(--m-micro) var(--e-micro);
+  -webkit-app-region: no-drag;
+}
 @media (hover: hover) {
-  .agent-frame-who:hover {
+  button.agent-frame-who:hover {
     background: var(--hover);
   }
 }
-.agent-frame-who:focus-visible {
+button.agent-frame-who:active {
+  background: var(--press);
+}
+button.agent-frame-who:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
@@ -589,6 +592,13 @@ button.agent-memory-topic:hover {
 .agent-frame-text {
   display: grid;
   min-width: 0;
+}
+.agent-frame-profile-action {
+  flex: none;
+  color: var(--muted);
+}
+.agent-frame-who:is(:hover, :focus-visible) .agent-frame-profile-action {
+  color: var(--ink);
 }
 .agent-frame-name {
   overflow: hidden;
@@ -632,6 +642,12 @@ button.agent-memory-topic:hover {
   height: 44px;
   max-width: none;
   flex: 1;
+}
+.agent-frame-notices {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
 }
 .topbar-frame[data-phone] {
   gap: var(--sp-4);
@@ -1608,24 +1624,24 @@ button.helper-card:focus-visible {
     font-size: var(--fs-hero);
     line-height: var(--lh-hero);
   }
-  .agent-frame[data-phone]:has(.agent-boundary-trigger.is-warn) {
+  .agent-frame[data-phone]:has(.agent-frame-notices[data-unavailable], .agent-boundary-trigger.is-warn) {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     row-gap: 0;
   }
-  .agent-frame[data-phone] > .agent-boundary-trigger.is-warn {
+  .agent-frame-notices:is([data-unavailable], :has(.agent-boundary-trigger.is-warn)) {
     grid-column: 1 / -1;
     grid-row: 2;
     justify-self: start;
   }
-  .agent-frame[data-phone]:has(.agent-boundary-trigger.is-warn) > .agent-frame-actions {
+  .agent-frame-notices:is([data-unavailable], :has(.agent-boundary-trigger.is-warn)) + .agent-frame-actions {
     grid-column: 2;
     grid-row: 1;
   }
-  .topbar-frame[data-phone]:has(.agent-boundary-trigger.is-warn) {
+  .topbar-frame[data-phone]:has(.agent-frame-notices[data-unavailable], .agent-boundary-trigger.is-warn) {
     height: auto;
     min-height: var(--topbar-height);
-    padding-block: var(--sp-4);
+    padding-block: calc(env(safe-area-inset-top) + var(--sp-4)) var(--sp-4);
   }
 }
 

@@ -9,7 +9,7 @@ import type { ShellState } from '../shell/useShellLayout.tsx'
 import { AgentFrame } from './AgentFrame.tsx'
 import { personalChat } from './chat.ts'
 import { draftPermission, permissionView } from '../composer/permission.ts'
-import { ACTIVITY_WORDS, agentActivity, agentLiveWord, dutyLine, generalChoice, scheduleWords, sessionAgent } from './model.ts'
+import { ACTIVITY_WORDS, agentActivity, agentLiveWord, dutyLine, generalChoice, readsAgents, scheduleWords, sessionAgent } from './model.ts'
 import { ActivityWord, IsolationNote, PermissionNote, Unavailable } from './parts.tsx'
 import { helperPermissionBlocked, permissionNote } from './personWords.ts'
 import { MODE_COPY } from '../core/securityCopy.ts'
@@ -113,9 +113,9 @@ export function TopicFrame({
     <ActivityWord state={state} live={agentLiveWord(snapshot, owner, current)} />
   ) : found?.workComputer ? (
     <StatusWord tone="neutral">{AGENT_SPACE_COPY.workComputer}</StatusWord>
-  ) : found && !found.available ? (
-    <Unavailable reason={found.unavailableReason} onRepair={repair} />
   ) : null
+  const unavailable = !word && found && !found.available ? <Unavailable reason={found.unavailableReason} onRepair={repair} /> : undefined
+  const canReadProfile = readsAgents(snapshot) && access.scopes.has('view') && !gone
   return (
     <AgentFrame
       name={name}
@@ -123,6 +123,7 @@ export function TopicFrame({
       avatar={found?.avatar ?? 'general'}
       state={frozen !== null && (state === 'running' || state === 'waiting') ? 'idle' : state}
       word={word}
+      unavailable={unavailable}
       note={
         note ? (
           <PermissionNote {...note} detail={boundary ? `${note.detail} ${boundary}` : note.detail} />
@@ -133,12 +134,10 @@ export function TopicFrame({
       topic={title}
       phone={phone}
       profileOpen={shell.profileShown !== null}
-      onProfile={() => {
-        shell.toggleProfile(owner)
-      }}
+      onProfile={canReadProfile ? () => shell.toggleProfile(owner) : undefined}
       actions={
         <>
-          {!phone && shell.catalog?.features?.automations && schedules.length > 0 && (
+          {canReadProfile && !phone && shell.catalog?.features?.automations && schedules.length > 0 && (
             <Button
               variant="ghost"
               size="sm"

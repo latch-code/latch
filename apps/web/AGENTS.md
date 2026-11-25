@@ -34,7 +34,7 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 - 项目菜单仅新会话、编辑。摘要列目录和已知分支，悬停看路径；会话冻结目录；可见时每 30 秒按 Host 的 `checkedOut` 分类（GIT-REVIEW）。
 - 桌面文件夹签名操作需 `folders.protocolVersion === 1`（`test/shell-folders.test.ts`）。
 - 电脑菜单按来源识别当前电脑，经 `computers.switchTo` 切换。
-- 资料「动态」列即将的定时；电脑、唤醒、通知与 MCP 归运行设置。
+- 聊天页头点头像、名字或箭头打开资料，入口与页签见 DESIGN。
 
 Host 计量，窗口增量同口径。本会话引用整删、不补全。仅消息用 `motionAllowed` 淡入。
 

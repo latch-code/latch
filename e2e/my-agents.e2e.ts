@@ -8,8 +8,8 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
-import { stillMotion } from './helpers/visual.ts'
+import { noHorizontalOverflow, reachable, settleShell } from './helpers/layout.ts'
+import { stillMotion, VISUAL_TIME } from './helpers/visual.ts'
 import { promptValue } from './helpers/prompt.ts'
 
 const OUT = 'test-results/my-agents'
@@ -65,6 +65,128 @@ const agentsNav = (page: Page) => page.getByRole('navigation', { name: '我的 A
 const agentRow = (page: Page, id: string) => agentsNav(page).locator(`[data-agent-id="${id}"]`)
 
 const choice = (page: Page, name: RegExp) => page.getByRole('menuitemradio', { name }).or(page.getByRole('radio', { name })).first()
+
+it('opens an Agent profile from the header with mouse, keyboard, and touch, including over Find on a tablet', async () => {
+  await mkdir(OUT, { recursive: true })
+  const host = await startTestHost({ hostName: '工作 Mac', now: () => VISUAL_TIME, clock: () => VISUAL_TIME })
+  const browser = await chromium.launch(browserLaunchOptions())
+  try {
+    const owner = await host.enroll({ listener: 'unix' })
+    const name = '跨团队资料整理和供应商每日动态观察助手'
+    const agent = await owner.json<CustomAgent>('custom-agents', {
+      method: 'POST',
+      body: { requestId: randomUUID(), name, description: '整理产品动态', harnessId: 'standard', mode: 'chat' },
+    })
+    const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
+    await desktop.clock.setFixedTime(VISUAL_TIME)
+    await stillMotion(desktop)
+    const page = await desktop.newPage()
+    page.setDefaultTimeout(15_000)
+    await fullScopeBrowser(page, host, owner, '资料入口桌面')
+    await place(page, '我的 Agent').click()
+    await agentRow(page, agent.id).click()
+
+    const trigger = (view: Page, person: string) => view.locator('.topbar').getByRole('button', { name: `${person} 的资料`, exact: true })
+    const arrow = (view: Page, person: string) => trigger(view, person).locator('.agent-frame-profile-action')
+    const profile = (view: Page, person: string) => view.getByRole('region', { name: `${person} 的资料`, exact: true })
+    const arrowPoint = async (view: Page, person: string) => {
+      const icon = arrow(view, person)
+      await icon.waitFor({ state: 'visible' })
+      return icon.evaluate(element => {
+        const bounds = element.getBoundingClientRect()
+        const x = bounds.x + bounds.width / 2
+        const y = bounds.y + bounds.height / 2
+        const button = element.closest('button')
+        if (!button?.contains(document.elementFromPoint(x, y))) throw new Error('The profile arrow is outside the header hit target')
+        return { x, y }
+      })
+    }
+    const hint = page.getByRole('tooltip', { name: '查看设置、动态和记忆', exact: true })
+    await reachable(trigger(page, name))
+    const firstArrow = await arrowPoint(page, name)
+    await page.mouse.move(firstArrow.x, firstArrow.y)
+    await hint.waitFor()
+    await page.screenshot({ path: `${OUT}/profile-trigger-hover-1440.png`, animations: 'disabled' })
+    await page.mouse.click(firstArrow.x, firstArrow.y)
+    await expect.poll(() => trigger(page, name).getAttribute('aria-expanded')).toBe('true')
+    await profile(page, name).getByRole('button', { name: '设置', exact: true }).waitFor()
+    await page.mouse.move(0, 0)
+    await profile(page, name).getByRole('button', { name: '关闭资料', exact: true }).press('Escape')
+    await profile(page, name).waitFor({ state: 'hidden' })
+    await expect.poll(() => trigger(page, name).evaluate(element => element === document.activeElement)).toBe(true)
+    await hint.waitFor()
+    await trigger(page, name).press('Enter')
+    await profile(page, name).getByRole('button', { name: '关闭资料', exact: true }).click()
+
+    const send = async (person: string) => {
+      const input = page.getByRole('textbox', { name: `给${person}发消息`, exact: true })
+      await input.fill('记录今天的验收结果')
+      await input.press('Meta+Enter')
+      await page.locator('.transcript-shell').getByText('记录今天的验收结果', { exact: true }).first().waitFor()
+    }
+    await send(name)
+    await agentRow(page, 'general').click()
+    await send('通用')
+
+    const find = page.getByRole('search', { name: '会话内查找', exact: true })
+    for (const width of [1440, 768]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.locator(`.app-shell[data-viewport="${width === 768 ? 'tablet' : 'desktop'}"]`).waitFor()
+      await settleShell(page)
+      for (const colorScheme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme })
+        await reachable(trigger(page, '通用'))
+        await arrowPoint(page, '通用')
+        await noHorizontalOverflow(page)
+        await page.mouse.move(0, 0)
+        await page.screenshot({ path: `${OUT}/general-trigger-${width}-${colorScheme}.png`, animations: 'disabled' })
+      }
+    }
+    await page.keyboard.press('Meta+f')
+    await find.getByRole('searchbox', { name: '查找消息内容', exact: true }).fill('今天')
+    await trigger(page, '通用').getByText('通用', { exact: true }).click()
+    await profile(page, '通用').getByRole('button', { name: '设置', exact: true }).waitFor()
+    await find.waitFor({ state: 'hidden' })
+    await desktop.close()
+
+    const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce', hasTouch: true })
+    await phone.clock.setFixedTime(VISUAL_TIME)
+    await stillMotion(phone)
+    const narrow = await phone.newPage()
+    narrow.setDefaultTimeout(15_000)
+    await fullScopeBrowser(narrow, host, owner, '资料入口手机')
+    await narrow.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '我的 Agent', exact: true }).click()
+    await narrow.getByRole('list', { name: '我的 Agent', exact: true }).locator(`[data-agent-id="${agent.id}"]`).click()
+    for (const [width, height] of [
+      [390, 844],
+      [320, 740],
+    ] as const) {
+      await narrow.setViewportSize({ width, height })
+      await settleShell(narrow)
+      for (const colorScheme of ['light', 'dark'] as const) {
+        await narrow.emulateMedia({ colorScheme })
+        await reachable(trigger(narrow, name))
+        await arrowPoint(narrow, name)
+        await noHorizontalOverflow(narrow)
+        await narrow.mouse.move(0, 0)
+        await narrow.getByRole('tooltip', { name: '查看设置、动态和记忆', exact: true }).waitFor({ state: 'hidden' })
+        await narrow.screenshot({ path: `${OUT}/profile-trigger-long-name-${width}-${colorScheme}.png`, animations: 'disabled' })
+      }
+    }
+    const more = narrow.locator('.topbar').getByRole('button', { name: '会话操作', exact: true })
+    await more.tap()
+    await narrow.getByRole('menu', { name: '会话操作', exact: true }).waitFor()
+    await narrow.keyboard.press('Escape')
+    const phoneArrow = await arrowPoint(narrow, name)
+    await narrow.touchscreen.tap(phoneArrow.x, phoneArrow.y)
+    const sheet = narrow.getByRole('dialog', { name, exact: true })
+    await sheet.getByRole('region', { name: `${name} 的资料`, exact: true }).waitFor()
+    await phone.close()
+  } finally {
+    await browser.close()
+    await host.close()
+  }
+})
 
 it('creates an Agent, continues its one chat, keeps its profile, talks with 通用, and says when a start is refused or unknown', async () => {
   await mkdir(OUT, { recursive: true })
@@ -286,31 +408,12 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
     expect(cannotArchive.status).toBe(409)
     expect(await cannotArchive.json()).toMatchObject({ error: 'agent-chat-retained' })
 
-    // Something waits in 我的 Agent while Code is shown: an amber dot on its segment, and on its button when shut.
-    await page.route('**/link/api/snapshot*', async route => {
-      const response = await route.fetch()
-      const snapshot = (await response.json()) as AppSnapshot
-      if (!Array.isArray(snapshot.tasks)) return route.fulfill({ response })
-      const tasks = snapshot.tasks.map(task =>
-        task.id === first!.id
-          ? {
-              ...task,
-              status: 'waiting-approval' as const,
-              board: { ...task.board, group: 'attention' as const, reason: 'approval' as const },
-            }
-          : task,
-      )
-      await route.fulfill({ response, json: { ...snapshot, tasks } })
-    })
-    // Code's home covers the topic without closing it, so after the reload its detail is read again: it says the same.
-    const firstDetail = `**/link/api/tasks/${first!.id}`
-    await page.route(firstDetail, async route => {
-      const response = await route.fetch()
-      const detail = (await response.json()) as { summary?: { status: string } }
-      if (!detail.summary) return route.fulfill({ response })
-      const summary = { ...detail.summary, status: 'waiting-approval', board: { group: 'attention', reason: 'approval' } }
-      await route.fulfill({ response, json: { ...detail, summary } })
-    })
+    // The fake ACP asks for approval so the snapshot and event stream agree through reload.
+    await expect.poll(async () => (await detail()).summary.status).toBe('idle')
+    await replyInput.fill('permission')
+    await replyInput.press('Meta+Enter')
+    await expect.poll(async () => (await detail()).approvals.length, { timeout: 15_000 }).toBe(1)
+    const pendingApproval = (await detail()).approvals[0]!.id
     // The keys: ⇧⌘1 to Code, ⇧⌘2 back.
     await page.keyboard.press('Meta+Shift+Digit1')
     await expect.poll(() => place(page, 'Code').getAttribute('aria-checked')).toBe('true')
@@ -326,8 +429,6 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
     await expect.poll(() => shut.getByRole('button', { name: '我的 Agent', exact: true }).getAttribute('aria-pressed')).toBe('true')
     await page.screenshot({ path: `${OUT}/shut-1440.png` })
     await page.getByRole('button', { name: '展开侧栏', exact: true }).click()
-    await page.unroute('**/link/api/snapshot*')
-    await page.unroute(firstDetail)
     await page.keyboard.press('Meta+Shift+Digit1')
     await expect.poll(() => place(page, 'Code').getAttribute('aria-checked')).toBe('true')
     await page.keyboard.press('Meta+Shift+Digit2')
@@ -335,6 +436,11 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
     // Focus lands on the place's primary, never on the page.
     await expect.poll(() => page.evaluate(() => document.activeElement?.hasAttribute('data-space-primary'))).toBe(true)
     await page.keyboard.press('Escape')
+
+    await agentRow(page, agent.id).click()
+    const approval = page.locator(`[data-approval-id="${pendingApproval}"]`).filter({ visible: true })
+    await approval.getByRole('button', { name: '拒绝', exact: true }).click()
+    await expect.poll(async () => (await detail()).summary.status).toBe('idle')
 
     // 通用: its row opens a conversation without a project, which belongs to 我的 Agent and not to Code.
     await agentsNav(page).locator('[data-agent-id="general"]').click()
@@ -347,6 +453,8 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
     expect(talk).not.toHaveProperty('agent')
     await expect.poll(() => page.locator('[data-agent-id="general"][aria-current="page"]').filter({ visible: true }).count()).toBe(1)
     await page.locator('.topbar').getByRole('button', { name: '通用 的资料', exact: true }).waitFor()
+    const generalMessage = page.locator('.transcript-shell').getByText('今天先做什么？', { exact: true })
+    await generalMessage.waitFor()
     await page.screenshot({ path: `${OUT}/general-1440.png` })
     // The Code schedule shortcut opens General's existing chat and its own profile without collapsing the page.
     await place(page, 'Code').click()
@@ -354,7 +462,7 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
     const generalProfile = page.getByRole('region', { name: '通用 的资料', exact: true })
     await generalProfile.getByText('没有定时任务', { exact: true }).waitFor()
     await expect.poll(async () => (await generalProfile.boundingBox())?.width ?? 0).toBeGreaterThan(0)
-    await page.locator('.transcript-shell').getByText('今天先做什么？', { exact: true }).waitFor()
+    await generalMessage.waitFor()
     expect((await owner.json<AppSnapshot>('snapshot')).agentChats?.general).toEqual({ state: 'ready', sessionId: talk!.id })
     await noHorizontalOverflow(page)
     await page.screenshot({ path: `${OUT}/general-from-code-schedule-1440.png` })

@@ -11,7 +11,7 @@ struct AgentFrame {
     let openTopic: (String) -> Void
 }
 
-/** The frame's header: the Agent's face, name and topic (they open the profile), then 话题 and the session's own menu. */
+/** The Agent's profile button sits between Back and the conversation actions. */
 struct AgentFrameItems: ToolbarContent {
     let frame: AgentFrame
     /** The open topic's summary; null on a new topic. */
@@ -19,9 +19,9 @@ struct AgentFrameItems: ToolbarContent {
     let shown: String?
     var body: some ToolbarContent {
         if #available(iOS 26, *) {
-            ToolbarItem(placement: .topBarLeading) { AgentFrameTitle(frame: frame, topic: topic) }.sharedBackgroundVisibility(.hidden)
+            ToolbarItem(placement: .principal) { AgentFrameTitle(frame: frame, topic: topic) }.sharedBackgroundVisibility(.hidden)
         } else {
-            ToolbarItem(placement: .topBarLeading) { AgentFrameTitle(frame: frame, topic: topic) }
+            ToolbarItem(placement: .principal) { AgentFrameTitle(frame: frame, topic: topic) }
         }
         if shown != nil { ToolbarItem(placement: .topBarTrailing) { TopicActions(topic: topic) } }
     }
@@ -31,7 +31,6 @@ private struct AgentFrameTitle: View {
     @EnvironmentObject private var model: PhoneModel
     let frame: AgentFrame
     let topic: NativeJSON
-    @Environment(\.horizontalSizeClass) private var width
     var body: some View {
         let entry = frame.entry
         Button(action: frame.openProfile) {
@@ -39,17 +38,35 @@ private struct AgentFrameTitle: View {
                 AgentFace(avatar: entry.avatar, size: 28, face: entry.face)
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
-                        Text(entry.name).font(.system(size: 15, weight: .semibold)).foregroundStyle(PhoneTheme.ink).lineLimit(1)
-                        if let words = model.connected ? PhoneHelperSpeech.activity(topic) ?? entry.face.words : nil { FaceWord(face: entry.face, words: words) }
+                        Text(PhoneConversation.visible(entry.name))
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(PhoneTheme.ink).lineLimit(1).layoutPriority(1)
+                        if let words = model.connected ? PhoneHelperSpeech.activity(topic) ?? entry.face.words : nil {
+                            FaceWord(face: entry.face, words: words).lineLimit(1)
+                        }
                     }
-                    if topic != .null, let title = topic["title"].string {
-                        Text(PhoneConversation.visible(title)).font(.system(size: 12)).foregroundStyle(PhoneTheme.muted).lineLimit(1)
+                    if let title = topic["title"].string, !title.isEmpty {
+                        Text(PhoneConversation.visible(title))
+                            .font(.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1)
                     }
                 }
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold)).foregroundStyle(PhoneTheme.muted).fixedSize().accessibilityHidden(true)
             }
-            .frame(width: width == .compact ? 168 : 400, alignment: .leading).contentShape(Rectangle())
         }
-        .buttonStyle(.plain).accessibilityLabel(entry.name).accessibilityHint("打开资料")
+        .buttonStyle(AgentProfileButtonStyle())
+        .accessibilityLabel("\(PhoneConversation.visible(entry.name))的资料与设置")
+    }
+}
+
+private struct AgentProfileButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        let shape = Capsule()
+        configuration.label
+            .padding(.horizontal, 10).frame(minHeight: 44)
+            .background(configuration.isPressed ? PhoneTheme.selectedRow : Color.clear, in: shape)
+            .contentShape(.interaction, Rectangle())
+            .contentShape(.hoverEffect, shape)
+            .hoverEffect(.highlight)
     }
 }
 

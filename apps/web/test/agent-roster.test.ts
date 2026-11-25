@@ -397,16 +397,17 @@ describe('总览 in the navigation', () => {
 })
 
 describe('the topic header', () => {
+  const device = { id: 'd1', dataScope: 'all' }
   const frame = (extra: Partial<ShellState> = {}, agents = [agent('man', '小满')]) => {
     const tasks = [topic('m1', 'man', 9, { title: '今天的晨报', status: 'running', live: live('command') })]
     const shell = {
-      snapshot: { ...snapshot(tasks, agents), automations: [] },
+      snapshot: { ...snapshot(tasks, agents), device, automations: [] },
       catalog: undefined,
       connection: 'connected',
       phone: false,
       drawerMode: false,
       sidebarCollapsed: false,
-      access: { scopes: new Set(['run']) },
+      access: { scopes: new Set(['view', 'run']) },
       current: null,
       profileShown: null,
       selectedId: 'm1',
@@ -424,13 +425,15 @@ describe('the topic header', () => {
     expect(html).toContain('小满的职责')
     expect(said(html)).toHaveLength(1)
     expect(html).toContain('aria-label="小满 的资料"')
+    expect(html).toContain('agent-frame-profile-action')
+    expect(frame({ access: { scopes: new Set(['run']) } } as never)).not.toContain('agent-frame-profile-action')
     expect(html).not.toContain('aria-label="话题"')
     expect(html).not.toMatch(/standard|Harness|模型/u)
   })
 
   it('says 不可用 with the reason and a way to repair for an Agent whose Harness is missing or too old', () => {
     const old = [agent('man', '小满', { available: false, unavailableReason: 'OpenCode 需要 1.2 或更高版本' })]
-    const idle = { snapshot: { ...snapshot([topic('m1', 'man', 9)], old), automations: [] } }
+    const idle = { snapshot: { ...snapshot([topic('m1', 'man', 9)], old), device, automations: [] } }
     const html = frame(idle as never, old)
     expect(html).toContain('不可用')
     // The Host's reason is the word's tooltip, not an ⓘ beside it.
@@ -438,6 +441,9 @@ describe('the topic header', () => {
       /class="ui-hint-label" tabindex="0">不可用<\/span><span[^>]*role="tooltip"[^>]*><span>OpenCode 需要 1.2 或更高版本/u,
     )
     expect(html).toContain('去修复')
+    const phone = frame({ ...idle, phone: true } as never, old)
+    expect(phone).toContain('aria-label="小满 的资料"')
+    expect(phone.indexOf('去修复')).toBeGreaterThan(phone.indexOf('</button>'))
     // A device that cannot change 设置 is told where, without a button it could not use.
     expect(frame({ ...idle, owner: false } as never, old)).not.toContain('去修复')
   })
@@ -447,6 +453,7 @@ describe('the topic header', () => {
     expect(html).toContain('已删除的 Agent')
     expect(html).toContain('data-tone="neutral">已删除')
     expect(said(html)).toHaveLength(0)
+    expect(html).not.toContain('agent-frame-profile-action')
     expect(html).not.toContain('新话题')
   })
 })

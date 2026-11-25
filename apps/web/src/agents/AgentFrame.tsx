@@ -1,21 +1,20 @@
 import type { ReactNode } from 'react'
 
 import type { AgentAvatar as AgentAvatarValue } from '@latch/protocol'
+import { ChevronRightGlyph, Icon, Tooltip } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
 import type { AvatarState } from './avatarFace.ts'
 import { AGENT_SPACE_COPY } from './spaceCopy.ts'
 
-/**
- * The conversation's frame: a 40px face, the name and the role line on the left, which open the profile; at the right
- * the one state word, the schedule chip and what the place adds (⋯). The same on a topic and on a new one.
- */
+/** The same profile entry and status in an existing or new conversation. */
 export function AgentFrame({
   name,
   avatar,
   state,
   word,
   note = null,
+  unavailable,
   topic,
   profileOpen,
   onProfile,
@@ -31,43 +30,56 @@ export function AgentFrame({
   word: ReactNode
   /** What stays said whatever the state: 不先问你 or 权限没确认, amber. */
   note?: ReactNode
+  unavailable?: ReactNode
   /** The open topic's title, under the name on a phone. */
   topic?: string | undefined
   profileOpen: boolean
-  onProfile: () => void
+  onProfile?: (() => void) | undefined
   actions: ReactNode
   phone?: boolean
 }) {
+  const identity = (
+    <>
+      <AgentAvatar avatar={avatar} size={phone ? 28 : 40} state={state} />
+      <span className="agent-frame-text">
+        <span className="agent-frame-name">
+          <VisibleText text={name} />
+        </span>
+        {!phone && duty && (
+          <span className="agent-frame-duty">
+            <VisibleText text={duty} />
+          </span>
+        )}
+        {phone && (word ? <span className="agent-frame-state">{word}</span> : topic && <span className="agent-frame-topic">{topic}</span>)}
+      </span>
+    </>
+  )
   return (
     <div className="agent-frame" data-phone={phone ? '' : undefined}>
-      <button
-        type="button"
-        className="agent-frame-who"
-        aria-label={AGENT_SPACE_COPY.profileOf(name)}
-        aria-expanded={profileOpen}
-        onClick={onProfile}>
-        <AgentAvatar avatar={avatar} size={phone ? 28 : 40} state={state} />
-        <span className="agent-frame-text">
-          <span className="agent-frame-name">
-            <VisibleText text={name} />
-          </span>
-          {!phone && duty && (
-            <span className="agent-frame-duty">
-              <VisibleText text={duty} />
-            </span>
-          )}
-          {/* A phone has room for one line under the name: the state, whole, while there is one, else the topic. */}
-          {phone && word ? (
-            <span className="agent-frame-state">{word}</span>
-          ) : (
-            phone && topic && <span className="agent-frame-topic">{topic}</span>
-          )}
+      {onProfile ? (
+        <Tooltip content={profileOpen ? AGENT_SPACE_COPY.closeProfile : AGENT_SPACE_COPY.profileHint} side="bottom">
+          <button
+            type="button"
+            className="agent-frame-who"
+            aria-label={AGENT_SPACE_COPY.profileOf(name)}
+            aria-expanded={profileOpen}
+            onClick={onProfile}>
+            {identity}
+            <Icon className="agent-frame-profile-action" icon={ChevronRightGlyph} size={14} />
+          </button>
+        </Tooltip>
+      ) : (
+        <span className="agent-frame-who">{identity}</span>
+      )}
+      {!phone && note}
+      {phone && (note || unavailable) && (
+        <span className="agent-frame-notices" data-unavailable={unavailable ? '' : undefined}>
+          {note}
+          {unavailable}
         </span>
-      </button>
-      {note}
+      )}
       <span className="agent-frame-actions">
-        {/* The one state word of the screen, at the right; a phone says it under the name. */}
-        {!phone && word}
+        {!phone && (word ?? unavailable)}
         {actions}
       </span>
     </div>
