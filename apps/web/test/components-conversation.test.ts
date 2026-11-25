@@ -406,6 +406,20 @@ describe('tool cards', () => {
     expect(unasked).not.toContain('title="Qwen Code')
     expect(JUDGED_COPY.unaskedBrief('Qwen Code').detail).toBe(JUDGED_COPY.unaskedNote('Qwen Code'))
     expect(words(row('failed', { by: 'Qwen Code', outcome: 'unasked' }, 'execute'))).toBe('')
+    // Duration sits before the state words so every row's 没有问你 lines up at the right edge.
+    const timedUnasked = renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool({
+          state: 'completed',
+          startedAt: '2026-10-20T12:00:00.000Z',
+          completedAt: '2026-10-20T12:00:09.300Z',
+          tool: { kind: 'read', title: 'Read file', judged: { by: 'Qwen Code', outcome: 'unasked' } },
+          toolName: 'Read',
+        }),
+      }),
+    )
+    expect(timedUnasked.indexOf('process-time')).toBeGreaterThan(-1)
+    expect(timedUnasked.indexOf('process-time')).toBeLessThan(timedUnasked.indexOf('tool-card-state'))
   })
 
   it('shows a call the Harness refused itself as that call, 拦下, with who stopped it and why, never as a failure', () => {
