@@ -1,24 +1,24 @@
 {
   "plugin-market": {
     "zh": {
-      "mp4": "plugin-market-zh.177ed0cb.mp4",
-      "mp4Small": "plugin-market-zh-sm.8b4a728b.mp4",
-      "poster": "plugin-market-zh.10b004b0.webp",
-      "posterAvif": "plugin-market-zh.10b004b0.avif",
+      "mp4": "plugin-market-zh.c7bd5b50.mp4",
+      "mp4Small": "plugin-market-zh-sm.234c4100.mp4",
+      "poster": "plugin-market-zh.655b1f6f.webp",
+      "posterAvif": "plugin-market-zh.655b1f6f.avif",
       "width": 1920,
       "height": 1200,
-      "duration": 13.2,
-      "alt": "在 Latch 工作台打开插件市场，查看四个随附插件，打开「上下文」，审阅来源与权限后确认安装。"
+      "duration": 13.97,
+      "alt": "在 Latch 工作台从侧栏打开插件市场，打开「发布清单面板」，审阅并安装后在同一对话框查看代码在哪里运行、带语法高亮的源码和运行风险，点「应用」经本机确认后安装完成。"
     },
     "en": {
-      "mp4": "plugin-market-en.d34fc06d.mp4",
-      "mp4Small": "plugin-market-en-sm.14398902.mp4",
-      "poster": "plugin-market-en.de4eb001.webp",
-      "posterAvif": "plugin-market-en.de4eb001.avif",
+      "mp4": "plugin-market-en.ee075e19.mp4",
+      "mp4Small": "plugin-market-en-sm.7d9b2b2e.mp4",
+      "poster": "plugin-market-en.7ed2175a.webp",
+      "posterAvif": "plugin-market-en.7ed2175a.avif",
       "width": 1920,
       "height": 1200,
-      "duration": 3.3,
-      "alt": "The Latch workbench opens the plugin marketplace and moves across the four bundled plugins."
+      "duration": 6.4,
+      "alt": "The Latch workbench opens the plugin marketplace from the sidebar and moves across the bundled plugins."
     }
   },
   "context-panel": {
@@ -89,20 +89,20 @@
   },
   "plugin-create": {
     "zh": {
-      "mp4": "plugin-create-zh.d164e6c3.mp4",
-      "mp4Small": "plugin-create-zh-sm.56b01f0d.mp4",
-      "poster": "plugin-create-zh.b6ff6dc5.webp",
-      "posterAvif": "plugin-create-zh.b6ff6dc5.avif",
+      "mp4": "plugin-create-zh.16f9a9fe.mp4",
+      "mp4Small": "plugin-create-zh-sm.779b5b39.mp4",
+      "poster": "plugin-create-zh.1367e612.webp",
+      "posterAvif": "plugin-create-zh.1367e612.avif",
       "width": 1920,
       "height": 1200,
       "duration": 12.5,
       "alt": "在插件市场点「创建插件」，以创造模式描述需求，Agent 在专用文件夹写出插件草稿，再打开草稿审阅清单与技能内容。"
     },
     "en": {
-      "mp4": "plugin-create-en.59513f2d.mp4",
-      "mp4Small": "plugin-create-en-sm.896631a2.mp4",
-      "poster": "plugin-create-en.c5803ae9.webp",
-      "posterAvif": "plugin-create-en.c5803ae9.avif",
+      "mp4": "plugin-create-en.e308348c.mp4",
+      "mp4Small": "plugin-create-en-sm.f773a944.mp4",
+      "poster": "plugin-create-en.99f51557.webp",
+      "posterAvif": "plugin-create-en.99f51557.avif",
       "width": 1920,
       "height": 1200,
       "duration": 12.9,
