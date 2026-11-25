@@ -1,7 +1,7 @@
 import { openControlWhenShown } from '../composer/ComposerControl.tsx'
 import { requestLeave } from '../preview/editDrafts.ts'
 import { requestBoard } from '../board/requests.ts'
-import { readsProjectFiles, type AppSnapshot, type BoardGroup, type TerminalTarget } from '@latch/protocol'
+import { readsProjectFiles, type AppSnapshot, type BoardGroup, type TerminalTarget, type WorkspaceInfo } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
 import type { PromptInput } from '../composer/PromptEditor.tsx'
 import { mentionMarker } from '../fileMentions.ts'
@@ -30,6 +30,7 @@ import { usesDrawer, useCoarsePointer, useViewport, useWindowHeight, useWindowWi
 import { findHarness, projectFor, usesDemoModel } from '../composerChoice.ts'
 import { setSessionOpener } from '../core/blocking.ts'
 import { ArchiveUndo } from '../components/ArchiveUndo.tsx'
+import { ProjectSummary } from '../components/ProjectSummary.tsx'
 import { basename } from '../format.ts'
 import { readPreferences, setPreference, switchWorkView, toggleWorkView, usePreferences } from '../preferences.ts'
 import { openItemPage, type WorkItemSessionTarget } from '../board/itemPage.ts'
@@ -232,8 +233,9 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const route: ShellRoute = marketplace ? { entry: 'marketplace' } : pageUnderMarket
   const hasStart = pageUnderMarket.start === true
   const routeRef = useRef(route)
-  const [settings, setSettings] = useState<Pick<ShellRoute, 'section' | 'projectId' | 'pluginId' | 'agent'> | null>(null)
+  const [settings, setSettings] = useState<Pick<ShellRoute, 'section' | 'pluginId' | 'agent'> | null>(null)
   const closeSettings = useCallback(() => setSettings(null), [])
+  const [projectEditor, setProjectEditor] = useState<{ id: string } | null>(null)
   routeRef.current = route
   // Where Code was left: its start screen or the open session. A page over it (设置, 应用) returns there, and a reload of
   // this tab finds the start screen again when that was what showed.
@@ -1143,9 +1145,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     drawer.setOpen(false)
     setRoute({ entry: 'apps', ...(target ? { app: target } : {}) })
   }
-  const openProjectSettings = (projectId: string) => {
-    setSettings({ section: 'workspaces', projectId })
-  }
   const openCreator = (seed = '') => {
     if (!session.creatorAvailable || session.creatorBlockedReason) return
     leaveBoard()
@@ -1314,6 +1313,30 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     requestAnimationFrame(() => (route.start ? homeComposerRef : composerRef).current?.focus())
   }
   const folders = shellFolders()
+  const canEditProject = owner && connection === 'connected'
+  const openProjectEditor = canEditProject ? (id: string) => setProjectEditor({ id }) : undefined
+  const canAddFolders = canEditProject && access.local && currentShell()?.remote !== true && folders !== null
+  const editingProject = canEditProject && projectEditor ? catalog?.workspaces.find(project => project.id === projectEditor.id) : undefined
+  // A reply from a dismissed editor must not close a project the person has since reopened.
+  const closeProjectEditor = useCallback(() => {
+    setProjectEditor(current => (current === projectEditor ? null : current))
+  }, [projectEditor])
+  useEffect(() => {
+    if (projectEditor && !editingProject) closeProjectEditor()
+  }, [projectEditor, editingProject, closeProjectEditor])
+  const renderProjectSummary = (project: WorkspaceInfo) => (
+    <ProjectSummary
+      key={project.id}
+      project={project}
+      canReadBranches={
+        connection === 'connected'
+        && catalog?.features?.projectFolderBranches === true
+        && access.scopes.has('view')
+        && readsProjectFiles(snapshot.device.dataScope)
+      }
+      onEdit={openProjectEditor}
+    />
+  )
   const pickProject =
     folders && access.local && owner && catalog
       ? async (start: boolean) => {
@@ -2384,7 +2407,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     frameShortcut,
     delegation,
     agentRemovals,
-    openProjectSettings,
+    editingProject,
+    openProjectEditor,
+    closeProjectEditor,
+    canAddFolders,
+    renderProjectSummary,
     openPluginSettings,
     creatorDraftTarget,
     setCreatorDraftTarget,

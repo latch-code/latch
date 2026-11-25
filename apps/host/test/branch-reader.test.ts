@@ -1,13 +1,18 @@
 import * as childProcess from 'node:child_process'
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TaskSummary } from '@latch/protocol'
+import { setKnownSecrets } from '@latch/core/node-kit'
 import type { Bridge, HarnessDriver } from '@latch/sdk'
 import { BranchReader, readGitBranch } from '../src/branch-reader.ts'
 import { HarnessHub } from '../src/hub.ts'
 vi.mock('node:child_process', { spy: true })
+vi.mock('node:fs/promises', async importOriginal => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...fs, realpath: vi.fn(fs.realpath) }
+})
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => {
   vi.restoreAllMocks()
@@ -46,6 +51,27 @@ const summary = (cwd: string, extra: Partial<TaskSummary> = {}): TaskSummary => 
   ...extra,
 })
 describe('read-only Git branch metadata', () => {
+  it('checks the saved real path again before returning the branch', async () => {
+    const { root } = await repository()
+    const saved = await realpath(root)
+    expect(await readGitBranch(saved, { requireRealPath: true })).toBe('main')
+    // A temporary fixture reports that this path now resolves to another folder.
+    vi.mocked(realpath).mockResolvedValueOnce(saved).mockResolvedValueOnce(join(saved, 'moved'))
+    expect(await readGitBranch(saved, { requireRealPath: true })).toBeUndefined()
+  })
+
+  it('omits names containing a Host-known value without a credential prefix', async () => {
+    const { root, git } = await repository()
+    const value = 'synthetic-test-value'
+    await writeFile(join(git, 'HEAD'), `ref: refs/heads/work/${value}\n`)
+    setKnownSecrets('branch-reader-test', [value])
+    try {
+      expect(await readGitBranch(root)).toBeUndefined()
+    } finally {
+      setKnownSecrets('branch-reader-test', [])
+    }
+  })
+
   it('reads a project folder no session has run in, and refuses a relative path', async () => {
     const read = vi.fn(async () => 'main'),
       changed = vi.fn(),

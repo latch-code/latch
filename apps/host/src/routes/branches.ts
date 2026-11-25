@@ -1,11 +1,11 @@
 import { z } from 'zod'
-import { readsProjectFiles } from '@latch/protocol'
+import { readsProjectFiles, type ProjectFolderBranches } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { BranchSwitcher, type BranchSwitcherOptions } from '../branch-switch.ts'
 import { json, jsonBody, safeDecode } from '../http-util.ts'
 import type { Caller, DeviceCaller, RouteContext, RouteModule } from './registry.ts'
 
-const PATH = /^\/link\/api\/workspaces\/([^/]+)\/branches(\/switch)?$/u
+const PATH = /^\/link\/api\/workspaces\/([^/]+)\/(branches|branches\/switch|folder-branches)$/u
 const switchSchema = z.strictObject({
   requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
   // The Host checks it against its own listing; this only bounds what is read.
@@ -14,6 +14,7 @@ const switchSchema = z.strictObject({
 
 /** What only server.ts knows: projects, their queue, and the sessions working in a folder. */
 export interface BranchRouteDeps {
+  folderBranches: (workspaceId: string) => Promise<ProjectFolderBranches>
   /** A saved project's folder (its first): where its sessions and drafts work. Throws for an unknown project. */
   projectFolder: (workspaceId: string) => string
   /** Runs in the project's queue: after its starts and changes, before the next ones. */
@@ -56,22 +57,23 @@ export function createBranchRoutes(context: RouteContext, deps: BranchRouteDeps)
   }
 
   return {
-    features: () => ({ branchSwitch: true }),
+    features: () => ({ branchSwitch: true, projectFolderBranches: true }),
     async route({ req, res, path, method, caller }) {
       const match = PATH.exec(path)
       if (!match) return false
       const workspaceId = safeDecode(match[1]!)
-      if (method === 'GET' && !match[2]) {
+      if (method === 'GET' && match[2] !== 'branches/switch') {
         requireScope(caller, 'view')
         permitted(caller, 'view')
         limits.files.take(caller.device.id)
-        const listing = await switcher.list(deps.projectFolder(workspaceId))
+        const listing =
+          match[2] === 'folder-branches' ? await deps.folderBranches(workspaceId) : await switcher.list(deps.projectFolder(workspaceId))
         // The scope may have been narrowed while the files were read: nothing read for the wider one leaves.
         permitted(caller, 'view')
         json(res, listing)
         return true
       }
-      if (method !== 'POST' || !match[2]) throw new AppError(405, 'method-not-allowed', '不支持这个方法')
+      if (method !== 'POST' || match[2] !== 'branches/switch') throw new AppError(405, 'method-not-allowed', '不支持这个方法')
       requireScope(caller, 'run')
       permitted(caller, 'run')
       limits.classC.take(caller.device.id)

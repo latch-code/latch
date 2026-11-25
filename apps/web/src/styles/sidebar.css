@@ -425,12 +425,6 @@
 .shelf-head:is(:hover, :focus-within) .shelf-count:has(+ .shelf-actions) {
   opacity: 0;
 }
-.shelf-rename {
-  display: flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 0 var(--sp-4) 0 10px;
-}
 /* A single track bounded by the list: a long nowrap title must not size the column. */
 .session-group ul {
   list-style: none;
@@ -820,23 +814,6 @@
   line-height: var(--lh-caption-para);
   font-weight: 400;
 }
-/* The field carries its label above the input: 保存 sits beside the input, at its height, not across label and input. */
-.project-inline-name {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  align-items: flex-end;
-  gap: var(--sp-4);
-}
-.project-inline-name .ui-field {
-  flex: 1;
-  min-width: 0;
-}
-.project-inline-name .ui-button {
-  flex: none;
-  min-height: 32px;
-}
-
 /* Reduced motion: a leaving row fades without folding. */
 @media (prefers-reduced-motion: reduce) {
   .session-entry {

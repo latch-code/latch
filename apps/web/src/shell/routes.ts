@@ -29,8 +29,6 @@ export interface ShellRoute {
   start?: boolean
   /** The chosen section of 设置; absent, a wide window shows the first one and a phone shows the list. */
   section?: SettingsSection
-  /** The project a 项目 section opens on. */
-  projectId?: string
   /** The plugin whose details should open in 设置 › 插件. */
   pluginId?: string
   /** The page an Agent section opens on. */

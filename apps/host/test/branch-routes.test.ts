@@ -4,9 +4,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { BranchListing, TaskDetail, WorkspaceInfo } from '@latch/protocol'
+import type { BranchListing, ProjectFolderBranches, TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { AuditLog } from '../src/audit.ts'
+import * as branchReader from '../src/branch-reader.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 const hosts: TestHost[] = []
@@ -84,6 +85,75 @@ const switchTo = (device: TestDevice, path: string, branch: string, requestId = 
   device.request(`${path}/switch`, { method: 'POST', body: { requestId, branch } })
 
 describe('branch routes', () => {
+  it('reads each current project folder independently, including when another folder is missing', async () => {
+    const t = await startTestHost()
+    hosts.push(t)
+    const owner = await t.enroll({ listener: 'unix' })
+    const paths = ['api', 'web', 'design', 'notes'].map(name => join(t.root, name))
+    await Promise.all(paths.map(path => mkdir(path)))
+    for (const [index, branch] of ['main', 'feature/web'].entries()) {
+      const git = join(paths[index]!, '.git')
+      await mkdir(git)
+      await writeFile(join(git, 'HEAD'), `ref: refs/heads/${branch}\n`)
+    }
+    const { workspace } = (await (await owner.addFolders({ paths })).json()) as { workspace: WorkspaceInfo }
+    const endpoint = `workspaces/${workspace.id}/folder-branches`
+    const viewer = await t.enroll({ scopes: ['view'], dataScope: 'files' })
+    const read = () => viewer.json<ProjectFolderBranches>(endpoint)
+    const [api, web, design, notes] = workspace.folders!
+    expect(await read()).toEqual({ folders: [{ ...api, branch: 'main' }, { ...web, branch: 'feature/web' }, design, notes] })
+
+    await rm(paths[2]!, { recursive: true })
+    await writeFile(join(paths[1]!, '.git', 'HEAD'), 'a'.repeat(40) + '\n')
+    expect(await read()).toEqual({ folders: [{ ...api, branch: 'main' }, { ...web, branch: '分离于 aaaaaaa' }, design, notes] })
+    await owner.json(`workspaces/${workspace.id}/folders/${web!.id}`, { method: 'DELETE' })
+    expect(await read()).toEqual({ folders: [{ ...api, branch: 'main' }, design, notes] })
+
+    expect(await errorOf(await viewer.request('workspaces/default/folder-branches'))).toEqual({ status: 404, error: 'workspace-not-found' })
+    const narrow = await t.enroll({ scopes: ['view'], dataScope: 'work' })
+    expect(await errorOf(await narrow.request(endpoint))).toEqual({ status: 403, error: 'file-scope' })
+    expect(await errorOf(await viewer.request('workspaces/missing/folder-branches'))).toEqual({ status: 404, error: 'workspace-not-found' })
+  })
+
+  it.each(['folder removed', 'permission narrowed'] as const)('discards an in-flight summary after %s', async change => {
+    const t = await startTestHost()
+    hosts.push(t)
+    const owner = await t.enroll({ listener: 'unix' })
+    const viewer = await t.enroll({ scopes: ['view'], dataScope: 'files' })
+    const paths = ['api', 'web'].map(name => join(t.root, name))
+    await Promise.all(paths.map(path => mkdir(path)))
+    const { workspace } = (await (await owner.addFolders({ paths })).json()) as { workspace: WorkspaceInfo }
+    const web = workspace.folders![1]!
+    const read = branchReader.readGitBranch
+    let reached!: () => void
+    const atRead = new Promise<void>(resolve => {
+      reached = resolve
+    })
+    let release!: () => void
+    const resume = new Promise<void>(resolve => {
+      release = resolve
+    })
+    vi.spyOn(branchReader, 'readGitBranch').mockImplementation(async (path, expected) => {
+      const branch = await read(path, expected)
+      if (expected && path === web.path) {
+        reached()
+        await resume
+      }
+      return branch
+    })
+    const pending = viewer.request(`workspaces/${workspace.id}/folder-branches`)
+    await atRead
+    try {
+      if (change === 'folder removed') await owner.json(`workspaces/${workspace.id}/folders/${web.id}`, { method: 'DELETE' })
+      else await t.host.security.devices.setScopes(viewer.id, { dataScope: 'work' }, { listener: 'unix' }, 'lpc-local')
+    } finally {
+      release()
+    }
+    expect(await errorOf(await pending)).toEqual(
+      change === 'folder removed' ? { status: 409, error: 'workspace-changed' } : { status: 403, error: 'file-scope' },
+    )
+  })
+
   it('lists for a device that may read the project’s files, and switches for one that may also run', SLOW, async () => {
     const { t, owner, path, workspaceId, sessionId, git } = await fixture()
     expect((await owner.json<{ catalog: { features: Record<string, unknown> } }>('snapshot')).catalog.features.branchSwitch).toBe(true)

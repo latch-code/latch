@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 /**
  * Below the drawer breakpoint the session list is a modal slide-over: the rest of
  * the shell is inert while it is open, focus stays inside, and Escape returns
- * focus to the opener. Native dialogs opened above it handle their own keys.
+ * focus to the opener. Dialogs and popovers opened above it handle their own keys.
  */
 export function useDrawer({
   enabled,
@@ -62,7 +62,7 @@ export function useDrawer({
     }
     focusFrame = requestAnimationFrame(enterDrawer)
     const keydown = (event: KeyboardEvent) => {
-      if (event.target instanceof Element && event.target.closest('dialog, .popover')) return
+      if (event.target instanceof Element && event.target.closest('dialog, .popover, :popover-open:not([role="tooltip"])')) return
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()

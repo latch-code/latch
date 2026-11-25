@@ -344,7 +344,9 @@ function PhoneTopBar({
   imported,
   computerUse,
   branchProject,
+  projectSummary,
 }: {
+  projectSummary?: ReactNode
   /** 「操控这台 Mac」 is in use in this session, or stopping. */
   computerUse?: 'on' | 'stopping' | undefined
   /** The session works in this project's folder and this device may switch its branch. */
@@ -423,6 +425,7 @@ function PhoneTopBar({
       </div>
       {summary && (
         <span className="topbar-phone-actions">
+          {projectSummary}
           {changes && (
             <IconButton size="lg" label={changes.label} icon={changes.icon} pressed={changes.pressed} onClick={changes.onToggle} />
           )}
@@ -482,7 +485,9 @@ export function SessionHeader({
   imported,
   computerUse,
   branchProject,
+  projectSummary,
 }: {
+  projectSummary?: ReactNode
   /** The session works in this project's folder and this device may switch its branch. */
   branchProject?: string | undefined
   /** The 待办 the session belongs to. */
@@ -543,6 +548,7 @@ export function SessionHeader({
         menu={menu}
         connection={connection}
         changes={slots.changes}
+        projectSummary={projectSummary}
         frame={frame}
         from={from}
         item={item}
@@ -561,6 +567,7 @@ export function SessionHeader({
           {SHELL_COPY.demoModel}
         </StatusPill>
       )}
+      {projectSummary}
       {slots.gitAction}
       {slots.changes && <ChangesToggle toggle={slots.changes} totals={changesTotals} />}
       {/* A session reaches its files through the panel; a new one has no panel yet, only this. */}
@@ -756,6 +763,9 @@ export function ConversationHeader({
       summary={summary}
       harness={topHarness}
       project={project}
+      projectSummary={
+        !shell.route.start && shell.savedProject && !summary?.personal && !summary?.agent && shell.renderProjectSummary(shell.savedProject)
+      }
       computer={computerName(snapshot.hostName)}
       cancelling={selectedId !== null && stopping.has(selectedId)}
       demo={demo}

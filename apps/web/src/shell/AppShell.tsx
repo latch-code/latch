@@ -93,7 +93,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     stopping,
     now,
     catalog,
-    owner,
     submission,
     choice,
     attachmentDraft,
@@ -138,7 +137,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     openSettings,
     settings,
     closeSettings,
-    openProjectSettings,
+    openProjectEditor,
     createProjectAndStart,
     sidebarLimit,
     sidebarWidth,
@@ -172,6 +171,11 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
   const startRoute = route.entry === 'sessions' && route.start === true && !board
   const pendingStart = startRoute && catalog?.features?.messageIdentity && submission.startingMessage
   const start = startRoute && !pendingStart
+  const draftProject =
+    start && !shell.creator && !submission.fork?.moved
+      ? catalog?.workspaces.find(item => item.id === choice.workspaceId && item.id !== 'default')
+      : undefined
+  const draftSummary = draftProject && shell.renderProjectSummary(draftProject)
   const coveredHome = shell.marketplaceOverHome && !submission.startingMessage
   // A conversation going on with another Harness: its source, the Harness it leaves and the one chosen for the next message.
   const movingFork = (start || coveredHome) && submission.fork?.moved ? submission.fork : undefined
@@ -275,7 +279,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 '--dock-height': shell.terminalOpen && !shell.marketplace ? `${shell.dockHeight}px` : '0px',
                 '--workbench-pane-count': Number(panes.left) + Number(panes.terminal) + Number(panes.right),
               }}>
-              {!phone && <TitleBar shell={shell} />}
+              {!phone && <TitleBar shell={shell} draftSummary={draftSummary} />}
               {/* One switch for both views, at the end of the window's top row: it stays mounted through a change. */}
               {!phone && !shell.marketplace && (
                 <ViewSwitch className="shell-view-switch" icons value={shell.preferences.workView} waiting={counts.attention} />
@@ -328,10 +332,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     onNew={startNew}
                     onMarketplace={shell.canBrowseMarketplace ? shell.openMarketplace : undefined}
                     onNewIn={startIn}
-                    onEditProject={owner ? openProjectSettings : undefined}
-                    onProjectsChanged={() => {
-                      void refresh()
-                    }}
+                    onEditProject={openProjectEditor}
                     onRefresh={resync}
                     sessionMenu={sessionMenu}
                     now={now}
@@ -387,10 +388,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                         : undefined
                     }
                     hostProblem={hostProblem}
-                    onEditProject={owner ? openProjectSettings : undefined}
-                    onProjectsChanged={() => {
-                      void refresh()
-                    }}
+                    onEditProject={openProjectEditor}
                     newActive={false}
                     drawer={drawerMode}
                     onClose={() => {
@@ -622,6 +620,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     <header className="workbench-phone-heading">
                       <IconButton size="lg" label={SHELL_COPY.backToSessions} icon={ChevronLeftGlyph} onClick={toPhoneList} />
                       <h1>{SHELL_COPY.newSession}</h1>
+                      {draftSummary}
                       <IconButton size="lg" label={SHELL_COPY.search} icon={SearchGlyph} onClick={openSearch} />
                       {access.scopes.has('view') && <UsageEntry />}
                       <ShellUpdateCheck shell={shell} />
@@ -704,7 +703,6 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     access={access}
                     onClose={closeSettings}
                     section={settings.section}
-                    initialProjectId={settings.projectId}
                     initialPluginId={settings.pluginId}
                     {...(shell.canBrowseMarketplace ? { onMarketplace: shell.openMarketplace } : {})}
                     {...(shell.canAddPlugins ? { onAddPlugin: shell.openAddPlugin } : {})}

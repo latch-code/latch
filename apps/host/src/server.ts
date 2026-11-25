@@ -198,6 +198,7 @@ import { AuditLog, type AuditActor, type StepupMethod } from './audit.ts'
 import { excludeFromBackup } from './backup.ts'
 import { PRIVATE_ENTRIES, isPrivateEntry } from './data-entries.ts'
 import { DeviceStore, EnrollmentService, type ConnectionContext } from './auth.ts'
+import { readGitBranch } from './branch-reader.ts'
 import { hashDisplay } from './crypto.ts'
 import { discoveryEpochInput } from '@latch/link-wire'
 import type { NativeOpening } from './native.ts'
@@ -3776,6 +3777,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
       ...(options.gitDelivery ? { git: options.gitDelivery } : {}),
       branches: {
+        async folderBranches(id) {
+          const record = requireProject(id)
+          const state = await projectState(record, { fresh: true, readable: true })
+          const ambiguous = state.failure && (state.failure.index === undefined || state.failure.reason === 'overlap')
+          const folders = await Promise.all(
+            state.folders.map(async ({ id, path, problem }) => ({
+              id,
+              path,
+              branch: ambiguous || problem ? undefined : await readGitBranch(path, { requireRealPath: true }),
+            })),
+          )
+          if (state.key !== stateKey(requireProject(id)))
+            throw new AppError(409, 'workspace-changed', '项目的文件夹已经变了，请重新打开摘要。')
+          return { folders }
+        },
         projectFolder: id => {
           const record = requireProject(id)
           return record.folders[0]?.path ?? record.path

@@ -12,6 +12,7 @@ import { ShortcutsOverlay } from './ShortcutsOverlay.tsx'
 import { UsageSurface } from '../usage/UsageSurface.tsx'
 import { LoginTerminalDialog } from '../panel/terminal/LoginTerminalDialog.tsx'
 import { FillTerminalDialog } from '../panel/terminal/FillTerminalDialog.tsx'
+import { EditProjectDialog } from '../components/EditProjectDialog.tsx'
 import { RemoveWorktreeDialog, removalWords } from '../components/RemoveWorktreeDialog.tsx'
 import { knownTags, SessionTagsDialog } from '../components/SessionTagsDialog.tsx'
 import { ItemJoinDialog } from '../board/ItemPageJoin.tsx'
@@ -218,6 +219,18 @@ export function Overlays({ shell }: { shell: ShellState }) {
                 }
               : undefined
           }
+        />
+      )}
+      {shell.editingProject && (
+        <EditProjectDialog
+          key={shell.editingProject.id}
+          project={shell.editingProject}
+          snapshot={snapshot}
+          canAddFolders={shell.canAddFolders}
+          onChanged={() => {
+            void refresh()
+          }}
+          onClose={shell.closeProjectEditor}
         />
       )}
       {renaming && (

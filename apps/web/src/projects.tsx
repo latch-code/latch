@@ -1,5 +1,5 @@
 import { BookOpen, Database, Folders, PenTool, Server, TestTubeDiagonal, Wrench } from 'lucide-react'
-import type { HarnessInfo, ProjectGlyph, TaskSummary, WorkspaceFolder, WorkspaceInfo } from '@latch/protocol'
+import type { AppSnapshot, HarnessInfo, ProjectGlyph, TaskSummary, WorkspaceFolder, WorkspaceInfo } from '@latch/protocol'
 import { Icon, type IconComponent, CodeGlyph, FolderGlyph, GlobeGlyph, PhoneGlyph } from '@latch/ui'
 import type { Brief } from './core/securityCopy.ts'
 import { basename } from './format.ts'
@@ -51,6 +51,39 @@ const COPY = defineCopy(
     unboundedDetail: (harness: string) => `${harness} doesn’t restrict which directories can be accessed.`,
     primaryOnly: (folder: string) => `Can use only the main folder “${folder}”`,
     primaryDetail: (harness: string) => `${harness} can’t use the other folders in this project.`,
+  },
+)
+
+export const PROJECT_EDIT_COPY = defineCopy(
+  {
+    systemDialog: '另一个系统对话框还没结束，请稍后再试。',
+    folderActionFailed: '没有完成文件夹操作，请同步项目后重试。',
+    projectIcon: '项目图标',
+    folderLimit: '每个项目最多 8 个文件夹',
+    addFolder: '添加文件夹…',
+    needsFolder: '项目至少要有一个文件夹',
+    folderInUse: '有正在运行或等待批准的会话使用它',
+    main: '主文件夹',
+    projectInUse: '有会话正在项目中运行，请先结束',
+    remove: '移除项目',
+    removeConfirm: '移除',
+    confirmFolder: (name: string) => `从项目中移除「${name}」？`,
+    confirmProject: (name: string) => `移除项目「${name}」？`,
+  },
+  {
+    systemDialog: 'Another system dialog is still open. Try again shortly.',
+    folderActionFailed: 'The folder action didn’t finish. Sync the project and try again.',
+    projectIcon: 'Project icon',
+    folderLimit: 'Up to 8 folders per project',
+    addFolder: 'Add folder…',
+    needsFolder: 'A project needs at least one folder',
+    folderInUse: 'A running session or one waiting for approval uses it',
+    main: 'Main folder',
+    projectInUse: 'End the running session in this project first.',
+    remove: 'Remove project',
+    removeConfirm: 'Remove',
+    confirmFolder: (name: string) => `Remove “${name}” from the project?`,
+    confirmProject: (name: string) => `Remove the project “${name}”?`,
   },
 )
 
@@ -121,6 +154,28 @@ export const projectFolders = (project: WorkspaceInfo): WorkspaceFolder[] =>
   project.folders?.length ? project.folders : [{ id: 'default', path: project.path }]
 export const projectName = (project: WorkspaceInfo) => project.name || basename(project.path)
 
+/** The shortest path suffix that distinguishes each folder, preserving the Host's path separators. */
+export function projectFolderLabels(folders: readonly WorkspaceFolder[]): string[] {
+  const paths = folders.map(({ path }) => {
+    const trimmed = path.replace(/[\\/]+$/u, '')
+    const parts = [...trimmed.matchAll(/[^\\/]+/gu)].toReversed()
+    // Drive and UNC roots have no folder name. Keep the full root as their label.
+    const volumeRoot = /^[a-z]:$/iu.test(trimmed) || (/^[\\/]{2}/u.test(path) && parts.length === 2)
+    return { path, trimmed, parts: volumeRoot ? [] : parts }
+  })
+  return paths.map(folder => {
+    let depth = 1
+    for (const other of paths) {
+      if (other === folder) continue
+      let shared = 0
+      while (shared < folder.parts.length && folder.parts[shared]?.[0] === other.parts[shared]?.[0]) shared++
+      depth = Math.max(depth, shared + 1)
+    }
+    const first = folder.parts[depth - 1]
+    return first ? folder.trimmed.slice(first.index) : folder.path
+  })
+}
+
 export function ProjectIcon({
   project,
   size = 16,
@@ -148,6 +203,19 @@ export function folderAccessText(harness: Pick<HarnessInfo, 'projectFolders'>, c
   if (support?.access === 'primary-asks') return COPY.asks
   if (support?.access === 'primary-unbounded') return COPY.unbounded
   return COPY.primary
+}
+
+export function folderInUse(project: WorkspaceInfo, folder: WorkspaceFolder, snapshot: AppSnapshot): boolean {
+  return snapshot.tasks.some(
+    task =>
+      (task.status === 'running' || task.status === 'waiting-approval')
+      && (task.workspaceId === project.id || task.workspaceId === undefined)
+      && (task.folders?.some(item => item.path === folder.path) || task.cwd === folder.path),
+  )
+}
+
+export function projectInUse(project: WorkspaceInfo, snapshot: AppSnapshot): boolean {
+  return snapshot.tasks.some(task => (task.status === 'running' || task.status === 'waiting-approval') && task.workspaceId === project.id)
 }
 
 /** A count describes membership; it never changes the settings navigation. */

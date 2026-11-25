@@ -77,6 +77,8 @@ export interface HostFeatures {
   worktreeLifecycle?: true
   /** `GET /workspaces/:id/branches` and `…/branches/switch`: a project folder's local branches and switching. */
   branchSwitch?: true
+  /** `GET /workspaces/:id/folder-branches`: the current branch labels in one project's folders. */
+  projectFolderBranches?: true
   terminal?: true
   /** A harness's login command can open in this computer's terminal: only on this computer, for a device with `run`. */
   loginTerminal?: true
