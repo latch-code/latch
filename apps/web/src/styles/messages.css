@@ -1065,6 +1065,7 @@
 .changed-files-toggle {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: var(--sp-4);
   padding: 0 var(--sp-4);
   border: 0;
@@ -1178,6 +1179,13 @@ button.summary-file:hover {
   display: flex;
   justify-content: flex-end;
   gap: var(--sp-8);
+}
+@media (max-width: 767.98px), (pointer: coarse) {
+  .changed-files-toggle {
+    min-width: 44px;
+    min-height: 44px;
+    margin-block: calc(-1 * var(--sp-6));
+  }
 }
 @media (max-width: 767.98px) {
   .changed-files-toggle-word,
@@ -1497,20 +1505,6 @@ button.summary-file:hover {
   box-shadow: inset 0 0 0 1px var(--line);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
-}
-.file-outputs-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-8);
-  min-height: 44px;
-  padding: var(--sp-6) var(--sp-8) var(--sp-6) var(--sp-12);
-  color: var(--ink);
-  font-weight: 500;
-}
-.file-outputs-heading .ui-button,
-.file-outputs-heading .changed-files-why {
-  font-weight: 400;
 }
 .file-outputs ul {
   display: grid;
