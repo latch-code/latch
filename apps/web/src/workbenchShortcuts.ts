@@ -1,6 +1,15 @@
-import { DEFAULT_SHORTCUTS, SHORTCUT_ACTIONS, parseChord, type ShortcutAction, type ShortcutChord } from '@latch/protocol'
+import {
+  DEFAULT_SHORTCUTS,
+  SHORTCUT_ACTIONS,
+  isComposerShortcut,
+  parseChord,
+  shortcutRefusal,
+  type ShortcutAction,
+  type ShortcutChord,
+} from '@latch/protocol'
 import { clientKind, shortcutBindings } from './core/shortcutBindings.ts'
 import { defineCopy } from './core/i18n.ts'
+import type { FollowUpDefault, SendKey } from './preferences.ts'
 
 const COPY = defineCopy(
   {
@@ -31,6 +40,9 @@ const COPY = defineCopy(
     attention: '下一个等你处理的请求',
     approval: '允许、拒绝选中的请求',
     composer: '聚焦输入框',
+    sendNow: '立即发送',
+    queue: '排队发送',
+    unassigned: '未设置',
     composerOptions: 'Harness · 模型 · 思考 · 权限',
     previousMessage: '空输入框取回上一条消息',
     stop: '在输入框里停止运行',
@@ -68,6 +80,9 @@ const COPY = defineCopy(
     attention: 'Next request that needs you',
     approval: 'Approve or reject the selected request',
     composer: 'Focus composer',
+    sendNow: 'Send now',
+    queue: 'Queue message',
+    unassigned: 'Unassigned',
     composerOptions: 'Harness · Model · Reasoning · Permission',
     previousMessage: 'Recall previous message in an empty composer',
     stop: 'Stop run from the composer',
@@ -330,6 +345,18 @@ const SHORTCUTS = [
     },
   },
   {
+    id: 'send-now',
+    get label() {
+      return COPY.sendNow
+    },
+  },
+  {
+    id: 'queue-message',
+    get label() {
+      return COPY.queue
+    },
+  },
+  {
     id: 'controls',
     get label() {
       return COPY.composerOptions
@@ -379,7 +406,7 @@ export type ShortcutId = (typeof SHORTCUTS)[number]['id']
 type Row = { id: ShortcutId; label: string; desktop?: string | null; browser?: string | null }
 const ROWS: readonly Row[] = SHORTCUTS
 
-const onMac = () => /Mac/u.test(navigator.platform)
+const onMac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/u.test(navigator.platform)
 
 /** Whether an action takes this device's own binding (设置 › 快捷键); the others are fixed. */
 export const isRebindable = (id: string): id is ShortcutAction => (SHORTCUT_ACTIONS as readonly string[]).includes(id)
@@ -425,11 +452,35 @@ export function chordText(chord: ShortcutChord, desktop: boolean): string | null
 
 /** The keys an action has here now: this device's binding, else its default; null where this client lacks it. */
 export function boundChord(id: ShortcutAction, desktop: boolean): ShortcutChord | null {
-  if (DEFAULT_SHORTCUTS[id][desktop ? 'desktop' : 'browser'] === null) return null
+  if (!isComposerShortcut(id) && DEFAULT_SHORTCUTS[id][desktop ? 'desktop' : 'browser'] === null) return null
   const own = shortcutBindings.bindings()
   // The store is this client's own kind; a test may ask about the other kind, which then shows its defaults.
   const bound = (desktop ? 'desktop' : 'browser') === clientKind() ? own[id] : undefined
   return bound ?? DEFAULT_SHORTCUTS[id][desktop ? 'desktop' : 'browser']
+}
+
+export function primarySendKeys(sendKey: SendKey, coarse: boolean, mac: boolean = onMac()): string {
+  return sendKey === 'enter' && !coarse ? 'Enter' : `${mac ? '⌘' : 'Ctrl'} Enter`
+}
+
+/** Labels shared by the send menu and shortcut settings, including the default send key where it applies. */
+export function followUpKeyLabels(primary: string | null, chord: ShortcutChord | null, desktop: boolean, mac: boolean = onMac()): string[] {
+  const labels = primary ? [primary] : []
+  if (chord) labels.push((chordText(chord, desktop || mac) ?? chord).replace(/Mod /gu, 'Ctrl '))
+  return labels
+}
+
+/** The default action already has the composer's send key. Keep each explicit binding on its named action. */
+export function followUpShortcuts(defaultAction: FollowUpDefault, desktop: boolean): Record<FollowUpDefault, ShortcutChord | null> {
+  const client = desktop ? 'desktop' : 'browser'
+  const bindings = client === clientKind() ? shortcutBindings.bindings() : {}
+  const keys = { steer: bindings['send-now'] ?? null, queue: bindings['queue-message'] ?? null }
+  const other = defaultAction === 'steer' ? 'queue' : 'steer'
+  const action = other === 'queue' ? 'queue-message' : 'send-now'
+  // A saved global shortcut may already own one of these chords, including on devices set up before this feature.
+  keys[other] ??=
+    ['Mod+Shift+Enter', 'Mod+Alt+Enter', 'Mod+Alt+Shift+Enter'].find(chord => !shortcutRefusal(client, bindings, action, chord)) ?? null
+  return keys
 }
 
 /** The keys on this kind of client; null for what it cannot do. */
@@ -447,13 +498,26 @@ const SPACE_SHORTCUTS: ReadonlySet<ShortcutId> = new Set(['space-code', 'space-a
 export function shortcutRows(
   desktop: boolean,
   mac: boolean = onMac(),
-  { spaces = true, delegate = true }: { spaces?: boolean; delegate?: boolean } = {},
+  {
+    spaces = true,
+    delegate = true,
+    followUpDefault = 'steer',
+    sendKey = 'enter',
+    coarse = false,
+  }: { spaces?: boolean; delegate?: boolean; followUpDefault?: FollowUpDefault; sendKey?: SendKey; coarse?: boolean } = {},
 ): Array<{ id: ShortcutId; label: string; keys: string }> {
+  const followUps = followUpShortcuts(followUpDefault, desktop)
   return SHORTCUTS.flatMap(({ id, label: named }) => {
     if (!spaces && SPACE_SHORTCUTS.has(id)) return []
     // In 我的 Agent the same key is 新对话…, said only where this device can start one.
     const label = id === 'new' && spaces && delegate ? COPY.sessionOrChat : named
-    const keys = shortcutKeys(id, desktop, mac)
+    let keys: string | null
+    if (id === 'send-now' || id === 'queue-message') {
+      const action = id === 'send-now' ? 'steer' : 'queue'
+      const primary = action === followUpDefault ? primarySendKeys(sendKey, coarse, mac) : null
+      const labels = followUpKeyLabels(primary, followUps[action], desktop, mac)
+      keys = labels.join(' · ') || COPY.unassigned
+    } else keys = shortcutKeys(id, desktop, mac)
     return keys === null ? [] : [{ id, label, keys }]
   })
 }
@@ -533,9 +597,14 @@ export function chordMatches(event: KeyStroke, chord: ShortcutChord | null): boo
 
 /** Whether the event is the bound keys of an action matched outside the workbench handler (the palette, 查找, 选取, 下一个请求). */
 export function shortcutMatches(event: KeyStroke, id: ShortcutAction, desktop: boolean): boolean {
-  if (event.isComposing) return false
   if (!desktop && event.altKey && typesCharacter(event)) return false
-  return chordMatches(event, boundChord(id, desktop))
+  return shortcutChordMatches(event, boundChord(id, desktop))
+}
+
+export function shortcutChordMatches(event: KeyStroke, chord: ShortcutChord | null): boolean {
+  if (event.isComposing) return false
+  if (event.altKey && !event.metaKey && typesCharacter(event)) return false
+  return chordMatches(event, chord)
 }
 
 export function workbenchShortcut(event: KeyStroke, desktop: boolean): WorkbenchAction | null {

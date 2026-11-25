@@ -159,7 +159,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | 日志脱敏与秘密形状 | `tests/redact.test.ts`；新增秘密格式时补用例 |
 | Host 进程、数据目录锁、`pnpm latch`、`--disable-sigusr1` | `security.test.ts`、`cli.test.ts` |
 | 路径、项目目录与会话文件夹 | `paths.test.ts`、`projects.test.ts`、`session-folders.test.ts` |
-| 排队顺序与本轮追加 | `prompt-queues.test.ts`、`prompt-queue-api.test.ts` 检查并发、重启与未知结果。Web 的 `e2e/prompt-queue.e2e.ts` 和原生的 `native-swift.test.ts` 用假 Agent 核对实际收到的消息与顺序 |
+| 排队顺序与本轮追加 | `prompt-queues.test.ts`、`prompt-queue-api.test.ts` 检查并发、重启与未知结果。Web 的 `e2e/prompt-queue.e2e.ts` 和原生的 `native-swift.test.ts` 核对消息顺序，Web 另用假 Agent 核对从输入框和队列立即发送的图片字节 |
 | 风险分级与审批 | `risk.test.ts`、`tests/runtime.test.ts`、`hub.test.ts`；Latch 内置的权限档位是 `tests/permission-modes.test.ts`、`builtin-modes.test.ts`、`apps/web/test/builtin-permission.test.ts` 与 `e2e/builtin-modes.e2e.ts` |
 | 审批与取消的回执 | `server.test.ts` 的 `receipts and cancels`、`session-meta.test.ts` |
 | 事件流与阅读位置 | `streaming.test.ts`、`apps/web/test/reading-position.test.ts`、`e2e/streaming-ui.e2e.ts`、`e2e/takeover.e2e.ts` |
@@ -169,7 +169,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | Git 受限运行器、工作树与交付 | `changes-git.test.ts`、`worktrees.test.ts`、`git-delivery.test.ts`、`git-hunks.test.ts`、`git-pr.test.ts`、`git-routes.test.ts`、`git-sync.test.ts`（获取、拉取、中止）、`git-clone.test.ts`（克隆，经假 `ssh`）、`branch-switch.test.ts` 与 `branch-routes.test.ts`（切换分支；`e2e/branch-switch.e2e.ts`）、`native.test.ts`（PR 自动续办的原生验证窗口与会话引用限制） |
 | 待办投递、来源与证据 | `work-threads.test.ts`（原请求、同轮提问与私有范围）、`native.test.ts`（正文窗口、PR 评论响应字节预算）、`apps/web/test/workbench-evidence.test.ts`（SHA）、`e2e/task-flow.e2e.ts`（浏览器、假 ACP 与假 GitHub CLI） |
 | 会话文件与预览 | `files.test.ts`、`file-content.test.ts`、`file-outside.test.ts`、`file-tree.test.ts` |
-| 输入框（块、原子删除、撤销、输入法、粘贴与拖入） | `apps/web/test/prompt-editor.test.ts`、`prompt-tokens.test.ts`、`e2e/prompt-marks.e2e.ts`（Chromium 与 WebKit）；成员块见 `e2e/teams.e2e.ts` |
+| 输入框（块、原子删除、撤销、输入法、粘贴与拖入） | `apps/web/test/prompt-editor.test.ts`、`prompt-tokens.test.ts`、`e2e/prompt-marks.e2e.ts`（Chromium 与 WebKit）；`e2e/teams.e2e.ts` 核对同排块的上下边缘、Harness 图标中心和块内外数字基线，以及已选成员和文件在块尾输入、整删重选时的候选和网络请求 |
 | 团队（开始、停止、交回与页面） | `apps/host/test/teams.test.ts`、`apps/web/test/teams.test.ts`、`e2e/teams.e2e.ts`；概要的独立团队与嵌套子 Agent 由同一用例检查。Codex 委派入口、显式与自主派出的同名成员、重载后结果和审批定位另跑 `e2e/codex-team.e2e.ts` |
 | 插件页面框 | `app-frame.test.ts`、`app-pages.test.ts`（Host 与 `apps/web/test/` 各一份）、`apps/desktop/test/desktop-frames.test.ts`、`e2e/app-pages.e2e.ts` |
 | 会话上下文图表 | `tests/runtime.test.ts`、`tests/agent-context.test.ts`、`packages/harness-acp/test/acp.test.ts`、`apps/web/test/components-panel.test.ts`、`apps/web/test/context-tools.test.ts` 与 `e2e/context.e2e.ts`；两轮多步输入的组成、历史选择、原对话定位与外部窗口分别验收 |
@@ -272,7 +272,7 @@ pnpm exec vitest run --config e2e/vitest.config.ts e2e/harness-acceptance.e2e.ts
 
 截图排队的 Live 用例会让测试模型停在第一轮。出现 `host-ready` 后，在临时目录创建空文件 `pair`，通过原生入口配对，打开「截图排队验收」。先只加一张测试截图并排队，再用另一张图配上 `Check the screenshot before changing the layout.` 排队。用宽、高都超过 400 像素的测试图片。确认列表中有两项后创建空文件 `drain`。用例释放第一轮，将队列和模型实收结果写入同一目录。无界面的 Swift 互操作用例另行核对空说明、切换会话、重绘后的 PNG 字节和重试去重。iOS 27.2 模拟器可能在配对落盘时拒绝 Vault 的 Class A 设置；使用单独的测试存储时要注明这一差异，文件保护留到真机验收。
 
-`ios-screens` 与 `ios-live` 需要已安装的 iOS 模拟器运行时。`ios-screens` 的选项：`LATCH_IOS_SCENES`（逗号分隔的场景前缀）、`LATCH_IOS_SCREENS_DIR`、`LATCH_IOS_SCREENS_DEVICE=<udid>`（只在这台已有模拟器上截）、`LATCH_IOS_SCREENS_KEEP_RUNNING=1`（仅与前者一起，截图后留下夹具 App）。
+`ios-screens` 与 `ios-live` 需要已安装的 iOS 模拟器运行时。`ios-screens` 的选项：`LATCH_IOS_SCENES`（逗号分隔的场景前缀）、`LATCH_IOS_SCREENS_DERIVED_DATA`（调用者管理的构建缓存）、`LATCH_IOS_SCREENS_DIR`、`LATCH_IOS_SCREENS_DEVICE=<udid>`（只在这台已有模拟器上截）、`LATCH_IOS_SCREENS_KEEP_RUNNING=1`（仅与前者一起，截图后留下夹具 App）。
 
 `ios-live` 的选项：
 
@@ -302,7 +302,7 @@ pnpm exec vitest run --config e2e/vitest.config.ts e2e/harness-acceptance.e2e.ts
 
 `native-push.test.ts` 用本地 HTTP/2 假 Apple 服务和临时密钥检查签名、投递、失效令牌回退及待办撤回。`ios-screens` 的 `push-approval` 场景检查原生待审批界面。要验收手机锁屏时的真实投递和灵动岛入口，需要匹配签名的 iPhone、Apple 推送凭据和发出审批的测试 Host，见[手机通知说明](IOS-NOTIFICATIONS.md)。
 
-原生待办的投影、旧窗口、确切问答或审批和提交版本由 `native-swift.test.ts` 编排。交付与原回合的组合读取经实际原生连接换路用例核对，复用原正文租约时拒绝旧连接的下一次读取和发布。缓存回归暂停旧 Vault，检查快速重开时的新资料库会等待收尾，离线只读到已撤下私有项的快照。用 `ios-screens` 的 `work-`、`review` 场景查看任务列表、来源、同 SHA 证据和文件栏布局。回复排版、消息图片与团队看 `markdown`、`markdown-code`、`markdown-prose`、`markdown-dense`、`markdown-diagram`、`pictures`、`team-results`、`team-graph` 场景，Markdown 分块、团队结果的读取与团队分工卡的位置和末端由 `native-swift.test.ts` 核对。实走「待办 → 原回合 → 回到待办」在本次创建的模拟器及临时 Host 上做，覆盖较窄权限、锁屏和断连。审阅还检查 iPad 横竖屏、分屏、辅助使用字号、长路径与过期警告。
+原生待办的投影、旧窗口、确切问答或审批和提交版本由 `native-swift.test.ts` 编排。交付与原回合的组合读取经实际原生连接换路用例核对，复用原正文租约时拒绝旧连接的下一次读取和发布。缓存回归暂停旧 Vault，检查快速重开时的新资料库会等待收尾，离线只读到已撤下私有项的快照。用 `ios-screens` 的 `work-`、`review` 场景查看任务列表、来源、同 SHA 证据和文件栏布局。输入框由 `reply-quote-draft` 和 `terminal-draft` 场景检查草稿恢复、相邻输入、退格或 × 移除、撤销与重做，并截取浅深色界面。回复排版、消息图片与团队看 `markdown`、`markdown-code`、`markdown-prose`、`markdown-dense`、`markdown-diagram`、`pictures`、`team-results`、`team-graph` 场景，Markdown 分块、团队结果的读取与团队分工卡的位置和末端由 `native-swift.test.ts` 核对。实走「待办 → 原回合 → 回到待办」在本次创建的模拟器及临时 Host 上做，覆盖较窄权限、锁屏和断连。审阅还检查 iPad 横竖屏、分屏、辅助使用字号、长路径与过期警告。
 
 Live 模式只在 `LatchScreens`（仅模拟器）中编译，用进程内存里的软件密钥代替 Secure Enclave；TLS、敲门 HMAC、根证明、正文窗口与 requestId 与产品相同。`pnpm check:boundaries` 核对这些代码不进 `Latch` 目标。
 

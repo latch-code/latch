@@ -85,7 +85,7 @@ async function computer(
   env: Record<string, string> = {},
   extra: string[] = [],
   options: AcpAgentOptions = {},
-  host: Pick<HarnessHostOptions, 'toolGateway' | 'modelGateway' | 'saveAttachment'> = {},
+  host: Pick<HarnessHostOptions, 'toolGateway' | 'modelGateway' | 'saveAttachment' | 'readAttachment'> = {},
 ) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-codex-')))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
@@ -1620,6 +1620,43 @@ describe('Codex over its app-server', () => {
     expect(steered!.params!.expectedTurnId).toEqual(expect.stringMatching(/^turn-/u))
     await bridge.cancel(id)
     await settled(bridge, id)
+  })
+
+  it('adds a captionless queued image to the same turn once and persists only its reference', async () => {
+    const image = {
+      id: 'abcdefghijklmnopqrstuv',
+      name: 'screen.png',
+      kind: 'image',
+      mime: 'image/png',
+      size: 3,
+      sha256: 'a'.repeat(64),
+    } as const
+    const data = 'cG5n'
+    const t = await computer({}, [], {}, { readAttachment: async () => ({ type: 'image', mimeType: image.mime, data }) })
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'sleep until told')
+    await vi.waitFor(async () => expect(sent(await t.log(), 'turn/start')).toHaveLength(1), { timeout: 5_000 })
+    const running = await bridge.detail(id)
+    expect(running.steerAttachments).toBe(true)
+    const queued = { runId: running.summary.runId!, queuedAt: new Date(0).toISOString(), authorize: async () => {} }
+    const requestId = rid()
+    for (let attempt = 0; attempt < 2; attempt++)
+      expect(await bridge.steerWithAttachments!(id, '', requestId, [image], queued)).toBe('injected')
+    await expect(bridge.steerWithAttachments!(id, '', requestId, [{ ...image, id: 'b'.repeat(22) }], queued)).rejects.toMatchObject({
+      code: 'request-conflict',
+    })
+    expect(sent(await t.log(), 'turn/steer').map(entry => entry.params?.input)).toEqual([
+      [{ type: 'image', url: `data:image/png;base64,${data}` }],
+    ])
+    await bridge.cancel(id)
+    await settled(bridge, id)
+    await bridge.close()
+    const reopened = await t.open()
+    expect((await reopened.detail(id)).messages.filter(message => message.steered)).toMatchObject([
+      { text: '', requestId, queuedAt: queued.queuedAt, attachments: [image] },
+    ])
+    const { id: imageId, ...metadata } = image
+    expect(await reopened.steerWithAttachments!(id, '', requestId, [{ ...metadata, id: imageId }], queued)).toBe('injected')
   })
 
   it('fails the turn when Codex exits in the middle of it', async () => {

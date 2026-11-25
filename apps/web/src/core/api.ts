@@ -430,7 +430,7 @@ export function inlineError(error: unknown): string {
 export function isUncertain(error: unknown): boolean {
   if (error instanceof ClientError) return !error.definitive
   if (!(error instanceof ApiError)) return true
-  return error.status === 408 || (error.status >= 500 && !NOT_ACCEPTED_5XX.has(error.code))
+  return error.code === 'steer-unknown' || error.status === 408 || (error.status >= 500 && !NOT_ACCEPTED_5XX.has(error.code))
 }
 
 /** The exact request a device sent, kept until the Host confirms it so a retry repeats it verbatim. */

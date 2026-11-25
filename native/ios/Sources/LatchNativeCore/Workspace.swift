@@ -1208,7 +1208,7 @@ public actor NativeWorkspace {
         // A 5xx whose code says the Host accepted nothing (a Harness that could not start) is a refusal, not unknown.
         if NativeHostRefusal.leavesUnknown(status: response.status, body: response.body) { throw NativeFailure.resultUnknown }
         let refusal = NativeHostRefusal.parse(status: response.status, body: response.body)
-        if queueControl == .steer, refusal?.code == "steer-unknown" { throw NativeFailure.resultUnknown }
+        if refusal?.code == "steer-unknown" { throw NativeFailure.resultUnknown }
         if work != nil || pending.teamRound != nil, [401, 403, 404].contains(response.status) {
             // Work routes recheck access when presenting the result, after the change or delivery may have happened.
             _ = await responseFailure(response, lease: lease)

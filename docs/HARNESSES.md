@@ -942,7 +942,7 @@ Agent 在 `initialize` 的 `_meta.steering = { supported: true }` 声明后，�
 | 无法识别的回答 | 从队列追加时保留为结果未知。输入框的普通追加仍沿用原错误行为 |
 | 30 秒没有回答 | 结果未知，不重发 |
 
-停止开始后不再追加。没有声明的 Agent 照常排队。语义见 [STREAMING.md](./STREAMING.md#追加到运行中的一轮)。
+停止开始后不再追加。Codex 和 pi 的直连适配器同时声明 `_meta.steering.attachments: true`，其他 ACP Agent 可按同一约定声明。此时草稿或队列里的附件按普通输入的能力交付，图片可单独发送。只声明 `supported` 的轮次可追加文字，附件排队。语义见 [STREAMING.md](./STREAMING.md#追加到运行中的一轮)。
 
 模拟器工具按当前运行 ID 检查发起设备。Driver 在真正发出较窄范围的追加前暂停这一轮的设备工具授权，追加送达或结果未知时撤掉授权。从队列追加时，写过文字的设备与点击追加的设备都计入本轮输入权限。旧回执的重放不会触发这一步。设备工具的规则见 [ARCHITECTURE.md](ARCHITECTURE.md#设备与浏览器)。
 

@@ -95,6 +95,8 @@ const SCENES = [
   'push-approval',
   'conversation',
   'conversation-sending',
+  'reply-quote-draft',
+  'terminal-draft',
   'recovering-chat',
   'offline-draft',
   'markdown',
@@ -241,7 +243,9 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
     const known = new Set(types.devicetypes.map(item => item.identifier))
     const output = resolve(process.env.LATCH_IOS_SCREENS_DIR ?? 'test-results/ios-screens')
     await mkdir(output, { recursive: true })
-    const derived = await mkdtemp(join(tmpdir(), 'latch-ios-screens-'))
+    // A caller can share its private incremental build with the product build and owns cleanup in that case.
+    const buildCache = process.env.LATCH_IOS_SCREENS_DERIVED_DATA
+    const derived = buildCache ? resolve(buildCache) : await mkdtemp(join(tmpdir(), 'latch-ios-screens-'))
     const created: string[] = []
     try {
       await run(
@@ -263,6 +267,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
           'native/ios/.build/xcode-packages',
           '-disableAutomaticPackageResolution',
           '-onlyUsePackageVersionsFromResolvedFile',
+          ...(buildCache ? ['-jobs', '2', 'OTHER_SWIFT_FLAGS=$(inherited) -j2'] : []),
           'CODE_SIGNING_ALLOWED=NO',
           'ARCHS=arm64',
           'ONLY_ACTIVE_ARCH=YES',
@@ -271,7 +276,13 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
         { timeout: 300_000, maxBuffer: 16_777_216 },
       )
       const textReader = join(derived, 'read-screen-text')
-      if (chosen.some(scene => ['inbox-first-rows', 'usage-empty', 'prompt-queue', 'conversation-sending'].includes(scene)))
+      if (
+        chosen.some(scene =>
+          ['inbox-first-rows', 'usage-empty', 'prompt-queue', 'conversation-sending', 'reply-quote-draft', 'terminal-draft'].includes(
+            scene,
+          ),
+        )
+      )
         await run('/usr/bin/xcrun', ['swiftc', 'native/ios/Tools/InboxScreenshotRows.swift', '-o', textReader])
       const application = join(derived, 'Build/Products/Debug-iphonesimulator/LatchScreens.app')
       // The marker the product check looks for is really in this target, so its absence there means something.
@@ -315,6 +326,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
           await simctl('ui', udid, 'appearance', theme)
           for (const scene of chosen) {
             const probe = scene === 'markdown-prose' || scene === 'markdown-dense' ? randomUUID() : undefined
+            const quoteProbe = scene === 'reply-quote-draft' || scene === 'terminal-draft' ? randomUUID() : undefined
             const inboxProbe = scene === 'inbox-first-rows' ? randomUUID() : undefined
             const started = performance.now()
             await simctl(
@@ -325,6 +337,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
               '-LatchScene',
               scene,
               ...(probe ? ['-LatchMarkdownProbe', probe] : []),
+              ...(quoteProbe ? ['-LatchReplyQuoteProbe', quoteProbe] : []),
               ...(inboxProbe ? ['-LatchInboxProbe', inboxProbe] : []),
             )
             const shot = join(output, `${scene}--${theme}--${device.name}.png`)
@@ -333,7 +346,31 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
               continue
             }
             await pause(2500)
-            if (probe) {
+            if (quoteProbe) {
+              const container = (await simctl('get_app_container', udid, 'codes.latch.ios.screens', 'data')).stdout.trim()
+              const proof = join(container, 'tmp', `reply-quote-${quoteProbe}.json`)
+              await vi.waitFor(() => stat(proof), { timeout: 20_000 })
+              expect(JSON.parse(await readFile(proof, 'utf8'))).toEqual({
+                restored: true,
+                keptSource: true,
+                deletedOnce: true,
+                undoRestoredSource: true,
+                undoRestoredText: true,
+                undoRestoredAttachment: true,
+                redoRemovedSource: true,
+                mixedSourceUndoCopy: true,
+              })
+              await vi.waitFor(
+                async () => {
+                  await simctl('io', udid, 'screenshot', shot)
+                  const words = scene === 'terminal-draft' ? ['Build', 'Done', 'Keep'] : ['Release', 'notes', 'Keep']
+                  const positions = JSON.parse((await run(textReader, [shot, ...words, '引用原句'])).stdout) as Record<string, number[]>
+                  for (const word of words) expect(positions[word], word).toHaveLength(1)
+                  expect(positions['引用原句']).toEqual([])
+                },
+                { timeout: 20_000, interval: 500 },
+              )
+            } else if (probe) {
               const container = (await simctl('get_app_container', udid, 'codes.latch.ios.screens', 'data')).stdout.trim()
               const proof = join(container, 'tmp', `markdown-${probe}.json`)
               const readProof = async (): Promise<unknown> => JSON.parse(await readFile(proof, 'utf8'))
@@ -374,8 +411,8 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
                     return
                   }
                   if (scene === 'prompt-queue') {
-                    const positions = JSON.parse((await run(textReader, [shot, '追加'])).stdout) as { 追加: number[] }
-                    expect(positions.追加).toHaveLength(3)
+                    const positions = JSON.parse((await run(textReader, [shot, '立即发送'])).stdout) as { 立即发送: number[] }
+                    expect(positions.立即发送).toHaveLength(3)
                     return
                   }
                   // The last word of the empty message starts to the right of centre when the sheet shrinks to fit it.
@@ -404,7 +441,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
         await simctl('shutdown', udid).catch(() => {})
         await simctl('delete', udid).catch(() => {})
       }
-      await rm(derived, { recursive: true, force: true })
+      if (!buildCache) await rm(derived, { recursive: true, force: true })
     }
   },
   2_700_000,

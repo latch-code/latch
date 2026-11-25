@@ -747,7 +747,7 @@ export class CodexWire implements AgentWire {
         auth: { logout: {} },
       },
       authMethods: [],
-      _meta: { steering: { supported: true } },
+      _meta: { steering: { supported: true, attachments: true } },
     }
   }
 

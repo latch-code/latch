@@ -8,7 +8,15 @@ import { deviceAccess } from '../core/permissions.ts'
 import { computerLabel } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
 import { keepAwakeLine, loginItemNote, useShellLifecycle } from '../core/shellLifecycle.ts'
-import { backdropLevel, setPreference, usePreferences, type SendKey, type ThemePreference, type WorkDisplay } from '../preferences.ts'
+import {
+  backdropLevel,
+  setPreference,
+  usePreferences,
+  type FollowUpDefault,
+  type SendKey,
+  type ThemePreference,
+  type WorkDisplay,
+} from '../preferences.ts'
 import { SettingsGroup, SettingsRow } from './common.tsx'
 import { NotificationSettings } from './NotificationSettings.tsx'
 import { chooseEditor, useEditors } from '../components/OpenInEditor.tsx'
@@ -39,6 +47,9 @@ const COPY = defineCopy(
     chinese: '简体中文',
     english: 'English',
     send: '发送消息',
+    followUp: '运行中默认发送方式',
+    queue: '排队',
+    sendNow: '立即发送',
     enter: '⏎ 发送',
     commandEnter: '⌘⏎ 发送',
     controlEnter: 'Ctrl ⏎ 发送',
@@ -66,6 +77,9 @@ const COPY = defineCopy(
     chinese: '简体中文',
     english: 'English',
     send: 'Send message',
+    followUp: 'Default action during a turn',
+    queue: 'Queue',
+    sendNow: 'Send now',
     enter: '⏎ Send',
     commandEnter: '⌘⏎ Send',
     controlEnter: 'Ctrl ⏎ Send',
@@ -258,6 +272,20 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
             }
           />
         )}
+        <SettingsRow
+          title={COPY.followUp}
+          trailing={
+            <SegmentedControl<FollowUpDefault>
+              label={COPY.followUp}
+              value={preferences.followUpDefault}
+              options={[
+                { value: 'steer', label: COPY.sendNow },
+                { value: 'queue', label: COPY.queue },
+              ]}
+              onValueChange={value => setPreference('followUpDefault', value)}
+            />
+          }
+        />
         {/* What the conversation shows of a turn's work, on this device. Approvals, questions and failures show at every level. */}
         <SettingsRow
           title={COPY.work}

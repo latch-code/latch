@@ -18,6 +18,7 @@ export type PalettePreference = 'mono' | 'graphite' | 'cool' | 'warm'
 export type AccentPreference = 'workbench' | 'navy' | 'teal' | 'iris'
 export type FloatingMaterialPreference = 'solid' | 'frosted' | 'clear'
 export type SendKey = 'enter' | 'mod-enter'
+export type FollowUpDefault = 'steer' | 'queue'
 /** 对话 (the sessions, the composer and the panels) or 看板 (every session as a card in its group). */
 export type WorkView = 'chat' | 'board'
 /** How much of a turn's work the conversation shows: every row, only what went wrong, or one folded row. */
@@ -125,6 +126,7 @@ export interface Preferences {
   density: DensityPreference
   /** Desktop only; touch keyboards always insert a newline on Enter. */
   sendKey: SendKey
+  followUpDefault: FollowUpDefault
   /** The right panel: whether it is open and its dragged width (local only). */
   rightPanel: RightPanelPreference
   /** The panel next to the rail: its dragged width and whether it is shut (local only, never sent to the Host). */
@@ -154,6 +156,7 @@ const defaults: Preferences = {
   motion: 'system',
   density: 'standard',
   sendKey: 'enter',
+  followUpDefault: 'steer',
   rightPanel: { open: true },
   sidebar: { collapsed: false },
   dockOpen: false,
@@ -208,6 +211,7 @@ export function parsePreferences(raw: string | null): Preferences {
       motion: item.motion === 'reduce' ? 'reduce' : 'system',
       density: item.density === 'compact' ? 'compact' : 'standard',
       sendKey: item.sendKey === 'mod-enter' ? 'mod-enter' : 'enter',
+      followUpDefault: item.followUpDefault === 'queue' ? 'queue' : defaults.followUpDefault,
       rightPanel: item.rightPanel === undefined ? { open: item.workbenchLayout !== 'triage' } : parseRightPanelPreference(item.rightPanel),
       sidebar: parseSidebarPreference(item.sidebar),
       dockOpen: item.dockOpen === true,

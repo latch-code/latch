@@ -1,6 +1,6 @@
 # @latch/harness-acp
 
-ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentPlugin`）。`src/runtime.ts`（会话、启动指纹、权限模式）、`wires/`（进程与协议）、`protocol.ts`（ACP v1）与同目录模块，预设的权限配置在 `profiles/`。不负责浏览器可见的预设（protocol 的 `agent-presets.ts`）与保存定义（Host）。
+每个启用的 Agent 由 `createAcpAgentPlugin` 注册 Driver。`src/runtime.ts` 管会话、启动指纹与权限模式，`wires/` 管进程，`protocol.ts` 定义 ACP v1，`profiles/` 定义权限预设。浏览器预设见 protocol 的 `agent-presets.ts`，Host 保存定义。
 
 运行环境 node；依赖 `@latch/protocol`、`@latch/sdk`、`@latch/core`（只用 `./node-kit`、`./file-tracking` 与 `./run-end`）、`zod`；`@cursor/sdk` 只在运行器进程。只有 Host 依赖本包，且只经入口 `src/index.ts`。
 
@@ -24,7 +24,7 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 
 测试：`pnpm test --project @latch/harness-acp` 与 `e2e/permissions-ui.e2e.ts`。先读 [docs/HARNESSES.md](../../docs/HARNESSES.md)。
 
-- 附件按协商能力原生发，余者按路径；Agent 图片输出经 Host 私有存储转成引用，字节不进消息、快照或 stderr。
+- 附件按协商能力发内容或路径；本轮追加须声明 `_meta.steering.attachments`。Agent 图片存 Host 私有目录，只传引用；字节不进消息、快照或 stderr。
 - 文件产物只表示运行时间窗口中的观察；旧运行晚到的结算只更新原消息。范围与预算见 ARCHITECTURE。
 - 配置修改准备前和发 RPC 前调用 Host `authorize`；超时结果未知，核对时拒绝写入。
 

@@ -153,21 +153,21 @@ export class RequestRecords {
 /**
  * Turns this Host accepted, by session, device and request ID, with the hash of what was sent: a retry from the same
  * device with the same body is answered as accepted before checks that may have changed since; another body under the
- * same ID is a conflict. Recorded only once the session holds the turn durably (the driver's prompt resolved). In memory
- * only, the newest 4096: after a restart a retry goes through the ordinary checks.
+ * same ID is a conflict. A steer the driver could not confirm stays unknown. In memory only, the newest 4096:
+ * after a restart a retry goes through the ordinary checks and the driver's durable receipts.
  */
 export class TurnReceipts {
-  private readonly receipts = new Map<string, string>()
+  private readonly receipts = new Map<string, { hash: string; unknown: boolean }>()
 
   constructor(private readonly limit = 4096) {}
 
-  get(key: string): string | undefined {
+  get(key: string): { hash: string; unknown: boolean } | undefined {
     return this.receipts.get(key)
   }
 
-  set(key: string, hash: string): void {
+  set(key: string, hash: string, unknown = false): void {
     this.receipts.delete(key)
-    this.receipts.set(key, hash)
+    this.receipts.set(key, { hash, unknown })
     if (this.receipts.size > this.limit) this.receipts.delete(this.receipts.keys().next().value!)
   }
 }

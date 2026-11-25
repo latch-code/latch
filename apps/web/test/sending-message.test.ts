@@ -108,6 +108,7 @@ test('an uncertain retry keeps the submission and says why; a definitive answer 
   expect(unconfirmedReason(new ApiTimeoutError())).toBe(new ApiTimeoutError().message)
   expect(unconfirmedReason(new ApiError(502, 'harness-unavailable', 'Harness 没有答复。'))).toBe('Harness 没有答复。')
   expect(unconfirmedReason(new ApiError(408, 'timeout', '请求超时。'))).toBe('请求超时。')
+  expect(unconfirmedReason(new ApiError(409, 'steer-unknown', '追加结果未确认。'))).toBe('追加结果未确认。')
   expect(unconfirmedReason(new NoAnswerError())).toBe('连不上 Mac 上的 Latch')
   // No network on this device: the computer is not the one to blame.
   expect(unconfirmedReason(new NoAnswerError(), false)).toBe('这台设备没有联网')

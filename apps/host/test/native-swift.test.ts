@@ -586,9 +586,18 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         { text: `${inlinePrefix}@eden.proxy.ts`, previous: `${inlinePrefix}@eden` },
         { text: '🙂正文@查后续', caret: '🙂正文@查'.length },
         { text: 'review@code' },
+        { text: '```text\n@file' },
       ],
       spacing: ['🙂 @a 111 @a ', '🙂  @a  @a  end', '  @a\n\t@a\tend', '@a @a '],
-      markers: [marker, `(前)${marker} \n${marker}\t`, `a${marker}`, `${marker}x`, marker.normalize('NFD'), `\n${marker}\u3000`],
+      markers: [
+        marker,
+        `(前)${marker} \n${marker}\t`,
+        `a${marker}`,
+        `${marker}x`,
+        marker.normalize('NFD'),
+        `\n${marker}\u3000`,
+        `[引用回复 s/m@0]\n> ${marker}`,
+      ],
     })
     expect(result).toEqual({
       edits: [
@@ -604,8 +613,9 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         { query: 'eden.proxy.ts', text: inlineMarker, caret: inlineMarker.length },
         { query: '查', text: `🙂正文 ${marker} 后续`, caret: `🙂正文 ${marker} `.length },
         { query: 'code', text: `review ${marker} `, caret: `review ${marker} `.length },
+        null,
       ],
-      retained: [true, true, false, false, false, true],
+      retained: [true, true, false, false, false, true, false],
       visible: ['🙂■111■', '🙂 ■ ■ end', '  ■\n\t■\tend', '■■'],
       selection: [
         [13, 16],
@@ -636,7 +646,12 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       tasks: ['lead', 's1', 's2', 's3'].map(id => ({ id, status: id === 's3' ? 'running' : 'idle' })),
       teams: [team, { ...team, id: 'elsewhere', leadSessionId: 'other' }, { ...team, id: 'old', createdAt: '2026-11-20' }],
     }
+    const quote = '[引用回复 ses/m@0]\n> output:  @查-接口-2  +  @检查输出'
+    const terminal = 'Terminal 1\n```text\nlogs:  @查-接口-2  keep\n```'
     const drafts = [
+      { text: quote },
+      { text: terminal },
+      { text: `@查-接口 修复\n${quote}\n\n${terminal}` },
       { text: 'email@查-接口 再试' },
       { text: '@查-接口-2 再试  @查-接口\n@查-接口-2 一遍' },
       { text: '@查-接口' },
@@ -656,6 +671,9 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       ],
       matches: ['b'],
       rounds: [
+        null,
+        null,
+        { ids: ['a'], prompt: `修复\n${quote}\n\n${terminal}`, reason: null },
         null,
         { ids: ['b', 'a'], prompt: '再试 \n 一遍', reason: null },
         { ids: ['a'], prompt: '', reason: '写下要成员做的事' },
@@ -5319,6 +5337,38 @@ S4 -->|是\n继续| End["保留\\n"]`
     expect(result.pastedPng).toEqual([true, true, true, true])
     expect(result.sendOwnership).toEqual([true, true])
     expect(result.renewedWindowImage).toEqual([true, true, true])
+    expect(result.sentQuoteParts).toEqual(['literal example', 'moon after@11', '附注', 'red moon@22'])
+    expect(result.composerReferences).toEqual({
+      display: '📝\n\ufffc\ufffcdone',
+      copied: '月🌕\n二行月🌕\n二行',
+      ranges: [
+        [3, '[引用回复 s/m1@4]\n> 月🌕\n> 二行\n\n'.length],
+        [3, 1],
+        [4, 0],
+      ],
+      deletes: [true, true, true, true],
+      edges: [true, true, true, true, true],
+      sources: [
+        ['conversation', '会话', 'Earlier work'],
+        ['hook', 'pre-push', '🪝 failed\n```\nnote'],
+        ['handoff', '交回结果', '结论一\n\n结论二'],
+        ['reply', '回复', '月🌕\n二行'],
+      ],
+      allVisible: '\ufffc\ufffc\ufffc\ufffcok',
+      roundtrip: true,
+      deletesHook: true,
+      literal: true,
+      oldHandoff: true,
+      terminal: [
+        '终端 1',
+        '终端 2 · 最近报错（较早的输出未包含）',
+        'Terminal 12',
+        'Terminal 1,024 · Latest error (earlier output omitted)',
+      ].map(title => [title, 'first 🚧\n```\nlast']),
+      terminalExamples: true,
+      typedPlaceholder: true,
+      ime: [true, true],
+    })
     expect(result.conversationReferences).toEqual([
       'A\n〔会话：Earlier work〕\n〔引用原句〕\n> quoted words\nB',
       'roundtrip',
@@ -5676,6 +5726,19 @@ S4 -->|是\n继续| End["保留\\n"]`
         { status: 'running', detail: { steer: true }, queues: false },
         { status: 'waiting-approval', detail: {}, queues: true },
         { status: 'running', detail: {}, queues: false },
+        { status: 'running', detail: { steer: true }, attached: true, queues: true },
+        { status: 'running', detail: { steer: true, steerAttachments: true }, attached: true, queues: true },
+        { status: 'running', detail: { steer: true, steerAttachments: true }, attached: true, nextTurnOnly: true, queues: true },
+        { status: 'running', detail: { steer: true }, queues: true, preferred: 'queue' },
+        { status: 'running', detail: { steer: true, steerAttachments: true }, attached: true, queues: true, preferred: 'queue' },
+        {
+          status: 'running',
+          detail: { steer: true, steerAttachments: true },
+          attached: true,
+          queues: true,
+          queueAttachments: false,
+          preferred: 'queue',
+        },
       ],
       harness: { level: 'L3' },
       launchConfigs: [
@@ -6030,7 +6093,18 @@ S4 -->|是\n继续| End["保留\\n"]`
     expect(result.latestRunning).toEqual({ copy: null, retry: null, warning: null, fork: null })
     expect(result.readOnly).toEqual({ copy: '改好了', retry: null, warning: null, fork: null })
     expect(result.resend).toEqual(['plain', '继续', '源会话的记录\n\n继续', '接着', ''])
-    expect(result.followUp).toEqual(['send', 'steer', 'queue', 'none'])
+    expect(result.followUp).toEqual([
+      ['send', ''],
+      ['steer', ''],
+      ['queue', ''],
+      ['none', ''],
+      ['queue', ''],
+      ['steer', 'queue'],
+      ['queue', ''],
+      ['queue', 'steer'],
+      ['queue', 'steer'],
+      ['steer', ''],
+    ])
     expect(result.controls).toEqual([
       // The main rows are asking, the model's and never; reading and the rules' go under 更多, a mode with no tier is left out.
       {
@@ -7218,7 +7292,7 @@ S4 -->|是\n继续| End["保留\\n"]`
       `回复 · ## 你 ${createHash('sha256').update('## 你\n![x](http://e/i.png) <b>hi</b> `<ok>`').digest('hex').slice(0, 8)}`,
       `回复 · 改好了。 ${createHash('sha256').update('改好了。').digest('hex').slice(0, 8)}`,
     ])
-    expect(handoffs.quoted).toBe('先看这个\n\n> 结论一\n>\n> 结论二\n\n')
+    expect(handoffs.quoted).toBe('先看这个\n\n交回结果：\n> 结论一\n>\n> 结论二\n\n')
     expect((handoffs.create as { body: unknown }).body).toEqual({
       requestId: '<id>',
       sourceSessionId: 'ses_source',

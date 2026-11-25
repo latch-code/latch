@@ -1,4 +1,4 @@
-import { chromium, type Browser, type Page } from '@playwright/test'
+import { chromium, type Browser, type Page, type Request } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -8,8 +8,8 @@ import type { AppSnapshot, TaskDetail, TeamAnswer, TeamSummary, WorkProposalSumm
 import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, reachable, settleShell } from './helpers/layout.ts'
-import { promptValue } from './helpers/prompt.ts'
+import { noHorizontalOverflow, openSession, reachable, settleShell } from './helpers/layout.ts'
+import { promptValue, setPromptSelection } from './helpers/prompt.ts'
 
 const OUTPUT = 'test-results/teams'
 const VIEWS = [
@@ -800,6 +800,11 @@ describe('a team of sessions, in the page', () => {
     const input = () => page.getByRole('textbox', { name: '继续对话', exact: true }).filter({ visible: true })
     const list = page.getByRole('listbox', { name: '提到成员或文件', exact: true })
     const members = list.getByRole('group', { name: '成员', exact: true })
+    // A member mentioned in a source excerpt is material for this chat, not an addressee.
+    await input().fill('终端 1\n```text\nlog  @核对接口  output\n```')
+    await input().locator('.terminal-excerpt-body').waitFor()
+    expect(await input().locator('.prompt-chip[data-kind="member"]').count()).toBe(0)
+    await page.locator('form.composer').filter({ has: input() }).getByRole('button', { name: '发送', exact: true }).waitFor()
     // @ lists the members first, each with its Harness and how it stands.
     await input().fill('@')
     await members.waitFor()
@@ -1006,6 +1011,122 @@ describe("the lead's agent sending its team another round", () => {
     await browser?.close()
     await host?.close()
     if (state) await rm(state, { recursive: true, force: true })
+  })
+
+  it('aligns the built-in member tile with a file and a quoted passage on the same line', async () => {
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { requestId: randomUUID(), prompt: 'echo 检查引用', harnessId: 'alpha', mode: 'agent' },
+    })
+    await settled(sessionId)
+    const { team } = await owner.json<TeamAnswer>(`tasks/${sessionId}/team`, {
+      method: 'POST',
+      body: { requestId: randomUUID(), tasks: [{ title: '输出 4', prompt: '检查输出', harnessId: 'standard' }] },
+    })
+    await poll(async () => (await teamOf(team.id)).state).toBe('returned')
+    await settled(sessionId)
+    const detail = await owner.json<TaskDetail>(`tasks/${sessionId}`)
+    await writeFile(join(detail.summary.cwd!, 'eden.proxy.ts'), '')
+    await openSession(page, sessionId)
+    const input = page.getByRole('textbox', { name: '继续对话', exact: true })
+    const typeBesidePickedChip = async (kind: 'member' | 'file') => {
+      const before = await promptValue(input)
+      expect(before.endsWith(' ')).toBe(true)
+      const chip = input.locator(`.prompt-chip[data-kind="${kind}"]`)
+      const label = await chip.locator('.prompt-chip-label').innerText()
+      const queries: string[] = []
+      const record = (request: Request) => {
+        if (request.url().endsWith(`/tasks/${sessionId}/files/search`)) queries.push(request.postDataJSON().q)
+      }
+      page.on('request', record)
+      try {
+        await input.press('End')
+        await input.press('Backspace')
+        await poll(() => promptValue(input)).toBe(before.slice(0, -1))
+        // Give a reactivated file lookup time to pass its 160ms debounce while the caret touches the chip.
+        await page.waitForTimeout(300)
+        const suggestions = page.getByRole('listbox', { name: /提到成员或文件|引用项目文件/u })
+        expect({ menus: await suggestions.count(), queries }).toEqual({ menus: 0, queries: [] })
+        await input.pressSequentially('11')
+        await poll(() => promptValue(input)).toBe(before + '11')
+        expect(await chip.locator('.prompt-chip-label').innerText()).toBe(label)
+        await page.waitForTimeout(300)
+        expect({ menus: await suggestions.count(), queries }).toEqual({ menus: 0, queries: [] })
+      } finally {
+        page.off('request', record)
+      }
+    }
+    await input.fill('@输出')
+    await page.getByRole('option').filter({ hasText: '输出 4' }).click()
+    const memberToken = (await promptValue(input)).trimEnd()
+    await typeBesidePickedChip('member')
+    await setPromptSelection(input, memberToken.length)
+    await input.press('Backspace')
+    await poll(() => promptValue(input)).toBe(' 11')
+    expect(await input.locator('[data-kind="member"]').count()).toBe(0)
+    await page.keyboard.type('@')
+    await page.getByRole('option').filter({ hasText: '输出 4' }).click()
+    await input.press('End')
+    await page.keyboard.type('1 @eden')
+    await page.getByRole('option').filter({ hasText: 'eden.proxy.ts' }).click()
+    const throughFile = (await promptValue(input)).trimEnd()
+    await typeBesidePickedChip('file')
+    await setPromptSelection(input, throughFile.length)
+    await input.press('Backspace')
+    await poll(() => promptValue(input)).toBe(throughFile.slice(0, throughFile.lastIndexOf('@')) + ' 11')
+    expect(await input.locator('[data-kind="file"]').count()).toBe(0)
+    await input.press('Shift+End')
+    await page.keyboard.type('@eden')
+    await page.getByRole('option').filter({ hasText: 'eden.proxy.ts' }).click()
+    await setPromptSelection(input, 0)
+    await page.keyboard.insertText('[引用回复 s/m@0]\n> 原话\n\n')
+    const marks = input.locator('.prompt-chip')
+    await input.locator('[data-kind="member"] .brand-mark img').waitFor()
+    for (const [width, height, theme] of VIEWS) {
+      await page.setViewportSize({ width, height })
+      await page.emulateMedia({ colorScheme: theme })
+      await settleShell(page)
+      const edges = await marks.evaluateAll(nodes =>
+        nodes.map(node => {
+          const { top, bottom } = node.getBoundingClientRect()
+          return { kind: node.getAttribute('data-kind'), top, bottom }
+        }),
+      )
+      expect(edges.map(edge => edge.kind)).toEqual(['quote', 'member', 'file'])
+      const member = marks.filter({ has: page.locator('.brand-mark') })
+      const alignment = await member.evaluate(chip => {
+        const mark = chip.querySelector<HTMLElement>('.brand-mark')!
+        const image = mark.querySelector('img')!
+        const center = (node: Element) => {
+          const { top, bottom } = node.getBoundingClientRect()
+          return (top + bottom) / 2
+        }
+        const digit = (text: Node, at: number) => {
+          const range = document.createRange()
+          range.setStart(text, at)
+          range.setEnd(text, at + 1)
+          return range.getBoundingClientRect().bottom
+        }
+        const name = chip.querySelector('.prompt-chip-label')!.firstChild!
+        const digits = Array.from(chip.closest('.cm-line')!.childNodes).find(
+          node => node.nodeType === Node.TEXT_NODE && node.textContent?.includes('111'),
+        )!
+        return {
+          markOffset: center(mark) - center(chip),
+          imageOffset: center(image) - center(chip),
+          digitOffset: digit(name, name.textContent!.lastIndexOf('4')) - digit(digits, digits.textContent!.indexOf('111')),
+        }
+      })
+      await input.screenshot({ path: `${OUTPUT}/mixed-chip-alignment--${width}--${theme}.png`, caret: 'hide' })
+      for (const [part, offset] of Object.entries(alignment))
+        expect.soft(Math.abs(offset), `${width} ${theme} ${part}: ${offset}px`).toBeLessThanOrEqual(0.5)
+      for (const edge of edges.slice(1)) {
+        expect(edge.top, edge.kind ?? '').toBeCloseTo(edges[0]!.top, 1)
+        expect(edge.bottom, edge.kind ?? '').toBeCloseTo(edges[0]!.bottom, 1)
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.emulateMedia({ colorScheme: 'light' })
   })
 
   it('turns the switch on, and the results of the round the agent sent come back as round 2', async () => {

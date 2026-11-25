@@ -8,7 +8,7 @@ import { workspaceSections } from '../src/components/Pickers.tsx'
 import { Composer } from '../src/composer/Composer.tsx'
 import { SessionFolders } from '../src/shell/SessionEnvironment.tsx'
 import { DiffView, PREVIOUS_NOTES } from '../src/components/DiffView.tsx'
-import { allowsByKey, approvalKeyCaps, ApprovalDrawer, type ApprovalStatus } from '../src/composer/ApprovalDrawer.tsx'
+import { allowsByKey, approvalKeyCaps, ApprovalDrawer, isApprovalAllowKey, type ApprovalStatus } from '../src/composer/ApprovalDrawer.tsx'
 import { ToolCard } from '../src/components/ToolCard.tsx'
 import { setLocale } from '../src/core/i18n.ts'
 import { approvalActions, type ApprovalGate } from '../src/core/permissions.ts'
@@ -736,6 +736,32 @@ describe('approval cards', () => {
     expect(html).toMatch(/class="ui-hint approval-clause-sentence"(?:(?!<\/div>).)*class="ui-hint-more"/u)
     expect(html.match(/写入需要确认/gu) ?? []).toHaveLength(1)
     expect(html).toMatch(/data-variant="primary"[^>]*>(?:(?!<\/button>).)*?允许<\/button>/u)
+  })
+
+  it('approves only with exact Mod+Enter and never during composition or key repeat', () => {
+    const chord = {
+      key: 'Enter',
+      metaKey: true,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      isComposing: false,
+      keyCode: 13,
+      repeat: false,
+    }
+    expect(isApprovalAllowKey(chord)).toBe(true)
+    expect(isApprovalAllowKey({ ...chord, metaKey: false, ctrlKey: true })).toBe(true)
+    for (const changed of [
+      { shiftKey: true },
+      { altKey: true },
+      { ctrlKey: true },
+      { metaKey: false },
+      { isComposing: true },
+      { keyCode: 229 },
+      { repeat: true },
+      { key: ' ' },
+    ])
+      expect(isApprovalAllowKey({ ...chord, ...changed }), JSON.stringify(changed)).toBe(false)
   })
 
   it('draws a key cap only on a button its key presses now', () => {

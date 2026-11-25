@@ -1,3 +1,5 @@
+import { Text } from '@codemirror/state'
+import { readReferenceExcerpts } from './referenceExcerpts.ts'
 import type { ReactNode } from 'react'
 import type { FileMention, SessionCommand, SessionSkill } from '@latch/protocol'
 import { replyQuotes } from '../conversation/replyQuote.ts'
@@ -92,7 +94,12 @@ export type PromptChip = PromptMark | { start: number; end: number; kind: 'file'
  * Every chip of the draft, in order and never overlapping: the catalogue's marks and the `@root:path` markers of the
  * files currently referenced, each standing on its own between whitespace. Where two would overlap the earlier one wins.
  */
-export function promptChips(text: string, catalogue: PromptCatalogue, refs: readonly FileMention[] = []): PromptChip[] {
+export function promptChips(
+  text: string,
+  catalogue: PromptCatalogue,
+  refs: readonly FileMention[] = [],
+  literalRanges?: readonly { from: number; to: number }[],
+): PromptChip[] {
   const files: PromptChip[] = refs.flatMap(ref =>
     mentionRanges(text, ref).map(range => ({
       ...range,
@@ -107,10 +114,20 @@ export function promptChips(text: string, catalogue: PromptCatalogue, refs: read
     for (const match of text.matchAll(/\[conversation-ref:[a-f0-9-]{36}\] ([^\n]{1,500}?) · read_conversation_reference/gu))
       references.push({ start: match.index, end: match.index + match[0].length, kind: 'conversation', name: match[1]!, description: '' })
   }
-  for (const { from, quote } of replyQuotes(text))
-    references.push({ start: from, end: text.indexOf('\n', from), kind: 'quote', name: '', description: quote.text })
+  for (const { from, to, quote } of replyQuotes(text)) {
+    // The composer appends a blank separator so typing beside the chip stays outside the quoted passage.
+    const end = text.startsWith('\n\n', to) ? to + 2 : to
+    references.push({ start: from, end, kind: 'quote', name: quote.text })
+  }
   const all = [...promptMarks(text, catalogue), ...files, ...references].sort((a, b) => a.start - b.start || b.end - a.end)
   const chips: PromptChip[] = []
-  for (const chip of all) if (chip.end > chip.start && (!chips.length || chip.start >= chips.at(-1)!.end)) chips.push(chip)
+  for (const chip of all) {
+    if (chip.end <= chip.start || chip.start < (chips.at(-1)?.end ?? 0)) continue
+    if (chip.kind === 'member') {
+      literalRanges ??= readReferenceExcerpts(Text.of(text.split('\n'))).literal
+      if (literalRanges.some(range => chip.start < range.to && chip.end > range.from)) continue
+    }
+    chips.push(chip)
+  }
   return chips
 }

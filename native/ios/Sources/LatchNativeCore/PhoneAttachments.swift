@@ -233,7 +233,7 @@ public enum PhoneAttachments {
     public static let largestFile = 50 * 1_048_576
     public static let tooMany = "每条消息最多添加 8 个附件。"
     public static let releasedWords = "已在 设置 › 设备 里释放，请移除后重新添加"
-    /** The Host takes a queued or steered message as text only (`queue-attachments-unsupported`). */
+    /** Shown when this follow-up cannot deliver the draft's attachments. */
     public static func heldBack(_ followUp: PhoneFollowUp, running: Bool, count: Int) -> String? {
         guard running, count > 0, followUp == .queue || followUp == .steer else { return nil }
         return "\(followUp == .steer ? "追加" : "排队")的消息不能带附件，本轮结束后再发送。"

@@ -2976,6 +2976,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return refs
     }
 
+    function bindPromptAttachments(deviceId: string, ids: string[], sessionId: string): Promise<void> {
+      return attachmentStore.bind(deviceId, ids, sessionId).catch(() => {
+        throw new AppError(503, 'attachment-publish-unknown', '消息已接收，附件记录尚未确认。请重试同一次提交。')
+      })
+    }
+
     const templateStore = await PromptTemplateStore.open(dataDir)
     const customization = await CustomizationStore.open(dataDir, { now, log })
     const shortcuts = await ShortcutsStore.open(dataDir, { now, log, known: id => devices.get(id) !== undefined })
@@ -3201,6 +3207,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         await attachmentStore.claim(actor.deviceId, ids, requestId, sessionId)
       },
       releaseAttachments: (actor, sessionId, ids, requestId) => attachmentStore.releaseClaim(actor.deviceId, ids, requestId, sessionId),
+      bindAttachments: (actor, sessionId, ids) => bindPromptAttachments(actor.deviceId, ids, sessionId),
       async prepare(actor, sessionId, model) {
         await checkQueuedPrompt(actor, sessionId, model, undefined, true)
         const turn = await queuedAgentTurn(sessionId, actor.dataScope)
@@ -3274,10 +3281,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               ...(reference ? { outsideContent: true as const } : {}),
             }),
         )
-        if (input.attachmentIds)
-          await attachmentStore.bind(actor.deviceId, input.attachmentIds, sessionId).catch(() => {
-            throw new AppError(503, 'attachment-publish-unknown', '会话已开始，附件记录尚未确认。请重试同一次提交。')
-          })
+        if (input.attachmentIds) await bindPromptAttachments(actor.deviceId, input.attachmentIds, sessionId)
         if (input.itemId) queueAudits.delete(input.itemId)
         // Only now is it the person's message in the session; a withdrawn one never gets here.
         await rememberFromPerson(
@@ -3287,7 +3291,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           input.requestId,
         )
       },
-      canSteer: id => harnessHub.supportsQueuedSteer(id),
+      canSteer: (id, withAttachments) => harnessHub.supportsQueuedSteer(id, withAttachments),
       async steer(actor, sessionId, input) {
         await assertQueueable(sessionId, input.text)
         const writers = [actor, input.sender, ...(input.editor ? [input.editor] : [])]
@@ -3306,15 +3310,26 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const seq = await audited({ action: 'task.prompt.sent', actor: sender, detail: { sessionId, itemId: input.itemId } })
         let outcome
         try {
+          const attachments = input.attachmentIds
+            ? await promptAttachments(
+                queuedCaller(actor),
+                input.attachmentIds,
+                { harnessId: await harnessHub.harnessOf(sessionId) },
+                sessionId,
+                input.attachmentRequestId,
+              )
+            : undefined
           await authorize()
-          outcome = await harnessHub.steer(sessionId, input.text, input.requestId, beforeSteer, {
-            runId: input.runId,
-            queuedAt: input.queuedAt,
-            authorize,
-          })
+          outcome = await harnessHub.steer(
+            sessionId,
+            input.text,
+            input.requestId,
+            beforeSteer,
+            { runId: input.runId, queuedAt: input.queuedAt, authorize },
+            attachments,
+          )
         } catch (error) {
-          if (error instanceof AppError && error.code !== 'steer-unknown' && refusedBeforeAccepting(error.status, error.code))
-            noteFailedAction(seq, sender)
+          if (error instanceof AppError && refusedBeforeAccepting(error.status, error.code)) noteFailedAction(seq, sender)
           throw error
         }
         if (outcome === 'injected') {
@@ -3362,6 +3377,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const turnRequests = new RequestRecords()
     /** Turns accepted, by session, device and request, with what was sent: see `sendPromptChecked`. */
     const turnReceipts = new TurnReceipts()
+    const pendingTurns = new Map<string, { steer: boolean; hash: string; result: Promise<PromptOutcome> }>()
     /** What a turn's retry must repeat to be the same request. */
     const turnBodyHash = (input: z.infer<typeof queuedPromptSchema>) =>
       sha256Hex(
@@ -8658,7 +8674,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return {
         ...content,
         summary: questionSummary(detail.summary),
-        queue: promptQueues.view(sessionId),
+        queue: promptQueues.view(sessionId, detail.steerAttachments),
         ...(supportsConversationReference(detail.summary) ? { canReferenceConversation: true as const } : {}),
         questions: questions.view(sessionId),
         ...(memoryRefusals.get(sessionId)?.length ? { memoryRefusals: memoryRefusals.get(sessionId)! } : {}),
@@ -10785,7 +10801,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // The install window: a retry of a turn this Host has on record gets its original answer; a new plain message, and a
       // queued or steered one on a session that is not running (it would start a turn at once), are refused.
       const turnKey = `${id}:${caller.device.id}:${input.requestId}`
-      if (turnRequests.has(turnKey) || promptQueues.knows(id, caller.device.id, input.requestId))
+      const pending = pendingTurns.get(turnKey)
+      // A retry must not switch from adding to the current turn to starting another, or release its uploads.
+      if (pending && (input.steer || pending.steer)) {
+        recheck(caller, 'run')
+        await assertSessionAccess(caller, id)
+        checkPrivateSession(caller, id, true)
+        if (pending.hash !== turnBodyHash(input)) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入')
+        return pending.result
+      }
+      if (turnReceipts.get(turnKey) || turnRequests.has(turnKey) || promptQueues.knows(id, caller.device.id, input.requestId))
         return sendPromptChecked(
           caller,
           id,
@@ -10796,14 +10821,23 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           unattended,
           turnRequests.someInFlight(key => key === turnKey),
         )
-      if (updateWindow.isOpen()) {
-        if (!(input.queue || input.steer)) refuseWhileUpdating('turn')
-        const status = (await hub!.summary(id)).status
-        if (status !== 'running' && status !== 'waiting-approval') refuseWhileUpdating('turn')
+      const begin = async () => {
+        if (updateWindow.isOpen()) {
+          if (!(input.queue || input.steer)) refuseWhileUpdating('turn')
+          const status = (await hub!.summary(id)).status
+          if (status !== 'running' && status !== 'waiting-approval') refuseWhileUpdating('turn')
+        }
+        return tracked(turnRequests, turnKey, () =>
+          sendPromptChecked(caller, id, input, withoutPrivateContext, outsideContent, writers, unattended),
+        )
       }
-      return tracked(turnRequests, turnKey, () =>
-        sendPromptChecked(caller, id, input, withoutPrivateContext, outsideContent, writers, unattended),
-      )
+      const result = begin()
+      pendingTurns.set(turnKey, { steer: !!input.steer, hash: turnBodyHash(input), result })
+      try {
+        return await result
+      } finally {
+        pendingTurns.delete(turnKey)
+      }
     }
 
     async function recordAgentPrompt(
@@ -10843,14 +10877,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // same ID is a conflict, and anything else (another device, a Host that restarted since) goes through as before.
       // Its attachments are bound once more, as the first answer would have.
       const turnKey = `${id}:${caller.device.id}:${input.requestId}`,
-        taken = input.queue || input.steer ? undefined : turnReceipts.get(turnKey)
+        taken = turnReceipts.get(turnKey)
       if (taken !== undefined) {
-        if (taken !== turnBodyHash(input)) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入')
-        if (input.attachmentIds?.length)
-          await attachmentStore.bind(caller.device.id, input.attachmentIds, id).catch(() => {
-            throw new AppError(503, 'attachment-publish-unknown', '会话已开始，附件记录尚未确认。请重试同一次提交。')
-          })
-        return 'accepted'
+        if (taken.hash !== turnBodyHash(input)) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入')
+        if (taken.unknown) throw new AppError(409, 'steer-unknown', '追加结果未确认，请核对会话记录。')
+        if (input.attachmentIds?.length) await bindPromptAttachments(caller.device.id, input.attachmentIds, id)
+        return input.steer ? 'steered' : 'accepted'
       }
       const coauthors = [...new Set(writers.coauthors ?? [])].filter(deviceId => deviceId !== caller.device.id)
       const queued = { ...input, ...(coauthors.length ? { coauthors } : {}) }
@@ -10920,21 +10952,55 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (writers.narrower && (input.queue || input.steer))
         throw new AppError(409, 'queue-writers-unknown', '这条消息带有无法核对来源的内容，不能排队或追加，请等本轮结束后发送。')
       if (input.queue || input.steer) await assertQueueable(id, input.prompt)
-      if (input.steer && !input.teamRequest && !input.model && input.prompt && !mentionsConversationReference(input.prompt)) {
-        recheck(caller, 'run')
-        const steered = await hub!.steer(
-          id,
-          input.prompt,
-          input.requestId,
-          simulatorSteerGuard(
+      if (input.steer && !input.teamRequest && !input.model && !mentionsConversationReference(input.prompt)) {
+        const ids = input.attachmentIds ?? []
+        const writer = queueActor(caller)
+        const authorize = async () => {
+          await assertSessionWorkspace(id)
+          assertWritable(id)
+          customAgents.assertWorksHere(hub!.agentOf(id)?.customAgentId)
+          checkPrivateSession(queuedCaller(writer), id, true)
+        }
+        const attachments = ids.length
+          ? await promptAttachments(caller, ids, { harnessId: await hub!.harnessOf(id) }, id, input.requestId)
+          : undefined
+        if (attachments) await attachmentStore.claim(caller.device.id, ids, input.requestId, id, true)
+        try {
+          recheck(caller, 'run')
+          checkPrivateSession(caller, id, true)
+          assertWritable(id)
+          const beforeSteer = simulatorSteerGuard(
             id,
             [caller.device.id, ...coauthors],
             withoutPrivateContext || caller.device.dataScope !== 'all' || writers.narrower === true,
-          ),
-        )
-        if (steered === 'injected') {
-          await recordAgentPrompt(caller, id, input, 'steered')
-          return 'steered'
+          )
+          const steered = await hub!.steer(
+            id,
+            input.prompt,
+            input.requestId,
+            beforeSteer,
+            attachments ? { authorize } : undefined,
+            attachments,
+          )
+          if (steered === 'injected') {
+            turnReceipts.set(turnKey, turnBodyHash(input))
+            await recordAgentPrompt(caller, id, input, 'steered')
+            if (attachments) await bindPromptAttachments(caller.device.id, ids, id)
+            return 'steered'
+          }
+          return { queued: await promptQueues.submit(writer, id, queued) }
+        } catch (error) {
+          if (error instanceof AppError && error.code === 'steer-unknown') turnReceipts.set(turnKey, turnBodyHash(input), true)
+          // A conflicting concurrent copy cannot release files that its original request might still deliver.
+          if (
+            attachments
+            && error instanceof AppError
+            && error.code !== 'request-conflict'
+            && refusedBeforeAccepting(error.status, error.code)
+            && !promptQueues.holdsUpload(caller.device.id, input.requestId)
+          )
+            await attachmentStore.releaseClaim(caller.device.id, ids, input.requestId, id)
+          throw error
         }
       }
       if (input.queue || input.steer) return { queued: await promptQueues.submit(queueActor(caller), id, queued) }
@@ -11005,16 +11071,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // The driver resolved only once the turn was durable: from now on a retry is answered from this receipt.
       turnReceipts.set(turnKey, turnBodyHash(input))
       await recordAgentPrompt(caller, id, input, 'accepted')
-      if (attachments.length)
-        await attachmentStore
-          .bind(
-            caller.device.id,
-            attachments.map(ref => ref.id),
-            id,
-          )
-          .catch(() => {
-            throw new AppError(503, 'attachment-publish-unknown', '会话已开始，附件记录尚未确认。请重试同一次提交。')
-          })
+      if (attachments.length) await bindPromptAttachments(caller.device.id, input.attachmentIds!, id)
       return 'accepted'
     }
 
@@ -11480,8 +11537,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           return true
         }
         const input = queuedPromptSchema.parse(body)
-        if ((input.steer && input.attachmentIds?.length) || ((input.queue || input.steer) && input.fileRefs?.length))
-          throw new AppError(400, 'queue-attachments-unsupported', '文件引用不能排队，附件只能排到下一轮。')
+        if ((input.queue || input.steer) && input.fileRefs?.length)
+          throw new AppError(400, 'queue-attachments-unsupported', '项目文件引用不能排队或追加。')
         if (input.freshContext && (input.queue || input.steer))
           throw new AppError(400, 'fresh-context-queued', '清空上下文的消息不能排队或追加，请等本轮结束后发送。')
         const moved = await movedChatInput(caller, id, input)

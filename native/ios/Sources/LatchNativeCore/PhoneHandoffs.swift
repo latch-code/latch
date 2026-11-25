@@ -139,7 +139,7 @@ public enum PhoneHandoffs {
             .map { $0.isEmpty ? ">" : "> " + $0 }.joined(separator: "\n")
         var head = previous
         while let last = head.last, last.isWhitespace { head.removeLast() }
-        return head + (head.isEmpty ? "" : "\n\n") + quote + "\n\n"
+        return head + (head.isEmpty ? "" : "\n\n") + "交回结果：\n" + quote + "\n\n"
     }
     public static let scopes: [(value: String, label: String)] = [("none", "不交回"), ("summary", "结论"), ("summary-and-evidence", "加证据")]
     public static let scopeFacts = [

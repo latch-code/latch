@@ -496,8 +496,8 @@ Harness 的进程级换档在空闲时结束旧进程并恢复同一外部会话
 
 一次写入是否「结果未知」按 Host 的错误码判断，不只看状态（`@latch/protocol` 的 `refusedBeforeAccepting`）：
 
-- **结果未知：** 网络错误、超时、408 与 5xx。
-- **确定的拒绝：** 4xx（408 除外），以及错误码在 `NOT_ACCEPTED_5XX` 里的 5xx：`audit-unavailable`、`presence-unavailable`、`agent-busy`、`agent-start-failed`、`agent-refused`、`agent-paused`、`agent-handshake-timeout`、`model-gateway-unavailable`。4xx 的例子：409 `harness-unavailable`、`harness-version-unsupported`。
+- **结果未知：** 网络错误、超时、408、追加回执未确认（409 `steer-unknown`）与下列明确拒绝以外的 5xx。
+- **确定的拒绝：** 4xx（408 与 `steer-unknown` 除外），以及错误码在 `NOT_ACCEPTED_5XX` 里的 5xx：`audit-unavailable`、`presence-unavailable`、`agent-busy`、`agent-start-failed`、`agent-refused`、`agent-paused`、`agent-handshake-timeout`、`model-gateway-unavailable`。4xx 的例子：409 `harness-unavailable`、`harness-version-unsupported`。
 
 规则：
 
@@ -526,7 +526,7 @@ Harness 的进程级换档在空闲时结束旧进程并恢复同一外部会话
 
 - 详情与 SSE 的 `TaskDetail.queue` 按 Host 的派发顺序给出每项的 `id`、`text`、`queuedAt`、`state` 和可选原因。`state` 为 `waiting`、`parked` 或 `dropped`。支持队列操作时，`orderRevision` 表示所见顺序的修订（省略时为 0），`canSteer` 标出具备追加条件的项。`delivery` 在派发中、普通发送结果未知或追加结果未知时分别为 `sending`、`uncertain`、`steer-unknown`。设备身份与请求回执留在 Host。
 - 入队回执不生成用户消息；实际派发才生成带 `requestId` 与 `queuedAt` 的正常消息。编辑会换派发标识，原提交的重试仍命中同一项。
-- 从队列追加还需本轮有 `TaskDetail.steer`。客户端带上所见 `runId` 与该项的 `contentRevision`（未编辑时为 0），Host 确认后，在这一轮保存一条带 `steered` 和原 `queuedAt` 的用户消息。迟到的操作不能追加到随后的轮次。
+- 从队列追加还需本轮有 `TaskDetail.steer`，发送带附件的项还需要 `TaskDetail.steerAttachments`。客户端带上所见 `runId` 与该项的 `contentRevision`（未编辑时为 0），Host 确认后，在这一轮保存一条带 `steered` 和原 `queuedAt` 的用户消息。迟到的操作不能追加到随后的轮次。
 - 两种 Driver 的 zod 快照保留 `queuedAt` 与 `TaskSummary.runOutcome`。新运行清除旧 outcome，真实结算后才写完成、失败、取消或中断。队列不从网络状态、`idle` 或文字猜测完成。
 
 ### 追加到运行中的一轮
@@ -539,7 +539,7 @@ Harness 的进程级换档在空闲时结束旧进程并恢复同一外部会话
 - **重试用原 `requestId`**，得到第一次的结果。第一次已按排队处理时，重试只命中那一轮或那一项，即使这时的轮次能接收追加。
 - **没有回答就不重发。** Agent 没有回答（超时或进程中断）时回执保持发送中，之后的重试一律 409 `steer-unknown`，因为 Agent 给每次请求另起消息，分不出重发。
 - **`steered` 只表示 Agent 接收了**，不表示它在本轮结束前读到。本轮没有正常完成、期间有过追加、而最后一次追加之后 Agent 再没有任何输出时，结束时写一条系统消息说明它可能没有读到。
-- 追加不带附件与文件引用，也不替人拒绝等待中的审批。
+- 本轮声明 `steerAttachments` 时，Host 按原上传设备保留附件，Driver 将说明与附件一同交给 Agent。发送结果未知时继续保留原请求和附件，可核对会话或手动释放保留的附件。项目文件引用留到新一轮，等待中的审批仍需人决定。
 
 ### 子 Agent
 

@@ -308,6 +308,8 @@ interface Live {
   wire: AgentWire
   commandCache?: { directory: string; confirmed: Confirmed; ordinal: number; plugins?: HarnessPluginReport }
   initialized: boolean
+  /** Attachment input went to the wire, even if its acknowledgment was lost and no message records it. */
+  sensitiveStderr?: true
   /** What the agent's answer to initialize said beside ACP's fields, for a profile that reads it (Grok's models). */
   startMeta?: unknown
   capabilities: {
@@ -322,6 +324,7 @@ interface Live {
     embeddedContext: boolean
     /** `_session/steering` adds text to a running turn. */
     steer: boolean
+    steerAttachments: boolean
     /** The agent logs out when asked. */
     logout: boolean
   }
@@ -1294,7 +1297,9 @@ export class AgentRuntime implements Bridge {
       ...(task.plan ? { plan: task.plan } : {}),
       ...(task.config?.length ? { config: task.config } : {}),
       permission: this.permissionView(task),
-      ...(active && run && this.steerable(run) ? { steer: true as const } : {}),
+      ...(active && run && this.steerable(run)
+        ? { steer: true as const, ...(run.live?.capabilities.steerAttachments ? { steerAttachments: true as const } : {}) }
+        : {}),
       clearContext: true,
       ...(task.acp.contextCleared ? { contextCleared: true as const } : {}),
       ...(codexTeam ? { codexTeam } : {}),
@@ -3116,6 +3121,10 @@ export class AgentRuntime implements Bridge {
           : prompt,
     )
     const repeated = (): Promise<void> | undefined => {
+      // Only an explicit prompt-required answer lets a steer with this ID become a new turn.
+      const steered = this.state.receipts[digest(['steer', sessionId, requestId])]?.steer
+      if (steered === 'sending') throw steerUnknown()
+      if (steered === 'injected') throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入')
       const receipt = this.state.receipts[key]
       if (receipt) {
         if (receipt.payloadHash !== payloadHash) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入')
@@ -3327,16 +3336,30 @@ export class AgentRuntime implements Bridge {
    * request and cannot tell a resend from a new one.
    */
   steerQueued(sessionId: string, prompt: string, requestId: string, options: QueuedSteerOptions): Promise<SteerOutcome> {
-    return this.steer(sessionId, prompt, requestId, options)
+    return this.steerWithAttachments(sessionId, prompt, requestId, [], options)
   }
 
-  async steer(sessionId: string, prompt: string, requestId: string, queued?: QueuedSteerOptions): Promise<SteerOutcome> {
+  steer(sessionId: string, prompt: string, requestId: string): Promise<SteerOutcome> {
+    return this.steerWithAttachments(sessionId, prompt, requestId, [])
+  }
+
+  async steerWithAttachments(
+    sessionId: string,
+    prompt: string,
+    requestId: string,
+    refs: AttachmentRef[],
+    options?: QueuedSteerOptions | Pick<QueuedSteerOptions, 'authorize'>,
+  ): Promise<SteerOutcome> {
     await this.ready()
-    assertPrompt(prompt, requestId)
+    const attachments = checkedAttachments(refs)
+    assertPrompt(prompt, requestId, attachments)
     this.assertNoModeCommand(prompt)
     const userText = harnessPromptSource({ method: 'steer', sessionId, requestId }, prompt)
     const key = digest(['steer', sessionId, requestId])
-    const payloadHash = queued ? digest([prompt, queued.runId, queued.queuedAt]) : digest(prompt)
+    const input = attachments.length ? { prompt, attachments } : prompt
+    const queued = options && 'runId' in options ? options : undefined
+    // Metadata may come back from storage in a different key order. Old text-only receipts hash the same JSON.
+    const payloadHash = sha256Hex(canonicalJson(queued ? [input, queued.runId, queued.queuedAt] : input))
     const receipt = this.state.receipts[key]
     const pending = this.steering.get(key)
     if (receipt || pending) {
@@ -3345,18 +3368,28 @@ export class AgentRuntime implements Bridge {
       if (receipt!.steer === 'injected' || receipt!.steer === 'prompt-required') return receipt!.steer
       throw steerUnknown()
     }
+    const promptKey = digest(['prompt', sessionId, requestId])
+    if (this.state.receipts[promptKey] || this.inflight.has(promptKey))
+      throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入')
     const task = this.task(sessionId)
     this.assertUsable(task)
     this.assertNotChecking(sessionId)
     const run = this.runs.get(sessionId)
-    if (!run || !this.steerable(run) || (queued && run.id !== queued.runId)) {
+    if (
+      !run
+      || !this.steerable(run)
+      || (attachments.length && !run.live?.capabilities.steerAttachments)
+      || (queued && run.id !== queued.runId)
+    ) {
       // The caller now sends or queues the text as a turn; a retry must get that answer, not steer it into the turn.
       this.state.receipts[key] = { taskId: sessionId, payloadHash, kind: 'steer', steer: 'prompt-required' }
       this.mark()
       await this.flush()
       return 'prompt-required'
     }
-    const promise = this.steerOnce(run, key, payloadHash, prompt, requestId, userText, queued).finally(() => this.steering.delete(key))
+    const promise = this.steerOnce(run, key, payloadHash, prompt, requestId, attachments, userText, options).finally(() =>
+      this.steering.delete(key),
+    )
     this.steering.set(key, { payloadHash, promise })
     return promise
   }
@@ -3365,28 +3398,42 @@ export class AgentRuntime implements Bridge {
     return run.sent && !run.cancelRequested && run.live?.initialized === true && run.live.capabilities.steer && !!run.acpSessionId
   }
 
+  private inputBlocks(taskId: string, live: Live, prompt: string, attachments: AttachmentRef[]): Promise<unknown[]> {
+    const task = this.state.tasks[taskId]
+    const routed = task && this.routedCapabilities(task, live)
+    return promptBlocks(
+      prompt,
+      attachments,
+      { ...live.capabilities, images: live.capabilities.images && routed?.vision !== false },
+      this.options.readAttachment,
+      this.options.attachmentPath && (ref => this.options.attachmentPath!(ref, taskId)),
+    )
+  }
+
   private async steerOnce(
     run: Run,
     key: string,
     payloadHash: string,
     prompt: string,
     requestId: string,
+    attachments: AttachmentRef[],
     userText?: string,
-    queued?: QueuedSteerOptions,
+    options?: QueuedSteerOptions | Pick<QueuedSteerOptions, 'authorize'>,
   ): Promise<SteerOutcome> {
     const live = run.live!
+    const queued = options && 'runId' in options ? options : undefined
     this.state.receipts[key] = { taskId: run.taskId, payloadHash, kind: 'steer', steer: 'sending' }
     this.mark()
     await this.flush()
-    if (queued) {
-      try {
-        await queued.authorize()
-      } catch (error) {
-        delete this.state.receipts[key]
-        this.mark()
-        await this.flush()
-        throw error
-      }
+    let blocks: unknown[]
+    try {
+      blocks = await this.inputBlocks(run.taskId, live, prompt, attachments)
+      if (options) await options.authorize()
+    } catch (error) {
+      delete this.state.receipts[key]
+      this.mark()
+      await this.flush()
+      throw error
     }
     // Writing the receipt and rechecking the devices may outlast the turn the person saw.
     if (this.runs.get(run.taskId) !== run || !this.steerable(run)) {
@@ -3414,6 +3461,7 @@ export class AgentRuntime implements Bridge {
         text: prompt,
         requestId,
         steered: true,
+        ...(attachments.length ? { attachments } : {}),
         createdAt: this.now(),
         ...(queued ? { queuedAt: queued.queuedAt } : {}),
       })
@@ -3422,11 +3470,15 @@ export class AgentRuntime implements Bridge {
       this.mark()
     }
     try {
+      if (attachments.length) {
+        run.sensitiveOutput = true
+        live.sensitiveStderr = true
+      }
       const result = await live.wire.request(
         STEER_METHOD,
         {
           sessionId: run.acpSessionId,
-          prompt: [{ type: 'text', text: prompt }],
+          prompt: blocks,
           _meta: { steering: { idleBehavior: 'promptRequired' } },
         },
         Math.min(this.limits.requestTimeoutMs, STEER_TIMEOUT_MS),
@@ -3441,12 +3493,16 @@ export class AgentRuntime implements Bridge {
       // No answer, or the process went away: the agent may have taken it. The receipt stays `sending`.
       if (error instanceof RequestTimeout || error instanceof ConnectionClosed || error instanceof ConnectionStopping) throw steerUnknown()
       outcome = 'failed'
-      this.limits.log(`${this.agent.name} 没有接受追加：${clip(this.redact(message(error)), 300)}`)
+      this.limits.log(
+        run.sensitiveOutput || run.attachments?.length
+          ? `${this.agent.name} 没有接受追加，含附件的错误输出未写入日志。`
+          : `${this.agent.name} 没有接受追加：${clip(this.redact(message(error)), 300)}`,
+      )
     } finally {
       finishAuthority?.(added || outcome === 'invalid')
     }
-    // An unrecognizable acknowledgment is insufficient evidence to put a queued message back on automatic delivery.
-    if (queued && outcome === 'invalid') throw steerUnknown()
+    // The agent may have taken the message before returning an unrecognizable acknowledgment.
+    if (outcome === 'invalid') throw steerUnknown()
     if (outcome !== 'injected') {
       run.steers--
       if (outcome === 'promptRequired')
@@ -5653,15 +5709,7 @@ export class AgentRuntime implements Bridge {
       const fork = this.state.tasks[run.taskId]?.acp.fork
       // The agent forked its own record of the source: the Host's text record of it is not sent as well.
       if (fork?.native && run.seq === 1) run.prompt = (fork.instead ?? '') + run.prompt.slice(fork.prefixLength)
-      // A picture goes to a routed model as a picture unless the person declared that model text-only.
-      const routed = this.state.tasks[run.taskId] && this.routedCapabilities(this.state.tasks[run.taskId]!, binding.live)
-      const content = await promptBlocks(
-        run.prompt,
-        run.attachments ?? [],
-        { ...binding.live.capabilities, images: binding.live.capabilities.images && routed?.vision !== false },
-        this.options.readAttachment,
-        this.options.attachmentPath && (ref => this.options.attachmentPath!(ref, run.taskId)),
-      )
+      const content = await this.inputBlocks(run.taskId, binding.live, run.prompt, run.attachments ?? [])
       // Native commands with no separate context input keep their prefix. Keep the brief pending for the next ordinary prompt.
       const named = /^\/(\S+)/u.exec(run.prompt)?.[1]
       const nativeCommand = named !== undefined && (binding.live.wire.commandsWithoutContext ?? binding.live.wire.idleCommands)?.has(named)
@@ -6319,6 +6367,7 @@ export class AgentRuntime implements Bridge {
         images: false,
         embeddedContext: false,
         steer: false,
+        steerAttachments: false,
         logout: false,
       },
       authMethods: [],
@@ -6376,6 +6425,7 @@ export class AgentRuntime implements Bridge {
         images: capabilities?.promptCapabilities?.image === true,
         embeddedContext: capabilities?.promptCapabilities?.embeddedContext === true,
         steer: result.data._meta?.steering?.supported === true,
+        steerAttachments: result.data._meta?.steering?.supported === true && result.data._meta.steering.attachments === true,
         logout: capabilities?.auth?.logout != null,
       }
       this.learnPromptCapabilities(live.capabilities)
@@ -6463,7 +6513,8 @@ export class AgentRuntime implements Bridge {
     if (info.stderr && (unexpected || !live.initialized)) {
       try {
         const sensitive =
-          this.runs.get(live.key)?.attachments?.length
+          live.sensitiveStderr
+          || this.runs.get(live.key)?.attachments?.length
           || this.runs.get(live.key)?.sensitiveOutput
           || this.state.tasks[live.key]?.messages.some(message => message.attachments?.length)
         this.limits.log(

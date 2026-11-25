@@ -12,6 +12,7 @@ import {
   type AgentRecord,
 } from '../src/index.ts'
 import { MAX_SESSION_SKILLS_BYTES, readSessionSkills } from '@latch/protocol'
+import type { HarnessHostOptions } from '@latch/sdk'
 import { forkPlan, stopsRetry } from '../src/wires/pi.ts'
 import { activate, fakePrograms, openBridge, replayTranscript } from './helpers/replay.ts'
 
@@ -101,7 +102,7 @@ async function transcript(scenario: string, steps: ReplayHeader['steps'], entrie
   return path
 }
 
-async function publicCommandsFixture(entries: ReplayEntry[]) {
+async function piFixture(entries: ReplayEntry[], host: Pick<HarnessHostOptions, 'readAttachment'> = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-pi-commands-')))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const marks = join(root, 'marks')
@@ -120,7 +121,7 @@ async function publicCommandsFixture(entries: ReplayEntry[]) {
     enabled: true,
   }
   const driver = await activate(createAcpAgentPlugin(record, { stopGraceMs: 300, requestTimeoutMs: 5_000, log: () => {} }), cleanups)
-  const bridge = await openBridge(driver, { dataDir: join(root, 'data'), workspace: root, tmpRoot: join(root, 'tmp') }, cleanups)
+  const bridge = await openBridge(driver, { dataDir: join(root, 'data'), workspace: root, tmpRoot: join(root, 'tmp') }, cleanups, host)
   // Catalogue tests read the settled turn, regardless of how long the replay process took to start.
   // Arm the notification before reading so settlement during detail() cannot be missed.
   const settledDetail = async (sessionId: string) => {
@@ -220,7 +221,7 @@ describe('pi over its own RPC', () => {
       ...Array.from({ length: 220 }, (_, i) => ({ name: `public-${i}`, source: 'prompt' })),
     ]
     const entries = [...openedWith(commands), ...commandReply('Hello')]
-    const { bridge, root, status, settledDetail } = await publicCommandsFixture(entries)
+    const { bridge, root, status, settledDetail } = await piFixture(entries)
     const { sessionId } = await bridge.createTask({ prompt: 'Hello', requestId: 'first', cwd: root })
     const listed = (await settledDetail(sessionId)).commands!
     expect(listed).toHaveLength(200)
@@ -255,7 +256,7 @@ describe('pi over its own RPC', () => {
         ...commandReply(command),
         ...commandReply('PUBLIC BRIEF\n\nHello'),
       ]
-      const { bridge, root, status, settledDetail } = await publicCommandsFixture(entries)
+      const { bridge, root, status, settledDetail } = await piFixture(entries)
       const brief = { segments: [{ source: 'user' as const, text: 'PUBLIC BRIEF' }] }
       const agentContext = { agent: { customAgentId: 'agt_commands' }, instructions: '', brief, revision: 'a'.repeat(64) }
       const { sessionId } = await bridge.createTask({ prompt: command, requestId: 'first', cwd: root, agentContext })
@@ -286,7 +287,7 @@ describe('pi over its own RPC', () => {
       ...commandReply(known ? command : `PUBLIC BRIEF\n\n${command}`),
       ...commandReply(known ? 'PUBLIC BRIEF\n\nHello' : 'Hello'),
     ]
-    const { bridge, root, status, settledDetail } = await publicCommandsFixture(entries)
+    const { bridge, root, status, settledDetail } = await piFixture(entries)
     const brief = { segments: [{ source: 'user' as const, text: 'PUBLIC BRIEF' }] }
     const agentContext = { agent: { customAgentId: 'agt_commands' }, instructions: '', brief, revision: 'a'.repeat(64) }
     const { sessionId } = await bridge.createTask({ prompt: command, requestId: 'first', cwd: root, agentContext })
@@ -543,6 +544,41 @@ describe('pi over its own RPC', () => {
     expect(detail.messages.find(message => message.role === 'user' && message.steered)?.text).toBe('Also lint')
     const notes = detail.messages.filter(message => message.role === 'system').map(message => message.text)
     expect(notes).toContain('pi 提示：停止前追加的内容还没送到 pi，已撤回\nAlso lint')
+  })
+
+  it('sends the image bytes with the caption in a pi steer command', async () => {
+    const image = {
+      id: 'abcdefghijklmnopqrstuv',
+      name: 'screen.png',
+      kind: 'image',
+      mime: 'image/png',
+      size: 3,
+      sha256: 'a'.repeat(64),
+    } as const
+    const content = { type: 'image', data: 'cG5n', mimeType: image.mime } as const
+    const entries = [
+      ...opened,
+      out('prompt', { message: 'Start' }),
+      answer('prompt', { disposition: 'started' }),
+      event('agent_start'),
+      event('tool_execution_start', { toolCallId: 'call-1', toolName: 'read', args: { path: 'a' } }),
+      out('steer', { message: 'See screenshot', images: [content] }),
+      answer('steer', { disposition: 'queued' }),
+      event('agent_end', { messages: [], willRetry: false }),
+      event('agent_settled', { aborted: false }),
+      ...stats,
+    ]
+    const { bridge, root, status, settledDetail } = await piFixture(entries, { readAttachment: async () => content })
+    const { sessionId } = await bridge.createTask({ prompt: 'Start', requestId: 'first', cwd: root })
+    await expect
+      .poll(async () => (await bridge.detail(sessionId)).messages.some(message => message.role === 'tool'), { timeout: 8_000 })
+      .toBe(true)
+    expect((await bridge.detail(sessionId)).steerAttachments).toBe(true)
+    expect(await bridge.steerWithAttachments!(sessionId, 'See screenshot', 'added', [image])).toBe('injected')
+    expect((await settledDetail(sessionId)).messages.filter(message => message.steered)).toMatchObject([
+      { text: 'See screenshot', attachments: [image] },
+    ])
+    expect(readReplayStatus(status)).toMatchObject({ cursor: entries.length, total: entries.length })
   })
 
   it("fails the turn with pi's own words when the model service refused it, keys left out", async () => {

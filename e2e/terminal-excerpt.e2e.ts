@@ -77,6 +77,10 @@ describe('an editable terminal error in the composer and sent history', () => {
         }
       }
       await screenshots('draft', composer)
+      await input.getByRole('button', { name: '移除终端引用' }).click()
+      expect(await promptValue(input)).not.toContain(label)
+      await page.keyboard.press('ControlOrMeta+z')
+      await expect.poll(() => promptValue(input)).toBe(edited)
       const send = composer.getByRole('button', { name: '发送', exact: true })
       await reachable(send)
       await send.click()

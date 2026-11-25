@@ -136,6 +136,7 @@ export function mentionKey(input: {
  */
 export function useFileMentions(
   draft: string,
+  caret: number | null,
   onDraft: (text: string, selection?: { start: number; end: number }) => void,
   textarea: RefObject<PromptInput | null>,
   choice: FileMentionChoice | undefined,
@@ -143,14 +144,13 @@ export function useFileMentions(
   members?: MentionMembers,
 ) {
   const id = useId()
-  const [caret, setCaret] = useState(draft.length),
-    [files, setFiles] = useState<MentionFile[]>([]),
+  const [files, setFiles] = useState<MentionFile[]>([]),
     [truncated, setTruncated] = useState(false),
     [loading, setLoading] = useState(false),
     [error, setError] = useState(''),
     [selected, setSelected] = useState<{ query: string; index: number }>(),
     [dismissed, setDismissed] = useState<string>()
-  const token = activeFileMention(draft, Math.min(caret, draft.length)),
+  const token = caret === null ? undefined : activeFileMention(draft, caret),
     scope = choice?.sessionId ?? choice?.workspaceId
   const query = token?.query ?? ''
   const people = members && token && dismissed !== draft ? matchingMembers(members.items, query) : []
@@ -224,7 +224,6 @@ export function useFileMentions(
     const caret = token.start + marker.length
     onDraft(next, { start: caret, end: caret })
     setDismissed(undefined)
-    setCaret(caret)
     requestAnimationFrame(() => textarea.current?.focus())
   }
   const chooseEntry = (index: number) => {
@@ -246,7 +245,6 @@ export function useFileMentions(
     choice.onRefs([...choice.refs.filter(ref => ref.root !== file.root || ref.path !== file.path), { root: file.root, path: file.path }])
     onDraft(`${draft.slice(0, token.start)}${marker}${draft.slice(token.end)}`, { start: caret, end: caret })
     setDismissed(undefined)
-    setCaret(caret)
     requestAnimationFrame(() => textarea.current?.focus())
   }
   const keydown = (event: KeyboardEvent) => {
@@ -363,5 +361,5 @@ export function useFileMentions(
       }
     />
   )
-  return { menu, keydown, setCaret, open, listId: id, activeId: active >= 0 ? optionId(active) : undefined }
+  return { menu, keydown, open, listId: id, activeId: active >= 0 ? optionId(active) : undefined }
 }

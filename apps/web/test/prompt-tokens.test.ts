@@ -106,14 +106,14 @@ describe('prompt chips', () => {
   })
 })
 
-it('shows reference titles and quote headers as atomic draft chips while preserving the model input and exact reply source', () => {
+it('shows reference titles and complete quoted passages as atomic draft chips', () => {
   const token = '[conversation-ref:00000000-0000-4000-8000-000000000000] Earlier work · read_conversation_reference'
   const header = '[引用回复 session/message@12]'
   const draft = token + '\n' + header + '\n> Keep this part.\nMy question'
   const chips = promptChips(draft, {})
   expect(chips.map(chip => [chip.kind, chip.name, draft.slice(chip.start, chip.end)])).toEqual([
     ['conversation', 'Earlier work', token],
-    ['quote', '', header],
+    ['quote', 'Keep this part.', header + '\n> Keep this part.'],
   ])
 })
 
@@ -123,8 +123,8 @@ it('keeps quote markers inside fenced code literal and preserves the offsets of 
   const file = '@docs:guide.md'
   const draft = ['😀请看', before, '> 前文', '```text', '[引用回复 session/example@0]', '> 示例', '```', after, '> 后文', file].join('\n')
   expect(promptChips(draft, {}, [{ root: 'docs', path: 'guide.md' }]).map(({ kind, start, end }) => [kind, start, end])).toEqual([
-    ['quote', draft.indexOf(before), draft.indexOf(before) + before.length],
-    ['quote', draft.indexOf(after), draft.indexOf(after) + after.length],
+    ['quote', draft.indexOf(before), draft.indexOf('\n```text')],
+    ['quote', draft.indexOf(after), draft.indexOf('\n' + file)],
     ['file', draft.indexOf(file), draft.indexOf(file) + file.length],
   ])
 })

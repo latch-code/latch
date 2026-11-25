@@ -893,6 +893,8 @@ export interface TaskDetail {
   permission?: SessionPermission
   /** The running turn takes more text now (`steer` on a prompt). Absent: what is sent meanwhile waits in the queue. */
   steer?: true
+  /** The running turn also accepts the session's supported attachments, including without a caption. */
+  steerAttachments?: true
   /** The next prompt may start a new context (`freshContext`). Absent: the driver cannot. */
   clearContext?: true
   /**

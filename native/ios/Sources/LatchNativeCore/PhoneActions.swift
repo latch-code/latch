@@ -180,13 +180,23 @@ public enum PhoneQueueControl {
     func confirmed(by answer: NativeJSON) -> Bool { answer[self == .steer ? "steered" : "ordered"] == .bool(true) }
 }
 
-/** What the send key does while a turn runs: 追加 into it where the Harness takes that now, else 排队 where the Host queues. */
+public enum PhoneFollowUpDefault: String, Sendable {
+    case steer, queue
+    public static let key = "latch.followUpDefault"
+}
+
+/** The keyboard and primary button use the preference when both actions can carry this draft. */
 public enum PhoneFollowUp: Equatable, Sendable {
     case send, steer, queue, none
-    public static func of(detail: NativeJSON, status: String?, queues: Bool) -> PhoneFollowUp {
-        guard status == "running" || status == "waiting-approval" else { return .send }
-        if detail["steer"].bool { return .steer }
-        return queues ? .queue : .none
+    public static func of(detail: NativeJSON, status: String?, queues: Bool, attached: Bool = false, nextTurnOnly: Bool = false) -> PhoneFollowUp {
+        choices(detail: detail, status: status, queues: queues, attached: attached, nextTurnOnly: nextTurnOnly).primary
+    }
+    public static func choices(detail: NativeJSON, status: String?, queues: Bool, attached: Bool = false, queueAttachments: Bool = true,
+                               nextTurnOnly: Bool = false, preferred: PhoneFollowUpDefault = .steer) -> (primary: Self, alternate: Self?) {
+        guard status == "running" || status == "waiting-approval" else { return (.send, nil) }
+        guard !nextTurnOnly, detail["steer"].bool, !attached || detail["steerAttachments"].bool else { return (queues ? .queue : .none, nil) }
+        guard queues, !attached || queueAttachments else { return (.steer, nil) }
+        return preferred == .queue ? (.queue, .steer) : (.steer, .queue)
     }
 }
 

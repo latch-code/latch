@@ -89,7 +89,7 @@ describe('a retry of an accepted turn', () => {
     receipts.set('b', '2')
     receipts.set('a', '1')
     receipts.set('c', '3')
-    expect(['a', 'b', 'c'].map(key => receipts.get(key))).toEqual(['1', undefined, '3'])
+    expect(['a', 'b', 'c'].map(key => receipts.get(key)?.hash)).toEqual(['1', undefined, '3'])
     expect(new TurnReceipts().get('a')).toBeUndefined()
   })
 })

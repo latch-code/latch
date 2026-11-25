@@ -1,15 +1,26 @@
 import { useLayoutEffect, useRef, type RefObject } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { Compartment, EditorState, Prec, StateEffect, StateField, Transaction, Annotation, type Extension } from '@codemirror/state'
+import {
+  Compartment,
+  EditorState,
+  Prec,
+  StateEffect,
+  StateField,
+  Transaction,
+  Annotation,
+  type ChangeSpec,
+  type Extension,
+} from '@codemirror/state'
 import { Decoration, EditorView, WidgetType, keymap, placeholder as placeholderText, type DecorationSet } from '@codemirror/view'
 import { history, historyKeymap, insertNewline, isolateHistory, standardKeymap } from '@codemirror/commands'
 import type { FileMention } from '@latch/protocol'
 import { escapeSecurityText } from '@latch/protocol'
 import { fencedParts } from '../conversation/fencedParts.ts'
 import { webLinks } from '../webLinks.ts'
-import { chipIcon, chipLabel, chipTip } from './PromptChip.tsx'
+import { chipIcon, chipLabel, chipSpokenText, chipTip } from './PromptChip.tsx'
 import { promptChips, type PromptCatalogue, type PromptChip } from './prompt-tokens.ts'
 import { terminalExcerptField } from './terminalExcerptDecorations.tsx'
+import { referenceExcerptField } from './referenceExcerptDecorations.tsx'
 
 /**
  * The message input as the rest of the page holds it: the draft, its selection in text offsets, focus, and an edit that
@@ -90,8 +101,7 @@ class ChipWidget extends WidgetType {
     label.textContent = chipLabel(this.chip)
     const spoken = document.createElement('span')
     spoken.className = 'prompt-chip-token'
-    spoken.textContent =
-      this.chip.kind === 'conversation' || this.chip.kind === 'quote' ? label.textContent : escapeSecurityText(this.token)
+    spoken.textContent = chipSpokenText(this.chip, this.token)
     chip.append(icon, label, spoken)
     // The glyph box keeps its 14px from the start, so the line does not move when React draws into it.
     const root = createRoot(icon)
@@ -126,14 +136,35 @@ class HintWidget extends WidgetType {
   }
 }
 
+/** A word still being typed can grow past an exact catalogue match such as @name or /short. */
+const typingToken = StateField.define<{ start: number; end: number } | null>({
+  create: () => null,
+  update(previous, transaction) {
+    const { head, empty } = transaction.newSelection.main
+    if (!empty) return null
+    if (!transaction.docChanged) return head === previous?.end ? previous : null
+    const deleting = transaction.isUserEvent('delete')
+    if (!transaction.isUserEvent('input.type') && !(deleting && previous)) return null
+    const line = transaction.newDoc.lineAt(head)
+    const word = /(?:^|\s)([@$/／]\S*)$/u.exec(line.text.slice(0, head - line.from))?.[1]
+    if (!word) return null
+    const start = head - word.length
+    // Removing the pending query and its separator can leave the caret against an earlier, committed chip.
+    if (deleting && previous && start !== transaction.changes.mapPos(previous.start)) return null
+    return { start, end: head }
+  },
+})
+
 /** The draft's chips: one replaced range per token, which the same set makes atomic for the caret and deletion. */
 function chipDecorations(state: EditorState): DecorationSet {
   const { catalogue, refs } = state.field(sourceField)
   const text = state.doc.toString()
   const { from, to } = state.selection.main
-  const { excerpts } = state.field(terminalExcerptField)
+  const typing = state.field(typingToken)
+  const excerpts = [...state.field(terminalExcerptField).excerpts, ...state.field(referenceExcerptField).excerpts]
   return Decoration.set(
-    promptChips(text, catalogue, refs)
+    promptChips(text, catalogue, refs, state.field(referenceExcerptField).literal)
+      .filter(chip => chip.end !== typing?.end || chip.start !== typing.start || chip.kind === 'quote' || chip.kind === 'conversation')
       .filter(chip => !excerpts.some(block => chip.start < block.to && chip.end > block.from))
       .map(chip =>
         Decoration.replace({
@@ -147,11 +178,65 @@ const chipField = StateField.define<DecorationSet>({
   create: chipDecorations,
   update(value, transaction) {
     if (transaction.docChanged || transaction.effects.some(effect => effect.is(setSource))) return chipDecorations(transaction.state)
-    if (transaction.selection && value.size) return chipDecorations(transaction.state)
+    if (transaction.selection && (value.size || transaction.startState.field(typingToken) !== transaction.state.field(typingToken)))
+      return chipDecorations(transaction.state)
     return value
   },
   provide: field => [EditorView.decorations.from(field), EditorView.atomicRanges.of(view => view.state.field(field))],
 })
+
+/** Add the separator the wire format needs when a person's edit would attach new prose to an intact reference. */
+const keepChipBoundaries = EditorState.transactionFilter.of(transaction => {
+  if (
+    !transaction.docChanged
+    || transaction.isUserEvent('input.complete')
+    || !(transaction.isUserEvent('input') || transaction.isUserEvent('delete'))
+  )
+    return transaction
+  const chips = transaction.startState.field(chipField)
+  const separators: ChangeSpec[] = []
+  transaction.changes.iterChangedRanges((from, to, newFrom, newTo) => {
+    let before = '',
+      after = ''
+    chips.between(from, to, (start, end, decoration) => {
+      const widget = decoration.spec.widget
+      if (!(widget instanceof ChipWidget)) return
+      const quote = widget.chip.kind === 'quote'
+      if (end === from) {
+        const next = transaction.newDoc.sliceString(newFrom, newFrom + 3)
+        if (quote) {
+          if (!widget.token.endsWith('\n\n') && next && (!next.startsWith('\n') || next.startsWith('\n> '))) before = '\n\n'
+        } else if (/^\S/u.test(next)) before = ' '
+      }
+      if (start === to && newTo > 0) {
+        const previous = transaction.newDoc.sliceString(newTo - 1, newTo)
+        if (quote && previous !== '\n') after = '\n'
+        // Harness commands and /skill:name only have meaning at the head of a message.
+        else if (!quote && !/^[/／]/u.test(widget.token) && /\S/u.test(previous)) after = ' '
+      }
+    })
+    if (before && after && newFrom === newTo) {
+      separators.push({ from: newFrom, insert: before === ' ' ? after : before })
+    } else {
+      if (before) separators.push({ from: newFrom, insert: before })
+      if (after) separators.push({ from: newTo, insert: after })
+    }
+  })
+  return separators.length ? [transaction, { changes: separators, sequential: true }] : transaction
+})
+
+/** Completion reads editable text at a single caret, outside already-rendered chips and source excerpts. */
+function completionCaret(state: EditorState): number | null {
+  const { head, empty } = state.selection.main
+  if (!empty) return null
+  const quoted = (excerpt: { from: number; to: number }) => excerpt.from < head && head <= excerpt.to
+  if (state.field(terminalExcerptField).excerpts.some(quoted) || state.field(referenceExcerptField).literal.some(quoted)) return null
+  let caret: number | null = head
+  state.field(chipField).between(head, head, (from, to) => {
+    if (from < head && head <= to) caret = null
+  })
+  return caret
+}
 
 const urlMark = Decoration.mark({ class: 'prompt-url' })
 const urlHighlights = EditorView.decorations.compute(['doc'], state => {
@@ -252,9 +337,9 @@ export interface PromptEditorProps {
   inputRef: RefObject<PromptInput | null>
   value: string
   /** Every change the person makes, with the caret after it. */
-  onChange(value: string, caret: number): void
-  /** The caret moved without the text changing. */
-  onCaret?(caret: number): void
+  onChange(value: string, completionCaret: number | null): void
+  /** Completion eligibility at mount, on selection changes and when the reference catalogue changes. */
+  onCaret?(completionCaret: number | null, value: string): void
   catalogue: PromptCatalogue
   refs?: readonly FileMention[] | undefined
   hint?: string | undefined
@@ -308,7 +393,10 @@ export function PromptEditor(props: PromptEditorProps) {
         extensions: [
           sourceField.init(() => ({ catalogue: initial.catalogue, refs: initial.refs ?? [], hint: initial.hint })),
           terminalExcerptField,
+          referenceExcerptField,
+          typingToken,
           chipField,
+          keepChipBoundaries,
           urlHighlights,
           hintField,
           undo.of(history()),
@@ -351,9 +439,10 @@ export function PromptEditor(props: PromptEditorProps) {
           EditorView.updateListener.of(update => {
             if (update.heightChanged || update.geometryChanged) fitHeight(update.view)
             const external = update.transactions.some(transaction => transaction.annotation(outside))
-            const head = update.state.selection.main.head
-            if (update.docChanged && !external) latest.current.onChange(update.state.doc.toString(), head)
-            else if (update.selectionSet) latest.current.onCaret?.(head)
+            if (update.docChanged && !external) latest.current.onChange(update.state.doc.toString(), completionCaret(update.state))
+            else if (update.docChanged || update.selectionSet || update.state.field(chipField) !== update.startState.field(chipField)) {
+              latest.current.onCaret?.(completionCaret(update.state), update.state.doc.toString())
+            }
           }),
         ],
       }),
@@ -409,6 +498,7 @@ export function PromptEditor(props: PromptEditorProps) {
     inputs.set(editor, input)
     view.current = editor
     latest.current.inputRef.current = input
+    latest.current.onCaret?.(completionCaret(editor.state), editor.state.doc.toString())
     return () => {
       if (latest.current.inputRef.current === input) latest.current.inputRef.current = null
       view.current = null

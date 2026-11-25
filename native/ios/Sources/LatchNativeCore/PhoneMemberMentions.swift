@@ -63,19 +63,28 @@ public struct PhoneMemberMentions: Equatable, Sendable {
     }
 
     public func round(in text: String, hasMaterials: Bool = false) -> Round? {
+        let materials = PhoneInputReferences.materialRanges(in: text)
         let marks = members.flatMap { member in
-            PhoneFileMentionToken.ranges(marker: member.token, in: text).map { (member.id, $0) }
+            PhoneFileMentionToken.ranges(marker: member.token, in: text, excluding: materials).map { (member.id, $0) }
         }.sorted { $0.1.location < $1.1.location }
         guard !marks.isEmpty else { return nil }
-        var ids = [String](), prompt = "", at = 0
-        let body = text as NSString
-        for (id, range) in marks {
-            if !ids.contains(id) { ids.append(id) }
-            prompt += body.substring(with: NSRange(location: at, length: range.location - at))
-            at = NSMaxRange(range)
+        var ids = [String]()
+        for (id, _) in marks where !ids.contains(id) { ids.append(id) }
+        // Only remove the addressed mentions. Preserve whitespace, output and identifiers inside every source.
+        let source = text as NSString
+        var cursor = 0, prompt = "", plain = ""
+        let pieces = (marks.map { (range: $0.1, material: false) } + materials.map { (range: $0, material: true) })
+            .sorted { $0.range.location < $1.range.location }
+        for piece in pieces {
+            plain += source.substring(with: NSRange(location: cursor, length: piece.range.location - cursor))
+            if piece.material {
+                prompt += plain.replacingOccurrences(of: "[ \t]{2,}", with: " ", options: .regularExpression) + source.substring(with: piece.range)
+                plain = ""
+            }
+            cursor = NSMaxRange(piece.range)
         }
-        prompt += body.substring(from: at)
-        prompt = phonePromptTrim(prompt.replacingOccurrences(of: "[ \\t]{2,}", with: " ", options: .regularExpression))
+        plain += source.substring(from: cursor)
+        prompt = phonePromptTrim(prompt + plain.replacingOccurrences(of: "[ \t]{2,}", with: " ", options: .regularExpression))
         let reason: String?
         if hasMaterials { reason = "派给成员只带文字" }
         else if let busy = members.first(where: { ids.contains($0.id) && $0.disabled != nil }), let refusal = busy.disabled {

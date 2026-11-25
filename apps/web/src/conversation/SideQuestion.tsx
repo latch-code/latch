@@ -1,3 +1,4 @@
+import { quotedExcerpt } from '../composer/quotedExcerpt.ts'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { HarnessInfo, HostCatalog, Message, TaskDetail, TaskSummary } from '@latch/protocol'
 import {
@@ -323,13 +324,6 @@ function answerOf(detail: TaskDetail | undefined): { text: string; streaming: bo
   }
 }
 
-const quote = (text: string) =>
-  text
-    .trim()
-    .split('\n')
-    .map(line => (line ? `> ${line}` : '>'))
-    .join('\n')
-
 /**
  * The panel beside the session (a page of its own on a phone): the question, the answer as it arrives, and what can be
  * done with it. Closing archives the fork.
@@ -470,7 +464,7 @@ export function SideQuestionPanel({
               icon={CopyGlyph}
               disabled={!settled || !answer.text}
               onClick={() => {
-                onInsert(quote(answer.text))
+                onInsert(quotedExcerpt('side', answer.text))
                 close()
               }}>
               {COPY.insert}

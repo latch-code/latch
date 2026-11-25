@@ -1,6 +1,6 @@
 import type { AppSnapshot, BoardReason, Message, TaskDetail, TaskSummary, WorkItemPlace, WorkItemSummary } from '@latch/protocol'
 import { defineCopy } from '../core/i18n.ts'
-import { quotedSummary } from '../handoffs/model.ts'
+import { quotedExcerpt } from '../composer/quotedExcerpt.ts'
 import { GROUP_LABELS } from './model.ts'
 
 /**
@@ -82,7 +82,7 @@ export async function bringReply(
   const detail = await read(`tasks/${encodeURIComponent(sourceId)}`)
   const reply = lastReply(detail.messages)
   if (!reply) return 'empty'
-  hand(targetId, quotedSummary('', reply).trimEnd())
+  hand(targetId, quotedExcerpt('board', reply))
   open(targetId)
   return 'brought'
 }

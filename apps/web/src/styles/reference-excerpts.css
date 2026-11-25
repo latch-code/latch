@@ -1,0 +1,30 @@
+.prompt-editor .reference-excerpt-title,
+.prompt-editor .reference-excerpt-body,
+.prompt-editor .reference-excerpt-log,
+.prompt-editor .reference-excerpt-stamp {
+  --prompt-line-padding: 0 var(--sp-12);
+  border-inline-start: 2px solid var(--line-strong);
+  background: var(--sunken);
+}
+.prompt-editor .reference-excerpt-title {
+  --prompt-line-padding: var(--sp-4) var(--sp-12);
+}
+.reference-excerpt-heading {
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.reference-excerpt-heading svg {
+  vertical-align: -2px;
+  margin-inline-end: var(--sp-6);
+}
+.prompt-editor .reference-excerpt-log {
+  font-family: var(--mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
+}
+.prompt-editor .reference-excerpt-stamp {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}

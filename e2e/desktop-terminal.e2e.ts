@@ -452,8 +452,9 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       const word = (await rows.getByText('ran echo hi').first().boundingBox())!
       await page.mouse.dblclick(word.x + 6, word.y + word.height / 2)
       await panel.getByRole('button', { name: '加入对话', exact: true }).click()
-      await expect.poll(() => promptValue(draft)).toBe('终端 1\n```text\nran\n```')
-      await draft.fill('')
+      await expect.poll(() => promptValue(draft)).toBe('终端 1\n```text\nran\n```\n')
+      await draft.getByRole('button', { name: '移除终端引用' }).click()
+      await expect.poll(() => promptValue(draft)).toBe('')
 
       shell.print('\r\nTypeError: missing fixture value\r\n    at render (app.ts:5:2)\r\nfixture complete\r\n')
       await expect.poll(() => rows.innerText()).toContain('missing fixture value')

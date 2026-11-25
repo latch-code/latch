@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { chromium } from '@playwright/test'
 import { describe, expect, it } from 'vitest'
 import type { TaskDetail } from '@latch/protocol'
@@ -6,8 +8,10 @@ import type { HarnessPlugin, ModelProvider } from '@latch/sdk'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { openSession } from './helpers/layout.ts'
+import { closeSettings, openSection, openSession, openSettings } from './helpers/layout.ts'
 import { promptValue } from './helpers/prompt.ts'
+
+const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=', 'base64')
 
 describe('queued follow-ups', () => {
   it('queues and edits during work, drains after success, parks at stop, resumes explicitly and displays dropped authority', async () => {
@@ -76,7 +80,7 @@ describe('queued follow-ups', () => {
         await palette.getByRole('option', { name: first, exact: true }).click()
         const input = page.getByRole('textbox', { name: '继续对话', exact: true }),
           tray = page.getByRole('region', { name: '排队发送', exact: true })
-        const enqueue = async (text: string) => {
+        const enqueue = async (text: string, byShortcut = false) => {
           await input.fill(text)
           const reply = page.waitForResponse(
             response =>
@@ -84,10 +88,11 @@ describe('queued follow-ups', () => {
               && response.url().endsWith(`${path}/prompt`)
               && response.request().postDataJSON()?.prompt === text,
           )
-          await page.getByRole('button', { name: '排队发送', exact: true }).click()
+          if (byShortcut) await input.press('Control+Shift+Enter')
+          else await page.getByRole('button', { name: '排队发送', exact: true }).click()
           expect((await reply).status()).toBe(202)
         }
-        await enqueue(`下一句 ${width}`)
+        await enqueue(`下一句 ${width}`, width === 1440)
         await tray.getByText(`下一句 ${width}`, { exact: true }).waitFor()
         await enqueue(second)
         await expect.poll(() => tray.locator('.prompt-queue-title').textContent()).toBe('接下来 · 2')
@@ -113,7 +118,7 @@ describe('queued follow-ups', () => {
         await expect.poll(() => rows.locator('.prompt-queue-text').allTextContents()).toEqual([second, edited])
         expect(await promptValue(input)).toBe(`仍在输入的草稿 ${width}`)
         expect((await owner.json<TaskDetail>(path)).queue?.map(item => item.text)).toEqual([second, edited])
-        expect(await tray.getByRole('button', { name: '追加到本轮' }).count()).toBe(0)
+        expect(await tray.getByRole('button', { name: '立即发送' }).count()).toBe(0)
         await input.fill('')
         await page.screenshot({ path: `test-results/queue-waiting-${width}.png`, fullPage: true })
         await page.emulateMedia({ colorScheme: width === 390 ? 'light' : 'dark' })
@@ -150,7 +155,6 @@ describe('queued follow-ups', () => {
   it('keeps a screenshot with its queued instructions across a reload and delivers it once', async () => {
     const first = '先等待界面草稿'
     const follow = '下一轮按图检查按钮'
-    const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=', 'base64')
     let release = () => {}
     const finish = new Promise<void>(resolve => {
       release = resolve
@@ -216,8 +220,9 @@ describe('queued follow-ups', () => {
     }
   })
 
-  it('adds a selected queued message to the same live turn without consuming the earlier item or the draft', async () => {
+  it('sends an attachment from the queue or composer into the live turn and preserves other queued messages and drafts', async () => {
     const host = await startTestHost()
+    const log = join(host.root, 'agent.jsonl')
     const browser = await chromium.launch(browserLaunchOptions())
     try {
       const owner = await host.enroll({ listener: 'unix' })
@@ -228,12 +233,11 @@ describe('queued follow-ups', () => {
           name: 'Steer fixture',
           command: process.execPath,
           args: [FAKE_ACP_AGENT],
-          env: { FAKE_ACP_CAPS: 'steer' },
+          env: { FAKE_ACP_CAPS: 'steer,steerAttachments,images', FAKE_ACP_LOG: log },
         },
       })
       const page = await browser.newPage({
-        viewport: { width: 390, height: 844 },
-        hasTouch: true,
+        viewport: { width: 1440, height: 900 },
         colorScheme: 'dark',
         reducedMotion: 'reduce',
       })
@@ -244,26 +248,93 @@ describe('queued follow-ups', () => {
       })
       const path = `tasks/${sessionId}`
       const detail = () => owner.json<TaskDetail>(path)
-      await expect.poll(async () => (await detail()).steer).toBe(true)
+      await expect.poll(async () => (await detail()).steerAttachments).toBe(true)
       const runId = (await detail()).summary.runId
       const earlier = '下一轮再看',
         now = '先看这个问题'
       await openSession(page, sessionId)
       const input = page.getByRole('textbox', { name: '继续对话', exact: true })
       const tray = page.getByRole('region', { name: '排队发送', exact: true })
-      for (const text of [earlier, now]) {
-        await input.fill(text)
-        await page.locator('form.composer:visible').getByRole('button', { name: '更多', exact: true }).tap()
-        await page.getByRole('menuitem', { name: '排到下一轮', exact: true }).tap()
-        await tray.getByText(text, { exact: true }).waitFor()
+      const composer = page.locator('form.composer:visible')
+      const send = composer.locator('.composer-slot').getByRole('button', { name: '立即发送', exact: true })
+      const queue = composer.locator('.composer-slot').getByRole('button', { name: '排队发送', exact: true })
+      const menu = page.getByRole('menu', { name: '选择发送方式' })
+      const sendChoice = menu.getByRole('menuitem', { name: '立即发送', exact: true })
+      const queueChoice = menu.getByRole('menuitem', { name: '排队发送', exact: true })
+      const mac = await page.evaluate(() => navigator.platform.startsWith('Mac'))
+      const menuKeys = async () => {
+        await menu.waitFor()
+        expect(await menu.getByRole('menuitem').count()).toBe(2)
+        const keys = await Promise.all([sendChoice.locator('kbd').allInnerTexts(), queueChoice.locator('kbd').allInnerTexts()])
+        return keys.map(caps => caps.join(' · '))
       }
+      const promptResponse = () =>
+        page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith(`${path}/prompt`))
+      const attach = async () => {
+        await composer.getByLabel('选择附件', { exact: true }).setInputFiles({ name: 'button.png', mimeType: 'image/png', buffer: image })
+        await expect.poll(() => composer.locator('.attachment-draft[data-state="ready"]').count()).toBe(1)
+      }
+      await attach()
+      await input.fill(earlier)
+      await send.hover()
+      expect(await menuKeys()).toEqual(['Enter', mac ? '⇧⌘⏎' : 'Ctrl Shift Enter'])
+      await queueChoice.click()
+      await expect.poll(async () => (await detail()).queue?.map(item => [item.text, item.attachmentCount])).toEqual([[earlier, 1]])
+      await input.fill(now)
+      const settings = await openSettings(page)
+      await openSection(settings, '通用')
+      await settings.getByRole('radiogroup', { name: '运行中默认发送方式' }).getByRole('radio', { name: '排队', exact: true }).click()
+      await closeSettings(settings)
+      await queue.hover()
+      expect(await menuKeys()).toEqual([mac ? '⇧⌘⏎' : 'Ctrl Shift Enter', 'Enter'])
+      const menuBox = (await menu.boundingBox())!
+      const trigger = (await queue.boundingBox())!
+      await page.screenshot({
+        path: 'test-results/queue-send-menu-default.png',
+        animations: 'disabled',
+        clip: { x: menuBox.x - 12, y: menuBox.y - 12, width: menuBox.width + 24, height: trigger.y + trigger.height - menuBox.y + 24 },
+      })
+      await input.click()
+      const shortcuts = await openSettings(page)
+      await openSection(shortcuts, '快捷键')
+      const bind = async (action: string, chord: string, label: RegExp) => {
+        const edit = shortcuts.getByRole('button', { name: `改「${action}」的快捷键`, exact: true })
+        await edit.click()
+        await shortcuts.getByRole('status').getByText('按下新的组合键').waitFor()
+        await page.keyboard.press(chord)
+        await expect.poll(() => edit.locator('kbd').last().innerText()).toMatch(label)
+      }
+      const queueChord = 'Control+Alt+KeyG'
+      const directChord = 'Control+Shift+KeyY'
+      await bind('立即发送', directChord, /Y$/u)
+      await bind('排队发送', queueChord, /G$/u)
+      await closeSettings(shortcuts)
+      await page.reload()
+      await openSession(page, sessionId)
+      await attach()
+      await input.fill(now)
+      await queue.waitFor()
+      const [queuedResponse] = await Promise.all([promptResponse(), input.press(queueChord)])
+      expect(queuedResponse.status()).toBe(202)
+      expect(queuedResponse.request().postDataJSON()).toMatchObject({ queue: true, prompt: now, attachmentIds: [expect.any(String)] })
+      await expect.poll(async () => (await detail()).queue?.map(item => item.text)).toEqual([earlier, now])
       const row = tray.getByRole('listitem').filter({ hasText: now })
       await input.fill('还在写的草稿')
-      await row.getByRole('button', { name: '追加到本轮' }).waitFor()
-      await page.screenshot({ path: 'test-results/queue-steer-390.png' })
+      await row.getByRole('button', { name: '立即发送' }).waitFor()
+      for (const [width, height] of [
+        [390, 844],
+        [768, 1024],
+        [1440, 900],
+      ] as const) {
+        await page.setViewportSize({ width, height })
+        await page.emulateMedia({ colorScheme: width === 768 ? 'light' : 'dark' })
+        await row.getByRole('button', { name: '立即发送', exact: true }).click({ trial: true })
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+        await page.screenshot({ path: `test-results/queue-steer-${width}.png`, animations: 'disabled' })
+      }
       const [steered] = await Promise.all([
         page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/steer')),
-        row.getByRole('button', { name: '追加到本轮' }).tap(),
+        row.getByRole('button', { name: '立即发送' }).click(),
       ])
       expect(steered.status()).toBe(200)
       expect(steered.request().postDataJSON()).toEqual({ runId, contentRevision: 0 })
@@ -273,8 +344,51 @@ describe('queued follow-ups', () => {
       const after = await detail()
       expect(after.summary).toMatchObject({ status: 'running', runId })
       expect(after.queue?.map(item => item.text)).toEqual([earlier])
+      expect(after.messages.find(message => message.steered)).toMatchObject({
+        queuedAt: expect.any(String),
+        attachments: [{ name: 'button.png' }],
+      })
       expect(await promptValue(input)).toBe('还在写的草稿')
       await input.fill('')
+      await attach()
+      await queue.hover()
+      expect(await menuKeys()).toEqual([
+        expect.stringContaining(mac ? '⇧⌘Y' : 'Ctrl Shift Y'),
+        expect.stringContaining(mac ? '⌥⌘G' : 'Ctrl Alt G'),
+      ])
+      await page.screenshot({ path: 'test-results/queue-send-menu.png', animations: 'disabled' })
+      const [directResponse] = await Promise.all([promptResponse(), sendChoice.click()])
+      expect(directResponse.status()).toBe(200)
+      expect(directResponse.request().postDataJSON()).toMatchObject({ steer: true, prompt: '', attachmentIds: [expect.any(String)] })
+      await expect.poll(async () => (await detail()).messages.filter(message => message.steered).length).toBe(2)
+      const immediate = '使用快捷键立即发送'
+      await input.fill(immediate)
+      const [shortcutResponse] = await Promise.all([promptResponse(), input.press(directChord)])
+      expect(shortcutResponse.status()).toBe(200)
+      expect(shortcutResponse.request().postDataJSON()).toMatchObject({ steer: true, prompt: immediate })
+      await expect.poll(async () => (await detail()).messages.filter(message => message.steered).length).toBe(3)
+      expect((await detail()).queue?.map(item => item.text)).toEqual([earlier])
+      const received = (await readFile(log, 'utf8'))
+        .trimEnd()
+        .split('\n')
+        .map(line => JSON.parse(line) as { method?: string; params?: { prompt: unknown[] } })
+        .filter(event => event.method === '_session/steering')
+        .map(event => event.params?.prompt)
+      const imageBlock = { type: 'image', data: image.toString('base64'), mimeType: 'image/png' }
+      expect(received).toEqual([[{ type: 'text', text: now }, imageBlock], [imageBlock], [{ type: 'text', text: immediate }]])
+      await page.setViewportSize({ width: 390, height: 844 })
+      const emulation = await page.context().newCDPSession(page)
+      await emulation.send('Emulation.setTouchEmulationEnabled', { enabled: true })
+      await input.fill('从手机选择排队')
+      const point = await queue.evaluate(button => {
+        const { x, y, width, height } = button.getBoundingClientRect()
+        return { x: x + width / 2, y: y + height / 2 }
+      })
+      await emulation.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] })
+      await emulation.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+      await menu.getByRole('menuitem', { name: '排队发送', exact: true }).click()
+      await expect.poll(async () => (await detail()).queue?.map(item => item.text)).toEqual([earlier, '从手机选择排队'])
+      expect((await detail()).messages.filter(message => message.steered)).toHaveLength(3)
       await page.getByRole('button', { name: '停止', exact: true }).click()
     } finally {
       await browser.close()

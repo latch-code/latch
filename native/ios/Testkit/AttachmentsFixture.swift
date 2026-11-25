@@ -134,6 +134,14 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     let repeated = PhoneReplyQuote.create(session: "s", message: "m", selected: "red moon", body: richBody, block: "Before red moon after red moon.", blockOffset: 22) ?? ""
     let wire = "A\n" + sourceReference + "\n" + quote + "\nB"
     let labels = PhoneInputReferences(wire)
+    result["composerReferences"] = compactReferenceEdits(conversation: sourceReference)
+    let example = "```text\n" + quote + "\n```"
+    result["sentQuoteParts"] = PhoneInputReferences.messageParts(example + "\n\n" + rich + "\n\n附注\n" + repeated).map { part in
+        switch part {
+        case .text(let words): return words == example ? "literal example" : words
+        case .reply(let passage): return "\(passage.text)@\(passage.offset)"
+        }
+    }
     result["conversationReferences"] = [
         labels.display, labels.restore(labels.display + "!") == wire + "!" ? "roundtrip" : "lost",
         labels.restore(labels.display.replacingOccurrences(of: "〔会话：Earlier work〕", with: "")).contains("conversation-ref:") ? "kept" : "removed",
@@ -722,6 +730,54 @@ final class FixtureChunks: @unchecked Sendable {
         lock.unlock()
         fire?()
     }
+}
+
+private func compactReferenceEdits(conversation: String) -> [String: Any] {
+    let a = "[引用回复 s/m1@4]\n> 月🌕\n> 二行\n\n", b = a.replacingOccurrences(of: "/m1@", with: "/m2@")
+    let placeholder = "\u{fffc}", prose = "📝\n"
+    func project(_ source: String) -> PhoneInputReferences { PhoneInputReferences(source, collapseQuotes: true) }
+    let wire = prose + a + b + "done", draft = project(wire), first = NSRange(location: 3, length: 1), second = NSRange(location: 4, length: 1)
+    let firstStart = NSRange(location: 3, length: 0), both = NSRange(location: 3, length: 2)
+    let hook = PhoneDelivery.hookExcerpt(hook: "pre-push", exitCode: 3, tail: "🪝 failed\n```\nnote", push: true)
+    let handoff = PhoneHandoffs.quoted("", summary: "结论一\n\n结论二")
+    let all = project(conversation + "\n\n" + hook + "\n\n" + handoff + a + "ok")
+    let literal = "`````text\n" + conversation + "\n" + a + hook + "\n" + handoff + "`````\n> user quote\n" + placeholder
+    let legacy = "[引用回复 s/m1@3]\n> quoted"
+    let opening = project(a)
+    let terminalTitles = ["终端 1", "终端 2 · 最近报错（较早的输出未包含）", "Terminal 12", "Terminal 1,024 · Latest error (earlier output omitted)"]
+    let output = "first 🚧\n```\nlast", fence = "````"
+    let terminalStates = terminalTitles.map { title -> [String] in
+        let block = title + "\n" + fence + "text\n" + output + "\n" + fence + "\n\n"
+        let projection = project(block + "continue")
+        guard let item = projection.quotes.first, item.kind == .terminal, item.wire == block,
+              projection.replacing(item.range, with: "") == "continue" else { return [] }
+        return [item.title, item.text]
+    }
+    let ordinaryCode = ["终端 1\n\n```text\nlogs\n```", "Terminal 1\n```swift\nlogs\n```",
+                        "Terminal 1\n```text\nlogs", "Terminal 1\n```text\nlogs\n````",
+                        "Terminal 1\n```text\nlogs\n```bash\nother\n```", "~~~~\n终端 1\n```text\nlogs\n```\n~~~~"]
+    let ranges = [draft.wireRange(for: first), draft.displayRange(forWire: NSRange(location: 4, length: 2)),
+                  draft.displayRange(forWire: NSRange(location: 4, length: 0))]
+    return [
+        "display": draft.display, "copied": draft.readableText(in: both) ?? "",
+        "ranges": ranges.map { $0.map { [$0.location, $0.length] } ?? [] },
+        "deletes": [draft.replacing(first, with: "") == prose + b + "done", draft.replacing(second, with: "") == prose + a + "done",
+                    draft.replacing(NSRange(location: 3, length: 4), with: "X") == prose + "Xne",
+                    opening.replacing(NSRange(location: 0, length: 1), with: "") == ""],
+        "edges": [draft.replacing(firstStart, with: "😊") == prose + "😊\n" + a + b + "done",
+                  project(legacy).replacing(NSRange(location: 1, length: 0), with: "later") == legacy + "\n\nlater",
+                  project(legacy).replacing(NSRange(location: 1, length: 0), with: "\n> mine") == legacy + "\n\n\n> mine",
+                  draft.restore(draft.display + "💡") == wire + "💡", draft.replacing(NSRange(location: 1, length: 0), with: "!") == nil],
+        "sources": all.quotes.map { [$0.kind.rawValue, $0.title, $0.text] }, "allVisible": all.display,
+        "roundtrip": all.restore(all.display) == conversation + "\n\n" + hook + "\n\n" + handoff + a + "ok",
+        "deletesHook": all.quotes.first(where: { $0.kind == .hook }).flatMap { all.replacing($0.range, with: "") } == conversation + "\n\n" + handoff + a + "ok",
+        "literal": project(literal).quotes.isEmpty && project(literal).display == literal,
+        "oldHandoff": project("> 结论一\n>\n> 结论二").quotes.isEmpty,
+        "terminal": terminalStates, "terminalExamples": ordinaryCode.allSatisfy { project($0).display == $0 && project($0).quotes.isEmpty },
+        "typedPlaceholder": opening.replacing(NSRange(location: 1, length: 0), with: placeholder) == a + placeholder,
+        "ime": [PhoneInputReferences.wireText("😊" + placeholder, quotes: [draft.quotes[1].at(NSRange(location: 2, length: 1))]) == "😊\n" + b,
+                PhoneInputReferences.wireText(placeholder + "X", quotes: [draft.quotes[0].at(NSRange(location: 1, length: 1))]) == placeholder + "X"],
+    ]
 }
 
 /** Which answers to a write leave its result unknown, and which are the Host's definite refusal with its own words. */

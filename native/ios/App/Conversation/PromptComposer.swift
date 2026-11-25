@@ -26,7 +26,8 @@ struct PromptComposer: View {
     }
     private var draftText: Binding<String> {
         let raw = rawDraft
-        return Binding(get: { PhoneInputReferences(raw.wrappedValue).display }, set: { raw.wrappedValue = PhoneInputReferences(raw.wrappedValue).restore($0) })
+        return Binding(get: { PhoneInputReferences(raw.wrappedValue, collapseQuotes: true).display },
+            set: { raw.wrappedValue = PhoneInputReferences(raw.wrappedValue, collapseQuotes: true).restore($0) })
     }
     private var text: String {
         get { draftText.wrappedValue }
@@ -37,6 +38,7 @@ struct PromptComposer: View {
     /** 「已送达」 for a moment, after 放弃这次提交 found the message already in its session. */
     @State private var settled: String?
     @AppStorage(PhoneFaceID.key) private var faceID = false
+    @AppStorage(PhoneFollowUpDefault.key) private var followUpDefault = PhoneFollowUpDefault.steer
     /** The picker opened from the input menu. */
     @State private var choosingReference = false
     @State private var attachSource: AttachSource?
@@ -95,7 +97,7 @@ struct PromptComposer: View {
     private var heldBack: String? {
         if let round = memberRound { return round.reason }
         if rejecting == nil, running, !mentions.references.isEmpty { return "本轮结束后才能发送文件引用" }
-        if followUp == .queue && model.canQueueAttachments { return nil }
+        if followUp == .queue && model.canQueueAttachments || followUp == .steer && model.detail["steerAttachments"].bool { return nil }
         return PhoneAttachments.heldBack(followUp, running: running && rejecting == nil, count: attachments.items.count)
     }
     private var running: Bool { ["running", "waiting-approval"].contains(model.currentSummary["status"].string ?? "") }
@@ -108,13 +110,15 @@ struct PromptComposer: View {
         return approval["id"].string
     }
     private var hint: String { rejecting != nil ? "输入内容会拒绝并告诉 Agent 改做什么" : placeholder ?? "回复 " + engine + "…" }
-    private var noteTooLong: Bool { rejecting != nil && PhoneConversation.rejectionNoteTooLong(text) }
-    /** While a turn runs: 追加 where the Harness takes more text now, else 排队 where the Host queues. */
-    private var followUp: PhoneFollowUp {
-        let mode = PhoneFollowUp.of(detail: model.detail, status: model.currentSummary["status"].string, queues: model.canQueueCurrent)
-        if mode == .steer, (((!attachments.isEmpty || pasteID != nil) && model.canQueueAttachments) || (rawDraft.wrappedValue.contains("[conversation-ref:") && model.canQueueCurrent)) { return .queue }
-        return mode
+    private var noteTooLong: Bool { rejecting != nil && PhoneConversation.rejectionNoteTooLong(rawDraft.wrappedValue) }
+    private var followUpChoices: (primary: PhoneFollowUp, alternate: PhoneFollowUp?) {
+        var detail = model.detail
+        if model.stoppingCurrent { var options = detail.object; options["steer"] = .bool(false); detail = .object(options) }
+        return PhoneFollowUp.choices(detail: detail, status: model.currentSummary["status"].string, queues: model.canQueueCurrent,
+            attached: !attachments.isEmpty || pasteID != nil, queueAttachments: model.canQueueAttachments,
+            nextTurnOnly: nextModel != nil || rawDraft.wrappedValue.contains("[conversation-ref:"), preferred: followUpDefault)
     }
+    private var followUp: PhoneFollowUp { followUpChoices.primary }
     private var controls: [PhoneConfigControl] {
         guard model.sessionId != nil, model.detail["summary"]["id"].string == model.sessionId else { return [] }
         return PhoneSessionConfig.controls(model.detail, harness: model.engineInfo(model.currentSummary["harnessId"].string))
@@ -173,7 +177,7 @@ struct PromptComposer: View {
                     .padding(.horizontal, 12)
             }
             if let draftId {
-                CodexTeamView(sessionId: draftId, draft: draftText,
+                CodexTeamView(sessionId: draftId, draft: rawDraft,
                     canPrepare: gate == nil && model.canRun && model.connected && !running && !drawerOpen && !sending && !model.busy && model.pending.isEmpty)
             }
             if editsOffline && model.offline {
@@ -209,7 +213,13 @@ struct PromptComposer: View {
     }
     private func insert() {
         guard let added = model.takeInsert(for: draftId) else { return }
-        rawDraft.wrappedValue = rawDraft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? added : rawDraft.wrappedValue + "\n\n" + added
+        let draft = rawDraft.wrappedValue
+        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            rawDraft.wrappedValue = added
+        } else {
+            let separator = draft.hasSuffix("\n\n") ? "" : draft.hasSuffix("\n") ? "\n" : "\n\n"
+            rawDraft.wrappedValue = draft + separator + added
+        }
     }
     private func gateLine(_ words: String) -> some View {
         HStack(spacing: 10) {
@@ -228,8 +238,10 @@ struct PromptComposer: View {
             if model.detail["canReferenceConversation"].bool && model.canRun && model.hasContentWindow {
                 Button("引用另一条会话", systemImage: "text.bubble") { choosingReference = true }
             }
-            if canQueueInstead {
-                Button("排到下一轮", systemImage: "text.badge.plus") { send(queueInstead: true) }.disabled(!canSend)
+            if let alternate {
+                Button(alternate == .queue ? "排到下一轮" : "立即发送", systemImage: alternate == .queue ? "text.badge.plus" : "arrow.up") {
+                    send(as: alternate)
+                }.disabled(!canSend)
             }
             SlashMenuItem(slash: slash, text: draftText, focused: $focused, context: slashContext)
         }
@@ -259,8 +271,10 @@ struct PromptComposer: View {
             selection: $slash.selection, composing: $slash.composing, selectionRequest: $slash.selectionRequest,
             mentionMarkers: mentions.markers, commandKeys: slashKeys, onCommand: slashKey,
             suffixHint: slash.hint(text, commands: slashCommands, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending),
-            onPasteImages: imagePasteHandler)
-        return input.overlay(alignment: .topLeading) { if text.isEmpty { PromptHint(text: hint) } }
+            onPasteImages: imagePasteHandler, referenceDraft: rawDraft)
+        // UIKit's undo history belongs to a single session and unlocked window.
+        return input.id(draftId).id(model.privateSnapshot.epoch)
+            .overlay(alignment: .topLeading) { if text.isEmpty { PromptHint(text: hint) } }
     }
     private func pasteImages(_ providers: [NSItemProvider]) async {
         guard pasteID == nil, let key = attachKey, let selection = model.attachSelection(key),
@@ -298,21 +312,21 @@ struct PromptComposer: View {
     }
     /** Stop remains the primary action only while there is nothing this phone can send to the next turn. */
     @ViewBuilder private var action: some View {
-        if running && trimmed.isEmpty && (rejecting != nil || !model.canQueueAttachments || (attachments.isEmpty && pasteID == nil)) { stopButton(quiet: drawerOpen) }
+        if running && trimmed.isEmpty && (rejecting != nil || followUp == .none || heldBack != nil || (attachments.isEmpty && pasteID == nil)) { stopButton(quiet: drawerOpen) }
         else if (memberRound != nil && !hasRoundMaterials) || (memberRound == nil && running && rejecting == nil && followUp != .none && PhoneSlash.actionOf(text) == nil) {
             let round = memberRound, steer = followUp == .steer
-            let label = round != nil ? "派给成员" : steer ? "追加" : "排队"
+            let label = round != nil ? "派给成员" : steer ? "立即发送" : "排队"
             Button { if let round { dispatch(round) } else { send() } } label: {
                 Text(label).font(.system(size: 14, weight: .semibold)).foregroundStyle(canSend ? Color.white : PhoneTheme.faint)
                     .padding(.horizontal, 14).frame(height: 36).background(canSend ? PhoneTheme.accent : PhoneTheme.bubble, in: Capsule())
                     .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(round != nil ? label : steer ? "追加到本轮" : "排队发送")
+            }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(round != nil || steer ? label : "排队发送")
         } else {
             Button { send() } label: {
                 Image(systemName: "arrow.up").font(.system(size: 15, weight: .semibold)).foregroundStyle(canSend ? Color.white : PhoneTheme.faint)
                     .frame(width: 36, height: 36).background(canSend ? PhoneTheme.accent : PhoneTheme.bubble, in: Circle())
                     .frame(width: 44, height: 44).contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(memberRound != nil ? "派给成员" : running ? "排队发送" : "发送")
+            }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(memberRound != nil ? "派给成员" : rejecting != nil ? "拒绝并发送说明" : "发送")
         }
     }
     /** While a drawer waits on you, stop steps back without going away. */
@@ -331,9 +345,6 @@ struct PromptComposer: View {
                 .frame(width: 44, height: 44).contentShape(Rectangle())
         }.buttonStyle(.plain).disabled(sending || model.stoppingCurrent || !model.transportReady).accessibilityLabel(model.stoppingCurrent ? "正在停止" : "停止")
     }
-    private var canQueueInstead: Bool {
-        followUp == .steer && model.canQueueCurrent && !trimmed.isEmpty && rejecting == nil && PhoneSlash.actionOf(text) == nil && memberRound == nil
-    }
     private func dispatch(_ round: PhoneMemberMentions.Round) {
         guard let target = draftId, round == memberRound, round.reason == nil, canSend else { return }
         let input = rawDraft.wrappedValue, submission = UUID(), context = mentions.context, materials = hasRoundMaterials
@@ -344,19 +355,28 @@ struct PromptComposer: View {
             _ = await model.sendTeamRound(round, draft: input, session: target, hasMaterials: materials)
         }
     }
-    private func send() { send(queueInstead: false) }
-    private func send(queueInstead: Bool) {
-        guard !queueInstead || canQueueInstead else { return }
+    private var alternate: PhoneFollowUp? {
+        guard !trimmed.isEmpty || !attachments.isEmpty, !drawerOpen, memberRound == nil, PhoneSlash.actionOf(text) == nil,
+              mentions.references.isEmpty else { return nil }
+        return followUpChoices.alternate
+    }
+    private func send(as override: PhoneFollowUp? = nil) {
+        guard override == nil || override == alternate else { return }
         guard let target = draftId, model.sessionId == target, gate == nil, canSend else { return }
         if let round = memberRound { dispatch(round); return }
         if rejecting == nil {
             switch PhoneSlash.action(text, context: slashContext) {
             case .text: break
             case .unavailable: return
-            case let .open(action, argument): runSlash(action, argument: argument); return
+            case let .open(action, _):
+                let draft = PhoneInputReferences(rawDraft.wrappedValue, collapseQuotes: true)
+                guard let words = draft.readableText(in: NSRange(location: 0, length: draft.display.utf16.count)),
+                      let request = PhoneSlash.actionOf(words) else { return }
+                runSlash(action, argument: request.argument)
+                return
             }
         }
-        let input = rawDraft.wrappedValue, reject = rejecting, next: PhoneFollowUp = queueInstead ? .queue : followUp
+        let input = rawDraft.wrappedValue, reject = rejecting, next = override ?? followUp
         let queue = running && reject == nil && next == .queue, steer = running && reject == nil && next == .steer
         // The send's target is fixed now: after waiting for uploads it goes to this session or nowhere.
         let chosen = nextModel, key = attachKey, refs = mentions.references
@@ -390,7 +410,11 @@ struct PromptComposer: View {
         }
     }
     private var slashKeys: [String] {
-        var keys = mentions.keys + (canSend ? ["submit"] : [])
+        var keys = mentions.keys
+        if canSend && !mentions.isOpen && slashMenu == nil {
+            keys.append("submit")
+            if alternate != nil { keys.append("alternateSubmit") }
+        }
         guard let menu = slashMenu else { return keys }
         keys.append(UIKeyCommand.inputEscape)
         if menu.options.contains(where: { $0.unavailable == nil }) { keys += [UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow] }
@@ -400,7 +424,11 @@ struct PromptComposer: View {
     private func slashKey(_ key: String) {
         guard !slash.composing else { return }
         if mentions.handle(key) { return }
-        if key == "submit" { if canSend { send() }; return }
+        if key == "submit" || key == "alternateSubmit" {
+            guard canSend, !mentions.isOpen, slashMenu == nil else { return }
+            if key == "submit" { send() } else if let alternate { send(as: alternate) }
+            return
+        }
         guard let menu = slashMenu else { return }
         if key == UIKeyCommand.inputEscape { slash.dismiss(text); return }
         if key == UIKeyCommand.inputUpArrow || key == UIKeyCommand.inputDownArrow { slash.move(menu, text: text, down: key == UIKeyCommand.inputDownArrow); return }

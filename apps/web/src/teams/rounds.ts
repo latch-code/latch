@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   TEAM_LIMITS,
+  type FileMention,
   type Message,
   type TaskSummary,
   type TeamAnswer,
@@ -11,6 +12,7 @@ import {
 } from '@latch/protocol'
 import { api, ApiError, errorMessage, newRequestId } from '../core/api.ts'
 import { unconfirmedReason } from '../core/sendingMessage.ts'
+import { promptChips } from '../composer/prompt-tokens.ts'
 import { TEAM_COPY } from './copy.ts'
 import { memberAtWork, teamOpen } from './model.ts'
 
@@ -80,21 +82,19 @@ export function memberChoices(team: TeamSummary, tasks: readonly Pick<TaskSummar
   })
 }
 
-/** Where a token stands on its own in the text: after a space or at the start, before a space or at the end. */
-function tokenRanges(text: string, token: string): Array<{ start: number; end: number }> {
-  const ranges: Array<{ start: number; end: number }> = []
-  for (let start = text.indexOf(token); start >= 0; start = text.indexOf(token, start + 1)) {
-    const end = start + token.length
-    if ((start === 0 || /\s/u.test(text[start - 1]!)) && (end === text.length || /\s/u.test(text[end]!))) ranges.push({ start, end })
-  }
-  return ranges
-}
-
-/** The member chips in the draft, in order. */
-export function memberMarks(text: string, choices: readonly Pick<MemberChoice, 'token' | 'itemId' | 'title'>[]) {
-  return choices
-    .flatMap(choice => tokenRanges(text, choice.token).map(range => ({ ...range, itemId: choice.itemId, title: choice.title })))
-    .toSorted((a, b) => a.start - b.start)
+/** Only visible member references address a round; a name inside a cited source stays literal. */
+export function memberMarks(
+  text: string,
+  choices: readonly Pick<MemberChoice, 'token' | 'itemId' | 'title'>[],
+  refs: readonly FileMention[] = [],
+) {
+  if (!choices.length || !text.includes('@')) return []
+  const byToken = new Map(choices.map(choice => [choice.token, choice]))
+  const members = choices.map(choice => ({ ...choice, name: choice.title }))
+  return promptChips(text, { members }, refs).flatMap(({ start, end, kind }) => {
+    const member = kind === 'member' && byToken.get(text.slice(start, end))
+    return member ? [{ start, end, itemId: member.itemId, title: member.title }] : []
+  })
 }
 
 /**
@@ -105,17 +105,22 @@ export function memberMarks(text: string, choices: readonly Pick<MemberChoice, '
 export function draftRound(
   text: string,
   choices: readonly MemberChoice[],
+  refs: readonly FileMention[] = [],
 ): { itemIds: string[]; prompt: string; ready: boolean; reason?: string } | undefined {
-  const marks = memberMarks(text, choices)
+  const marks = memberMarks(text, choices, refs)
   if (!marks.length) return undefined
   const itemIds = [...new Set(marks.map(mark => mark.itemId))]
   let prompt = ''
   let at = 0
   for (const mark of marks) {
-    prompt += text.slice(at, mark.start)
+    const before = text.slice(at, mark.start)
     at = mark.end
+    if (/[ \t]$/u.test(before) && /[ \t]/u.test(text[at] ?? '')) {
+      prompt += before.replace(/[ \t]+$/u, ' ')
+      while (text[at] === ' ' || text[at] === '\t') at++
+    } else prompt += before
   }
-  prompt = (prompt + text.slice(at)).replace(/[ \t]{2,}/gu, ' ').trim()
+  prompt = (prompt + text.slice(at)).trim()
   const busy = choices.find(choice => itemIds.includes(choice.itemId) && choice.disabled)
   const reason = busy
     ? `${busy.title} · ${busy.disabled}`

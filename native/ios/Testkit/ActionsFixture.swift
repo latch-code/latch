@@ -76,7 +76,12 @@ func phoneActionsFixture(_ input: [String: Any]) throws -> [String: Any] {
         "latestRunning": turns.last.map { actions($0, latest: true, running: true) } ?? NSNull(),
         "readOnly": turns.last.map { actions($0, latest: true, canSend: false, canFork: false) } ?? NSNull(),
         "resend": value["resend"].array.map { PhoneTurnActions.resendText($0) },
-        "followUp": value["followUps"].array.map { "\(PhoneFollowUp.of(detail: $0["detail"], status: $0["status"].string, queues: $0["queues"].bool))" },
+        "followUp": value["followUps"].array.map { row in
+            let choices = PhoneFollowUp.choices(detail: row["detail"], status: row["status"].string, queues: row["queues"].bool,
+                attached: row["attached"].bool, queueAttachments: row["queueAttachments"] != .bool(false), nextTurnOnly: row["nextTurnOnly"].bool,
+                preferred: PhoneFollowUpDefault(rawValue: row["preferred"].string ?? "") ?? .steer)
+            return [String(describing: choices.primary), choices.alternate.map { String(describing: $0) } ?? ""]
+        },
         "controls": controls(config),
         "launchControls": value["launchConfigs"].array.map(controls),
         "chatControls": PhoneSessionConfig.controls(.object(["config": config["config"], "summary": .object(["mode": .string("chat"), "level": .string("L3")])]), harness: value["harness"]).map(\.kind.rawValue),

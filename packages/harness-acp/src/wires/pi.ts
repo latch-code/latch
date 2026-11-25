@@ -112,7 +112,21 @@ const promptParams = z.object({
   prompt: z.array(z.object({ type: text, text: text.optional(), data: text.optional(), mimeType: text.optional() })),
 })
 const optionParams = z.object({ sessionId: text, configId: text, value: text.max(1024) })
-const steerParams = z.object({ sessionId: text, prompt: z.array(z.object({ type: text, text: text.optional() })) })
+/** Both RPC commands accept the same message and image fields (including an image without a caption). */
+function piInput(blocks: z.infer<typeof promptParams>['prompt']) {
+  const texts: string[] = []
+  const images: Array<{ type: 'image'; data: string; mimeType: string }> = []
+  for (const block of blocks) {
+    if (block.type === 'text' && block.text !== undefined) texts.push(block.text)
+    else if (block.type === 'image' && block.data && block.mimeType)
+      images.push({ type: 'image', data: block.data, mimeType: block.mimeType })
+    else throw new RpcError(RPC.invalidParams, `pi takes no ${clip(block.type, 64)} content`)
+  }
+  // The gate's level is the person's to choose in Latch, which sends its command itself.
+  if (texts.some(text => GATE_INPUT.test(text))) throw new RpcError(RPC.invalidParams, `/${GATE_COMMAND} is Latch's own command`)
+  return { message: texts.join('\n\n'), ...(images.length ? { images } : {}) }
+}
+
 const sessionParams = z.object({ sessionId: text.optional(), mcpServers: z.array(z.unknown()).optional() })
 const deleteParams = z.object({ sessionId: text })
 const forkParams = z.object({ sessionId: text, before: text, mcpServers: z.array(z.unknown()).optional() })
@@ -502,7 +516,7 @@ export class PiWire implements AgentWire {
         // Deleting removes pi's file of the session, only where the Host may change CLI stores.
         sessionCapabilities: { resume: {}, ...(this.cliStore ? { delete: {} } : {}) },
       },
-      _meta: { steering: { supported: true } },
+      _meta: { steering: { supported: true, attachments: true } },
     }
   }
 
@@ -786,16 +800,7 @@ export class PiWire implements AgentWire {
     if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
     this.assertSession(parsed.data.sessionId)
     if (this.turn) throw new RpcError(RPC.internal, 'A turn is already running')
-    const texts: string[] = []
-    const images: Array<{ type: 'image'; data: string; mimeType: string }> = []
-    for (const block of parsed.data.prompt) {
-      if (block.type === 'text' && block.text !== undefined) texts.push(block.text)
-      else if (block.type === 'image' && block.data && block.mimeType)
-        images.push({ type: 'image', data: block.data, mimeType: block.mimeType })
-      else throw new RpcError(RPC.invalidParams, `pi takes no ${clip(block.type, 64)} content`)
-    }
-    // The gate's level is the person's to choose in Latch, which sends its command itself; a message cannot.
-    if (texts.some(text => GATE_INPUT.test(text))) throw new RpcError(RPC.invalidParams, `/${GATE_COMMAND} is Latch's own command`)
+    const input = piInput(parsed.data.prompt)
     // Listed once the session has a turn, when the runtime surely knows it: it drops updates for a session it does not.
     if (this.listedFor !== this.sessionId) {
       this.listedFor = this.sessionId
@@ -807,7 +812,7 @@ export class PiWire implements AgentWire {
         ...(this.pluginReport ? { plugins: this.pluginReport } : {}),
       })
     }
-    const compact = images.length ? undefined : compactCommand(texts.join('\n\n'))
+    const compact = input.images ? undefined : compactCommand(input.message)
     const done = new Promise<unknown>((resolve, reject) => {
       this.turn = { resolve, reject, cancelled: false, ...(compact ? { compaction: { reported: false } } : {}) }
     })
@@ -831,7 +836,7 @@ export class PiWire implements AgentWire {
     }
     let accepted: z.infer<typeof disposition>
     try {
-      accepted = disposition.parse(await this.send({ type: 'prompt', message: texts.join('\n\n'), ...(images.length ? { images } : {}) }))
+      accepted = disposition.parse(await this.send({ type: 'prompt', ...input }))
     } catch (error) {
       if (this.turn === turn) this.turn = undefined
       throw error
@@ -842,18 +847,17 @@ export class PiWire implements AgentWire {
   }
 
   private async steer(params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
-    const parsed = steerParams.safeParse(params)
+    const parsed = promptParams.safeParse(params)
     if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
     this.assertSession(parsed.data.sessionId)
-    const textOf = parsed.data.prompt.flatMap(block => (block.type === 'text' && block.text !== undefined ? [block.text] : []))
+    const input = piInput(parsed.data.prompt)
     // pi would abort the running turn to compact; it runs only between turns, never as text added to one.
-    const named = /^\/(\S+)/u.exec(textOf.join('\n\n'))?.[1]
-    if (compactCommand(textOf.join('\n\n')) || (named !== undefined && this.idleCommands.has(named)))
+    const named = /^\/(\S+)/u.exec(input.message)?.[1]
+    if (compactCommand(input.message) || (named !== undefined && this.idleCommands.has(named)))
       throw new RpcError(RPC.invalidParams, 'This pi command runs only between turns')
-    if (textOf.some(text => GATE_INPUT.test(text))) throw new RpcError(RPC.invalidParams, `/${GATE_COMMAND} is Latch's own command`)
     if (!this.turn || this.turn.cancelled || !this.running) return { outcome: 'promptRequired' }
     // pi queues it into the running turn, after the calls in flight and before the model's next request.
-    await this.send({ type: 'steer', message: textOf.join('\n\n') }, timeoutMs, signal)
+    await this.send({ type: 'steer', ...input }, timeoutMs, signal)
     return { outcome: 'injected' }
   }
 

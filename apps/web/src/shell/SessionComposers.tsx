@@ -402,7 +402,7 @@ export function SessionComposer({
       : undefined
   const choices = leadTeam ? memberChoices(leadTeam, shell.snapshot.tasks) : undefined
   const textOnly = (attachmentDraft?.items.length ?? 0) > 0 || (mentionChoice?.refs.length ?? 0) > 0
-  const named = choices ? draftRound(submission.draft, choices) : undefined
+  const named = choices ? draftRound(submission.draft, choices, mentionChoice.refs) : undefined
   const roundDraft = named && textOnly ? { ...named, ready: false, reason: TEAM_COPY.textOnly } : named
   const teamRound = useTeamRound(leadTeam?.id, refresh)
   const roundFailure = teamRound.status.state === 'failed' && teamRound.status.key === submission.draft ? teamRound.status.reason : ''
@@ -677,7 +677,8 @@ export function SessionComposer({
         canSend={gate.kind === 'open' && sessionBlock === undefined && !submission.pending && shell.connection === 'connected'}
         canRemove={access.scopes.has('run') && shell.connection === 'connected'}
         queueControl={catalog?.features?.queueControl === true}
-        steerRunId={steer && !cancelling.has(selectedId) ? current.summary.runId : undefined}
+        steerRunId={steer ? current.summary.runId : undefined}
+        steerAttachments={current.steerAttachments}
         running={shell.active || current.approvals.length > 0}
         onRemovedUnknown={text => setToast({ text, tone: 'error' })}
         onChanged={refresh}
@@ -940,7 +941,7 @@ export function SessionComposer({
                 },
                 marks: choices.map(choice => ({
                   ...choice,
-                  media: <MemberTile harnessId={choice.harnessId} harnesses={catalog.harnesses} size={16} />,
+                  media: <MemberTile harnessId={choice.harnessId} harnesses={catalog.harnesses} size={14} />,
                 })),
                 ...(roundDraft ? { round: { ready: roundDraft.ready, ...(roundDraft.reason ? { reason: roundDraft.reason } : {}) } } : {}),
                 sending: teamRound.status.state === 'sending',
@@ -1109,6 +1110,7 @@ export function SessionComposer({
           void sendDraft(true)
         }}
         sendKey={preferences.sendKey}
+        followUpDefault={preferences.followUpDefault}
         coarse={coarse}
         run={run}
         configUnknown={configUnknownBar(
@@ -1119,7 +1121,7 @@ export function SessionComposer({
           abandonConfig,
         )}
         queueable={canQueue && !answer && (!attachmentDraft?.items.length || catalog?.features?.queueAttachments === true)}
-        steerable={steer && !answer && !attachmentDraft?.items.length && !submission.draft.includes('[conversation-ref:')}
+        steerable={steer && !answer && shell.canSteerDraft(submission.draft, !!attachmentDraft?.items.length)}
         inline={phone}
         meta={!showControls || phone ? undefined : <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />}
         // The limit arrives seconds after a turn starts and leaves with the Host's memory: last before send at every width,

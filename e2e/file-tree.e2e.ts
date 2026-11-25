@@ -8,7 +8,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost } from './helpers/host.ts'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { backToPhoneSessions, openPanelTab, openSession, settleShell } from './helpers/layout.ts'
-import { promptValue } from './helpers/prompt.ts'
+import { promptValue, setPromptSelection } from './helpers/prompt.ts'
 
 it.each([
   [390, 'light'],
@@ -252,6 +252,17 @@ it('browses a saved project before creating a session, previews and quotes real 
         expect(await host.host.bridge.listTasks()).toHaveLength(taskCount)
         expect(submissions).toHaveLength(0)
         await page.screenshot({ path: `test-results/file-tree/quoted-draft-${width}-${theme}.png`, animations: 'disabled' })
+        await input.locator('[data-source="file"]').waitFor()
+        if (width === 1440 && theme === 'dark') {
+          // Two different sources can share an editable draft, including a restored browser excerpt.
+          await setPromptSelection(input, (await promptValue(input)).length)
+          await page.keyboard.insertText('\n浏览器控制台 · localhost（页面提供的内容）\n\n```text\nError: settings panel unavailable\n```')
+          await input.locator('[data-source="console"]').waitFor()
+          expect(await input.locator('.reference-excerpt-log').innerText()).toBe('Error: settings panel unavailable')
+          await input
+            .locator('xpath=ancestor::form')
+            .screenshot({ path: 'test-results/file-tree/mixed-draft-dark.png', animations: 'disabled', caret: 'hide' })
+        }
         await input.fill('保留我的草稿')
         if (width === 390) {
           // Leaving the start screen for the list and coming back through 新建会话 keeps the draft.

@@ -780,6 +780,37 @@ const priorityMenu = (select: () => void): ActionMenuSection[] => [
 ]
 
 describe('action menu', () => {
+  it('previews alternatives without taking the editor focus, and moves into the menu on ArrowDown', async () => {
+    const screen = await render(
+      <>
+        <input aria-label="草稿" />
+        <Menu
+          previewOnHover
+          label="选择发送方式"
+          sections={[{ id: 'actions', items: [{ id: 'queue', label: '排队发送', onSelect() {} }] }]}
+          trigger={props => <button {...props}>立即发送</button>}
+        />
+      </>,
+    )
+    const editor = screen.getByRole('textbox', { name: '草稿' })
+    const trigger = screen.getByRole('button', { name: '立即发送' })
+    const item = screen.getByRole('menuitem', { name: '排队发送' })
+    await editor.click()
+    await userEvent.hover(trigger)
+    await expect.element(item).toBeVisible()
+    await expect.element(editor).toHaveFocus()
+    await userEvent.hover(editor)
+    await expect.element(trigger).toHaveAttribute('aria-expanded', 'false')
+    await userEvent.keyboard('{Tab}')
+    await expect.element(trigger).toHaveFocus()
+    await expect.element(item).toBeVisible()
+    await userEvent.keyboard('{ArrowDown}')
+    await expect.element(item).toHaveFocus()
+    await userEvent.keyboard('{Escape}')
+    await expect.element(trigger).toHaveFocus()
+    await expect.element(trigger).toHaveAttribute('aria-expanded', 'false')
+  })
+
   it('opens from its trigger with focus on the first item and puts a destructive item last, after a separator', async () => {
     const renamed = vi.fn()
     const screen = await render(

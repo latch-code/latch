@@ -47,14 +47,17 @@ export function replyQuotes(text: string): Array<{ from: number; to: number; quo
   return found
 }
 
+export function replyTextAt(target: EventTarget | null): Element | null {
+  const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null
+  return element?.closest('.transcript .message-assistant:not(.is-live) .message-text') ?? null
+}
+
 export function quoteAtSelection(sessionId: string): { quote: ReplyQuote; rect: DOMRect } | undefined {
   const selection = document.getSelection()
   if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return
   const range = selection.getRangeAt(0)
-  const host = (node: Node) =>
-    (node instanceof Element ? node : node.parentElement)?.closest('.transcript .message-assistant:not(.is-live) .message-text')
-  const body = host(range.startContainer)
-  if (!body || host(range.endContainer) !== body || body.closest('[inert], [hidden]')) return
+  const body = replyTextAt(range.startContainer)
+  if (!body || replyTextAt(range.endContainer) !== body || body.closest('[inert], [hidden]')) return
   const messageId = body.closest<HTMLElement>('[data-message-id]')?.dataset.messageId
   const text = range.toString()
   if (!messageId || !text.trim() || text.length > 4000) return

@@ -118,7 +118,7 @@ const entrySchema = z.strictObject({
   createdAt: z.number().finite(),
   taskId: taskId.optional(),
   creationRequestId: z.string().uuid().optional(),
-  claim: z.strictObject({ requestId: z.string().uuid(), sessionId: taskId.optional() }).optional(),
+  claim: z.strictObject({ requestId: z.string().uuid(), sessionId: taskId.optional(), steer: z.literal(true).optional() }).optional(),
   secret: z.boolean(),
 })
 /** What a device released (`releaseReserved`): a later request naming it hears so, rather than that it never existed. */
@@ -524,7 +524,7 @@ export class AttachmentStore {
   hasDrafts(): boolean {
     return Object.values(this.state.entries).some(entry => !entry.taskId)
   }
-  async claim(owner: string, ids: readonly string[], requestId: string, sessionId?: string): Promise<void> {
+  async claim(owner: string, ids: readonly string[], requestId: string, sessionId?: string, steer = false): Promise<void> {
     await this.mutate(async () => {
       this.refs(owner, ids, sessionId, requestId)
       const next = structuredClone(this.state)
@@ -535,8 +535,8 @@ export class AttachmentStore {
         const previous = entry.claim ?? (entry.creationRequestId ? { requestId: entry.creationRequestId } : undefined)
         if (previous && (previous.requestId !== requestId || previous.sessionId !== sessionId))
           throw new AppError(409, 'attachment-claimed', '附件已保留给另一条提交。请重试原提交，或移除附件后重新添加。')
-        if (entry.claim) continue
-        entry.claim = { requestId, ...(sessionId ? { sessionId } : {}) }
+        if (entry.claim && (!steer || entry.claim.steer)) continue
+        entry.claim = { requestId, ...(sessionId ? { sessionId } : {}), ...(steer ? { steer: true as const } : {}) }
         if (!sessionId) entry.creationRequestId = requestId
         changed = true
       }
@@ -806,7 +806,7 @@ export class AttachmentStore {
       const entry = this.state.entries[id]
       if (!entry || entry.taskId || entry.owner !== owner) return
       const claim = entry.claim ?? (entry.creationRequestId ? { requestId: entry.creationRequestId } : undefined)
-      if (claim && busy(claim.requestId))
+      if (entry.claim?.steer || (claim && busy(claim.requestId)))
         throw new AppError(409, 'attachment-in-use', '这个附件属于一条还在发送的消息，确认结果前不能移除。')
       const next = structuredClone(this.state)
       delete next.entries[id]
@@ -849,7 +849,8 @@ export class AttachmentStore {
       for (const [id, entry] of Object.entries(next.entries)) {
         const sessionId = entry.claim?.sessionId,
           named = sessionId === undefined ? undefined : listed.get(sessionId)
-        if (entry.taskId || !named || named.has(id) || entry.createdAt + ATTACHMENT_CLAIM_TTL > this.now()) continue
+        // A steer can reach the agent without a recorded acknowledgment. Only the person's explicit release gives it up.
+        if (entry.taskId || entry.claim?.steer || !named || named.has(id) || entry.createdAt + ATTACHMENT_CLAIM_TTL > this.now()) continue
         removed.push(entry)
         delete next.entries[id]
       }

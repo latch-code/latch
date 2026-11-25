@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { TaskDetail } from '@latch/protocol'
-import { FAKE_ACP_AGENT } from '@latch/testkit'
+import type { AttachmentRef, TaskDetail } from '@latch/protocol'
+import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { createRuntime } from '@latch/core'
 import { AppError, type Bridge, type HarnessPlugin, type ModelProvider } from '@latch/sdk'
+import { AttachmentStore } from '../src/attachments.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 const hosts: TestHost[] = []
@@ -13,7 +14,7 @@ afterEach(async () => {
   vi.restoreAllMocks()
   for (const host of hosts.splice(0)) await host.close()
 })
-async function fixture(steerQueued?: Bridge['steerQueued'], beforeDetail?: () => Promise<unknown> | undefined) {
+async function fixture(steerQueued?: Bridge['steerQueued'], beforeDetail?: () => Promise<unknown> | undefined, steer?: Bridge['steer']) {
   const calls: string[] = [],
     release: Array<() => void> = []
   const provider: ModelProvider = {
@@ -45,7 +46,7 @@ async function fixture(steerQueued?: Bridge['steerQueued'], beforeDetail?: () =>
     description: '',
     activate(ctx) {
       ctx.registerProvider(provider)
-      if (steerQueued)
+      if (steerQueued || steer)
         ctx.registerHarness({
           id: 'queue-driver',
           name: 'Queue driver',
@@ -59,7 +60,8 @@ async function fixture(steerQueued?: Bridge['steerQueued'], beforeDetail?: () =>
               const current = await detail(id)
               return current.summary.status === 'running' ? { ...current, steer: true } : current
             }
-            bridge.steerQueued = steerQueued
+            if (steerQueued) bridge.steerQueued = steerQueued
+            if (steer) bridge.steer = steer
             return bridge
           },
         })
@@ -74,7 +76,7 @@ async function fixture(steerQueued?: Bridge['steerQueued'], beforeDetail?: () =>
     body: {
       prompt: 'First',
       requestId: randomUUID(),
-      ...(steerQueued ? { harnessId: 'queue-driver', mode: 'chat', model: { providerId: provider.id, model: 'fake' } } : {}),
+      ...(steerQueued || steer ? { harnessId: 'queue-driver', mode: 'chat', model: { providerId: provider.id, model: 'fake' } } : {}),
     },
   })
   await expect.poll(() => calls.length).toBe(1)
@@ -141,6 +143,31 @@ describe('queue HTTP boundaries', () => {
     })
     expect(delivered).toEqual(['During the turn'])
     expect(calls).toEqual(['First'])
+  })
+  it('keeps an unconfirmed direct steer from being sent again as a queued or plain message', async () => {
+    let finish!: () => void
+    const held = new Promise<void>(resolve => (finish = resolve))
+    const delivered: string[] = []
+    // @ts-expect-error A JavaScript driver can omit the acknowledgment after delivery.
+    const steer: NonNullable<Bridge['steer']> = async (_sessionId, text) => {
+      delivered.push(text)
+      await held
+    }
+    const { owner, path, detail } = await fixture(undefined, undefined, steer)
+    const body = { prompt: 'During this turn', requestId: randomUUID() }
+    const send = (intent: { queue?: boolean; steer?: boolean }) => owner.request(path + '/prompt', { body: { ...body, ...intent } })
+    const first = send({ steer: true })
+    try {
+      await vi.waitFor(() => expect(delivered).toEqual([body.prompt]))
+      expect(await (await send({ queue: true })).json()).toMatchObject({ error: 'request-conflict' })
+    } finally {
+      finish()
+    }
+    expect(await (await first).json()).toMatchObject({ error: 'steer-unknown' })
+    expect(await (await send({ steer: true })).json()).toMatchObject({ error: 'steer-unknown' })
+    expect(await (await send({})).json()).toMatchObject({ error: 'request-conflict' })
+    expect(delivered).toEqual([body.prompt])
+    expect((await detail()).queue ?? []).toEqual([])
   })
   it('applies only the order a run device saw, audits once, and dispatches that order on the next completion', async () => {
     const { host, owner, phone, calls, release, path, detail } = await fixture()
@@ -313,6 +340,85 @@ describe('queue HTTP boundaries', () => {
   })
 })
 describe('steering a running turn over HTTP', () => {
+  async function upload(device: TestDevice, harnessId: string, value: string): Promise<AttachmentRef> {
+    const bytes = Buffer.from(value)
+    const { attachment } = await device.json<{ attachment: AttachmentRef }>('attachments', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/octet-stream',
+        'x-latch-attachment': Buffer.from(
+          JSON.stringify({ requestId: randomUUID(), name: 'note.txt', size: bytes.length, selection: { harnessId } }),
+        ).toString('base64url'),
+      },
+      rawBody: bytes,
+    })
+    return attachment
+  }
+  it('publishes attachment-only and queued steers once, preserving the original upload across edits and devices', async () => {
+    const host = await startTestHost()
+    hosts.push(host)
+    const owner = await host.enroll({ listener: 'unix' })
+    const sender = await host.enroll({ listener: 'unix' })
+    const harnessId = 'steer-files'
+    await owner.confirmedJson('agents', {
+      body: {
+        id: harnessId,
+        name: 'Fixture',
+        command: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        env: { FAKE_ACP_CAPS: 'steer,steerAttachments,embedded' },
+      },
+    })
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      body: { harnessId, prompt: 'steerable hold', requestId: randomUUID() },
+    })
+    const path = `tasks/${sessionId}`
+    const detail = () => owner.json<TaskDetail>(path)
+    await expect.poll(async () => (await detail()).steerAttachments).toBe(true)
+    const direct = await upload(sender, harnessId, 'Direct contents')
+    const body = { prompt: '', requestId: randomUUID(), steer: true, attachmentIds: [direct.id] }
+    expect((await owner.request(`${path}/prompt`, { body })).status).toBe(404)
+    const send = () => sender.json(`${path}/prompt`, { body })
+    expect(await Promise.all([send(), send()])).toEqual([{ steered: true }, { steered: true }])
+    const queued = await upload(sender, harnessId, 'Queued contents')
+    const queue = (prompt: string, attachmentIds?: string[]) =>
+      sender.json<{ queued: { id: string } }>(`${path}/prompt`, { body: { prompt, requestId: randomUUID(), queue: true, attachmentIds } })
+    const first = await queue('For the next turn')
+    const { queued: entry } = await queue('', [queued.id])
+    await owner.json(`${path}/queue/${entry.id}`, { method: 'PATCH', body: { text: 'Edited' } })
+    const running = await detail()
+    expect(running.queue?.[1]).toMatchObject({ id: entry.id, attachmentCount: 1, canSteer: true, contentRevision: 1 })
+    const steer = () => owner.json(`${path}/queue/${entry.id}/steer`, { body: { runId: running.summary.runId, contentRevision: 1 } })
+    expect(await Promise.all([steer(), steer()])).toEqual([{ steered: true }, { steered: true }])
+    const latest = await detail()
+    expect(latest.queue?.map(item => item.id)).toEqual([first.queued.id])
+    expect(latest.messages.filter(message => message.steered)).toMatchObject([
+      { text: '', requestId: body.requestId, attachments: [direct] },
+      { text: 'Edited', queuedAt: running.queue![1]!.queuedAt, attachments: [queued] },
+    ])
+    for (const [ref, content] of [
+      [direct, 'Direct contents'],
+      [queued, 'Queued contents'],
+    ] as const) {
+      expect(await readFile(join(host.dataDir, 'attachments', sessionId, ref.id), 'utf8')).toBe(content)
+    }
+    // A reduction while the driver prepares the bytes must win before anything reaches the running agent.
+    const narrowed = await upload(sender, harnessId, 'Authority changed')
+    const read = AttachmentStore.prototype.read
+    vi.spyOn(AttachmentStore.prototype, 'read').mockImplementationOnce(async function (this: AttachmentStore, ref) {
+      const contents = await read.call(this, ref)
+      await host.host.security.devices.setScopes(sender.id, { dataScope: 'work' }, { listener: 'host' }, 'none')
+      return contents
+    })
+    const refused = await sender.request(`${path}/prompt`, { body: { ...body, attachmentIds: [narrowed.id], requestId: randomUUID() } })
+    expect(await refused.json()).toMatchObject({ error: 'device-revoked' })
+    expect((await detail()).messages.filter(message => message.steered)).toHaveLength(2)
+    const index = JSON.parse(await readFile(join(host.dataDir, 'attachments', 'index.json'), 'utf8'))
+    expect(index.entries[narrowed.id].claim).toBeUndefined()
+    await owner.json(`${path}/cancel`, { body: { requestId: randomUUID() } })
+    expect(await send()).toEqual({ steered: true })
+    expect(await steer()).toEqual({ steered: true })
+  })
   it('adds a phone message to the running turn when the agent takes it, and queues it when it cannot', async () => {
     const host = await startTestHost()
     hosts.push(host)
@@ -337,6 +443,14 @@ describe('steering a running turn over HTTP', () => {
     })
     const path = `tasks/${created.sessionId}`
     await expect.poll(async () => (await phone.json<TaskDetail>(path)).steer).toBe(true)
+    const file = await upload(owner, 'steer-agent', 'Wait for the next turn')
+    const request = { prompt: '', requestId: randomUUID(), steer: true, attachmentIds: [file.id] }
+    const { queued } = await owner.json<{ queued: { id: string } }>(`${path}/prompt`, { body: request })
+    expect(await owner.json(`${path}/prompt`, { body: request })).toEqual({ queued })
+    const queuedDetail = await owner.json<TaskDetail>(path)
+    expect(queuedDetail.queue?.[0]?.canSteer).toBeUndefined()
+    expect(queuedDetail.queue?.[0]?.attachmentCount).toBe(1)
+    await owner.json(`${path}/queue/${queued.id}`, { method: 'DELETE' })
     const body = { prompt: 'check the tests too', requestId: randomUUID(), steer: true }
     expect(await phone.json(`${path}/prompt`, { method: 'POST', body })).toEqual({ steered: true })
     expect(await phone.json(`${path}/prompt`, { method: 'POST', body })).toEqual({ steered: true })

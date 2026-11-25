@@ -90,6 +90,26 @@ describe('a team’s members in the lead’s input', () => {
     expect(memberMarks('a @二 b @一', choices).map(mark => mark.itemId)).toEqual(['itm_b', 'itm_a'])
   })
 
+  it('routes only an address outside quoted material and preserves the material sent with it', () => {
+    const choices = memberChoices(team([member('itm_a', '一', 'done', 's1'), member('itm_b', '二', 'done', 's2')]), [
+      idle('s1'),
+      idle('s2'),
+    ])
+    const file = { root: 'work', path: 'log @一 output.txt' }
+    const sources = [
+      '[引用回复 s/m@0]\n> 联系 @一 讨论',
+      '终端 1\n```text\noutput   @一  value\n    indented\n```',
+      '浏览器控制台 · https://test/ @一 网页（页面提供的内容）\n\n```text\nlog @一 entry\n```',
+      '交回结果：\n> @一 done',
+      '[conversation-ref:00000000-0000-4000-8000-000000000001] 任务 @一 清单 · read_conversation_reference',
+      '> @一 legacy quote',
+      '~~~~js\n// @一 literal\n~~~~',
+      '@work:log @一 output.txt',
+    ].join('\n\n')
+    expect(draftRound(sources, choices, [file])).toBeUndefined()
+    expect(draftRound('@二 ' + sources, choices, [file])).toEqual({ itemIds: ['itm_b'], prompt: sources, ready: true })
+  })
+
   it('draws a chip as a mark where it stands on its own', () => {
     const marks = promptMarks('@一 再看 @一x @二', {
       members: [
