@@ -478,8 +478,8 @@ private struct ConsultationPermission: View {
             Toggle("允许主动联系其他 Agent", isOn: Binding(get: { on }, set: setPermission))
                 .font(.body.weight(.medium))
                 .disabled(locked)
-            Text(!supported ? "当前运行方式不支持主动联系其他 Agent。" : legacy ? "当前只可联系内置 Agent。允许后，它也可在你的聊天回合询问本机已确认的 DeepSeek Harness。DeepSeek 以你的电脑账户运行，只回复文字。"
-                        : "你直接发消息时，它每轮可询问一位本机 Agent。已确认的 DeepSeek Harness 以你的电脑账户运行，本轮只回复文字。")
+            Text(!supported ? "当前运行方式不支持主动联系其他 Agent。" : legacy ? "当前只可联系内置 Agent。允许后，它也可在你发消息时询问同一台电脑上已确认的 DeepSeek Harness。DeepSeek 以你的电脑账户运行，只回复文字。"
+                        : "你直接发消息时，它每轮可询问同一台电脑上的一位 Agent。已确认的 DeepSeek Harness 以你的电脑账户运行，本轮只回复文字。")
                 .font(.caption).foregroundStyle(PhoneTheme.muted)
             if legacy && supported {
                 Button("允许联系 DeepSeek Harness") { setPermission(true) }.disabled(locked)
