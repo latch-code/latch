@@ -403,16 +403,21 @@ struct QueueChips: View {
     }
 }
 
-struct AbandonQueueChange: View {
+struct AbandonSessionWrite: View {
     @EnvironmentObject private var model: PhoneModel
     let pending: NativePendingWrite
     @State private var confirming = false
     var body: some View {
-        Button("放弃重试") { confirming = true }
+        if let receipt = pending.teamRound, PhoneSessions.mayReadBody(snapshot: model.snapshot, sessionId: receipt.session) {
+            Button("查看带队会话") { Task { await model.openSession(receipt.session) } }
+                .font(PhoneTheme.caption).disabled(model.busy || !model.transportReady)
+        }
+        let abandon = pending.teamRound == nil ? "放弃重试" : "结束等待"
+        Button(abandon) { confirming = true }
             .font(PhoneTheme.caption).disabled(model.busy || !model.hasContentWindow)
-            .confirmationDialog("放弃重试这次队列操作？", isPresented: $confirming) {
-                Button("放弃重试", role: .destructive) { Task { await model.abandonQueueChange(pending) } }
+            .confirmationDialog(pending.teamRound == nil ? "放弃重试这次队列操作？" : "结束等待这次派活？", isPresented: $confirming) {
+                Button(abandon, role: .destructive) { Task { await model.abandonSessionWrite(pending) } }
                 Button("取消", role: .cancel) {}
-            } message: { Text("电脑可能已经处理。请核对队列和会话记录，已完成的操作不会撤回。") }
+            } message: { Text(pending.teamRound == nil ? "电脑可能已经处理。请核对队列和会话记录，已完成的操作不会撤回。" : "电脑可能已经派活。请查看成员的会话记录，已经开始的任务会继续运行。") }
     }
 }

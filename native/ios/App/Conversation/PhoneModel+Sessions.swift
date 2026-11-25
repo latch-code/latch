@@ -98,7 +98,34 @@ extension PhoneModel {
     }
     /** Back to the list; the window stays open for the next conversation. */
     func closeSession() { sessionId = nil; detail = .null; contentGeneration = UUID(); PreviewFiles.clear(); startEvents() }
-    func start(_ choice: PhoneStartChoice, prompt: String, attachments: [String] = []) async -> Bool {
+    func findMentionFiles(_ query: String, in scope: PhoneMentionScope) async throws -> PhoneFileMatches {
+        let host = generation, selection = contentGeneration, window = privateSnapshot.epoch
+        func current() -> Bool {
+            guard host == generation, selection == contentGeneration, window == privateSnapshot.epoch,
+                  connected, hasContentWindow, scope.offered(in: snapshot) else { return false }
+            if case let .session(id) = scope { return id == sessionId }
+            return true
+        }
+        guard current() else { throw NativeFailure.contextChanged }
+        #if LATCH_SCREENS
+        if staged { return try ScreensStage.fileMatches(query) }
+        #endif
+        guard let workspace, let access = currentFileAccess else { throw NativeFailure.expired }
+        let matches = try await workspace.findMentionFiles(query, in: scope, access: access)
+        try Task.checkCancellation()
+        guard current(), currentFileAccess?.transport === access.transport, currentFileAccess?.lease.sameWindow(as: access.lease) == true else {
+            throw NativeFailure.contextChanged
+        }
+        return matches
+    }
+    func attachStartFiles(_ files: [PhoneFileMatches.Hit], to fields: inout [String: NativeJSON]) throws {
+        guard !files.isEmpty else { return }
+        guard fields["mode"]?.string == "agent", let project = fields["workspaceId"]?.string, let harness = fields["harnessId"]?.string else {
+            throw NativeFailure.forbidden
+        }
+        try PhoneMentionScope.project(workspace: project, harness: harness).attach(files, to: &fields, snapshot: snapshot)
+    }
+    func start(_ choice: PhoneStartChoice, prompt: String, attachments: [String] = [], fileRefs: [PhoneFileMatches.Hit] = []) async -> Bool {
         guard transportReady else { return false }
         let current = generation
         do {
@@ -108,6 +135,7 @@ extension PhoneModel {
             guard current == generation else { return false }
             guard pending.isEmpty else { throw NativeFailure.resultUnknown }
             var fields = PhoneStart.newSessionFields(snapshot["catalog"], choice: choice, prompt: prompt)
+            try attachStartFiles(fileRefs, to: &fields)
             if !attachments.isEmpty { fields["attachmentIds"] = .array(attachments.map { .string($0) }) }
             let done = await submit(try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: fields))
             if done, sessionId != nil { startEvents() }
@@ -116,7 +144,7 @@ extension PhoneModel {
     }
     /** `steer`: into the running turn, where the Harness takes that now. A message after 清空上下文 starts a new context; it is never queued or steered. */
     /** `target`: with attachments, the session the send began in; the message goes nowhere else. */
-    @discardableResult func send(text: String, queue: Bool = false, steer: Bool = false, nextModel: PhoneModelChoice? = nil, attachments: [String] = [], target: String?? = nil, takingDraft: Bool = false) async -> Bool {
+    @discardableResult func send(text: String, queue: Bool = false, steer: Bool = false, nextModel: PhoneModelChoice? = nil, attachments: [String] = [], fileRefs: [PhoneFileMatches.Hit] = [], target: String?? = nil, takingDraft: Bool = false) async -> Bool {
         guard transportReady else { return false }
         if let target, target != sessionId { if let key = target { attachTrays[key, default: PhoneAttachTray()].note = PhoneAttachSend.movedWords }; return false }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty, text.count <= 16_000,
@@ -135,13 +163,39 @@ extension PhoneModel {
             else if sessionId == nil { fields["mode"] = .string("agent") }
             let fresh = sessionId.map { clearing.contains($0) && !queue && !steer } ?? false
             if fresh { fields["freshContext"] = .bool(true) }
+            if !fileRefs.isEmpty {
+                guard let selected else { throw NativeFailure.forbidden }
+                try PhoneMentionScope.session(selected).attach(fileRefs, to: &fields, snapshot: snapshot)
+            }
             if !attachments.isEmpty { fields["attachmentIds"] = .array(attachments.map { .string($0) }) }
             let sent = await submit(try NativePendingWrite(method: .post, path: path, fields: fields), takingDraft: takingDraft)
             if sent, fresh, pending.isEmpty, let selected { clearing.remove(selected) }
             return sent
         } catch { report(error); return false }
     }
+    func sendTeamRound(_ round: PhoneMemberMentions.Round, draft: String, session: String, hasMaterials: Bool) async -> Bool {
+        guard round.reason == nil, sessionId == session, detail["summary"]["id"].string == session, pending.isEmpty,
+              PhoneMemberMentions(snapshot: snapshot, session: session)?.round(in: draft, hasMaterials: hasMaterials) == round else { return false }
+        do {
+            let receipt = try PhoneTeamRoundReceipt(session: session, team: round.teamId, opening: heldDrafts.opening, draft: draft)
+            let request = try receipt.write(itemIds: round.itemIds, prompt: round.prompt)
+            let reading = contentGeneration
+            guard canRun, hasContentWindow, privateSnapshot.confirmed, let transport = installedTransport else { return false }
+            let outcome = await write(request, on: transport) {
+                self.sessionId == session && self.contentGeneration == reading
+                    && PhoneMemberMentions(snapshot: self.snapshot, session: session)?.round(in: draft, hasMaterials: hasMaterials) == round
+            }
+            switch outcome {
+            case .done: receipt.clearSentDraft(in: heldDrafts); return true
+            case let .refused(refusal): error = refusal.message.isEmpty ? "未能派给团队成员" : refusal.message
+            case let .unknown(refusal): if let refusal, !refusal.message.isEmpty { error = "结果未确认 · " + refusal.message }
+            case let .failed(problem): if !(problem is CancellationError) { report(problem) }
+            }
+            return false
+        } catch { report(error); return false }
+    }
     @discardableResult func submit(_ request: NativePendingWrite, takingDraft: Bool = false) async -> Bool {
+        if request.teamRound != nil { return false }
         guard let workspace, transportReady, !busy else { return false }
         let current = generation, initialReading = contentGeneration
         do { try await ensureVerified() } catch { report(error); return false }
@@ -241,9 +295,9 @@ extension PhoneModel {
         }
         error = refusal.message.isEmpty ? "暂时无法完成，请稍后重试。" : refusal.message
     }
-    /** A person releases this phone's pending queue write. The Host keeps its own delivery record. */
-    func abandonQueueChange(_ request: NativePendingWrite) async {
-        guard let workspace, !busy, hasContentWindow, PhoneQueueControl(request) != nil,
+    /** A person releases this phone's pending queue change or team round. The Host keeps its delivery record. */
+    func abandonSessionWrite(_ request: NativePendingWrite) async {
+        guard let workspace, !busy, hasContentWindow, request.teamRound != nil || PhoneQueueControl(request) != nil,
               pending.contains(where: { $0.requestId == request.requestId }) else { return }
         let current = generation
         busy = true; defer { if generation == current { busy = false } }

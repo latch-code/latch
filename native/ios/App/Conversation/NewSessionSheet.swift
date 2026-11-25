@@ -23,6 +23,7 @@ struct NewSessionSheet: View {
     @State private var attachSource: AttachSource?
     @State private var focused = false
     @StateObject private var slash = SlashComposerState()
+    @StateObject private var mentionState = MentionState()
     @State private var slashSpace: CGFloat = 198
     @State private var modelPicker = false
     @State private var modelQuery = ""
@@ -37,6 +38,12 @@ struct NewSessionSheet: View {
         if PhoneStart.usesServices(harness), !PhoneStart.models(catalog).isEmpty { value.actions.insert(.model) }
         value.actionReasons[.new] = "已经在新会话里"
         return value
+    }
+    private var mentions: MentionComposer {
+        let scope = MentionComposer.project(plan?.choice ?? choice)
+        return MentionComposer(model: model, state: mentionState, editor: slash, text: $prompt,
+            context: MentionContext(model, scope: scope, owner: draftKey),
+            enabled: focused && slashSpace >= 44 && slashContext.bodyOpen && !slashContext.pending)
     }
     private var slashMenu: PhoneSlashMenu? { slashSpace < 44 ? nil : slash.menu(prompt, commands: [], context: slashContext, focused: focused) }
     private var slashRead: SlashReadKey { SlashReadKey(model: model, enabled: focused && slashContext.bodyOpen, retry: slash.retry) }
@@ -90,14 +97,15 @@ struct NewSessionSheet: View {
                     AttachmentRows(key: attachKey, selection: attachSelection, inset: 0).padding(.vertical, 2)
                 }
                 if let slashReason { Text(slashReason).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .leading) }
+                MentionSuggestions(input: mentions, maximumHeight: slashSpace)
                 if let menu = slashMenu {
                     SlashSuggestions(menu: menu, active: slash.active(menu, text: prompt), engine: PhoneStart.engineName(harness), mark: PhoneStart.mark(harness), reportedCommands: 0,
                         loading: slash.loading, failure: slash.failure, maximumHeight: slashSpace, retry: { slash.retry += 1 },
                         choose: { slash.complete(menu, option: $0, text: $prompt, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending) })
                 }
-                LocalTextEditor(text: $prompt, placeholder: "要做什么？", maximumLines: slashMenu == nil ? 6 : 3, focused: $focused,
+                LocalTextEditor(text: $prompt, placeholder: "要做什么？", maximumLines: slashMenu == nil && !mentions.isOpen ? 6 : 3, focused: $focused,
                     selection: $slash.selection, composing: $slash.composing, selectionRequest: $slash.selectionRequest,
-                    commandKeys: slashKeys, onCommand: slashKey, suffixHint: slash.hint(prompt, commands: [], enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending))
+                    mentionMarkers: mentions.markers, commandKeys: slashKeys, onCommand: slashKey, suffixHint: slash.hint(prompt, commands: [], enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending))
                     .overlay(alignment: .topLeading) { if prompt.isEmpty { Text("要做什么？").font(PhoneTheme.body).foregroundStyle(PhoneTheme.faint).allowsHitTesting(false).accessibilityHidden(true) } }
                     .padding(14).padding(.bottom, 40).frame(minHeight: 110, alignment: .topLeading)
                     .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 16))
@@ -114,7 +122,9 @@ struct NewSessionSheet: View {
                     HStack {
                         Label(PhonePending.words(pending), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                         Spacer()
-                        Button("重试这次提交") { Task { if PhoneHistory.isImport(pending) { await model.retryPending(pending); if model.pending.isEmpty { dismiss() } } else if await model.submit(pending), model.pending.isEmpty { dismiss() } } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                        if pending.teamRound == nil {
+                            Button("重试这次提交") { Task { if PhoneHistory.isImport(pending) { await model.retryPending(pending); if model.pending.isEmpty { dismiss() } } else if await model.submit(pending), model.pending.isEmpty { dismiss() } } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                        }
                         if PhonePending.prompt(pending) != nil, PhonePending.kind(pending) == .start {
                             Button("放弃这次提交") {
                                 Task { if case let .text(back, _) = await model.abandonPrompt(pending) { prompt = PhonePending.joined(prompt, back) } }
@@ -154,6 +164,7 @@ struct NewSessionSheet: View {
         }
         .onChange(of: prompt) { _, value in slash.changed(value) }
         .onChange(of: model.privateSnapshot.epoch) { _, _ in slash.clear(); modelPicker = false }
+        .onChange(of: mentions.context) { _, _ in mentionState.clear() }
         .task(id: slashRead) { await slash.load(model, key: slashRead) }
         // The sheet goes once the cover has; the session opens once both have (InboxView's onDismiss).
         .fullScreenCover(item: $importing, onDismiss: { if model.openAfterDismiss != nil { dismiss() } }) { scope in
@@ -167,7 +178,7 @@ struct NewSessionSheet: View {
         // Closing the sheet lets go of what was attached here; the Host's drafts go too.
         // Only a real dismiss lets go: not while starting or opening the window for it, an unconfirmed start, or 接入已有会话 over it.
         .onDisappear {
-            slash.clear()
+            slash.clear(); mentionState.clear()
             if !delivered, model.generation == openedHost, model.privateSnapshot.epoch == openedContent,
                model.verifiedUntil.map({ $0 > Date() }) == true { model.holdDraft(prompt, for: draftKey) }
             if PhoneAttachments.dropsOnClose(key: attachKey, pending: model.pending, starting: starting, verifying: model.verifying, covered: importing != nil) {
@@ -199,6 +210,7 @@ struct NewSessionSheet: View {
             modelQuery = argument; modelPicker = true; prompt = ""; slash.clear(); return
         }
         starting = true
+        let refs = mentions.references
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines), chosen = choice, source = fork, forkPlan = plan
         let host = model.generation, content = model.privateSnapshot.epoch, reading = model.contentGeneration
         Task {
@@ -213,8 +225,9 @@ struct NewSessionSheet: View {
                 model.endAttachmentSend(attachKey, owner: submission); starting = false; return
             }
             let started: Bool
-            if let source { started = if let forkPlan { await model.startFork(source, plan: forkPlan, prompt: text) } else { false } }
-            else { started = await model.start(chosen, prompt: text, attachments: ids) }
+            if let source { started = if let forkPlan { await model.startFork(source, plan: forkPlan, prompt: text, fileRefs: refs) } else { false } }
+            else { started = await model.start(chosen, prompt: text, attachments: ids, fileRefs: refs) }
+            if started { mentionState.clear() }
             delivered = started
             model.endAttachmentSend(attachKey, owner: submission)
             starting = false
@@ -222,7 +235,7 @@ struct NewSessionSheet: View {
         }
     }
     private var slashKeys: [String] {
-        var keys = canStart ? ["submit"] : []
+        var keys = mentions.keys + (canStart ? ["submit"] : [])
         guard let menu = slashMenu else { return keys }
         keys.append(UIKeyCommand.inputEscape)
         if menu.options.contains(where: { $0.unavailable == nil }) { keys += [UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow] }
@@ -231,6 +244,7 @@ struct NewSessionSheet: View {
     }
     private func slashKey(_ key: String) {
         guard !slash.composing else { return }
+        if mentions.handle(key) { return }
         if key == "submit" { if canStart { start() }; return }
         guard let menu = slashMenu else { return }
         if key == UIKeyCommand.inputEscape { slash.dismiss(prompt); return }

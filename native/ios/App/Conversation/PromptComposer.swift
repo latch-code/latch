@@ -45,6 +45,7 @@ struct PromptComposer: View {
     private var sending: Bool { sendID != nil }
     @State private var pasteID: UUID?
     @StateObject private var slash = SlashComposerState()
+    @StateObject private var mentionState = MentionState()
     @State private var slashSpace: CGFloat = 198
     @State private var slashControl: SlashControlRequest?
     @State private var slashStart: SlashStartDraft?
@@ -63,6 +64,12 @@ struct PromptComposer: View {
         if value.projectId != nil, PhoneReview.readsTurns(model.snapshot) { value.actions.insert(.changes) }
         return value
     }
+    private var mentions: MentionComposer {
+        let scope = draftId.map(PhoneMentionScope.session)
+        return MentionComposer(model: model, state: mentionState, editor: slash, text: draftText,
+            context: MentionContext(model, scope: scope, owner: draftId),
+            enabled: focused && slashSpace >= 44 && slashContext.bodyOpen && !slashContext.pending)
+    }
     private var slashMenu: PhoneSlashMenu? { slashSpace < 44 ? nil : slash.menu(text, commands: slashCommands, context: slashContext, focused: focused) }
     private var slashRead: SlashReadKey { SlashReadKey(model: model, enabled: focused && slashContext.bodyOpen, retry: slash.retry) }
     private var slashReason: String? {
@@ -78,7 +85,16 @@ struct PromptComposer: View {
     private var harness: NativeJSON { model.engineInfo(model.currentSummary["harnessId"].string) }
     private var attachKey: String? { draftId.flatMap { model.sessionId == $0 ? $0 : nil } }
     private var attachments: PhoneAttachTray { attachKey.map { model.tray($0) } ?? PhoneAttachTray() }
+    private var hasRoundMaterials: Bool {
+        !attachments.isEmpty || !mentions.references.isEmpty || rawDraft.wrappedValue.contains("[conversation-ref:")
+    }
+    private var memberRound: PhoneMemberMentions.Round? {
+        guard gate == nil, !drawerOpen, PhoneSlash.actionOf(text) == nil, text.contains("@") else { return nil }
+        return mentions.team?.round(in: rawDraft.wrappedValue, hasMaterials: hasRoundMaterials)
+    }
     private var heldBack: String? {
+        if let round = memberRound { return round.reason }
+        if rejecting == nil, running, !mentions.references.isEmpty { return "本轮结束后才能发送文件引用" }
         if followUp == .queue && model.canQueueAttachments { return nil }
         return PhoneAttachments.heldBack(followUp, running: running && rejecting == nil, count: attachments.items.count)
     }
@@ -108,6 +124,7 @@ struct PromptComposer: View {
         if rejecting == nil, PhoneSlash.actionOf(text) != nil {
             if case .open = PhoneSlash.action(text, context: slashContext) { return !slash.composing }; return false
         }
+        if let round = memberRound { return round.reason == nil && !model.busy && model.pending.isEmpty && !slash.composing }
         let attached = !attachments.isEmpty && rejecting == nil
         return (!trimmed.isEmpty || attached) && model.canRun && !model.busy && !slash.composing && model.pending.isEmpty && !noteTooLong
             && (!running || rejecting != nil || followUp != .none) && heldBack == nil
@@ -122,8 +139,8 @@ struct PromptComposer: View {
                     if PhonePending.retried(pending, at: draftId.map { .session($0) } ?? .list) {
                         Button("重试这次提交") { Task { if PhoneHistory.isImport(pending) { await model.retryPending(pending) } else { await model.submit(pending) } } }.font(PhoneTheme.caption).disabled(model.busy || !model.transportReady)
                     }
-                    if PhoneQueueControl(pending) != nil, let draftId, PhonePending.kind(pending) == .session(id: draftId) {
-                        AbandonQueueChange(pending: pending)
+                    if pending.teamRound != nil || PhoneQueueControl(pending) != nil, let draftId, PhonePending.kind(pending) == .session(id: draftId) {
+                        AbandonSessionWrite(pending: pending)
                     }
                     if PhonePending.prompt(pending) != nil, let draftId, PhonePending.kind(pending) == .session(id: draftId) {
                         Button("放弃这次提交") { Task { await abandon(pending) } }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).disabled(model.busy)
@@ -148,6 +165,7 @@ struct PromptComposer: View {
                 Text("告诉 Agent 的话最多 \(PhoneConversation.rejectionNoteLimit) 个字").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
             }
             if let slashReason { Text(slashReason).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16) }
+            MentionSuggestions(input: mentions, maximumHeight: slashSpace).padding(.horizontal, 12)
             if let menu = slashMenu {
                 SlashSuggestions(menu: menu, active: slash.active(menu, text: text), engine: engine,
                     mark: model.engineMark(model.currentSummary["harnessId"].string), reportedCommands: slashCommands.count, loading: slash.loading, failure: slash.failure,
@@ -169,9 +187,10 @@ struct PromptComposer: View {
         .onAppear { insert() }
         // 加入对话 and 带入输入框 put text after what is written, never send it.
         .onChange(of: draftId.flatMap { model.draftInserts[$0] }) { _, value in if value != nil { insert() } }
-        .onDisappear { pasteID = nil; slash.clear() }
+        .onDisappear { pasteID = nil; slash.clear(); mentionState.clear() }
         .onChange(of: text) { _, value in slash.changed(value) }
         .onChange(of: model.privateSnapshot.epoch) { _, _ in sendID = nil; pasteID = nil; choosingReference = false; slash.clear(); slashControl = nil; slashStart = nil }
+        .onChange(of: mentions.context) { _, _ in mentionState.clear() }
         .task(id: slashRead) { await slash.load(model, key: slashRead) }
         .sheet(isPresented: $choosingReference) {
             if let id = draftId, model.hasContentWindow, model.detail["canReferenceConversation"].bool { ConversationReferenceSources(target: id) }
@@ -236,9 +255,9 @@ struct PromptComposer: View {
         }
     }
     private var editor: some View {
-        let input = LocalTextEditor(text: draftText, placeholder: hint, maximumLines: slashMenu == nil ? 6 : 3, focused: $focused,
+        let input = LocalTextEditor(text: draftText, placeholder: hint, maximumLines: slashMenu == nil && !mentions.isOpen ? 6 : 3, focused: $focused,
             selection: $slash.selection, composing: $slash.composing, selectionRequest: $slash.selectionRequest,
-            commandKeys: slashKeys, onCommand: slashKey,
+            mentionMarkers: mentions.markers, commandKeys: slashKeys, onCommand: slashKey,
             suffixHint: slash.hint(text, commands: slashCommands, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending),
             onPasteImages: imagePasteHandler)
         return input.overlay(alignment: .topLeading) { if text.isEmpty { PromptHint(text: hint) } }
@@ -280,19 +299,20 @@ struct PromptComposer: View {
     /** Stop remains the primary action only while there is nothing this phone can send to the next turn. */
     @ViewBuilder private var action: some View {
         if running && trimmed.isEmpty && (rejecting != nil || !model.canQueueAttachments || (attachments.isEmpty && pasteID == nil)) { stopButton(quiet: drawerOpen) }
-        else if running && rejecting == nil && followUp != .none && PhoneSlash.actionOf(text) == nil {
-            let steer = followUp == .steer
-            Button { send() } label: {
-                Text(steer ? "追加" : "排队").font(.system(size: 14, weight: .semibold)).foregroundStyle(canSend ? Color.white : PhoneTheme.faint)
+        else if (memberRound != nil && !hasRoundMaterials) || (memberRound == nil && running && rejecting == nil && followUp != .none && PhoneSlash.actionOf(text) == nil) {
+            let round = memberRound, steer = followUp == .steer
+            let label = round != nil ? "派给成员" : steer ? "追加" : "排队"
+            Button { if let round { dispatch(round) } else { send() } } label: {
+                Text(label).font(.system(size: 14, weight: .semibold)).foregroundStyle(canSend ? Color.white : PhoneTheme.faint)
                     .padding(.horizontal, 14).frame(height: 36).background(canSend ? PhoneTheme.accent : PhoneTheme.bubble, in: Capsule())
                     .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(steer ? "追加到本轮" : "排队发送")
+            }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(round != nil ? label : steer ? "追加到本轮" : "排队发送")
         } else {
             Button { send() } label: {
                 Image(systemName: "arrow.up").font(.system(size: 15, weight: .semibold)).foregroundStyle(canSend ? Color.white : PhoneTheme.faint)
                     .frame(width: 36, height: 36).background(canSend ? PhoneTheme.accent : PhoneTheme.bubble, in: Circle())
                     .frame(width: 44, height: 44).contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(running ? "排队发送" : "发送")
+            }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(memberRound != nil ? "派给成员" : running ? "排队发送" : "发送")
         }
     }
     /** While a drawer waits on you, stop steps back without going away. */
@@ -312,12 +332,23 @@ struct PromptComposer: View {
         }.buttonStyle(.plain).disabled(sending || model.stoppingCurrent || !model.transportReady).accessibilityLabel(model.stoppingCurrent ? "正在停止" : "停止")
     }
     private var canQueueInstead: Bool {
-        followUp == .steer && model.canQueueCurrent && !trimmed.isEmpty && rejecting == nil && PhoneSlash.actionOf(text) == nil
+        followUp == .steer && model.canQueueCurrent && !trimmed.isEmpty && rejecting == nil && PhoneSlash.actionOf(text) == nil && memberRound == nil
+    }
+    private func dispatch(_ round: PhoneMemberMentions.Round) {
+        guard let target = draftId, round == memberRound, round.reason == nil, canSend else { return }
+        let input = rawDraft.wrappedValue, submission = UUID(), context = mentions.context, materials = hasRoundMaterials
+        sendID = submission
+        Task {
+            defer { if sendID == submission { sendID = nil } }
+            guard sendID == submission, mentions.context == context, model.sessionId == target else { return }
+            _ = await model.sendTeamRound(round, draft: input, session: target, hasMaterials: materials)
+        }
     }
     private func send() { send(queueInstead: false) }
     private func send(queueInstead: Bool) {
         guard !queueInstead || canQueueInstead else { return }
         guard let target = draftId, model.sessionId == target, gate == nil, canSend else { return }
+        if let round = memberRound { dispatch(round); return }
         if rejecting == nil {
             switch PhoneSlash.action(text, context: slashContext) {
             case .text: break
@@ -328,7 +359,7 @@ struct PromptComposer: View {
         let input = rawDraft.wrappedValue, reject = rejecting, next: PhoneFollowUp = queueInstead ? .queue : followUp
         let queue = running && reject == nil && next == .queue, steer = running && reject == nil && next == .steer
         // The send's target is fixed now: after waiting for uploads it goes to this session or nowhere.
-        let chosen = nextModel, key = attachKey
+        let chosen = nextModel, key = attachKey, refs = mentions.references
         let host = model.generation, reading = model.contentGeneration, window = model.privateSnapshot.epoch
         let submission = UUID()
         sendID = submission
@@ -350,15 +381,16 @@ struct PromptComposer: View {
                           model.sessionId == target, case let .success(value) = ready else { return }
                     ids = value
                 }
-                sent = await model.send(text: input, queue: queue, steer: steer, nextModel: chosen, attachments: ids, target: .some(target), takingDraft: true)
+                sent = await model.send(text: input, queue: queue, steer: steer, nextModel: chosen, attachments: ids, fileRefs: refs, target: .some(target), takingDraft: true)
             }
+            if reject == nil, sent, sendID == submission { mentionState.clear() }
             if reject != nil, sent, sendID == submission, model.generation == host, model.contentGeneration == reading, model.sessionId == target, rawDraft.wrappedValue == input {
                 rawDraft.wrappedValue = ""
             }
         }
     }
     private var slashKeys: [String] {
-        var keys = canSend ? ["submit"] : []
+        var keys = mentions.keys + (canSend ? ["submit"] : [])
         guard let menu = slashMenu else { return keys }
         keys.append(UIKeyCommand.inputEscape)
         if menu.options.contains(where: { $0.unavailable == nil }) { keys += [UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow] }
@@ -367,6 +399,7 @@ struct PromptComposer: View {
     }
     private func slashKey(_ key: String) {
         guard !slash.composing else { return }
+        if mentions.handle(key) { return }
         if key == "submit" { if canSend { send() }; return }
         guard let menu = slashMenu else { return }
         if key == UIKeyCommand.inputEscape { slash.dismiss(text); return }

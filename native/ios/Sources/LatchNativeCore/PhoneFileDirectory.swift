@@ -91,12 +91,13 @@ public struct PhoneFileMatches: Sendable {
         public let root: String
         public let path: String
         public let name: String
+        public let ignored: Bool
         public var id: Data { Data((root + "\0" + path).utf8) }
     }
     public let files: [Hit]
     public let truncated: Bool
     public let uncheckedCount: UInt64
-    public init(_ value: NativeJSON) throws {
+    public init(_ value: NativeJSON, forMentions: Bool = false) throws {
         guard case let .array(rows) = value["files"], rows.count <= 100, case let .bool(truncated) = value["truncated"] else {
             throw NativeFailure.invalidRecord
         }
@@ -106,14 +107,53 @@ public struct PhoneFileMatches: Sendable {
             else { throw NativeFailure.invalidRecord }
             uncheckedCount = files + folders
         }
-        files = try rows.map { row in
+        files = try rows.compactMap { row in
             guard let root = row["root"].string, LinkBytes.matches(root, "[A-Za-z0-9_-]{1,32}"),
                   let name = row["name"].string, let path = row["path"].string, path.utf8.count <= 4096 else { throw NativeFailure.invalidRecord }
+            // The file picker can preview Unix names like "C:notes". Such paths are invalid on a message reference.
+            if forMentions, path.range(of: "^[A-Za-z]:", options: .regularExpression) != nil { return nil }
             let parts = path.components(separatedBy: "/")
             guard parts.allSatisfy(PhoneFileFolder.validName), parts.last?.utf8.elementsEqual(name.utf8) == true else { throw NativeFailure.invalidRecord }
-            return Hit(root: root, path: path, name: name)
+            return Hit(root: root, path: path, name: name, ignored: row["ignored"].bool)
         }
         guard Set(files.map(\.id)).count == files.count else { throw NativeFailure.invalidRecord }
         self.truncated = truncated
+    }
+}
+
+/** A first message searches the roots of its chosen Harness. Later messages use the Host's frozen session roots. */
+public enum PhoneMentionScope: Hashable, Sendable {
+    case session(String)
+    case project(workspace: String, harness: String)
+
+    public func offered(in snapshot: NativeJSON) -> Bool {
+        supported(in: snapshot) && PhoneWorkItems.canReadFiles(snapshot)
+    }
+
+    public func supported(in snapshot: NativeJSON) -> Bool {
+        let catalog = snapshot["catalog"], device = snapshot["device"]
+        guard catalog["features"]["fileMentions"].bool, catalog["features"]["fileSearch"].bool,
+              device["status"].string == "active", device["scopes"].array.contains(.string("view")),
+              device["scopes"].array.contains(.string("run")) else { return false }
+        let harness: String
+        switch self {
+        case let .session(id):
+            guard LinkBytes.matches(id, "[A-Za-z0-9_-]{1,160}"),
+                  let row = snapshot["tasks"].array.first(where: { $0["id"].string == id }),
+                  row["mode"] == .null || row["mode"].string == "agent", let selected = row["harnessId"].string else { return false }
+            harness = selected
+        case let .project(workspace, id):
+            guard workspace != "default", LinkBytes.matches(workspace, "[a-z0-9][a-z0-9_-]{0,63}"),
+                  PhoneStart.projects(catalog).contains(where: { $0.id == workspace }) else { return false }
+            harness = id
+        }
+        return PhoneStart.harness(catalog, harness)["capabilities"]["tools"]["fileMentions"].bool
+    }
+
+    /** Attach only explicit choices to a new write. The retry keeps these bytes in its original receipt. */
+    public func attach(_ files: [PhoneFileMatches.Hit], to fields: inout [String: NativeJSON], snapshot: NativeJSON) throws {
+        guard offered(in: snapshot), fields["queue"] != .bool(true), fields["steer"] != .bool(true),
+              files.count <= 32, Set(files.map(\.id)).count == files.count else { throw NativeFailure.forbidden }
+        fields["fileRefs"] = .array(files.map { .object(["root": .string($0.root), "path": .string($0.path)]) })
     }
 }

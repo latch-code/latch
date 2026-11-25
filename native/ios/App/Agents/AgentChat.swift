@@ -166,6 +166,7 @@ private struct NewTopicView: View {
     @State private var sending = false
     @State private var focused = false
     @StateObject private var slash = SlashComposerState()
+    @StateObject private var mentionState = MentionState()
     @State private var slashSpace: CGFloat = 198
     @State private var modelPicker = false
     @State private var modelQuery = ""
@@ -191,6 +192,12 @@ private struct NewTopicView: View {
         if PhoneStart.usesServices(harness), !PhoneStart.models(catalog).isEmpty { value.actions.insert(.model) }
         value.actionReasons[.new] = "每个 Agent 只有一条聊天"
         return value
+    }
+    private var mentions: MentionComposer {
+        let scope = attachSelection?["mode"].string == "agent" ? MentionComposer.project(choice) : nil
+        return MentionComposer(model: model, state: mentionState, editor: slash, text: $prompt,
+            context: MentionContext(model, scope: scope, owner: frame.owner),
+            enabled: focused && slashSpace >= 44 && slashContext.bodyOpen && !slashContext.pending && readyChat == nil)
     }
     private var slashMenu: PhoneSlashMenu? { slashSpace < 44 ? nil : slash.menu(prompt, commands: [], context: slashContext, focused: focused) }
     private var slashRead: SlashReadKey { SlashReadKey(model: model, enabled: focused && slashContext.bodyOpen, retry: slash.retry) }
@@ -245,6 +252,7 @@ private struct NewTopicView: View {
         }
         .onChange(of: prompt) { _, value in slash.changed(value) }
         .onChange(of: model.privateSnapshot.epoch) { _, _ in slash.clear(); modelPicker = false }
+        .onChange(of: mentions.context) { _, _ in mentionState.clear() }
         .task(id: slashRead) { await slash.load(model, key: slashRead) }
         .onAppear {
             openedHost = model.generation; openedContent = model.privateSnapshot.epoch
@@ -254,7 +262,7 @@ private struct NewTopicView: View {
         .onChange(of: model.returnedText[attachKey], initial: true) { _, value in if let value { prompt = PhonePending.joined(prompt, value); model.returnedText[attachKey] = nil } }
         // Leaving the new topic lets go of what was attached here, unless a start that carries them is still unconfirmed.
         .onDisappear {
-            slash.clear()
+            slash.clear(); mentionState.clear()
             if !delivered, model.generation == openedHost, model.privateSnapshot.epoch == openedContent,
                model.verifiedUntil.map({ $0 > Date() }) == true { model.holdDraft(prompt, for: attachKey) }
             if PhoneAttachments.dropsOnClose(key: attachKey, pending: model.pending, starting: sending, verifying: model.verifying, covered: false) { model.dropAttachments(attachKey) }
@@ -285,6 +293,7 @@ private struct NewTopicView: View {
             if let blocker { Text(blocker).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).lineLimit(2).padding(.horizontal, 16).frame(maxWidth: .infinity, alignment: .leading) }
             AttachmentRows(key: attachKey, selection: attachSelection)
             if let slashReason { Text(slashReason).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16) }
+            MentionSuggestions(input: mentions, maximumHeight: slashSpace).padding(.horizontal, 12)
             if let menu = slashMenu {
                 SlashSuggestions(menu: menu, active: slash.active(menu, text: prompt), engine: frame.entry.name, mark: PhoneStart.mark(harness), reportedCommands: 0,
                     loading: slash.loading, failure: slash.failure, maximumHeight: slashSpace, retry: { slash.retry += 1 },
@@ -321,9 +330,9 @@ private struct NewTopicView: View {
                 picks
             }
         } editor: {
-            LocalTextEditor(text: $prompt, placeholder: placeholder, maximumLines: slashMenu == nil ? 6 : 3, focused: $focused,
+            LocalTextEditor(text: $prompt, placeholder: placeholder, maximumLines: slashMenu == nil && !mentions.isOpen ? 6 : 3, focused: $focused,
                 selection: $slash.selection, composing: $slash.composing, selectionRequest: $slash.selectionRequest,
-                commandKeys: slashKeys, onCommand: slashKey, suffixHint: slash.hint(prompt, commands: [], enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending))
+                mentionMarkers: mentions.markers, commandKeys: slashKeys, onCommand: slashKey, suffixHint: slash.hint(prompt, commands: [], enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending))
                 .overlay(alignment: .topLeading) {
                     if prompt.isEmpty { PromptHint(text: placeholder) }
                 }
@@ -354,6 +363,7 @@ private struct NewTopicView: View {
             modelQuery = argument; modelPicker = true; prompt = ""; slash.clear(); return
         }
         sending = true
+        let refs = mentions.references
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let host = model.generation, content = model.privateSnapshot.epoch, reading = model.contentGeneration
         let owner = frame.owner, chosenAgent = agent, chosen = choice, key = attachKey
@@ -368,9 +378,10 @@ private struct NewTopicView: View {
             guard model.generation == host, model.privateSnapshot.epoch == content, model.contentGeneration == reading else {
                 model.endAttachmentSend(key, owner: submission); sending = false; return
             }
-            let done = await model.startTopic(owner: owner, agent: chosenAgent, choice: chosen, prompt: text, attachments: ids)
+            let done = await model.startTopic(owner: owner, agent: chosenAgent, choice: chosen, prompt: text, attachments: ids, fileRefs: refs)
             model.endAttachmentSend(key, owner: submission)
             guard model.generation == host, model.privateSnapshot.epoch == content else { sending = false; return }
+            if done { mentionState.clear() }
             delivered = done
             prompt = PhoneAgentChat.promptAfterStart(prompt, pending: model.pending, owner: frame.owner, started: done)
             if done, let id = model.sessionId { started(id) }
@@ -378,7 +389,7 @@ private struct NewTopicView: View {
         }
     }
     private var slashKeys: [String] {
-        var keys = canSend ? ["submit"] : []
+        var keys = mentions.keys + (canSend ? ["submit"] : [])
         guard let menu = slashMenu else { return keys }
         keys.append(UIKeyCommand.inputEscape)
         if menu.options.contains(where: { $0.unavailable == nil }) { keys += [UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow] }
@@ -387,6 +398,7 @@ private struct NewTopicView: View {
     }
     private func slashKey(_ key: String) {
         guard !slash.composing else { return }
+        if mentions.handle(key) { return }
         if key == "submit" { if canSend { send() }; return }
         guard let menu = slashMenu else { return }
         if key == UIKeyCommand.inputEscape { slash.dismiss(prompt); return }

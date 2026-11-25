@@ -103,9 +103,14 @@ struct EngineTile: View {
     ]
     /** Native menus require an Image label, not the tile's composed View. */
     static func menuImage(_ mark: String?, scheme: ColorScheme) -> Image {
-        if mark == "latch" { return bundled("LatchMark").renderingMode(.original) }
-        guard let art = mark.flatMap({ marks[$0] }) else { return Image(systemName: "cpu") }
-        return bundled(scheme == .dark ? art.dark : art.light).renderingMode(art.mono ? .template : .original)
+        icon(mark, dark: scheme == .dark).map(Image.init(uiImage:)) ?? Image(systemName: "cpu")
+    }
+    static func icon(_ mark: String?, dark: Bool) -> UIImage? {
+        if mark == "latch" { return UIImage(named: "LatchMark")?.withRenderingMode(.alwaysOriginal) }
+        guard let art = mark.flatMap({ marks[$0] }), let image = UIImage(named: dark ? art.dark : art.light) else {
+            return UIImage(systemName: "cpu")?.withRenderingMode(.alwaysTemplate)
+        }
+        return image.withRenderingMode(art.mono ? .alwaysTemplate : .alwaysOriginal)
     }
     /**
      * A copy drawn `points` wide, for a widget: WidgetKit keeps no image far larger than it is shown, and some marks are

@@ -249,13 +249,16 @@ extension PhoneModel {
         guard canRun, let id = change.itemId, workStamp(id) == stamp, workPath.isEmpty, let transport = stamp.transport,
               let item = workItem(id) else { return .failed(NativeFailure.forbidden) }
         if case let .completion(_, base, _) = change, base != item.revision { return .failed(NativeFailure.changedElsewhere) }
-        if case let .post(_, _, session?) = change, !item.sessionIds.contains(session) || workSourceVisibility(session) != .readable {
-            return .failed(NativeFailure.changedElsewhere)
+        func recipientAvailable() -> Bool {
+            guard case let .post(_, _, target?) = change else { return true }
+            guard let latest = self.workItem(id), self.privateSnapshot.confirmed else { return false }
+            return PhoneWorkPostChoice.choices(snapshot: self.snapshot, item: latest).contains { $0.id == target && $0.disabled == nil }
         }
+        guard recipientAvailable() else { return .failed(NativeFailure.changedElsewhere) }
         let navigation = workPathGeneration
         do {
             return await write(try change.request(requestId: requestId), refresh: false, on: transport) {
-                stamp == self.workStamp(id) && self.workPathGeneration == navigation && self.canRun
+                stamp == self.workStamp(id) && self.workPathGeneration == navigation && self.canRun && recipientAvailable()
             }
         }
         catch { return .failed(error) }

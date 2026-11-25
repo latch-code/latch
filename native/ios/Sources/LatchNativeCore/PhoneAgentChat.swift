@@ -263,6 +263,7 @@ public enum PhonePendingPlace: Equatable, Sendable {
 extension PhonePending {
     /** Whether this place offers 重试 for the write: a new topic's start only on that new topic or the list. */
     public static func retried(_ write: NativePendingWrite, at place: PhonePendingPlace) -> Bool {
+        if write.teamRound != nil { return false }
         guard case let .topic(owner) = kind(write) else { return true }
         switch place {
         case let .newTopic(page): return page == owner

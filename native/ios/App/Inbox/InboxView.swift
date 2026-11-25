@@ -632,15 +632,17 @@ struct PendingWritesBar: View {
                 case .post(_, _, .some): "核对投递"
                 default: "重试这次提交"
                 }
-                Button(retryLabel) {
-                    Task {
-                        // A new topic's start opens its topic in 我的 Agent, where the conversation with that Agent is.
-                        if let owner = PhonePending.topicOwner(pending) {
-                            if await model.finishTopic(pending) { model.tab = .agents; model.agentPath = [owner] }
-                        } else { await model.retryPending(pending) }
-                    }
-                }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
-                if PhoneQueueControl(pending) != nil { AbandonQueueChange(pending: pending) }
+                if pending.teamRound == nil {
+                    Button(retryLabel) {
+                        Task {
+                            // A new topic's start opens its topic in 我的 Agent, where the conversation with that Agent is.
+                            if let owner = PhonePending.topicOwner(pending) {
+                                if await model.finishTopic(pending) { model.tab = .agents; model.agentPath = [owner] }
+                            } else { await model.retryPending(pending) }
+                        }
+                    }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
+                }
+                if pending.teamRound != nil || PhoneQueueControl(pending) != nil { AbandonSessionWrite(pending: pending) }
                 if PhonePending.prompt(pending) != nil, case let .session(id) = PhonePending.kind(pending) {
                     Button("放弃这次提交") {
                         Task {

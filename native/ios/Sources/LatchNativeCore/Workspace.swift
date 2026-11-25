@@ -49,7 +49,10 @@ public struct NativePendingWrite: Codable, Sendable {
     public let method: String
     public let path: String
     public let body: Data
-    public init(method: NativeHTTPMethod, path: String, fields: [String: NativeJSON], requestId: String = UUID().uuidString) throws {
+    /** Local to the encrypted receipt; the Host receives only the HTTP body. */
+    public let teamRound: PhoneTeamRoundReceipt?
+    public init(method: NativeHTTPMethod, path: String, fields: [String: NativeJSON], requestId: String = UUID().uuidString,
+                teamRound: PhoneTeamRoundReceipt? = nil) throws {
         guard method != .get && method != .head, LinkBytes.matches(requestId, "[A-Za-z0-9_-]{16,80}"),
               path.hasPrefix("/link/api/"), path.utf8.count <= 1024, !path.contains("?"), !path.contains("#"),
               path.utf8.allSatisfy({ $0 >= 33 && $0 < 127 }), !path.contains("..") else { throw NativeFailure.invalidRecord }
@@ -57,7 +60,7 @@ public struct NativePendingWrite: Codable, Sendable {
         if PhoneWorkChange.isCompletion(method, path, fields) || PhoneQueueControl.action(method, path) != nil
             || (method == .patch && LinkBytes.matches(path, "/link/api/tasks/[A-Za-z0-9_-]{1,160}/queue/[A-Za-z0-9_-]{1,160}")) { input.removeValue(forKey: "requestId") }
         else { input["requestId"] = .string(requestId) }
-        self.requestId = requestId; self.method = method.rawValue; self.path = path
+        self.requestId = requestId; self.method = method.rawValue; self.path = path; self.teamRound = teamRound
         body = try NativeJSON.object(input).encoded()
     }
 }
@@ -509,23 +512,39 @@ public actor NativeWorkspace {
     }
     /** Directory listings are private and tied to the same session, window and connection throughout. */
     public func fileDirectory(session: String, folder: PhoneFileFolder, access: NativeFileAccess) async throws -> PhoneFileDirectory {
-        let value = try await projectFiles(session: session, feature: .tree, path: folder.path(session: session), access: access)
+        let value = try await projectFiles(path: folder.path(session: session), access: access) {
+            PhoneFileDirectory.offered($0, session: session)
+        }
         return try PhoneFileDirectory(value, session: session, folder: folder)
     }
     public func findProjectFiles(session: String, query: String, access: NativeFileAccess) async throws -> PhoneFileMatches {
         guard LinkBytes.matches(session, "[A-Za-z0-9_-]{1,160}"), !query.isEmpty, query.utf16.count <= 512 else { throw NativeFailure.invalidRecord }
         let body = try NativeJSON.object(["q": .string(query)]).encoded()
-        let value = try await projectFiles(session: session, feature: .search, path: "/link/api/tasks/" + session + "/files/search", body: body, access: access)
+        let value = try await projectFiles(path: "/link/api/tasks/" + session + "/files/search", body: body, access: access) {
+            PhoneFileDirectory.offered($0, session: session, feature: .search)
+        }
         return try PhoneFileMatches(value)
     }
-    private func projectFiles(session: String, feature: PhoneFileDirectory.Feature, path: String, body: Data? = nil,
-                              access: NativeFileAccess) async throws -> NativeJSON {
-        guard PhoneFileDirectory.offered(metadata, session: session, feature: feature) else { throw NativeFailure.forbidden }
+    public func findMentionFiles(_ query: String, in scope: PhoneMentionScope, access: NativeFileAccess) async throws -> PhoneFileMatches {
+        guard query.utf16.count <= 512 else { throw NativeFailure.invalidRecord }
+        var fields: [String: NativeJSON] = ["q": .string(query), "limit": .number(30)]
+        let path: String
+        switch scope {
+        case let .session(id): path = "/link/api/tasks/" + id + "/files/search"
+        case let .project(id, harness):
+            path = "/link/api/workspaces/" + id + "/files/search"
+            fields["harnessId"] = .string(harness)
+        }
+        let value = try await projectFiles(path: path, body: NativeJSON.object(fields).encoded(), access: access, offered: scope.offered)
+        return try PhoneFileMatches(value, forMentions: true)
+    }
+    private func projectFiles(path: String, body: Data? = nil, access: NativeFileAccess, offered: (NativeJSON) -> Bool) async throws -> NativeJSON {
+        guard offered(metadata) else { throw NativeFailure.forbidden }
         let device = metadata["device"], instance = self.instance
         let value = try await getJSON(path, body: true, on: access.transport, post: body, access: access)
         try Task.checkCancellation()
         guard installedTransport === access.transport, access.transport.valid, self.instance == instance,
-              PhoneFileDirectory.offered(metadata, session: session, feature: feature),
+              offered(metadata),
               ["id", "status", "scopes", "dataScope"].allSatisfy({ metadata["device"][$0] == device[$0] }) else {
             throw NativeReadFailure.bodyAccessChanged
         }
@@ -1135,10 +1154,12 @@ public actor NativeWorkspace {
             }
             requestPath = retry ? "/link/api/work/items/retry-create" : pending.path
         } else { requestPath = pending.path }
+        // The Host retains only a bounded number of round receipts. Reposting an older request can dispatch it twice.
+        if retry, pending.teamRound != nil { throw NativeFailure.resultUnknown }
         if retry {
             guard let data = try await vault.body(name: "pending-" + pending.requestId, lease: lease) else { throw NativeFailure.storageUnavailable }
             let previous = try JSONDecoder().decode(NativePendingWrite.self, from: data)
-            guard previous.method == pending.method, previous.path == pending.path, previous.body == pending.body else { throw NativeFailure.invalidRecord }
+            guard previous.method == pending.method, previous.path == pending.path, previous.body == pending.body, previous.teamRound == pending.teamRound else { throw NativeFailure.invalidRecord }
             // Reposting an unknown delivery can ask the session to run again. Read only the original Host post as evidence.
             if case let .post(item, _, .some) = work {
                 guard let transport = installedTransport else { throw NativeFailure.resultUnknown }
@@ -1166,6 +1187,11 @@ public actor NativeWorkspace {
         if (200..<300).contains(response.status) {
             guard let value = try? NativeJSON.decode(response.body) else { throw NativeFailure.resultUnknown }
             if let queueControl, !queueControl.confirmed(by: value) { throw NativeFailure.resultUnknown }
+            if let round = pending.teamRound {
+                guard round.confirmed(by: value), lease.valid, accessEpoch == access else { throw NativeFailure.resultUnknown }
+                do { try await removePending(pending.requestId) } catch { throw NativeFailure.resultUnknown }
+                return .null
+            }
             if PhoneHelperCreate.isCreation(pending), (try? PhoneHelperCreate.createdId(value, for: pending)) == nil {
                 throw NativeFailure.resultUnknown
             }
@@ -1183,7 +1209,7 @@ public actor NativeWorkspace {
         if NativeHostRefusal.leavesUnknown(status: response.status, body: response.body) { throw NativeFailure.resultUnknown }
         let refusal = NativeHostRefusal.parse(status: response.status, body: response.body)
         if queueControl == .steer, refusal?.code == "steer-unknown" { throw NativeFailure.resultUnknown }
-        if work != nil, [401, 403, 404].contains(response.status) {
+        if work != nil || pending.teamRound != nil, [401, 403, 404].contains(response.status) {
             // Work routes recheck access when presenting the result, after the change or delivery may have happened.
             _ = await responseFailure(response, lease: lease)
             if explain, mayReadWorkAnswer(), let refusal { throw NativeUnsettledRefusal(refusal: refusal) }

@@ -283,6 +283,7 @@ public struct PhoneWorkPost: Equatable, Sendable, Identifiable {
     public let id: String
     public let at: Date
     public let text: String
+    public let target: PhoneWorkPostTarget?
     public let delivery: Delivery?
     public let refusal: String?
     public let sourceSessionId: String?
@@ -295,12 +296,14 @@ public struct PhoneWorkPost: Equatable, Sendable, Identifiable {
     public init?(_ value: NativeJSON) {
         guard let id = value["id"].string, PhoneWorkItems.validPost(id), let at = PhoneTime.parse(value["at"]),
               let text = PhoneWorkItems.text(value["text"], max: 4000), !text.isEmpty else { return nil }
+        let target = PhoneWorkPostTarget(value["target"])
+        guard value.object["target"] == nil || target != nil else { return nil }
         let turn = PhoneWorkTurn(value["turn"]), delivery = value["delivery"]["state"].string.flatMap(Delivery.init)
         let session = value["delivery"]["sessionId"].string.flatMap(PhoneWorkItems.session)
         guard value.object["delivery"] == nil || delivery != nil,
               value["delivery"].object["sessionId"] == nil || session != nil,
               value.object["turn"] == nil || (turn != nil && turn?.sessionId == session) else { return nil }
-        self.id = id; self.at = at; self.text = text; self.turn = turn; self.delivery = delivery
+        self.id = id; self.at = at; self.text = text; self.turn = turn; self.delivery = delivery; self.target = target
         sourceSessionId = session
         sourceWithdrawn = false
         refusal = session == nil ? nil : PhoneWorkItems.text(value["delivery"]["reason"], max: 300)
@@ -322,7 +325,7 @@ public struct PhoneWorkPost: Equatable, Sendable, Identifiable {
 
     private init(withdrawn post: Self) {
         id = post.id; at = post.at; text = post.text; delivery = post.delivery; sourceSessionId = post.sourceSessionId
-        sourceWithdrawn = true
+        sourceWithdrawn = true; target = nil
         refusal = nil; turn = nil; reply = nil; attention = nil; source = nil
     }
 
