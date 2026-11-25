@@ -200,7 +200,7 @@ extension PhoneModel {
         guard transportReady else { return false }
         let current = generation
         do {
-            guard canRun, prompt.count <= 16_000, attachments.count <= PhoneAttachments.perMessage else { throw NativeFailure.forbidden }
+            guard canRun, PhoneConversation.promptLengthIssue(prompt) == nil, attachments.count <= PhoneAttachments.perMessage else { throw NativeFailure.forbidden }
             var fields = try topicFields(owner: owner, agent: agent, choice: choice, prompt: prompt)
             try attachStartFiles(fileRefs, to: &fields)
             if !attachments.isEmpty { fields["attachmentIds"] = .array(attachments.map { .string($0) }) }

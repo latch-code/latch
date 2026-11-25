@@ -939,6 +939,16 @@ describe('composer', () => {
     expect(empty).not.toMatch(/<button[^>]*aria-label="发送"[^>]*disabled=""/u)
   })
 
+  it('keeps an oversized prompt editable and counts the source of a folded reference before sending', () => {
+    const boundary = '😀'.repeat(8000)
+    const render = (draft: string) => renderToStaticMarkup(createElement(Composer, { ...base, draft }))
+    const allowed = render(' ' + boundary + ' ')
+    expect(allowed).not.toMatch(/aria-label="发送"[^>]*aria-disabled/u)
+    const oversized = render('[引用回复 session/message@0]\n> 原话\n' + boundary)
+    expect(oversized).toContain('请缩短正文或引用')
+    expect(oversized).toMatch(/aria-label="发送"[^>]*aria-disabled="true"/u)
+  })
+
   it('puts stop in the send slot, and steps it back while an approval waits', () => {
     const html = renderToStaticMarkup(createElement(Composer, { ...base, variant: 'session', run: { cancel: 'idle', onCancel: noop } }))
     // Stop takes the send slot and is never red.

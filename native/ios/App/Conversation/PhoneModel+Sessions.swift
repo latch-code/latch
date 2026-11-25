@@ -129,7 +129,7 @@ extension PhoneModel {
         guard transportReady else { return false }
         let current = generation
         do {
-            guard canRun, prompt.count <= 16_000, attachments.count <= PhoneAttachments.perMessage else { throw NativeFailure.forbidden }
+            guard canRun, PhoneConversation.promptLengthIssue(prompt) == nil, attachments.count <= PhoneAttachments.perMessage else { throw NativeFailure.forbidden }
             sessionId = nil; detail = .null; contentGeneration = UUID()
             try await ensureVerified()
             guard current == generation else { return false }
@@ -147,7 +147,7 @@ extension PhoneModel {
     @discardableResult func send(text: String, queue: Bool = false, steer: Bool = false, nextModel: PhoneModelChoice? = nil, attachments: [String] = [], fileRefs: [PhoneFileMatches.Hit] = [], target: String?? = nil, takingDraft: Bool = false) async -> Bool {
         guard transportReady else { return false }
         if let target, target != sessionId { if let key = target { attachTrays[key, default: PhoneAttachTray()].note = PhoneAttachSend.movedWords }; return false }
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty, text.count <= 16_000,
+        guard !phonePromptTrim(text).isEmpty || !attachments.isEmpty, PhoneConversation.promptLengthIssue(text) == nil,
               attachments.count <= PhoneAttachments.perMessage,
               attachments.isEmpty || ((!steer || detail["steerAttachments"].bool) && (!queue || canQueueAttachments)) else { return false }
         let current = generation, selected = sessionId, reading = contentGeneration

@@ -23,7 +23,7 @@ import { Menu, type MenuSection } from '../components/overlays.tsx'
 const COPY = defineCopy(
   {
     folderSettings: '文件夹请在 设置 › 项目 中添加。',
-    checking: '正在确认这个 Harness 能否接收文件…',
+    checking: '正在确认能否添加附件…',
     unavailable: '暂时不能添加文件。',
     choose: '选择附件',
     more: '更多',
@@ -48,7 +48,7 @@ const COPY = defineCopy(
   },
   {
     folderSettings: 'Add folders in Settings › Projects.',
-    checking: 'Checking whether this Harness accepts files…',
+    checking: 'Checking whether you can add attachments…',
     unavailable: 'Files cannot be added right now.',
     choose: 'Choose attachments',
     more: 'More',

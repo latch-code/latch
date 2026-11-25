@@ -115,6 +115,9 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
         "outcomes": value["statuses"].array.compactMap { status in delivered.first.map { PhoneConversation.outcome($0, latestStatus: status.string) } },
         "delivery": delivered.first.flatMap { PhoneConversation.delivery(value["delivered"], turn: $0) } ?? "",
         "hasFiles": [PhoneConversation.hasFiles(detail), PhoneConversation.hasFiles(value["delivered"])],
+        "promptTooLong": [String(repeating: "a", count: 16_001), "\u{feff}" + String(repeating: "🙂", count: 8_000) + "\n",
+                         String(repeating: "🙂", count: 8_001), "[引用回复 s/m@0]\n> " + String(repeating: "x", count: 15_995)]
+            .map { PhoneConversation.promptLengthIssue($0) != nil },
         "noteTooLong": [PhoneConversation.rejectionNoteTooLong(String(repeating: "字", count: 500)), PhoneConversation.rejectionNoteTooLong(String(repeating: "字", count: 501)), PhoneConversation.rejectionNoteTooLong(" " + String(repeating: "字", count: 500) + "\n")],
         "faceId": [("com.apple.LocalAuthentication", -2), ("com.apple.LocalAuthentication", -4), ("com.apple.LocalAuthentication", -1), (kCFErrorDomainOSStatus as String, -128), (kCFErrorDomainOSStatus as String, -25300), ("", 0)]
             .map { SecureDeviceKeys.verificationFailure(domain: $0.0, code: $0.1) == .declined },

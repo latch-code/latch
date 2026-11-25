@@ -22,7 +22,10 @@ import UIKit
                 // chip's separator, even if deleting text has just brought them together.
                 var wordEnd = index
                 while wordEnd > end && plain.character(at: wordEnd - 1) == 32 { wordEnd -= 1 }
+                let previous = wordEnd > end && plain.character(at: wordEnd - 1) == 0xfffc
+                    ? storage.attribute(.attachment, at: wordEnd - 1, effectiveRange: nil) as? PromptSourceAttachment : nil
                 let leading = wordEnd > end && !phonePromptWhitespace(plain.character(at: wordEnd - 1))
+                    && previous?.source.wire.last?.isWhitespace != true
                 let next = index + 1
                 let hadTrailing = storage.attribute(Self.trailingDelimiter, at: index, effectiveRange: nil) != nil
                 let trailing: Bool

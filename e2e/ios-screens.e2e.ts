@@ -278,9 +278,15 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
       const textReader = join(derived, 'read-screen-text')
       if (
         chosen.some(scene =>
-          ['inbox-first-rows', 'usage-empty', 'prompt-queue', 'conversation-sending', 'reply-quote-draft', 'terminal-draft'].includes(
-            scene,
-          ),
+          [
+            'inbox-first-rows',
+            'usage-empty',
+            'prompt-queue',
+            'steer',
+            'conversation-sending',
+            'reply-quote-draft',
+            'terminal-draft',
+          ].includes(scene),
         )
       )
         await run('/usr/bin/xcrun', ['swiftc', 'native/ios/Tools/InboxScreenshotRows.swift', '-o', textReader])
@@ -358,7 +364,15 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
                 undoRestoredText: true,
                 undoRestoredAttachment: true,
                 redoRemovedSource: true,
-                mixedSourceUndoCopy: true,
+                oversizeDraftKept: true,
+                shortenedDraftCanSend: true,
+                mixedMounted: true,
+                distinctSubmitKeys: true,
+                compositionKeptSource: true,
+                mixedCopy: true,
+                mixedPlainEdit: true,
+                mixedQuoteUndo: true,
+                mixedFileUndo: true,
               })
               await vi.waitFor(
                 async () => {
@@ -394,7 +408,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
                 { timeout: 20_000, interval: 500 },
               )
               await copyFile(frame, shot)
-            } else if (scene === 'usage-empty' || scene === 'prompt-queue' || scene === 'conversation-sending') {
+            } else if (scene === 'usage-empty' || scene === 'prompt-queue' || scene === 'steer' || scene === 'conversation-sending') {
               await vi.waitFor(
                 async () => {
                   await simctl('io', udid, 'screenshot', shot)
@@ -410,9 +424,9 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
                     expect(positions['重试这次提交']).toHaveLength(0)
                     return
                   }
-                  if (scene === 'prompt-queue') {
-                    const positions = JSON.parse((await run(textReader, [shot, '立即发送'])).stdout) as { 立即发送: number[] }
-                    expect(positions.立即发送).toHaveLength(3)
+                  if (scene === 'prompt-queue' || scene === 'steer') {
+                    const positions = JSON.parse((await run(textReader, [shot, '--settled', '立即发送'])).stdout) as { 立即发送: number[] }
+                    expect(positions.立即发送).toHaveLength(scene === 'prompt-queue' ? 3 : 1)
                     return
                   }
                   // The last word of the empty message starts to the right of centre when the sheet shrinks to fit it.

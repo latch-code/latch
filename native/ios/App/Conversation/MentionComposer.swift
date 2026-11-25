@@ -45,6 +45,7 @@ struct MentionContext: Equatable {
     let text: Binding<String>
     let context: MentionContext
     let enabled: Bool
+    var sourceText: String? = nil
 
     static func project(_ choice: PhoneStartChoice) -> PhoneMentionScope? {
         guard let project = choice.workspaceId, project != "default", let harness = choice.harnessId else { return nil }
@@ -53,7 +54,7 @@ struct MentionContext: Equatable {
 
     var references: [PhoneFileMatches.Hit] {
         guard state.pickedIn == context else { return [] }
-        let draft = text.wrappedValue
+        let draft = sourceText ?? text.wrappedValue
         return state.picks.filter { PhoneFileMentionToken.contains(root: $0.root, path: $0.path, in: draft) }
     }
     private var current: Bool {

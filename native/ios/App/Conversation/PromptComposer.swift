@@ -70,7 +70,7 @@ struct PromptComposer: View {
         let scope = draftId.map(PhoneMentionScope.session)
         return MentionComposer(model: model, state: mentionState, editor: slash, text: draftText,
             context: MentionContext(model, scope: scope, owner: draftId),
-            enabled: focused && slashSpace >= 44 && slashContext.bodyOpen && !slashContext.pending)
+            enabled: focused && slashSpace >= 44 && slashContext.bodyOpen && !slashContext.pending, sourceText: rawDraft.wrappedValue)
     }
     private var slashMenu: PhoneSlashMenu? { slashSpace < 44 ? nil : slash.menu(text, commands: slashCommands, context: slashContext, focused: focused) }
     private var slashRead: SlashReadKey { SlashReadKey(model: model, enabled: focused && slashContext.bodyOpen, retry: slash.retry) }
@@ -92,10 +92,11 @@ struct PromptComposer: View {
     }
     private var memberRound: PhoneMemberMentions.Round? {
         guard gate == nil, !drawerOpen, PhoneSlash.actionOf(text) == nil, text.contains("@") else { return nil }
-        return mentions.team?.round(in: rawDraft.wrappedValue, hasMaterials: hasRoundMaterials)
+        return mentions.team?.round(in: rawDraft.wrappedValue, hasMaterials: hasRoundMaterials, fileRefs: mentions.references)
     }
     private var heldBack: String? {
         if let round = memberRound { return round.reason }
+        if rejecting == nil, PhoneSlash.actionOf(text) == nil, let issue = PhoneConversation.promptLengthIssue(rawDraft.wrappedValue) { return issue }
         if rejecting == nil, running, !mentions.references.isEmpty { return "本轮结束后才能发送文件引用" }
         if followUp == .queue && model.canQueueAttachments || followUp == .steer && model.detail["steerAttachments"].bool { return nil }
         return PhoneAttachments.heldBack(followUp, running: running && rejecting == nil, count: attachments.items.count)
@@ -103,7 +104,7 @@ struct PromptComposer: View {
     private var running: Bool { ["running", "waiting-approval"].contains(model.currentSummary["status"].string ?? "") }
     /** The drawer above already holds the answers, stop among them where it cannot be allowed. */
     private var drawerOpen: Bool { !model.detail["approvals"].array.isEmpty || !model.detail["questions"].array.isEmpty }
-    private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmed: String { phonePromptTrim(text) }
     private var rejecting: String? {
         // A question's drawer covers any approval, and typing answers what is on screen.
         guard model.engineInfo(model.currentSummary["harnessId"].string)["capabilities"]["permission"]["rejectionNote"].bool, model.detail["questions"].array.isEmpty, let approval = model.detail["approvals"].array.first else { return nil }
@@ -112,11 +113,9 @@ struct PromptComposer: View {
     private var hint: String { rejecting != nil ? "输入内容会拒绝并告诉 Agent 改做什么" : placeholder ?? "回复 " + engine + "…" }
     private var noteTooLong: Bool { rejecting != nil && PhoneConversation.rejectionNoteTooLong(rawDraft.wrappedValue) }
     private var followUpChoices: (primary: PhoneFollowUp, alternate: PhoneFollowUp?) {
-        var detail = model.detail
-        if model.stoppingCurrent { var options = detail.object; options["steer"] = .bool(false); detail = .object(options) }
-        return PhoneFollowUp.choices(detail: detail, status: model.currentSummary["status"].string, queues: model.canQueueCurrent,
+        PhoneFollowUp.choices(detail: model.detail, status: model.currentSummary["status"].string, queues: model.canQueueCurrent,
             attached: !attachments.isEmpty || pasteID != nil, queueAttachments: model.canQueueAttachments,
-            nextTurnOnly: nextModel != nil || rawDraft.wrappedValue.contains("[conversation-ref:"), preferred: followUpDefault)
+            nextTurnOnly: model.stoppingCurrent || nextModel != nil || rawDraft.wrappedValue.contains("[conversation-ref:"), preferred: followUpDefault)
     }
     private var followUp: PhoneFollowUp { followUpChoices.primary }
     private var controls: [PhoneConfigControl] {
@@ -321,6 +320,12 @@ struct PromptComposer: View {
                     .padding(.horizontal, 14).frame(height: 36).background(canSend ? PhoneTheme.accent : PhoneTheme.bubble, in: Capsule())
                     .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
             }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(round != nil || steer ? label : "排队发送")
+                .contextMenu {
+                    if let alternate {
+                        Button("立即发送", systemImage: "arrow.up") { send(as: alternate == .steer ? alternate : nil) }
+                        Button("排到下一轮", systemImage: "text.badge.plus") { send(as: alternate == .queue ? alternate : nil) }
+                    }
+                }
         } else {
             Button { send() } label: {
                 Image(systemName: "arrow.up").font(.system(size: 15, weight: .semibold)).foregroundStyle(canSend ? Color.white : PhoneTheme.faint)

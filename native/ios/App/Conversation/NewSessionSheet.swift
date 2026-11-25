@@ -61,13 +61,15 @@ struct NewSessionSheet: View {
     private var plan: PhoneForkPlan? { fork?.plan(catalog, source: source, choice: choice, picked: picked) }
     private var shownModel: PhoneModelChoice? { plan.map { $0.choice.model ?? $0.forwarded } ?? choice.model }
     private var harness: NativeJSON { catalog["harnesses"].array.first { $0["id"].string == choice.harnessId } ?? .null }
-    private var blocker: String? { PhoneStart.blocker(catalog, choice: choice) }
+    private var blocker: String? {
+        PhoneStart.blocker(catalog, choice: choice) ?? (PhoneSlash.actionOf(prompt) == nil ? PhoneConversation.promptLengthIssue(prompt) : nil)
+    }
     private var canStart: Bool {
         if PhoneSlash.actionOf(prompt) != nil {
             if case .open = PhoneSlash.action(prompt, context: slashContext) { return !slash.composing }; return false
         }
         let attached = attaches && !model.tray(attachKey).isEmpty
-        return blocker == nil && (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attached) && (fork == nil ? model.canRun : model.canFork) && !starting && model.pending.isEmpty
+        return blocker == nil && (!phonePromptTrim(prompt).isEmpty || attached) && (fork == nil ? model.canRun : model.canFork) && !starting && model.pending.isEmpty
     }
     var body: some View {
         NavigationStack {
@@ -211,7 +213,7 @@ struct NewSessionSheet: View {
         }
         starting = true
         let refs = mentions.references
-        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines), chosen = choice, source = fork, forkPlan = plan
+        let text = phonePromptTrim(prompt), chosen = choice, source = fork, forkPlan = plan
         let host = model.generation, content = model.privateSnapshot.epoch, reading = model.contentGeneration
         Task {
             let submission = UUID()

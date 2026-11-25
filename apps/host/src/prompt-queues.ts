@@ -7,6 +7,7 @@ import { modelEffort } from './config.ts'
 import {
   DATA_SCOPES,
   LISTENER_CLASSES,
+  SESSION_PROMPT_CHARS,
   refusedBeforeAccepting,
   type DataScope,
   type ListenerClass,
@@ -21,7 +22,7 @@ const ACTIVE = new Set(['running', 'waiting-approval'])
 const VISIBLE = new Set(['waiting', 'parked', 'dropped', 'sending', 'uncertain'])
 const MAX_RECEIPTS = 100_000
 const RECEIPTS_PER_DEVICE = 10_000
-const text = z.string().min(1).max(16_000)
+const text = z.string().min(1).max(SESSION_PROMPT_CHARS)
 const id = z.string().min(1).max(256)
 const MAX_COAUTHORS = 256
 /** Refused, never cut: a device left out would no longer count as one that wrote the text. */
@@ -61,7 +62,7 @@ const recordSchema = z.strictObject({
   /** Distinguishes a steer into this turn from a new prompt, including after a crash. */
   steerRunId: z.string().min(1).max(128).optional(),
   hash: z.string().regex(/^[a-f0-9]{64}$/u),
-  text: z.string().max(16_000).optional(),
+  text: z.string().max(SESSION_PROMPT_CHARS).optional(),
   teamRequest: z.literal(true).optional(),
   attachmentIds: z
     .array(z.string().regex(/^[A-Za-z0-9_-]{22}$/u))
@@ -106,7 +107,7 @@ async function receivedSteer(item: Record, detail: TaskDetail, options: QueueOpt
  */
 function valid(item: Record): void {
   if (!recordSchema.safeParse(item).success)
-    throw new AppError(400, 'queue-item-invalid', `排队内容无效：每条最多 ${text.maxLength ?? 16_000} 个字符。`)
+    throw new AppError(400, 'queue-item-invalid', `排队内容无效：每条最多 ${SESSION_PROMPT_CHARS} 个字符。`)
 }
 export interface QueueActor {
   deviceId: string

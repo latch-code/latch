@@ -162,10 +162,18 @@ public struct PhoneInputReferences {
         self.quotes = quotes
     }
 
+    private static let quotedLines = try! NSRegularExpression(pattern: #"(?m)^ {0,3}>[^\n]*"#)
+    private static let fileExcerptTitles = try! NSRegularExpression(pattern: #"(?m)^\[引用 [^\n]+ · [^\n]+\](?=\n>(?: |$))"#)
+
     /** Mentions in quoted material and fenced examples are data supplied to the agent. */
     public static func materialRanges(in text: String) -> [NSRange] {
         let document = PhoneInputReferences(text, collapseQuotes: true)
         var ranges = document.labels.map(\.range)
+        if text.contains(">") {
+            let full = NSRange(location: 0, length: text.utf16.count)
+            ranges += quotedLines.matches(in: text, range: full).map(\.range)
+            if text.contains("[引用 ") { ranges += fileExcerptTitles.matches(in: text, range: full).map(\.range) }
+        }
         if text.contains("```") || text.contains("~~~") {
             var terminals: [Part] = []
             ranges += codeRanges(text, terminals: &terminals)

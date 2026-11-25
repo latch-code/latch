@@ -369,10 +369,10 @@
   width: 14px;
   height: 14px;
 }
-/* The label supplies the inline-flex baseline shared with the surrounding text. Its line box fills the chip. */
+/* Use the surrounding type's baseline. The chip sits 2px inside the line on each side. */
 .prompt-chip-label {
   align-self: baseline;
-  line-height: calc(1lh - 4px);
+  margin-block: calc(-1 * var(--sp-2));
   min-width: 0;
   max-width: 28ch;
   overflow: hidden;

@@ -309,7 +309,7 @@ interface Live {
   commandCache?: { directory: string; confirmed: Confirmed; ordinal: number; plugins?: HarnessPluginReport }
   initialized: boolean
   /** Attachment input went to the wire, even if its acknowledgment was lost and no message records it. */
-  sensitiveStderr?: true
+  receivedAttachments?: true
   /** What the agent's answer to initialize said beside ACP's fields, for a profile that reads it (Grok's models). */
   startMeta?: unknown
   capabilities: {
@@ -3472,7 +3472,7 @@ export class AgentRuntime implements Bridge {
     try {
       if (attachments.length) {
         run.sensitiveOutput = true
-        live.sensitiveStderr = true
+        live.receivedAttachments = true
       }
       const result = await live.wire.request(
         STEER_METHOD,
@@ -5726,6 +5726,8 @@ export class AgentRuntime implements Bridge {
         return
       }
       this.assertGatewayThinking(task)
+      if (run.attachments?.length) binding.live.receivedAttachments = true
+      if (binding.live.receivedAttachments) run.sensitiveOutput = true
       run.sent = true
       if (binding.live.gateway) {
         run.gatewayMark = binding.live.gateway.requests()
@@ -5854,6 +5856,7 @@ export class AgentRuntime implements Bridge {
   }
 
   private failure(run: Run, error: unknown, notes: string[]): TaskStatus {
+    const hideOutput = run.sensitiveOutput || run.attachments?.length
     if (error instanceof ConnectionClosed) {
       run.end = this.endOf(error.info)
       // A sent turn ended by Latch is interrupted even when its wire initiated the forced stop; a crash remains a failure.
@@ -5872,7 +5875,11 @@ export class AgentRuntime implements Bridge {
         return 'cancelled'
       }
       if (!(error instanceof RpcError && error.code === RPC.cancelled))
-        notes.push(`取消时 ${this.agent.name} 返回错误：${clip(this.redact(message(error)), 1000)}`)
+        notes.push(
+          hideOutput
+            ? `取消时 ${this.agent.name} 返回错误。`
+            : `取消时 ${this.agent.name} 返回错误：${clip(this.redact(message(error)), 1000)}`,
+        )
       return 'cancelled'
     }
     if (error instanceof ConnectionStopping) {
@@ -5891,14 +5898,14 @@ export class AgentRuntime implements Bridge {
         if (run.live && run.acpSessionId) run.live.sessions.delete(run.acpSessionId)
         // A wire that knows why says so (Claude's direct wire: its record was cleaned up).
         const lost = isObject(error.data) ? (error.data as { lostReason?: unknown }).lostReason : undefined
-        const why = typeof lost === 'string' ? clip(this.redact(lost), 300) : ''
+        const why = !hideOutput && typeof lost === 'string' ? clip(this.redact(lost), 300) : ''
         notes.push(why ? `${this.agent.name} 找不到这个会话：${why}。请新建会话。` : `${this.agent.name} 找不到这个会话，请新建会话。`)
         return 'failed'
       }
       if (run.live && !this.state.tasks[run.taskId]?.acp.route)
         this.noteQuota(run.live, this.selection.profile?.quota?.error?.(error.data, this.clock()))
       notes.push(
-        run.attachments?.length || run.sensitiveOutput
+        hideOutput
           ? `${this.agent.name} 未能处理本轮附件请求。`
           : `${this.agent.name} 返回错误：${clip(this.redact(agentErrorText(error)), 1000)}`,
       )
@@ -5907,7 +5914,11 @@ export class AgentRuntime implements Bridge {
     // The same refusal as above, already turned into words on its way out of `session`.
     if (error instanceof AppError && error.code === 'agent-auth-required') run.end = 'login-required'
     const note =
-      error instanceof AppError ? this.redact(error.message) : `${this.agent.name} 运行失败：${clip(this.redact(message(error)), 1000)}`
+      error instanceof AppError
+        ? this.redact(error.message)
+        : hideOutput
+          ? `${this.agent.name} 运行失败。`
+          : `${this.agent.name} 运行失败：${clip(this.redact(message(error)), 1000)}`
     const code = errorCodeOf(error)
     if (code) run.failure = { note, code }
     notes.push(note)
@@ -6513,7 +6524,7 @@ export class AgentRuntime implements Bridge {
     if (info.stderr && (unexpected || !live.initialized)) {
       try {
         const sensitive =
-          live.sensitiveStderr
+          live.receivedAttachments
           || this.runs.get(live.key)?.attachments?.length
           || this.runs.get(live.key)?.sensitiveOutput
           || this.state.tasks[live.key]?.messages.some(message => message.attachments?.length)
@@ -7748,7 +7759,11 @@ export class AgentRuntime implements Bridge {
       seen.add(shown)
       messageId = randomUUID()
       const content =
-        run?.sensitiveOutput || run?.attachments?.length || task.messages.some(item => item.attachments?.length) || params === undefined
+        live.receivedAttachments
+        || run?.sensitiveOutput
+        || run?.attachments?.length
+        || task.messages.some(item => item.attachments?.length)
+        || params === undefined
           ? ''
           : `\n\n${clip(this.redact(pretty(params)), UNRECOGNIZED_PARAMS_LIMIT)}`
       task.messages.push({

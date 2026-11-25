@@ -12,6 +12,7 @@ import { clientKind, useShortcutBindings } from '../core/shortcutBindings.ts'
 import { followUpKeyLabels, followUpShortcuts, primarySendKeys, shortcutChordMatches } from '../workbenchShortcuts.ts'
 import { escapeIsLeftover } from '../escapeGrace.ts'
 import { SlashCommands, useSlashCommands, type SlashAction } from './SlashCommands.tsx'
+import { promptLengthError } from './promptLength.ts'
 import { latchActionOf } from './latchActions.ts'
 import { PromptEditor, type PromptInput } from './PromptEditor.tsx'
 import {
@@ -353,6 +354,7 @@ export function Composer({
   // Members named in the draft: it goes to them as a round, whether or not this session is at work.
   const round = answer === undefined && typedAction === undefined ? members?.round : undefined
   const rounding = round !== undefined
+  const lengthError = !rounding && !typedAction && !answer && readOnly === undefined ? promptLengthError(draft) : undefined
   const queueDraft =
     !rounding
     && !!run
@@ -366,6 +368,7 @@ export function Composer({
   const actionBlock = typedAction ? (localAction?.unavailable ?? (!localAction?.run ? COPY.actionUnavailable : undefined)) : undefined
   const sendable =
     !locked
+    && !lengthError
     && readOnly === undefined
     && (answer !== undefined
       ? !empty
@@ -512,6 +515,7 @@ export function Composer({
   const shortcut = primarySendKeys(sendKey, coarse)
   const sendTip =
     actionBlock
+    ?? lengthError
     ?? blockReason
     ?? round?.reason
     ?? (locked ? COPY.waitForSubmit : empty ? COPY.writeFirst : queueDraft && !steerable ? COPY.sendAfterTurn : undefined)
@@ -666,6 +670,7 @@ export function Composer({
       <RunBar run={run} />
       <ConfigUnknownBar state={configUnknown} />
       {actionBlock && <InlineNotice>{actionBlock}</InlineNotice>}
+      {lengthError && <InlineNotice>{lengthError}</InlineNotice>}
       {queueTray}
       {!locked && readOnly === undefined && mentions.menu}
       {attachments && (
