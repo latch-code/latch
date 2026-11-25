@@ -31,12 +31,23 @@ describe('optional settings chunk lifecycle', () => {
       await enrollBrowser(page, host, { name: '设置模块失败', scopes: ['view', 'run', 'admin'] })
       const draft = page.getByRole('textbox', { name: '新会话消息', exact: true })
       await draft.fill('Keep the draft through a settings module failure')
-      await page.route('**/assets/PluginsSettings-*.js', route => route.abort('failed'))
-      await openEntry(page, '插件')
-      const settings = page.locator('.settings-page')
+      let unavailable = true
+      let moduleRequests = 0
+      await page.route('**/assets/GeneralSettings-*.js', route => {
+        moduleRequests++
+        return unavailable ? route.abort('failed') : route.continue()
+      })
+      const settings = await openSettings(page)
       const retry = settings.getByRole('button', { name: '重试加载', exact: true })
+      await retry.waitFor()
+      expect(await settings.getByRole('button', { name: '重新载入', exact: true }).count()).toBe(0)
       await retry.click()
-      await settings.getByText('无法加载插件设置，当前会话和草稿仍保留。', { exact: true }).waitFor()
+      await settings.getByText('无法加载通用设置，当前会话和草稿仍保留。', { exact: true }).waitFor()
+      unavailable = false
+      const failedRequests = moduleRequests
+      await retry.click()
+      await expect.poll(() => moduleRequests, { timeout: 3000 }).toBeGreaterThan(failedRequests)
+      await settings.getByText('界面语言', { exact: true }).first().waitFor()
       await closeSettings(settings)
       expect(await promptValue(draft)).toBe('Keep the draft through a settings module failure')
     } finally {
@@ -50,7 +61,14 @@ describe('optional settings chunk lifecycle', () => {
     page.setDefaultTimeout(10_000)
     let moduleRequests = 0
     try {
+      await page.route('**/link/build.json', route => route.fulfill({ json: { build: '29990101T000000Z-abcdef' } }))
       await enrollBrowser(page, host, { name: '设置模块重试', scopes: ['view', 'run', 'admin'] })
+      const checkUpdates = page.getByRole('button', { name: '检查更新', exact: true }).filter({ visible: true }).first()
+      await checkUpdates.click()
+      const check = page.getByRole('dialog', { name: '检查更新', exact: true })
+      await check.getByText('有新版页面', { exact: true }).waitFor()
+      await checkUpdates.click()
+      await check.waitFor({ state: 'hidden' })
       await page.route('**/assets/PluginsSettings-*.js', route => {
         moduleRequests++
         return route.fulfill({
@@ -73,6 +91,7 @@ describe('optional settings chunk lifecycle', () => {
       const settings = page.locator('.settings-page')
       const retry = settings.getByRole('button', { name: '重试加载', exact: true })
       await retry.waitFor()
+      expect(await settings.getByRole('button', { name: '重新载入', exact: true }).count()).toBe(0)
       const phase = () => page.locator('html').getAttribute('data-fixture-settings-render')
       expect(await phase()).toBe('failed')
       await page.evaluate(() => document.dispatchEvent(new Event('latch-fixture-plugin-ready')))

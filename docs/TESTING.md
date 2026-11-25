@@ -467,6 +467,7 @@ testkit 另导出：`FAKE_ACP_AGENT`、`FAKE_CODEX_APP_SERVER`、`FAKE_PI_AGENT`
 ## 浏览器 e2e
 
 - **先构建。** e2e 在同一个 Vitest 进程内用 `startTestHost` 启动 Host，页面来自 `dist/web`（或 `LATCH_E2E_UI_DIR`）；改客户端后先 `pnpm build`，否则测的是旧页面。
+- `e2e/host-state.e2e.ts` 在临时目录替换两版页面，检查旧窗口的设置模块返回 404 后可手动载入新版，并恢复普通文字草稿。`e2e/settings-loading.e2e.ts` 验证同版网络恢复及组件渲染出错后的就地重试。
 - **浏览器。** 默认用 `playwright install chromium` 装的 Chromium，设置 `LATCH_BROWSER_PATH` 时用该路径的 Chrome，都无头运行。WebKit 用例（`webkit.e2e.ts`、`preview-security-webkit.e2e.ts`，以及 `slash.e2e.ts` 等的 WebKit 分支）需要 `pnpm --filter @latch/e2e exec playwright install webkit`。
 - **设备。** 每台设备是独立的 BrowserContext，用 `enrollBrowser` 经真实连接页登记。手机经 HTTPS 与邀请的登记只在 `enrollment.e2e.ts`。需要本机桌面端或另一台设备时，用 `testHost.enroll({ listener: 'unix' })` 等 API 设备直接驱动 Host。
 - **走正常入口。** 用例经页面的真实控件到达状态：按 Host ID 打开会话用 `helpers/layout.ts` 的 `openSession`，不用 CSS 隐藏、直接调用内部函数或手填 DTO 代替。
