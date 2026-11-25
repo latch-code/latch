@@ -1816,14 +1816,17 @@ describe('visual capture of the real product', () => {
         await recorder.capture(target, viewport, 'sidebar-group-hover', "a project group's head under the pointer, with its +", sidebar)
         await release()
 
-        // A pinned session leads its own shelf, marked with the pin.
+        // A pinned session appears in the 置顶 shelf above 项目 and leads its own project shelf, marked with the pin.
         await local.json(`tasks/${sessions.plan}`, { method: 'PATCH', body: { pinned: true } })
+        const pinnedShelf = sidebar.locator('.session-group[data-shelf="pinned"]')
+        await pinnedShelf.locator(`[data-task-id="${sessions.plan}"]`).waitFor()
         const pinnedRow = sidebar.locator(`.session-item:has([data-task-id="${sessions.plan}"]) .session-pin`)
         await pinnedRow.waitFor()
         await expect.poll(() => sidebar.locator('[data-leaving]').count()).toBe(0)
         await settleMotion(target)
-        await recorder.capture(target, viewport, 'sidebar-pinned', 'a pinned session at the head of its shelf', sidebar)
+        await recorder.capture(target, viewport, 'sidebar-pinned', 'a pinned session in 置顶 and at the head of its shelf', sidebar)
         await local.json(`tasks/${sessions.plan}`, { method: 'PATCH', body: { pinned: false } })
+        await pinnedShelf.waitFor({ state: 'detached' })
         await pinnedRow.waitFor({ state: 'detached' })
         await expect.poll(() => sidebar.locator('[data-leaving]').count()).toBe(0)
 

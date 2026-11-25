@@ -80,6 +80,7 @@ const SessionItem = memo(function SessionItem({
   harness,
   project,
   inWaitingShelf,
+  inPinnedShelf = false,
   selected,
   unread,
   stopping,
@@ -106,6 +107,8 @@ const SessionItem = memo(function SessionItem({
   /** Named on the second line in 等你处理, where the shelf no longer says where the session belongs. */
   project: string | undefined
   inWaitingShelf: boolean
+  /** Drawn inside the 置顶 shelf above 项目, where the shelf itself says it is pinned. */
+  inPinnedShelf?: boolean
   selected: boolean
   unread: boolean
   stopping: boolean
@@ -166,7 +169,9 @@ const SessionItem = memo(function SessionItem({
       <div
         className={`session-item ${selected ? 'is-selected' : ''} ${strong ? 'is-strong' : ''} ${showsUnread(status) ? 'is-unread' : ''}`}>
         <Tooltip
-          content={[title, engine, model, gateway && COPY.gatewayRoute, worktree ?? branch].filter(Boolean).join(' · ')}
+          content={[title, engine, model, gateway && COPY.gatewayRoute, inPinnedShelf && project, worktree ?? branch]
+            .filter(Boolean)
+            .join(' · ')}
           describe={false}>
           <button
             type="button"
@@ -178,7 +183,7 @@ const SessionItem = memo(function SessionItem({
             }}>
             <span className="session-line">
               <SessionRowGlyph status={status} mark={harness.mark} />
-              {task.pinned && (
+              {task.pinned && !inPinnedShelf && (
                 <PinGlyph className="session-pin" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-label={COPY.pinned} />
               )}
               {worktree && (
@@ -303,6 +308,7 @@ function SessionGroupView({
   const awaiting = sessionsAwaitingReturn(snapshot)
   const workspaceId = group.workspaceId
   const waiting = group.id === 'waiting'
+  const pinned = group.id === 'pinned'
   const workspaces = snapshot.catalog?.workspaces
   const count = group.tasks.length + others.reduce((sum, other) => sum + (other.live ? other.items.length : 0), 0)
   return (
@@ -332,7 +338,7 @@ function SessionGroupView({
       <Collapse open={!folded}>
         <ul>
           {rows.map(({ item: task, leaving }) => {
-            const project = waiting && workspaces ? projectOf(task, workspaces) : undefined
+            const project = (waiting || pinned) && workspaces ? projectOf(task, workspaces) : undefined
             return (
               <SessionItem
                 member={group.members?.has(task.id) === true}
@@ -354,6 +360,7 @@ function SessionGroupView({
                 harness={taskHarness(snapshot, task)}
                 project={project && projectName(project)}
                 inWaitingShelf={waiting}
+                inPinnedShelf={pinned}
                 selected={!leaving && task.id === selectedId}
                 unread={task.id !== selectedId && isUnread(task)}
                 stopping={cancelling.has(task.id)}
@@ -585,6 +592,7 @@ function CodeList({
   const grouped = groupSessions(visible, snapshot.catalog?.workspaces, {
     includeEmpty: projectSections,
     teams: snapshot.teams,
+    ...(archived ? {} : { pinnedShelf: true }),
     ...(archived || projectTree ? {} : { waitingFrom: own }),
   })
   const groups: SessionGroup[] =
@@ -598,8 +606,8 @@ function CodeList({
       .join('')
     + elsewhere.map(other => `|${other.hostId}:${folded.has(`computer:${other.hostId}`) ? '' : other.count}`).join('')
   const remeasure = useListMotion(list, context, signature)
-  // 「项目」 heads the projects (and 无项目), after 等你处理; its + adds one.
-  const headAt = groups.findIndex(group => group.id !== 'waiting')
+  // 「项目」 heads the projects (and 无项目), after 等你处理 and 置顶; its + adds one.
+  const headAt = groups.findIndex(group => group.id !== 'waiting' && group.id !== 'pinned')
   const projectsHead = !archived && (
     <div className="sidebar-group-label">
       <span>{COPY.projects}</span>

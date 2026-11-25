@@ -177,6 +177,21 @@
   margin-left: var(--sp-12);
   border-left: 1px solid var(--line);
 }
+.sidebar .session-group[data-shelf='pinned'] .shelf-head {
+  height: 24px;
+}
+.sidebar .session-group[data-shelf='pinned'] .shelf-toggle {
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+.sidebar .session-group[data-shelf='pinned'] .shelf-chevron {
+  opacity: 1;
+}
+.sidebar .session-group[data-shelf='pinned'] > .ui-collapse {
+  margin-left: 0;
+  border-left: 0;
+}
 .sidebar .session-item-main {
   height: max(var(--touch), calc(2 * var(--density-row) + var(--sp-10)));
   padding: var(--sp-4) var(--sp-8);

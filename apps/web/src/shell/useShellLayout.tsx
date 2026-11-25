@@ -1073,7 +1073,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       return rosterTopics(rosterRows(snapshot, { general: readsAgents(snapshot) }))
     return listedSessions(snapshot.tasks, catalog?.workspaces, {
       filter,
-      search,
+      search: phone ? search : '',
       folded: readFolded(shelvesKey(snapshot.device.id)),
       projectTree: !phone,
       teams: snapshot.teams,

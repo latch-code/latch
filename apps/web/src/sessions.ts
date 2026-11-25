@@ -35,6 +35,7 @@ const COPY = defineCopy(
     unsupported: '不支持的请求',
     stopping: '正在停止',
     attention: '等你处理',
+    pinned: '置顶',
     last: (status: string) => `上次状态：${status}`,
     failedUnknown: (count: number) => `失败 · ${count} 条结果未知`,
     failed: '失败',
@@ -64,6 +65,7 @@ const COPY = defineCopy(
     unsupported: 'Unsupported request',
     stopping: 'Stopping',
     attention: 'Needs you',
+    pinned: 'Pinned',
     last: (status: string) => `Last status: ${status}`,
     failedUnknown: (count: number) => plural(count, { one: 'Failed · {n} unknown outcome', other: 'Failed · {n} unknown outcomes' }),
     failed: 'Failed',
@@ -353,7 +355,7 @@ export function filterSessions(tasks: TaskSummary[], filter: SessionFilter, quer
 const byRecency = (a: TaskSummary, b: TaskSummary) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0)
 
 export interface SessionGroup {
-  /** `waiting`, `project:<workspace id>`, `dir:<path>` (a Host that does not list its projects), or `other`. */
+  /** `waiting`, `pinned`, `project:<workspace id>`, `dir:<path>` (a Host that does not list its projects), or `other`. */
   id: string
   label: string
   tasks: TaskSummary[]
@@ -458,18 +460,29 @@ export function recentProjectSessions(
 }
 
 /**
- * 等你处理 while the Host puts something there (`board`), saved projects by their latest session, then conversations outside a project. Pinned
- * sessions lead their own shelf. Only `waitingFrom` moves a session to 等你处理: a search or the archive keeps it in place.
+ * 等你处理 while the Host puts something there (`board`), 置顶 above the projects when `pinnedShelf` is asked for, saved projects by their
+ * latest session, then conversations outside a project. Pinned sessions also remain at the head of their own project shelf. Only
+ * `waitingFrom` moves a session to 等你处理: a search or the archive keeps it in place.
  */
 export function groupSessions(
   tasks: TaskSummary[],
   workspaces: readonly WorkspaceInfo[] | undefined,
-  options: { includeEmpty?: boolean; waitingFrom?: readonly TaskSummary[]; teams?: readonly TeamSummary[] | undefined } = {},
+  options: {
+    includeEmpty?: boolean
+    waitingFrom?: readonly TaskSummary[]
+    teams?: readonly TeamSummary[] | undefined
+    pinnedShelf?: boolean
+  } = {},
 ): SessionGroup[] {
   const waiting: SessionGroup = {
     id: 'waiting',
     label: COPY.attention,
     tasks: (options.waitingFrom ?? []).filter(inAttention).toSorted(byRecency),
+  }
+  const pinned: SessionGroup = {
+    id: 'pinned',
+    label: COPY.pinned,
+    tasks: options.pinnedShelf ? tasks.filter(task => task.pinned === true).toSorted(byRecency) : [],
   }
   const shelved = new Set(waiting.tasks.map(task => task.id))
   const other: SessionGroup = { id: 'other', label: workspaces === undefined ? COPY.sessions : COPY.noProject, tasks: [] }
@@ -507,14 +520,14 @@ export function groupSessions(
     for (const project of workspaces ?? []) {
       if (project.id !== 'default' && !projects.has(`project:${project.id}`)) projects.set(`project:${project.id}`, makeProject(project))
     }
-  const shelves = [waiting, ...projects.values(), other].filter(
+  const shelves = [waiting, pinned, ...projects.values(), other].filter(
     group => group.tasks.length > 0 || (options.includeEmpty && group.project !== undefined),
   )
   // A stable sort, so pinned rows keep their own recency order at the head of the shelf.
   return shelves.map(group => {
     const pinnedFirst = group.tasks.toSorted((a, b) => Number(b.pinned === true) - Number(a.pinned === true))
-    // 等你处理 is a flat list of what waits: a member there is shown like any other session.
-    if (group === waiting) return { ...group, tasks: pinnedFirst }
+    // 等你处理 and 置顶 are flat lists: a member there is shown like any other session.
+    if (group === waiting || group === pinned) return { ...group, tasks: pinnedFirst }
     const nested = nestMembers(pinnedFirst, options.teams)
     return { ...group, tasks: nested.tasks, ...(nested.members.size ? { members: nested.members } : {}) }
   })
@@ -522,7 +535,8 @@ export function groupSessions(
 
 /**
  * The rows as the list draws them, top to bottom, for stepping through it: 等你处理 first and nothing from a folded shelf.
- * Only browsing moves a session to 等你处理, as in the list itself.
+ * Only browsing moves a session to 等你处理, as in the list itself; a pinned session drawn both in 置顶 and in its project
+ * is visited once, at its first visible shelf.
  */
 export function listedSessions(
   tasks: TaskSummary[],
@@ -547,12 +561,19 @@ export function listedSessions(
   },
 ): TaskSummary[] {
   if (space === 'agents') return delegationRows(tasks, { filter, expanded }).rows
-  return groupSessions(filterSessions(tasks, filter, search, space), workspaces, {
+  const rows = groupSessions(filterSessions(tasks, filter, search, space), workspaces, {
     ...(filter !== 'archived' && !search && !projectTree ? { waitingFrom: inSpace(tasks, space) } : {}),
+    ...(filter !== 'archived' && !search && projectTree ? { pinnedShelf: true } : {}),
     teams,
   })
     .filter(group => !folded.has(group.id))
     .flatMap(group => foldMembers(group.tasks, group.members, folded).tasks)
+  const seen = new Set<string>()
+  return rows.filter(task => {
+    if (seen.has(task.id)) return false
+    seen.add(task.id)
+    return true
+  })
 }
 
 /** How many delegations 我的 Agent's list shows under 最近委托 before 全部. */

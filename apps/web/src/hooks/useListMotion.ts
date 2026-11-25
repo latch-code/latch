@@ -41,7 +41,7 @@ function measureRows(container: HTMLElement | null, previous: Map<string, number
   for (const element of container.querySelectorAll<HTMLElement>('[data-flip-id]')) {
     const scope = element.parentElement?.closest<HTMLElement>('[data-flip-scope]')
     const top = element.getBoundingClientRect().top - (scope ? scope.getBoundingClientRect().top : containerTop)
-    const id = element.dataset.flipId ?? ''
+    const id = `${scope?.dataset.flipId ?? ''}\u0000${element.dataset.flipId ?? ''}`
     tops.set(id, top)
     if (previous === null) continue
     const before = previous.get(id)
