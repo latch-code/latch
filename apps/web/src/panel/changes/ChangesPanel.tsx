@@ -262,8 +262,8 @@ export interface ChangesTarget {
   turnId?: string
   /** A task evidence link names the observed Git commit. */
   commitSha?: string
-  /** 交付 opens a file in 未提交, the work tree against HEAD. */
-  scope?: 'uncommitted'
+  /** 交付 opens a file in 未提交; 概要 opens earlier changes in 这个会话. */
+  scope?: 'uncommitted' | 'session'
   /** A line of the conversation does not always know which session folder its file is in. */
   file?: { root?: string; path: string }
   /** The same link pressed again goes there again. */
@@ -788,11 +788,7 @@ function ReadableChanges({
   const preferences = usePreferences()
   const [git, setGit] = useState<GitPane>()
   const [choice, setChoice] = useState<ScopeChoice>(
-    target?.turnId
-      ? { kind: 'turn', turnId: target.turnId }
-      : target?.scope === 'uncommitted'
-        ? { kind: 'uncommitted' }
-        : { kind: 'latest' },
+    target?.turnId ? { kind: 'turn', turnId: target.turnId } : target?.scope ? { kind: target.scope } : { kind: 'latest' },
   )
   const { list, turns, running, failure, busy, actionError, result, undoneFiles, revision, reload, actions, readFile } = useChanges(
     summary,
@@ -870,7 +866,7 @@ function ReadableChanges({
     }
     setGit(undefined)
     if (target.turnId) setChoice({ kind: 'turn', turnId: target.turnId })
-    else if (target.scope === 'uncommitted') setChoice({ kind: 'uncommitted' })
+    else if (target.scope) setChoice({ kind: target.scope })
   }, [target?.nonce])
 
   const files = useMemo(() => (list ? list.files.toSorted(compareFiles) : []), [list])

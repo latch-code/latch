@@ -16,6 +16,8 @@ import { SessionPanels } from '../src/components/SessionPanels.tsx'
 import { FileBreadcrumb, breadcrumbFolders } from '../src/preview/FileBreadcrumb.tsx'
 import { soleFolder } from '../src/preview/treeFiles.ts'
 import { SessionFacts, SessionFolders, liveFolder } from '../src/shell/SessionEnvironment.tsx'
+import { SessionOverview } from '../src/shell/SessionOverview.tsx'
+import type { ShellState } from '../src/shell/useShellLayout.tsx'
 import { closeTab, offerTab, type FileTab } from '../src/preview/useFileTabs.ts'
 import { sessionMenuSections } from '../src/sessionMenu.ts'
 
@@ -494,5 +496,146 @@ describe('the facts below the folders', () => {
       createElement(SessionFacts, { summary: session(), detail: detail([option]), harness: undefined, gate: { kind: 'open' } }),
     )
     expect(text).not.toContain('Speed')
+  })
+})
+
+describe('the session overview', () => {
+  const baseShell = (current: TaskDetail, extra: Partial<ShellState> = {}): ShellState => {
+    const catalog = hostCatalog({ workspaces: [{ id: 'proj-app', name: '设置项目', path: '/work/app' }] })
+    const snapshot = appSnapshot({
+      catalog,
+      device: { ...appSnapshot().device, dataScope: 'all' },
+    })
+    return {
+      connection: 'connected',
+      canViewChanges: true,
+      canDeliver: true,
+      canBrowseFiles: true,
+      snapshot,
+      current,
+      catalog,
+      topHarness: catalog.harnesses[0],
+      access: { local: false, admin: true, legacy: false, scopes: new Set(['view', 'run', 'admin']) },
+      gate: { kind: 'open' },
+      route: { entry: 'sessions', start: false },
+      board: false,
+      pageMode: false,
+      infoPage: false,
+      columnOpen: false,
+      panelAvailable: () => true,
+      choose: noop,
+      revealContextRow: () => false,
+      selectApproval: noop,
+      openChangesTab: noop,
+      showSurface: noop,
+      closePanel: noop,
+      closeInfoPage: noop,
+      ...extra,
+    } as unknown as ShellState
+  }
+
+  it('omits raw execute commands while showing pending items, plan steps, project folders and session facts', () => {
+    const summary = session({
+      cwd: '/work/app',
+      workspaceId: 'proj-app',
+      model: 'fake-coder-32k',
+      usage: { inputTokens: 12_000, outputTokens: 3_000 },
+    })
+    const current: TaskDetail = {
+      summary,
+      messages: [
+        { id: 'u1', role: 'user', text: 'check', turnId: 'turn-1', turn: { activeMs: 8_000, endedAt: '2026-11-26T00:00:10.000Z' } },
+        {
+          id: 't1',
+          role: 'tool',
+          text: 'rg -n foo apps/',
+          toolName: 'bash',
+          state: 'completed',
+          tool: { kind: 'execute', title: 'rg -n foo apps/' },
+        },
+        {
+          id: 'a1',
+          role: 'assistant',
+          text: 'done',
+          outputs: [{ root: 'default', path: 'apps/web/src/shell/SessionOverview.tsx', change: 'modified' }],
+        },
+      ],
+      approvals: [
+        {
+          id: 'ap-1',
+          sessionId: summary.id,
+          toolName: 'write_file',
+          reason: '写入 src/index.ts',
+          requestedAt: '2026-11-26T00:00:05.000Z',
+        },
+      ],
+      questions: [
+        {
+          id: 'q-1',
+          toolCallId: 'tc-1',
+          prompt: '使用哪种方案？',
+          state: 'pending',
+          questions: [{ id: 'q1', label: '选择目录结构', multiple: false, options: [] }],
+        },
+      ],
+      plan: [
+        { content: '梳理概要结构', status: 'completed' },
+        { content: '补充项目与会话信息', status: 'in_progress' },
+      ],
+      usageReport: {
+        at: '2026-11-26T00:00:09.000Z',
+        contextUsed: 16_000,
+        contextSize: 32_000,
+        cost: { amount: 0.12, currency: 'USD' },
+      },
+      liveText: '',
+      cursor: 0,
+    }
+    const html = render(createElement(SessionOverview, { shell: baseShell(current), summary }))
+    expect(html).toContain('aria-label="等你处理"')
+    expect(html).toContain('写入 src/index.ts')
+    expect(html).toContain('选择目录结构')
+    expect(html).toContain('aria-label="计划"')
+    expect(html).toContain('已完成 1/2')
+    expect(html).toContain('补充项目与会话信息')
+    expect(html).toContain('这次改动')
+    expect(html).toContain('apps/web/src/shell/SessionOverview.tsx')
+    expect(html).toContain('aria-label="项目"')
+    expect(html).toContain('设置项目')
+    expect(html).toContain('aria-label="会话"')
+    expect(html).toContain('Standard · fake-coder-32k')
+    expect(html).toContain('16k / 32k tokens（50%）')
+    expect(html).not.toContain('aria-label="检查"')
+    expect(html).not.toContain('rg -n foo apps/')
+  })
+
+  it('falls back to session-level changes when a follow-up turn produces no new file edits', () => {
+    const summary = session({ cwd: '/work/app', workspaceId: 'default', permissionDrift: true })
+    const current: TaskDetail = {
+      summary,
+      messages: [
+        { id: 'u1', role: 'user', text: 'edit', turnId: 'turn-1' },
+        {
+          id: 'a1',
+          role: 'assistant',
+          text: 'edited',
+          outputs: [
+            { root: 'default', path: 'src/a.ts', change: 'created' },
+            { root: 'default', path: 'src/b.ts', change: 'modified' },
+          ],
+        },
+        { id: 'u2', role: 'user', text: 'why did you change b?', turnId: 'turn-2' },
+        { id: 'a2', role: 'assistant', text: 'because of types', outputs: [] },
+      ],
+      approvals: [],
+      liveText: '',
+      cursor: 0,
+    }
+    const html = render(createElement(SessionOverview, { shell: baseShell(current), summary }))
+    expect(html).toContain('aria-label="本会话改动"')
+    expect(html).toContain('src/b.ts')
+    expect(html).toContain('src/a.ts')
+    expect(html).toContain('权限已变化')
+    expect(html).toContain('data-lock=""')
   })
 })
