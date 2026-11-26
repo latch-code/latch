@@ -183,10 +183,19 @@ describe('revealScrollbarsWhileScrolling', () => {
       expect(scrollbarAnimations(list)).toHaveLength(0)
     })
 
-    // The browser delivers the restored media query's change event before the next animation frame.
-    await new Promise(requestAnimationFrame)
-    list.scrollTop = 80
-    await expect.poll(() => list.classList.contains('ui-scrolling')).toBe(true)
+    // Wait until the browser delivers the restored media query's change event and re-attaches tracking.
+    let target = 40
+    await expect
+      .poll(
+        () => {
+          if (list.classList.contains('ui-scrolling')) return true
+          target = target === 80 ? 120 : 80
+          list.scrollTop = target
+          return false
+        },
+        { timeout: 2000 },
+      )
+      .toBe(true)
   })
 
   it('hides without animating under reduced motion or still capture', async () => {
