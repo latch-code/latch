@@ -204,19 +204,29 @@ function field(key: string, raw: z.infer<typeof property>): Field | undefined {
   return undefined
 }
 
+const COMPANION_SUFFIXES = ['_custom', '_other'] as const
+
 /**
- * Text fields that hold the person's own words for a choice beside them, by the choice's key: `<key>_custom` next to a
- * field of choices `<key>`, as Claude's adapter asks AskUserQuestion (each question followed by its 「Other」 box). The
- * question card's 其他 is that box, so it is not a question of its own.
+ * Text fields that hold the person's own words for a choice beside them, by the choice's key: `<key>_custom` or
+ * `<key>_other` next to a field of choices `<key>`, as Claude's adapter (`question_0_custom`) and Antigravity
+ * (`q0_other`) ask their question tools (each question followed by its 「Other」 box). The question card's 其他 is that
+ * box, so it is not a question of its own.
  */
-function companions(entries: ReadonlyArray<[string, z.infer<typeof property>]>): Map<string, string> {
+function companions(entries: ReadonlyArray<[string, z.infer<typeof property>]>, required: ReadonlySet<string>): Map<string, string> {
   const keys = new Map(entries)
   const found = new Map<string, string>()
+  const claimed = new Set<string>()
   for (const [key, raw] of entries) {
-    if (!key.endsWith('_custom') || (raw.type !== undefined && raw.type !== 'string') || raw.enum || raw.oneOf || raw.anyOf) continue
-    const owner = keys.get(key.slice(0, -'_custom'.length))
-    if (owner && (owner.enum?.length || owner.oneOf?.length || owner.anyOf?.length || owner.items))
-      found.set(key, key.slice(0, -'_custom'.length))
+    if (required.has(key) || (raw.type !== undefined && raw.type !== 'string') || raw.enum || raw.oneOf || raw.anyOf || raw.items) continue
+    const suffix = COMPANION_SUFFIXES.find(item => key.endsWith(item) && key.length > item.length)
+    if (!suffix) continue
+    const ownerKey = key.slice(0, -suffix.length)
+    if (claimed.has(ownerKey)) continue
+    const owner = keys.get(ownerKey)
+    if (owner && (owner.enum?.length || owner.oneOf?.length || owner.anyOf?.length || owner.items)) {
+      found.set(key, ownerKey)
+      claimed.add(ownerKey)
+    }
   }
   return found
 }
@@ -230,7 +240,8 @@ export function elicitationAsk(params: unknown): AgentAsk | undefined {
   const parsed = elicitation.safeParse(params)
   if (!parsed.success || parsed.data.mode !== 'form') return undefined
   const all = Object.entries(parsed.data.requestedSchema?.properties ?? {})
-  const folded = companions(all)
+  const required = new Set(parsed.data.requestedSchema?.required ?? [])
+  const folded = companions(all, required)
   const entries = all.filter(([key]) => !folded.has(key))
   if (entries.length > QUESTIONS) return undefined
   const fields: Field[] = []
