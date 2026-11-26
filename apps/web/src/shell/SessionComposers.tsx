@@ -2,7 +2,7 @@ import { SHELL_COPY } from './copy.ts'
 import { useState } from 'react'
 import { FAILURE_ACTION_LABEL, failureAction, type FailureStep } from '../conversation/failureAction.ts'
 import { Eraser, GitFork } from 'lucide-react'
-import { NOT_ACCEPTED_5XX, type ModelRef, type SessionConfigOption, type TaskSummary } from '@latch/protocol'
+import { NOT_ACCEPTED_5XX, type ModelRef, type QueuedPromptContent, type SessionConfigOption, type TaskSummary } from '@latch/protocol'
 import { Button, Collapse, Hint, Icon, InlineNotice, FolderGlyph, HistoryGlyph, ShieldAlertGlyph, Drawer, ValuePicker } from '@latch/ui'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import {
@@ -51,6 +51,7 @@ import { draftPermission, draftRead, permissionView } from '../composer/permissi
 import { helperPermissionBlocked } from '../agents/personWords.ts'
 import { readOnSelect, readsOnPermission, useReading } from '../composer/harnessCatalogue.tsx'
 import { QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
+import { QueueEditForm } from '../composer/QueueEditForm.tsx'
 import { QueueDrawer } from '../composer/QueueDrawer.tsx'
 import { WorkspaceRecovery } from '../composer/WorkspaceRecovery.tsx'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
@@ -591,6 +592,22 @@ export function SessionComposer({
     if (!summary || (!speaker && summary.personal)) return null
     return summary.modelRoute && catalog ? <RouteWarning catalog={catalog} route={summary.modelRoute} /> : null
   })()
+  const [queueEdit, setQueueEdit] = useState<{ sessionId: string; deviceId: string; id: string; content: QueuedPromptContent }>()
+  // A queue edit has its own draft and uploads. Its content stays with the device and session that opened it.
+  const editing =
+    queueEdit
+    && !home
+    && current?.summary.id === queueEdit.sessionId
+    && selectedId === queueEdit.sessionId
+    && shell.snapshot.device.id === queueEdit.deviceId
+    && gate.kind === 'open'
+    && !asked
+    && !noteComposer
+    && !submission.pending
+    && !submission.sending
+      ? queueEdit
+      : undefined
+  if (queueEdit && !editing) setQueueEdit(undefined)
   // Keyed, in order: the stack slides each one in and out as it comes and goes.
   const drawers = [
     current && workspaceChanged.has(current.summary.id) && (
@@ -680,6 +697,12 @@ export function SessionComposer({
         steerRunId={steer ? current.summary.runId : undefined}
         steerAttachments={current.steerAttachments}
         running={shell.active || current.approvals.length > 0}
+        editing={!!editing}
+        onEdit={
+          asked || noteComposer || submission.sending
+            ? undefined
+            : (id, content) => setQueueEdit({ sessionId: selectedId, deviceId: shell.snapshot.device.id, id, content })
+        }
         onRemovedUnknown={text => setToast({ text, tone: 'error' })}
         onChanged={refresh}
       />
@@ -900,6 +923,30 @@ export function SessionComposer({
         />
       )}
       <Composer
+        queueEditForm={
+          editing && (
+            <QueueEditForm
+              key={editing.id}
+              sessionId={editing.sessionId}
+              itemId={editing.id}
+              original={editing.content}
+              selection={{ harnessId: summary?.harnessId ?? '', ...(editing.content.model ? { model: editing.content.model } : {}) }}
+              allowAttachments={catalog?.features?.queueAttachments === true}
+              writable={
+                sessionBlock === undefined
+                && !!current?.queue?.some(item => item.id === editing.id && item.state !== 'dropped' && !item.delivery)
+              }
+              online={shell.connection === 'connected'}
+              sendKey={preferences.sendKey}
+              coarse={coarse}
+              onClose={() => {
+                setQueueEdit(undefined)
+                requestAnimationFrame(() => composerRef.current?.focus({ preventScroll: true }))
+              }}
+              onChanged={refresh}
+            />
+          )
+        }
         attachmentMenu={
           referenceTarget
             ? [

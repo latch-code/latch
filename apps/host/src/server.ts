@@ -63,7 +63,7 @@ import {
   REFERENCE_TOOL,
   unavailableReference,
 } from './conversation-references.ts'
-import { PromptQueues, type QueueActor } from './prompt-queues.ts'
+import { PromptQueues, queueUploads, type QueueActor } from './prompt-queues.ts'
 import { Questions } from './questions.ts'
 import { createQuestionsPlugin } from './plugins/tools/questions/index.ts'
 import { forkSeed, relaySeed } from './forks.ts'
@@ -3141,6 +3141,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return refs
     }
 
+    async function queuedAttachmentRefs(
+      uploads: ReturnType<typeof queueUploads>,
+      ids: readonly string[],
+      sessionId: string,
+      model?: ModelRef,
+    ): Promise<AttachmentRef[]> {
+      const selection = { harnessId: await harnessHub.harnessOf(sessionId), ...(model ? { model } : {}) }
+      const files = new Map<string, AttachmentRef>()
+      for (const group of uploads) {
+        const refs = await promptAttachments(queuedCaller(group.actor), group.ids, selection, sessionId, group.requestId)
+        for (const ref of refs) files.set(ref.id, ref)
+      }
+      return ids.map(id => files.get(id)!)
+    }
+
     function bindPromptAttachments(deviceId: string, ids: string[], sessionId: string): Promise<void> {
       return attachmentStore.bind(deviceId, ids, sessionId).catch(() => {
         throw new AppError(503, 'attachment-publish-unknown', '消息已接收，附件记录尚未确认。请重试同一次提交。')
@@ -3367,6 +3382,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       now,
       detail: id => harnessHub.detail(id),
       check: checkQueuedPrompt,
+      attachment: id => attachmentStore.get(id)?.ref,
       async holdAttachments(actor, sessionId, ids, requestId, model) {
         const harnessId = await harnessHub.harnessOf(sessionId)
         await promptAttachments(queuedCaller(actor), ids, { harnessId, ...(model ? { model } : {}) }, sessionId, requestId)
@@ -3416,23 +3432,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (turn?.binding !== input.binding) throw queueContextChanged()
         const agentContext = turn?.agentContext
         const reference = mentionsConversationReference(input.text)
-        const attachments = input.attachmentIds?.length
-          ? await promptAttachments(
-              queuedCaller(actor),
-              input.attachmentIds,
-              {
-                harnessId: await harnessHub.harnessOf(sessionId),
-                ...(input.model ? { model: input.model } : {}),
-              },
-              sessionId,
-              input.attachmentRequestId ?? input.requestId,
-            )
-          : undefined
+        const uploads = queueUploads(actor, input.attachmentIds ?? [], input.attachmentRequestId ?? input.requestId)
+        const attachments = uploads.length ? await queuedAttachmentRefs(uploads, input.attachmentIds!, sessionId, input.model) : undefined
         if (attachments) {
           await checkQueuedPrompt(actor, sessionId, input.model, input.binding)
           await input.authorize?.()
           checkPrivateSession(queuedCaller(actor), sessionId, true)
           if (input.editor) checkPrivateSession(queuedCaller(input.editor), sessionId, true)
+          for (const { actor: uploader } of uploads) checkPrivateSession(queuedCaller(uploader), sessionId, true)
         }
         await withSimulatorPrompt(
           [actor.deviceId, ...(input.editor ? [input.editor.deviceId] : []), ...(input.coauthors ?? [])],
@@ -3447,7 +3454,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               ...(reference ? { outsideContent: true as const } : {}),
             }),
         )
-        if (input.attachmentIds) await bindPromptAttachments(actor.deviceId, input.attachmentIds, sessionId)
+        for (const group of uploads) await bindPromptAttachments(group.actor.deviceId, group.ids, sessionId)
         if (input.itemId) queueAudits.delete(input.itemId)
         // Only now is it the person's message in the session; a withdrawn one never gets here.
         await rememberFromPerson(
@@ -3460,7 +3467,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       canSteer: (id, withAttachments) => harnessHub.supportsQueuedSteer(id, withAttachments),
       async steer(actor, sessionId, input) {
         await assertQueueable(sessionId, input.text)
-        const writers = [actor, input.sender, ...(input.editor ? [input.editor] : [])]
+        const uploads = queueUploads(actor, input.attachmentIds ?? [], input.attachmentRequestId ?? input.requestId)
+        const writers = [actor, input.sender, ...(input.editor ? [input.editor] : []), ...uploads.map(group => group.actor)]
         const authorize = async () => {
           await input.authorize()
           // An earlier writer's grant or native window can expire while a later writer's session checks await I/O.
@@ -3476,15 +3484,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const seq = await audited({ action: 'task.prompt.sent', actor: sender, detail: { sessionId, itemId: input.itemId } })
         let outcome
         try {
-          const attachments = input.attachmentIds
-            ? await promptAttachments(
-                queuedCaller(actor),
-                input.attachmentIds,
-                { harnessId: await harnessHub.harnessOf(sessionId) },
-                sessionId,
-                input.attachmentRequestId,
-              )
-            : undefined
+          const attachments = uploads.length ? await queuedAttachmentRefs(uploads, input.attachmentIds!, sessionId) : undefined
           await authorize()
           outcome = await harnessHub.steer(
             sessionId,
@@ -11793,13 +11793,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return true
       }
       await authorize()
+      if (method === 'GET' && !match[3]) {
+        recheck(caller, 'view')
+        checkPrivateSession(caller, sessionId)
+        json(res, promptQueues.content(sessionId, itemId))
+        return true
+      }
       if (method === 'PATCH' && !match[3]) {
         const input = z
-          .strictObject({ text: z.string().trim().min(1).max(SESSION_PROMPT_CHARS) })
+          .strictObject({
+            text: promptSchema.shape.prompt,
+            attachmentIds: promptSchema.shape.attachmentIds,
+            contentRevision: z.number().int().nonnegative().optional(),
+          })
           .parse(await jsonBody(req, TASK_BODY_LIMIT))
         await assertQueueable(sessionId, input.text)
-        await audited({ action: 'task.prompt.edited', actor: actorOf(caller), detail: { sessionId, itemId } })
-        await promptQueues.edit(sessionId, itemId, input.text, queueActor(caller), authorize)
+        await promptQueues.edit(sessionId, itemId, input, queueActor(caller), async () => {
+          await audited({ action: 'task.prompt.edited', actor: actorOf(caller), detail: { sessionId, itemId } })
+        })
         json(res, { edited: true })
         return true
       }

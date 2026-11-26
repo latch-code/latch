@@ -27,7 +27,7 @@
 - 构建禁测试代码；组件自检；私有框架限画面，输入走 idb Unix 套接字。
 - `work` 不见文件差异；扩展报告限 `admin`、普通来源。投影不改执行参数、回执、终态（STREAMING）。
 - `src/paths.ts`、`host-state.ts`、`env.ts` 只用可擦除语法（`tsconfig.strip.json`），供 Vite 与 Vitest 配置直接加载。
-- 附件字节仅入私有存储，消息与 SSE 只存引用。上传逐块核权，下载绑定设备，追加沿用原上传者并复核授权。
+- 附件字节仅入私有存储，消息与 SSE 只存引用。上传逐块核权，下载绑定设备，排队附件保留各上传者，派发复核授权。
 - 文件树/搜索限 `files`、`all`；macOS 仅经 `latch-files` 描述符。索引不存权限，预览绑定 Harness/根身份/版本，晚回复查设备与正文窗口（ARCHITECTURE）。
 - 创作绑 Host 目录。官方查 Git HTTPS；查源、暂存限本机 `admin`、`all`。市场随插件启停（PLUGIN-DEVELOPMENT）。
 - 准备及配置回执见 ARCHITECTURE。外观写入需基版与回执，替换前复核权限，目录同步未确认复用原请求（CUSTOMIZATION）。

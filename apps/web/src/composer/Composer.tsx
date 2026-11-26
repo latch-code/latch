@@ -220,6 +220,7 @@ export function Composer({
   queueable = false,
   steerable = false,
   queueTray,
+  queueEditForm,
   attachments,
   attachmentMenu,
   fileMentions,
@@ -231,6 +232,7 @@ export function Composer({
   /** The running turn can take this draft immediately. */
   steerable?: boolean
   queueTray?: ReactNode
+  queueEditForm?: ReactNode
   agentMentions?: AgentMentions | undefined
   fileMentions?: FileMentionChoice
   /**
@@ -882,49 +884,51 @@ export function Composer({
         </div>
       )}
       <DrawerStack className="composer-drawers">{drawers}</DrawerStack>
-      <form
-        ref={commandAnchor}
-        hidden={pendingInTranscript}
-        className={`composer ${run ? 'is-running' : ''}`}
-        data-inline={inline ? '' : undefined}
-        data-variant={readOnly !== undefined ? 'read-only' : undefined}
-        onDragOver={
-          attachments
-            ? event => {
-                if ([...event.dataTransfer.types].includes('Files')) event.preventDefault()
-              }
-            : undefined
-        }
-        onDrop={attachments ? event => dropAttachments(event, attachments) : undefined}
-        onSubmit={event => {
-          event.preventDefault()
-          if (sendable) submit()
-        }}>
-        {fields}
-        {addressed && (phone || (peerBlock && draft.trim())) && (
-          <div className="agent-mention-address">
-            {phone && recipientChip}
-            {peerBlock && draft.trim() && <span>{peerBlock}</span>}
+      {queueEditForm ?? (
+        <form
+          ref={commandAnchor}
+          hidden={pendingInTranscript}
+          className={`composer ${run ? 'is-running' : ''}`}
+          data-inline={inline ? '' : undefined}
+          data-variant={readOnly !== undefined ? 'read-only' : undefined}
+          onDragOver={
+            attachments
+              ? event => {
+                  if ([...event.dataTransfer.types].includes('Files')) event.preventDefault()
+                }
+              : undefined
+          }
+          onDrop={attachments ? event => dropAttachments(event, attachments) : undefined}
+          onSubmit={event => {
+            event.preventDefault()
+            if (sendable) submit()
+          }}>
+          {fields}
+          {addressed && (phone || (peerBlock && draft.trim())) && (
+            <div className="agent-mention-address">
+              {phone && recipientChip}
+              {peerBlock && draft.trim() && <span>{peerBlock}</span>}
+            </div>
+          )}
+          {input}
+          {/* The text, then one line: 「+」, slash and the Harness at its start; the one entry, 「⋯」 and send at its end. */}
+          <div className="composer-toolbar">
+            <div className="composer-controls">
+              {add}
+              {peerPickerButton}
+              {!phone && recipientChip}
+              {!inline && slashButton}
+              {controls}
+              {trailing}
+            </div>
+            <div className="composer-end">
+              {meta && <div className="composer-meta">{meta}</div>}
+              {action}
+            </div>
           </div>
-        )}
-        {input}
-        {/* The text, then one line: 「+」, slash and the Harness at its start; the one entry, 「⋯」 and send at its end. */}
-        <div className="composer-toolbar">
-          <div className="composer-controls">
-            {add}
-            {peerPickerButton}
-            {!phone && recipientChip}
-            {!inline && slashButton}
-            {controls}
-            {trailing}
-          </div>
-          <div className="composer-end">
-            {meta && <div className="composer-meta">{meta}</div>}
-            {action}
-          </div>
-        </div>
-        {status}
-      </form>
+          {status}
+        </form>
+      )}
       {below}
       {/* The limit is not a choice: it stands at the end of the line under the input, with what the session used. */}
       {usage ? (

@@ -1,4 +1,4 @@
-import { useContext, useEffect, useRef, useState, type RefObject } from 'react'
+import { useContext, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { isFileMetadata, type AttachmentRef } from '@latch/protocol'
 import { FileSession } from './FileChip.tsx'
 import { FileOpenContext } from '../preview/fileContext.ts'
@@ -22,17 +22,28 @@ const sizeText = (bytes: number) =>
   bytes < 1024 * 1024 ? `${Math.max(1, Math.ceil(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
 
 /**
- * A sent attachment as a tile of the file itself. A picture, video or sound asks for its preview handle once the tile
+ * A stored attachment as a tile of the file itself. A picture, video or sound asks for its preview handle once the tile
  * comes into view and draws from it; nothing that may hold a secret is drawn. Pressing a drawn picture shows it large
  * over the page, from where it can open in the file pane; anything else opens the file pane.
  */
-function MessageAttachment({ attachment, inline }: { attachment: AttachmentRef; inline: boolean }) {
-  const session = useContext(FileSession),
+export function MessageAttachment({
+  attachment,
+  inline = false,
+  sessionId: sourceSessionId,
+  corner,
+}: {
+  attachment: AttachmentRef
+  inline?: boolean
+  sessionId?: string
+  corner?: ReactNode
+}) {
+  const fileSession = useContext(FileSession),
     open = useContext(FileOpenContext)
+  const sessionId = sourceSessionId ?? fileSession?.id
   const anchor = useRef<HTMLElement>(null)
   const type = tileType(attachment)
   const drawn = type === 'image' || type === 'video' || type === 'audio'
-  const key = `${session?.id ?? ''}\n${attachment.id}\n${attachment.sha256}`
+  const key = `${sessionId ?? ''}\n${attachment.id}\n${attachment.sha256}`
   const [media, setMedia] = useState<{ key: string; url: string; download: boolean }>()
   const [failed, setFailed] = useState<string>()
   // Its preview handle lapses (10 minutes): the first failure asks the Host once more and resumes where playback stood.
@@ -40,7 +51,7 @@ function MessageAttachment({ attachment, inline }: { attachment: AttachmentRef; 
   const picture = type === 'image' && media?.key === key ? media.url : undefined
   useEffect(() => {
     const again = retry?.key === key
-    if (!drawn || !session || !open || (!anchor.current && !again)) return
+    if (!drawn || !sessionId || !open || (!anchor.current && !again)) return
     const controller = new AbortController()
     let started = false
     const load = () => {
@@ -81,13 +92,13 @@ function MessageAttachment({ attachment, inline }: { attachment: AttachmentRef; 
       controller.abort()
       observer.disconnect()
     }
-  }, [key, attachment.id, type, drawn, session?.id, open, retry])
+  }, [key, attachment.id, type, drawn, sessionId, open, retry])
   const openPane = () => {
-    if (session) open?.({ sessionId: session.id, reference: attachment.name, attachmentId: attachment.id })
+    if (sessionId) open?.({ sessionId, reference: attachment.name, attachmentId: attachment.id })
   }
   // An agent's picture, video or sound is drawn in its reply at its own size, as media a reply links to is; until the
   // Host answers, a picture or video holds its place, and what cannot be drawn is the tile.
-  const drawnInline = inline && drawn && failed !== key && !!session && !!open
+  const drawnInline = inline && drawn && failed !== key && !!sessionId && !!open
   const shown: ResolvedMedia | undefined =
     drawnInline && media?.key === key
       ? {
@@ -109,7 +120,7 @@ function MessageAttachment({ attachment, inline }: { attachment: AttachmentRef; 
           fileName: attachment.name,
           ...(attachment.width && attachment.height ? { width: attachment.width, height: attachment.height } : {}),
           download: media?.download === true,
-          ...(session && open ? { openInFiles: openPane } : {}),
+          ...(sessionId && open ? { openInFiles: openPane } : {}),
           renew: () => setRetry({ key }),
           element: () => anchor.current,
         }
@@ -148,7 +159,7 @@ function MessageAttachment({ attachment, inline }: { attachment: AttachmentRef; 
       )
   }
   return (
-    <div className="message-attachment" data-type={type}>
+    <div className={corner ? 'attachment-draft' : 'message-attachment'} data-state={corner ? 'ready' : undefined} data-type={type}>
       <AttachmentTile
         ref={anchor as RefObject<HTMLButtonElement>}
         name={attachment.name}
@@ -156,7 +167,8 @@ function MessageAttachment({ attachment, inline }: { attachment: AttachmentRef; 
         {...(media?.key === key ? { src: media.url } : {})}
         label={`${attachment.name} ${sizeText(attachment.size)}`}
         title={`${attachment.name} · ${sizeText(attachment.size)}`}
-        disabled={!session || !open}
+        disabled={!sessionId || !open}
+        corner={corner}
         onOpen={() => {
           // A picture is looked at where it is, large; any other file opens in the file pane.
           if (picture) large.open()

@@ -9,6 +9,8 @@ import {
   LISTENER_CLASSES,
   SESSION_PROMPT_CHARS,
   refusedBeforeAccepting,
+  type AttachmentRef,
+  type QueuedPromptContent,
   type DataScope,
   type ListenerClass,
   type ModelRef,
@@ -22,7 +24,10 @@ const ACTIVE = new Set(['running', 'waiting-approval'])
 const VISIBLE = new Set(['waiting', 'parked', 'dropped', 'sending', 'uncertain'])
 const MAX_RECEIPTS = 100_000
 const RECEIPTS_PER_DEVICE = 10_000
-const text = z.string().min(1).max(SESSION_PROMPT_CHARS)
+const attachmentIds = z
+  .array(z.string().regex(/^[A-Za-z0-9_-]{22}$/u))
+  .min(1)
+  .max(8)
 const id = z.string().min(1).max(256)
 const MAX_COAUTHORS = 256
 /** Refused, never cut: a device left out would no longer count as one that wrote the text. */
@@ -40,6 +45,26 @@ const actorSchema = z.strictObject({
     .regex(/^[a-f0-9]{64}$/u)
     .optional(),
 })
+const uploadSchema = z.strictObject({ actor: actorSchema, requestId: z.string().uuid(), ids: attachmentIds })
+type QueueUpload = z.infer<typeof uploadSchema>
+interface QueueSource extends QueueActor {
+  editedUploads?: QueueUpload[] | undefined
+}
+
+function retainedUploads(source: QueueSource, ids: readonly string[]): QueueUpload[] {
+  return (source.editedUploads ?? []).flatMap(group => {
+    const kept = group.ids.filter(id => ids.includes(id))
+    return kept.length ? [{ ...group, ids: kept }] : []
+  })
+}
+
+/** Old entries claim all files with the original device and request. Each edit reserves its new files separately. */
+export function queueUploads(source: QueueSource, ids: readonly string[], requestId: string): QueueUpload[] {
+  const edits = retainedUploads(source, ids)
+  const original = ids.filter(id => !edits.some(group => group.ids.includes(id)))
+  return original.length ? [{ actor: source, requestId, ids: original }, ...edits] : edits
+}
+
 const recordSchema = z.strictObject({
   id,
   sessionId: id,
@@ -64,11 +89,8 @@ const recordSchema = z.strictObject({
   hash: z.string().regex(/^[a-f0-9]{64}$/u),
   text: z.string().max(SESSION_PROMPT_CHARS).optional(),
   teamRequest: z.literal(true).optional(),
-  attachmentIds: z
-    .array(z.string().regex(/^[A-Za-z0-9_-]{22}$/u))
-    .min(1)
-    .max(8)
-    .optional(),
+  attachmentIds: attachmentIds.optional(),
+  editedUploads: z.array(uploadSchema).max(8).optional(),
   queuedAt: z.string().datetime(),
   state: z.enum(['waiting', 'parked', 'dropped', 'sending', 'uncertain', 'sent', 'removed']),
   waitRunId: z.string().max(128),
@@ -94,7 +116,8 @@ async function receivedSteer(item: Record, detail: TaskDetail, options: QueueOpt
   if (!received || !item.attachmentIds) return received
   if (!options.bindAttachments) return false
   try {
-    await options.bindAttachments(item, item.sessionId, item.attachmentIds)
+    for (const group of queueUploads(item, item.attachmentIds, item.requestId))
+      await options.bindAttachments(group.actor, item.sessionId, group.ids)
     return true
   } catch {
     // Keep the upload claimed and retry publication from the same message.
@@ -117,6 +140,7 @@ export interface QueueActor {
   nativeWindowHash?: string
 }
 export interface QueueOptions {
+  attachment?(id: string): AttachmentRef | undefined
   dataDir: string
   now?: () => number
   detail(id: string): Promise<TaskDetail>
@@ -134,7 +158,7 @@ export interface QueueOptions {
   dropped?(actor: QueueActor, sessionId: string, itemId: string): void
   canSteer?(sessionId: string, withAttachments: boolean): boolean
   steer?(
-    actor: QueueActor,
+    actor: QueueSource,
     sessionId: string,
     input: {
       sender: QueueActor
@@ -151,7 +175,7 @@ export interface QueueOptions {
     },
   ): Promise<'injected' | 'prompt-required'>
   send(
-    actor: QueueActor,
+    actor: QueueSource,
     sessionId: string,
     input: {
       text: string
@@ -174,8 +198,11 @@ export interface QueueOptions {
 /** The Host owns FIFO scheduling and receipts; drivers still own prompt acceptance and request deduplication. */
 export class PromptQueues {
   private serial: Promise<void> = Promise.resolve()
-  // An upload was reserved, but the atomic queue write had no certain outcome. Keep it parked until a durable write.
-  private readonly unconfirmedAdmissions = new Set<string>()
+  // An admission or edit may have reached disk. A retry must confirm it with a durable write.
+  private readonly unconfirmedWrites = new Set<string>()
+  // Protect both uploads being reserved and claims whose queue-file replacement has not yet been confirmed.
+  private reserving: QueueUpload | undefined
+  private readonly releaseAfterCommit = new Set<QueueUpload & { sessionId: string }>()
   private closed = false
   private constructor(
     private readonly options: QueueOptions,
@@ -221,7 +248,14 @@ export class PromptQueues {
       if (!detail) continue
       for (const item of pending)
         if (await receivedSteer(item, detail, options))
-          entries.set(item.id, { ...item, state: 'sent', text: undefined, attachmentIds: undefined, reason: undefined })
+          entries.set(item.id, {
+            ...item,
+            state: 'sent',
+            text: undefined,
+            attachmentIds: undefined,
+            editedUploads: undefined,
+            reason: undefined,
+          })
     }
     const queue = new PromptQueues(options, entries)
     if (items.length) await queue.commit(new Map(entries))
@@ -236,8 +270,11 @@ export class PromptQueues {
   }
 
   holdsUpload(deviceId: string, requestId: string): boolean {
+    const matches = (group: QueueUpload) => group.actor.deviceId === deviceId && group.requestId === requestId
+    if (this.reserving && matches(this.reserving)) return true
+    for (const group of this.releaseAfterCommit) if (matches(group)) return true
     for (const item of this.entries.values())
-      if (item.deviceId === deviceId && item.requestId === requestId && item.attachmentIds?.length && VISIBLE.has(item.state)) return true
+      if (item.attachmentIds && VISIBLE.has(item.state) && queueUploads(item, item.attachmentIds, item.requestId).some(matches)) return true
     return false
   }
 
@@ -301,6 +338,22 @@ export class PromptQueues {
     }))
   }
 
+  private editable(sessionId: string, itemId: string): Record {
+    const item = this.find(sessionId, itemId)
+    if (item.state !== 'waiting' && item.state !== 'parked') throw new AppError(409, 'queue-settled', '这条排队内容现在无法编辑。')
+    return item
+  }
+
+  content(sessionId: string, itemId: string): QueuedPromptContent {
+    const item = this.editable(sessionId, itemId)
+    const attachments = (item.attachmentIds ?? []).map(id => {
+      const ref = this.options.attachment?.(id)
+      if (!ref) throw new AppError(409, 'attachment-missing', '排队附件已不可用。')
+      return ref
+    })
+    return { text: item.text!, attachments, contentRevision: item.contentRevision ?? 0, ...(item.model ? { model: item.model } : {}) }
+  }
+
   submit(
     actor: QueueActor,
     sessionId: string,
@@ -326,7 +379,7 @@ export class PromptQueues {
       )
       if (prior) {
         if (prior.hash !== hash) throw new AppError(409, 'request-conflict', '同一次排队请求不能提交不同内容')
-        if (this.unconfirmedAdmissions.has(prior.id)) await this.commit(new Map(this.entries))
+        if (this.unconfirmedWrites.has(prior.id)) await this.commit(new Map(this.entries))
         return VISIBLE.has(prior.state) ? { queued: { id: prior.id } } : { accepted: true }
       }
       if (existingOnly) throw new AppError(409, 'queue-settled', '没有可重试的排队回执。')
@@ -372,7 +425,7 @@ export class PromptQueues {
             ...(model ? { model } : {}),
             ...(binding ? { binding } : {}),
           })
-          await this.patch(immediate, { state: 'sent', text: undefined, attachmentIds: undefined })
+          await this.patch(immediate, { state: 'sent', text: undefined, attachmentIds: undefined, editedUploads: undefined })
         } catch (error) {
           // Refused before the session took it: the receipt goes too, so nothing on record can still send it and the
           // refusal stays definite (NOT_ACCEPTED_5XX). The client sends again as a new request, or not at all.
@@ -439,39 +492,61 @@ export class PromptQueues {
     })
   }
 
-  private async admit(item: Record, next: Map<string, Record>): Promise<void> {
-    if (item.attachmentIds) {
-      if (!this.options.holdAttachments) throw new AppError(409, 'attachments-unsupported', '当前会话不能保存排队附件。')
-      await this.options.holdAttachments(item, item.sessionId, item.attachmentIds, item.requestId, item.model)
-      try {
-        await this.options.check(item, item.sessionId, item.model, item.binding)
-      } catch (error) {
-        await this.options.releaseAttachments?.(item, item.sessionId, item.attachmentIds, item.requestId)
-        throw error
-      }
+  private async reserve(group: QueueUpload, item: Record, recheck: () => Promise<void>): Promise<void> {
+    const { actor, ids, requestId } = group
+    if (!this.options.holdAttachments) throw new AppError(409, 'attachments-unsupported', '当前会话不能保存排队附件。')
+    await this.options.holdAttachments(actor, item.sessionId, ids, requestId, item.model)
+    try {
+      await recheck()
+    } catch (error) {
+      await this.options.releaseAttachments?.(actor, item.sessionId, ids, requestId)
+      throw error
     }
+  }
+
+  private async admit(item: Record, next: Map<string, Record>): Promise<void> {
+    if (item.attachmentIds)
+      await this.reserve({ actor: item, ids: item.attachmentIds, requestId: item.requestId }, item, () =>
+        this.options.check(item, item.sessionId, item.model, item.binding),
+      )
     try {
       await this.commit(next)
     } catch (cause) {
       if (!item.attachmentIds) throw cause
       // rename or directory sync may already have succeeded. Never release or dispatch on that uncertainty.
       this.entries.set(item.id, { ...item, state: 'parked', reason: '排队保存结果未确认，请确认后发送' })
-      this.unconfirmedAdmissions.add(item.id)
+      this.unconfirmedWrites.add(item.id)
       this.options.changed(item.sessionId)
       throw new AppError(503, 'queue-save-unknown', '排队保存结果未确认，请重试原请求或到队列里移除。')
     }
   }
 
-  edit(sessionId: string, itemId: string, value: string, actor: QueueActor, authorize?: () => Promise<void>): Promise<void> {
+  edit(
+    sessionId: string,
+    itemId: string,
+    input: string | { text: string; attachmentIds?: string[] | undefined; contentRevision?: number | undefined },
+    actor: QueueActor,
+    beforeChange?: () => Promise<void>,
+  ): Promise<void> {
     return this.lock(async () => {
       this.assertOpen()
-      const item = this.find(sessionId, itemId)
-      if (!VISIBLE.has(item.state) || item.state === 'sending' || item.state === 'uncertain')
-        throw new AppError(409, 'queue-settled', '这一项已经发送或正在确认结果')
-      if (!text.safeParse(value).success) throw new AppError(400, 'queue-item-invalid', '排队内容无效。')
-      if (item.text === value) return
-      await this.options.check(actor, sessionId, item.model, item.binding)
-      await authorize?.()
+      const item = this.editable(sessionId, itemId)
+      const check = () => this.options.check(actor, sessionId, item.model, item.binding)
+      await check()
+      const edit = typeof input === 'string' ? { text: input } : input
+      const prior = item.attachmentIds ?? []
+      const ids = edit.attachmentIds ?? prior
+      if ((!edit.text && !ids.length) || edit.text.length > SESSION_PROMPT_CHARS)
+        throw new AppError(400, 'queue-item-invalid', '请输入排队内容或添加附件。')
+      if (ids.length && (!attachmentIds.safeParse(ids).success || new Set(ids).size !== ids.length))
+        throw new AppError(400, 'attachment-count', '每条消息最多 8 个不同附件。')
+      if (edit.attachmentIds && edit.contentRevision === undefined) throw new AppError(400, 'invalid-input', '修改排队附件需要内容修订。')
+      if (item.text === edit.text && prior.length === ids.length && prior.every((id, i) => id === ids[i])) {
+        if (this.unconfirmedWrites.has(item.id)) await this.commit(new Map(this.entries))
+        return
+      }
+      if (edit.contentRevision !== undefined && edit.contentRevision !== (item.contentRevision ?? 0))
+        throw new AppError(409, 'queue-content-changed', '这条排队内容已被修改，请重新编辑。')
       // The editor before this one may have kept words of its own: it stays a writer of the text, so authorship only grows.
       const previous = item.editor?.deviceId
       const kept =
@@ -480,13 +555,43 @@ export class PromptQueues {
           : item.coauthors
       const contentRevision = (item.contentRevision ?? 0) + 1
       if (!Number.isSafeInteger(contentRevision)) throw new AppError(409, 'queue-item-invalid', '这条排队内容无法再修改。')
-      await this.patch(item, {
-        text: value,
+      const added = ids.filter(id => !prior.includes(id))
+      const removed = prior.filter(id => !ids.includes(id))
+      const uploads = retainedUploads(item, ids)
+      const adding = added.length ? { actor, ids: added, requestId: randomUUID() } : undefined
+      if (adding) uploads.push(adding)
+      const updated: Record = {
+        ...item,
+        text: edit.text,
+        attachmentIds: ids.length ? ids : undefined,
+        editedUploads: uploads.length ? uploads : undefined,
         contentRevision,
         sendRequestId: randomUUID(),
         editor: actor,
         ...(kept ? { coauthors: kept } : {}),
-      })
+      }
+      valid(updated)
+      if (beforeChange) {
+        await beforeChange()
+        await check()
+      }
+      this.reserving = adding
+      try {
+        if (adding) await this.reserve(adding, item, check)
+        // Both the old and new files must survive until the queue replacement is durable.
+        for (const group of queueUploads(item, removed, item.requestId)) this.releaseAfterCommit.add({ ...group, sessionId })
+        try {
+          await this.save(updated)
+        } catch {
+          // Even a text-only change may already have been renamed into place. Never dispatch the previous version.
+          this.entries.set(item.id, { ...updated, state: 'parked', reason: '排队保存结果未确认，请确认后发送' })
+          this.unconfirmedWrites.add(item.id)
+          this.options.changed(sessionId)
+          throw new AppError(503, 'queue-save-unknown', '排队保存结果未确认，请重试保存。')
+        }
+      } finally {
+        this.reserving = undefined
+      }
     })
   }
 
@@ -496,8 +601,10 @@ export class PromptQueues {
       const item = this.find(sessionId, itemId)
       const unknown = item.state === 'sending' || item.state === 'uncertain'
       if (item.state !== 'removed') {
-        await this.patch(item, { state: 'removed', text: undefined, attachmentIds: undefined, reason: undefined })
-        if (!unknown && item.attachmentIds) await this.options.releaseAttachments?.(item, sessionId, item.attachmentIds, item.requestId)
+        await this.patch(item, { state: 'removed', text: undefined, attachmentIds: undefined, editedUploads: undefined, reason: undefined })
+        if (!unknown && item.attachmentIds)
+          for (const group of queueUploads(item, item.attachmentIds, item.requestId))
+            await this.options.releaseAttachments?.(group.actor, sessionId, group.ids, group.requestId)
       }
       return { removed: true, ...(unknown ? { deliveryUnknown: true } : {}) }
     })
@@ -612,11 +719,13 @@ export class PromptQueues {
           ...(item.coauthors ? { coauthors: item.coauthors } : {}),
           authorize: async () => {
             await this.options.check(item, sessionId, item.model, item.binding)
-            if (item.editor) await this.options.check(item.editor, sessionId, item.model, item.binding)
+            await this.checkEditors(item)
             await authorize()
           },
         })
-        if (outcome === 'injected' && item.attachmentIds) await this.options.bindAttachments!(item, sessionId, item.attachmentIds)
+        if (outcome === 'injected' && item.attachmentIds)
+          for (const group of queueUploads(item, item.attachmentIds, item.requestId))
+            await this.options.bindAttachments!(group.actor, sessionId, group.ids)
       } catch (error) {
         if (error instanceof AppError && refusedBeforeAccepting(error.status, error.code)) {
           await this.save(item)
@@ -630,7 +739,7 @@ export class PromptQueues {
         await this.save(item)
         throw new AppError(409, 'queue-steer-unavailable', '当前轮次没有接受追加，队列会按原顺序处理。')
       }
-      await this.patch(sending, { state: 'sent', text: undefined, attachmentIds: undefined, reason: undefined })
+      await this.patch(sending, { state: 'sent', text: undefined, attachmentIds: undefined, editedUploads: undefined, reason: undefined })
     })
   }
 
@@ -640,7 +749,7 @@ export class PromptQueues {
       if (item.state === 'sending') await this.patch(item, { state: 'uncertain' })
       return false
     }
-    await this.patch(item, { state: 'sent', text: undefined, attachmentIds: undefined, reason: undefined })
+    await this.patch(item, { state: 'sent', text: undefined, attachmentIds: undefined, editedUploads: undefined, reason: undefined })
     return true
   }
 
@@ -705,10 +814,15 @@ export class PromptQueues {
     })
   }
 
+  private async checkEditors(item: Record): Promise<void> {
+    for (const group of item.editedUploads ?? []) await this.options.check(group.actor, item.sessionId, item.model, item.binding)
+    if (item.editor) await this.options.check(item.editor, item.sessionId, item.model, item.binding)
+  }
+
   private async checkWriters(item: Record): Promise<boolean> {
     try {
       await this.options.check(item, item.sessionId, item.model, item.binding)
-      if (item.editor) await this.options.check(item.editor, item.sessionId, item.model, item.binding)
+      await this.checkEditors(item)
       return true
     } catch (error) {
       if (error instanceof AppError && (error.code === 'queue-paused' || error.code === 'queue-context-changed')) {
@@ -735,7 +849,7 @@ export class PromptQueues {
     const beforeSend =
       item.editor || authorize
         ? async () => {
-            if (item.editor) await this.options.check(item.editor, item.sessionId, item.model, item.binding)
+            await this.checkEditors(item)
             await authorize?.()
           }
         : undefined
@@ -771,7 +885,7 @@ export class PromptQueues {
     }
     const detail = await this.options.detail(item.sessionId)
     const next = new Map(this.entries)
-    next.set(item.id, { ...item, state: 'sent', text: undefined, attachmentIds: undefined, reason: undefined })
+    next.set(item.id, { ...item, state: 'sent', text: undefined, attachmentIds: undefined, editedUploads: undefined, reason: undefined })
     for (const [key, pending] of next)
       if (pending.sessionId === item.sessionId && (pending.state === 'waiting' || (resume && pending.state === 'parked'))) {
         next.set(key, { ...pending, state: 'waiting', waitRunId: detail.summary.runId ?? '', reason: undefined })
@@ -813,7 +927,15 @@ export class PromptQueues {
   private async commit(next: Map<string, Record>): Promise<void> {
     await writeFileAtomic(join(this.options.dataDir, 'queues.json'), JSON.stringify({ version: 1, items: [...next.values()] }))
     this.entries = next
-    this.unconfirmedAdmissions.clear()
+    this.unconfirmedWrites.clear()
+    for (const group of this.releaseAfterCommit) {
+      try {
+        await this.options.releaseAttachments?.(group.actor, group.sessionId, group.ids, group.requestId)
+        this.releaseAfterCommit.delete(group)
+      } catch {
+        // The edit is durable. Keep the claim protected and try the release again after the next queue write.
+      }
+    }
   }
   private lock<T>(action: () => Promise<T>): Promise<T> {
     const result = this.serial.then(action)

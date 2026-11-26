@@ -215,6 +215,7 @@ export function useAttachments({
   connectionReported = false,
   heldBack,
   heldRefs = false,
+  retainedCount = 0,
 }: {
   enabled: boolean
   selection: AttachmentSelection
@@ -228,6 +229,8 @@ export function useAttachments({
   heldBack?: string
   /** File references in the text, which `heldBack` also holds back. */
   heldRefs?: boolean
+  /** Files already held by the queue count towards the same per-message limit as new uploads. */
+  retainedCount?: number
 }) {
   const [items, setItems] = useState<DraftAttachment[]>([])
   const [caps, setCaps] = useState<AttachmentCapabilities>()
@@ -484,7 +487,7 @@ export function useAttachments({
   }
   const add = (files: File[], pastedText?: string) => {
     if (!enabled || locked || preparing) return
-    if (state.current.length + files.length > 8) {
+    if (retainedCount + state.current.length + files.length > 8) {
       setError(COPY.limit)
       return
     }
@@ -597,6 +600,7 @@ export function useAttachments({
       setPreparing(false)
     },
     clear: () => reset(true),
+    discard: () => reset(),
     setError,
   }
 }

@@ -8,7 +8,7 @@ import type { HarnessPlugin, ModelProvider } from '@latch/sdk'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { closeSettings, openSection, openSession, openSettings } from './helpers/layout.ts'
+import { closeSettings, noHorizontalOverflow, openSection, openSession, openSettings, reachable } from './helpers/layout.ts'
 import { promptValue } from './helpers/prompt.ts'
 
 const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=', 'base64')
@@ -99,10 +99,11 @@ describe('queued follow-ups', () => {
         await expect.poll(async () => (await owner.json<TaskDetail>(path)).queue?.length).toBe(2)
         await input.fill(`仍在输入的草稿 ${width}`)
         await tray.getByRole('button', { name: '编辑', exact: true }).first().click()
-        const dialog = page.getByRole('dialog', { name: '编辑排队内容', exact: true })
-        await dialog.getByRole('textbox', { name: '排队消息', exact: true }).fill(edited)
-        await dialog.getByRole('button', { name: '保存', exact: true }).click()
-        await dialog.waitFor({ state: 'detached' })
+        const composer = page.locator('form.composer:visible'),
+          editInput = composer.getByRole('textbox')
+        await expect.poll(() => promptValue(editInput)).toBe(`下一句 ${width}`)
+        await editInput.fill(edited)
+        await composer.getByRole('button', { name: /^保存/u }).click()
         await tray.getByText(edited, { exact: true }).waitFor()
         const rows = tray.getByRole('listitem')
         const grip = rows.nth(1).getByRole('button', { name: '调整顺序', exact: true })
@@ -152,7 +153,7 @@ describe('queued follow-ups', () => {
       await host.close()
     }
   })
-  it('keeps a screenshot with its queued instructions across a reload and delivers it once', async () => {
+  it('restores queued attachments after reload, isolates edits from the current draft and delivers the saved files once', async () => {
     const first = '先等待界面草稿'
     const follow = '下一轮按图检查按钮'
     let release = () => {}
@@ -192,6 +193,7 @@ describe('queued follow-ups', () => {
     try {
       const owner = await host.enroll({ listener: 'unix' })
       const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, colorScheme: 'dark' })
+      page.setDefaultTimeout(15_000)
       await enrollBrowser(page, host, { name: '排队截图' })
       const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
         method: 'POST',
@@ -200,19 +202,126 @@ describe('queued follow-ups', () => {
       await expect.poll(() => seen.length).toBe(1)
       await openSession(page, sessionId)
       const composer = page.locator('form.composer:visible')
-      await composer.getByLabel('选择附件', { exact: true }).setInputFiles({ name: 'button.png', mimeType: 'image/png', buffer: image })
-      await expect.poll(() => composer.locator('.attachment-draft[data-state="ready"]').count()).toBe(1)
-      await composer.getByRole('textbox', { name: '继续对话' }).fill(follow)
+      const screenshots = await page.evaluate(() => {
+        const canvas = document.createElement('canvas')
+        canvas.width = 128
+        canvas.height = 80
+        const draw = canvas.getContext('2d')!
+        return ['#315568', '#467147'].map(background => {
+          draw.fillStyle = background
+          draw.fillRect(0, 0, canvas.width, canvas.height)
+          draw.fillStyle = 'white'
+          draw.fillRect(12, 20, 72, 8)
+          draw.fillRect(12, 48, 100, 4)
+          return canvas.toDataURL('image/png').split(',')[1]!
+        })
+      })
+      const attach = async (names: string[], count: number) => {
+        await composer.getByLabel('选择附件', { exact: true }).setInputFiles(
+          names.map(name => ({
+            name,
+            mimeType: 'image/png',
+            buffer: Buffer.from(screenshots[name === 'after.png' ? 1 : 0]!, 'base64'),
+          })),
+        )
+        await expect.poll(() => composer.locator('.attachment-draft[data-state="ready"]').count()).toBe(count)
+      }
+      const remove = (name: string) => composer.getByRole('button', { name: `移除附件 ${name}`, exact: true })
+      const input = composer.getByRole('textbox')
+      const save = composer.getByRole('button', { name: /^保存/u })
+      const cancel = composer.getByRole('button', { name: /^取消/u })
+      await attach(['button.png', 'before.png'], 2)
       await composer.getByRole('button', { name: '排队发送', exact: true }).click()
       const queue = page.getByRole('region', { name: '排队发送', exact: true })
-      await queue.getByText('1 个附件').waitFor()
+      const edit = queue.getByRole('button', { name: '编辑', exact: true })
+      await queue.getByText('2 个附件').waitFor()
       await page.reload()
-      await queue.getByText('1 个附件').waitFor()
-      await page.screenshot({ path: 'test-results/queued-screenshot-390.png', animations: 'disabled' })
+      await queue.getByText('2 个附件').waitFor()
+      const draft = '这是还没排队的草稿'
+      await input.fill(draft)
+      await attach(['draft.png'], 1)
+      await edit.click()
+      await remove('button.png').waitFor()
+      await remove('before.png').waitFor()
+      await expect
+        .poll(() =>
+          composer
+            .locator('.attachment-draft img')
+            .evaluateAll(images => images.filter(img => img instanceof HTMLImageElement && img.naturalWidth === 128).length),
+        )
+        .toBe(2)
+      expect(await promptValue(input)).toBe('')
+      expect(await remove('draft.png').count()).toBe(0)
+      await remove('before.png').click()
+      const [uploaded] = await Promise.all([
+        page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/link/api/attachments')),
+        attach(['temporary.png'], 2),
+      ])
+      const { attachment: temporary } = (await uploaded.json()) as { attachment: { id: string } }
+      await input.fill('取消这次修改')
+      const [released] = await Promise.all([
+        page.waitForResponse(
+          response => response.request().method() === 'DELETE' && response.url().endsWith(`/attachments/${temporary.id}`),
+        ),
+        cancel.click(),
+      ])
+      expect(released.ok()).toBe(true)
+      await expect.poll(() => promptValue(input)).toBe(draft)
+      await remove('draft.png').waitFor()
+      await edit.click()
+      await remove('before.png').click()
+      await attach(['after.png'], 2)
+      expect(await promptValue(input)).toBe('')
+      for (const [width, height] of [
+        [390, 844],
+        [768, 1024],
+        [1440, 900],
+      ] as const) {
+        await page.setViewportSize({ width, height })
+        for (const colorScheme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme })
+          await reachable(save)
+          await reachable(cancel)
+          await noHorizontalOverflow(page, composer)
+          await page.screenshot({ path: `test-results/queue-edit-${width}-${colorScheme}.png`, animations: 'disabled' })
+        }
+      }
+      const changes: Array<{ body: unknown; status: number }> = []
+      const path = `**/tasks/${sessionId}/queue/*`
+      await page.route(path, async route => {
+        if (route.request().method() !== 'PATCH') return route.continue()
+        const response = await route.fetch()
+        changes.push({ body: route.request().postDataJSON(), status: response.status() })
+        if (changes.length === 1) return route.abort('connectionreset')
+        return route.fulfill({ response })
+      })
+      await save.click()
+      const retry = composer.getByRole('button', { name: '重试保存', exact: true })
+      await retry.waitFor()
+      expect(await input.isEditable()).toBe(false)
+      expect(await remove('after.png').isDisabled()).toBe(true)
+      await retry.click()
+      await expect.poll(() => promptValue(input)).toBe(draft)
+      expect(changes).toHaveLength(2)
+      expect(changes[0]!.status).toBe(200)
+      expect(changes[1]).toEqual(changes[0])
+      await page.unroute(path)
+      await remove('draft.png').waitFor()
+      await edit.click()
+      await remove('button.png').waitFor()
+      await remove('after.png').waitFor()
+      expect(await remove('before.png').count()).toBe(0)
+      await input.fill(follow)
+      await save.click()
+      await expect.poll(() => promptValue(input)).toBe(draft)
       expect(seen).toHaveLength(1)
       release()
-      await expect.poll(() => seen.filter(turn => turn.text === follow)).toEqual([{ text: follow, images: [image.toString('base64')] }])
-      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).queue ?? []).toEqual([])
+      await expect.poll(() => seen.slice(1)).toEqual([{ text: follow, images: screenshots }])
+      const detail = () => owner.json<TaskDetail>(`tasks/${sessionId}`)
+      await expect.poll(async () => (await detail()).queue ?? []).toEqual([])
+      const delivered = (await detail()).messages.filter(message => message.queuedAt)
+      expect(delivered).toHaveLength(1)
+      expect(delivered[0]?.attachments?.map(file => file.name)).toEqual(['button.png', 'after.png'])
     } finally {
       release()
       await browser.close()

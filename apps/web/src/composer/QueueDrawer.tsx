@@ -1,33 +1,14 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
-import type { PromptQueueItem } from '@latch/protocol'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import type { PromptQueueItem, QueuedPromptContent } from '@latch/protocol'
 import { ArrowDown, ArrowUp, GripVertical } from 'lucide-react'
-import {
-  Button,
-  Collapse,
-  Dialog,
-  Drawer,
-  EditGlyph,
-  IconButton,
-  InlineNotice,
-  Menu,
-  MOTION,
-  SendGlyph,
-  TextAreaField,
-  TrashGlyph,
-} from '@latch/ui'
-import { promptLengthError } from './promptLength.ts'
+import { Button, Collapse, Drawer, EditGlyph, IconButton, InlineNotice, Menu, MOTION, SendGlyph, TrashGlyph } from '@latch/ui'
 import { api, inlineError } from '../core/api.ts'
 import { defineCopy, formatNumber } from '../core/i18n.ts'
 import { VisibleText, escapeHiddenCharacters } from '../components/VisibleText.tsx'
 
 const COPY = defineCopy(
   {
-    editTitle: '编辑排队内容',
     attachments: (count: number) => `${formatNumber(count)} 个附件`,
-    cancel: '取消',
-    save: '保存',
-    message: '排队消息',
     paused: '已暂停 · 请确认后发送',
     deliveryUnknown: '发送结果未确认',
     checkQueue: '未发送 · 请检查排队内容',
@@ -46,11 +27,7 @@ const COPY = defineCopy(
     remove: '移除',
   },
   {
-    editTitle: 'Edit queued message',
     attachments: (count: number) => (count === 1 ? '1 attachment' : `${formatNumber(count)} attachments`),
-    cancel: 'Cancel',
-    save: 'Save',
-    message: 'Queued message',
     paused: 'Paused · Confirm to send',
     deliveryUnknown: 'Delivery unconfirmed',
     checkQueue: 'Unsent · Review the queue',
@@ -127,63 +104,6 @@ function QueueRows({
   )
 }
 
-function QueueEditor({
-  item,
-  writable,
-  save,
-  close,
-}: {
-  item: PromptQueueItem
-  writable: boolean
-  save(text: string): Promise<void>
-  close(): void
-}) {
-  const form = useId()
-  const [text, setText] = useState(item.text),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState('')
-  const lengthError = promptLengthError(text)
-  const canSave = writable && !!text.trim() && text !== item.text && !lengthError
-  return (
-    <Dialog
-      open
-      title={COPY.editTitle}
-      size="lg"
-      onClose={() => {
-        if (!busy) close()
-      }}
-      footer={
-        <>
-          <Button onClick={close} disabled={busy}>
-            {COPY.cancel}
-          </Button>
-          <Button variant="primary" form={form} type="submit" loading={busy} disabled={!canSave}>
-            {COPY.save}
-          </Button>
-        </>
-      }>
-      <form
-        id={form}
-        className="queue-edit-form"
-        onSubmit={event => {
-          event.preventDefault()
-          event.stopPropagation()
-          if (busy || !canSave) return
-          setBusy(true)
-          setError('')
-          void save(text.trim()).then(close, error => {
-            setError(inlineError(error))
-            setBusy(false)
-          })
-        }}>
-        <TextAreaField label={COPY.message} value={text} rows={5} onChange={event => setText(event.target.value)} />
-        {lengthError && <InlineNotice>{lengthError}</InlineNotice>}
-        {error && <InlineNotice tone="error">{error}</InlineNotice>}
-      </form>
-    </Dialog>
-  )
-}
-
 /** Queue contents come from the Host; actions use each item's stable identity even after an uncertain response. */
 export function QueueDrawer({
   sessionId,
@@ -194,6 +114,8 @@ export function QueueDrawer({
   steerRunId,
   steerAttachments,
   running,
+  onEdit,
+  editing,
   onRemovedUnknown,
   onChanged,
 }: {
@@ -205,16 +127,35 @@ export function QueueDrawer({
   steerRunId?: string | undefined
   steerAttachments?: boolean | undefined
   running: boolean
+  onEdit: ((id: string, content: QueuedPromptContent) => void) | undefined
+  editing: boolean
   onRemovedUnknown(message: string): void
   onChanged(): Promise<void>
 }) {
   const [busy, setBusy] = useState<string | null>(null),
-    [editing, setEditing] = useState<PromptQueueItem | null>(null),
     [notice, setNotice] = useState<{ cause: unknown }>()
   const changing = useRef(false)
   const [drag, setDrag] = useState<{ id: string; order: string[]; revision: number; target?: string } | null>(null)
-  const canOrder = queueControl && canSend && items.length > 1 && items.every(item => !item.delivery)
+  const canOrder = !editing && queueControl && canSend && items.length > 1 && items.every(item => !item.delivery)
   const queuePath = `tasks/${encodeURIComponent(sessionId)}/queue`
+  const editRead = useRef<AbortController | undefined>(undefined)
+  useEffect(() => () => editRead.current?.abort(), [])
+  const openEditor = async (item: PromptQueueItem, path: string) => {
+    if (changing.current || editRead.current) return
+    const controller = new AbortController()
+    editRead.current = controller
+    setBusy(item.id + '/edit')
+    setNotice(undefined)
+    try {
+      const content = await api<QueuedPromptContent>(path, { signal: controller.signal })
+      if (!controller.signal.aborted) onEdit?.(item.id, content)
+    } catch (cause) {
+      if (!controller.signal.aborted) setNotice({ cause })
+    } finally {
+      editRead.current = undefined
+      if (!controller.signal.aborted) setBusy(null)
+    }
+  }
   const [empty, setEmpty] = useState(items.length === 0)
   const [opening, setOpening] = useState(0)
   if (empty !== (items.length === 0)) {
@@ -261,162 +202,150 @@ export function QueueDrawer({
     void change(id + '/order', () => api(queuePath, { method: 'PUT', body: { baseOrder, order, baseRevision } }))
   }
   return (
-    <>
-      {/* Rows enter after the ancestor is open; reopening a skipped until-found subtree can freeze its transitions. */}
-      <Collapse key={opening} open={items.length > 0}>
-        <Drawer className="prompt-queue" label={COPY.queue} data-paused={paused ? '' : undefined}>
-          <p className="prompt-queue-title" role="status">
-            {heading}
-          </p>
-          <QueueRows
-            items={items}
-            arrive={opening > 0}
-            render={(item, index) => {
-              const itemPath = `${queuePath}/${encodeURIComponent(item.id)}`
-              const canSteer =
-                queueControl
-                && !!steerRunId
-                && item.canSteer
-                && (!item.attachmentCount || steerAttachments)
-                && !item.delivery
-                && item.state !== 'dropped'
-              const canResume = !running && index === 0 && item.state === 'parked' && item.delivery !== 'steer-unknown'
-              const neighbors = [
-                { target: items[index - 1], label: COPY.up, icon: ArrowUp },
-                { target: items[index + 1], label: COPY.down, icon: ArrowDown },
-              ]
-              return (
-                <div
-                  className="prompt-queue-row"
-                  data-drop={
-                    drag?.target === item.id && drag.id !== item.id ? (index < drag.order.indexOf(drag.id) ? 'before' : 'after') : undefined
-                  }
-                  onDragOver={event => {
-                    if (!drag || !canOrder || index < 0) return
-                    event.preventDefault()
-                    event.dataTransfer.dropEffect = 'move'
-                    if (drag.target !== item.id) setDrag({ ...drag, target: item.id })
-                  }}
-                  onDrop={event => {
-                    if (!drag || index < 0) return
-                    event.preventDefault()
-                    event.stopPropagation()
-                    move(drag.id, item.id, drag.order, drag.revision)
-                    setDrag(null)
-                  }}>
-                  {canOrder && index >= 0 && (
-                    <Menu
-                      label={COPY.order}
-                      trigger={props => (
-                        <IconButton
-                          {...props}
-                          className="prompt-queue-grip"
-                          label={COPY.order}
-                          icon={GripVertical}
-                          size="xs"
-                          disabled={busy !== null}
-                          draggable={busy === null}
-                          onDragStart={event => {
-                            if (changing.current) {
-                              event.preventDefault()
-                              return
-                            }
-                            event.dataTransfer.setData('application/x-latch-queue-item', item.id)
-                            event.dataTransfer.effectAllowed = 'move'
-                            setDrag({ id: item.id, order: items.map(entry => entry.id), revision: items[0]?.orderRevision ?? 0 })
-                          }}
-                          onDragEnd={() => setDrag(null)}
-                        />
-                      )}
-                      sections={[
-                        {
-                          id: 'order',
-                          items: neighbors.flatMap(({ target, label, icon }) =>
-                            target ? [{ id: target.id, label, icon, onSelect: () => move(item.id, target.id) }] : [],
-                          ),
-                        },
-                      ]}
-                    />
-                  )}
-                  <span className="prompt-queue-text" title={escapeHiddenCharacters(item.text)}>
-                    <VisibleText text={item.text} />
-                    {item.attachmentCount && <span className="prompt-queue-reason">{COPY.attachments(item.attachmentCount)}</span>}
-                    {item.state === 'dropped' && (
-                      <span className="prompt-queue-reason">
-                        <VisibleText text={COPY.notSent(item.reason ?? COPY.changed)} />
-                      </span>
-                    )}
-                    {(item.state === 'parked' || item.delivery === 'sending') && item.reason && (
-                      <span className="prompt-queue-reason">
-                        <VisibleText text={item.reason} />
-                      </span>
-                    )}
-                  </span>
-                  <span className="prompt-queue-actions">
-                    {(canSteer || canResume) && canSend && (
-                      <Button
-                        size="xs"
-                        variant={canSteer ? 'ghost' : 'primary'}
-                        icon={canSteer ? SendGlyph : undefined}
-                        tooltip={canSteer ? COPY.steerHint : undefined}
-                        loading={busy === itemPath}
-                        disabled={busy !== null}
-                        onClick={() => {
-                          void change(itemPath, () =>
-                            canSteer
-                              ? api(itemPath + '/steer', {
-                                  method: 'POST',
-                                  body: { runId: steerRunId, contentRevision: item.contentRevision ?? 0 },
-                                })
-                              : api(itemPath + '/send', { method: 'POST' }),
-                          )
-                        }}>
-                        {canSteer ? COPY.sendNow : COPY.send}
-                      </Button>
-                    )}
-                    {canSend && item.state !== 'dropped' && !item.delivery && (
-                      <IconButton size="xs" label={COPY.edit} icon={EditGlyph} disabled={busy !== null} onClick={() => setEditing(item)} />
-                    )}
-                    {canRemove && (
+    // Rows enter after the ancestor is open; reopening a skipped until-found subtree can freeze its transitions.
+    <Collapse key={opening} open={items.length > 0}>
+      <Drawer className="prompt-queue" label={COPY.queue} data-paused={paused ? '' : undefined}>
+        <p className="prompt-queue-title" role="status">
+          {heading}
+        </p>
+        <QueueRows
+          items={items}
+          arrive={opening > 0}
+          render={(item, index) => {
+            const itemPath = `${queuePath}/${encodeURIComponent(item.id)}`
+            const canSteer =
+              queueControl
+              && !!steerRunId
+              && item.canSteer
+              && (!item.attachmentCount || steerAttachments)
+              && !item.delivery
+              && item.state !== 'dropped'
+            const canResume = !running && index === 0 && item.state === 'parked' && item.delivery !== 'steer-unknown'
+            const neighbors = [
+              { target: items[index - 1], label: COPY.up, icon: ArrowUp },
+              { target: items[index + 1], label: COPY.down, icon: ArrowDown },
+            ]
+            return (
+              <div
+                className="prompt-queue-row"
+                data-drop={
+                  drag?.target === item.id && drag.id !== item.id ? (index < drag.order.indexOf(drag.id) ? 'before' : 'after') : undefined
+                }
+                onDragOver={event => {
+                  if (!drag || !canOrder || index < 0) return
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                  if (drag.target !== item.id) setDrag({ ...drag, target: item.id })
+                }}
+                onDrop={event => {
+                  if (!drag || index < 0) return
+                  event.preventDefault()
+                  event.stopPropagation()
+                  move(drag.id, item.id, drag.order, drag.revision)
+                  setDrag(null)
+                }}>
+                {canOrder && index >= 0 && (
+                  <Menu
+                    label={COPY.order}
+                    trigger={props => (
                       <IconButton
+                        {...props}
+                        className="prompt-queue-grip"
+                        label={COPY.order}
+                        icon={GripVertical}
                         size="xs"
-                        icon={TrashGlyph}
-                        label={COPY.remove}
-                        busy={busy === item.id + '/remove'}
-                        disabled={busy !== null}
-                        onClick={() => {
-                          void change(item.id + '/remove', async () => {
-                            const result = await api<{ deliveryUnknown?: boolean }>(itemPath, { method: 'DELETE' })
-                            if (result.deliveryUnknown) onRemovedUnknown(COPY.removedUnknown)
-                          })
+                        disabled={editing || busy !== null}
+                        draggable={busy === null}
+                        onDragStart={event => {
+                          if (changing.current) {
+                            event.preventDefault()
+                            return
+                          }
+                          event.dataTransfer.setData('application/x-latch-queue-item', item.id)
+                          event.dataTransfer.effectAllowed = 'move'
+                          setDrag({ id: item.id, order: items.map(entry => entry.id), revision: items[0]?.orderRevision ?? 0 })
                         }}
+                        onDragEnd={() => setDrag(null)}
                       />
                     )}
-                  </span>
-                </div>
-              )
-            }}
-          />
-          {error && <InlineNotice tone="warn">{error}</InlineNotice>}
-        </Drawer>
-      </Collapse>
-      {editing
-        && createPortal(
-          <QueueEditor
-            key={editing.id}
-            item={editing}
-            writable={canSend && items.some(item => item.id === editing.id && item.state !== 'dropped' && !item.delivery)}
-            close={() => setEditing(null)}
-            save={async text => {
-              await api(`tasks/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(editing.id)}`, {
-                method: 'PATCH',
-                body: { text },
-              })
-              await onChanged()
-            }}
-          />,
-          document.body,
-        )}
-    </>
+                    sections={[
+                      {
+                        id: 'order',
+                        items: neighbors.flatMap(({ target, label, icon }) =>
+                          target ? [{ id: target.id, label, icon, onSelect: () => move(item.id, target.id) }] : [],
+                        ),
+                      },
+                    ]}
+                  />
+                )}
+                <span className="prompt-queue-text" title={escapeHiddenCharacters(item.text)}>
+                  <VisibleText text={item.text} />
+                  {item.attachmentCount && <span className="prompt-queue-reason">{COPY.attachments(item.attachmentCount)}</span>}
+                  {item.state === 'dropped' && (
+                    <span className="prompt-queue-reason">
+                      <VisibleText text={COPY.notSent(item.reason ?? COPY.changed)} />
+                    </span>
+                  )}
+                  {(item.state === 'parked' || item.delivery === 'sending') && item.reason && (
+                    <span className="prompt-queue-reason">
+                      <VisibleText text={item.reason} />
+                    </span>
+                  )}
+                </span>
+                <span className="prompt-queue-actions">
+                  {(canSteer || canResume) && canSend && (
+                    <Button
+                      size="xs"
+                      variant={canSteer ? 'ghost' : 'primary'}
+                      icon={canSteer ? SendGlyph : undefined}
+                      tooltip={canSteer ? COPY.steerHint : undefined}
+                      loading={busy === itemPath}
+                      disabled={editing || busy !== null}
+                      onClick={() => {
+                        void change(itemPath, () =>
+                          canSteer
+                            ? api(itemPath + '/steer', {
+                                method: 'POST',
+                                body: { runId: steerRunId, contentRevision: item.contentRevision ?? 0 },
+                              })
+                            : api(itemPath + '/send', { method: 'POST' }),
+                        )
+                      }}>
+                      {canSteer ? COPY.sendNow : COPY.send}
+                    </Button>
+                  )}
+                  {canSend && onEdit && item.state !== 'dropped' && !item.delivery && (
+                    <IconButton
+                      size="xs"
+                      label={COPY.edit}
+                      icon={EditGlyph}
+                      disabled={editing || busy !== null}
+                      busy={busy === item.id + '/edit'}
+                      onClick={() => void openEditor(item, itemPath)}
+                    />
+                  )}
+                  {canRemove && (
+                    <IconButton
+                      size="xs"
+                      icon={TrashGlyph}
+                      label={COPY.remove}
+                      busy={busy === item.id + '/remove'}
+                      disabled={editing || busy !== null}
+                      onClick={() => {
+                        void change(item.id + '/remove', async () => {
+                          const result = await api<{ deliveryUnknown?: boolean }>(itemPath, { method: 'DELETE' })
+                          if (result.deliveryUnknown) onRemovedUnknown(COPY.removedUnknown)
+                        })
+                      }}
+                    />
+                  )}
+                </span>
+              </div>
+            )
+          }}
+        />
+        {error && <InlineNotice tone="warn">{error}</InlineNotice>}
+      </Drawer>
+    </Collapse>
   )
 }

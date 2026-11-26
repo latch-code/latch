@@ -53,6 +53,8 @@ const tray = (items: PromptQueueItem[], canSend: boolean, options: Partial<Compo
       running: false,
       queueControl: true,
       onRemovedUnknown: noop,
+      editing: false,
+      onEdit: noop,
       onChanged: async () => {},
       ...options,
     }),

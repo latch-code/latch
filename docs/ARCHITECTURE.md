@@ -1033,7 +1033,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `POST /tasks/:id/cancel`、`…/stop-subagent`、`…/keep-waiting`、`…/computer-stop` | `view` | 取消；停止一个子 Agent（[HARNESSES.md](./HARNESSES.md#子-agent)）；推迟沉默提示（[STREAMING.md](./STREAMING.md#运行的真实状态)）；结束这个会话的「操控这台 Mac」（[MCP.md](./MCP.md#操控这台-mac)） |
 | `POST /approvals/:id` | 拒绝 `view`；允许 R1 `approve:standard`；允许 R2 `approve:elevated`；允许 L3 询问 `run` | 见「审批与取消」 |
 | `POST /tasks/:id/config`、`GET /tasks/:id/config-requests/:requestId`、`POST …/check` | 修改与核对 `run`（Latch 内置放宽档位另要该档代答的批准权限）；查询为原设备的 `view` | 见「会话配置修改回执」 |
-| `PUT /tasks/:id/queue`、`PATCH`/`DELETE …/queue/:itemId`、`POST …/send`、`POST …/steer` | `run` | 见「排队输入」 |
+| `PUT /tasks/:id/queue`、`GET`/`PATCH`/`DELETE …/queue/:itemId`、`POST …/send`、`POST …/steer` | `run`，读编辑内容还需 `view` | 见「排队输入」 |
 | `POST /tasks/:id/questions/:questionId/answer` | `run` | 见「Agent 提问」 |
 | `POST /search` | `view` | 见「会话搜索与批处理」 |
 | `GET /prompts`；`PUT`/`DELETE /prompts/:id` | 读 `view`；写 `admin` | 见「提示模板」 |
@@ -1211,11 +1211,12 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。
 `catalog.features.queue` 表示 `POST /tasks/:id/prompt` 接受 `queue: true`：运行中返回 202 `{ queued: { id } }`，空闲且没有队列时立即发送。
 
 - **上限。** 每会话 5 项，每项 16,000 字符，Host 共 1000 项可见内容；设备绑定的回执每设备 10000 项、Host 共 100000 项，满时拒绝新增。已上传且目标支持的附件可随下一轮排队，Host 为原设备保留上传引用，派发时重新检查。当前轮次声明能接收附件时，输入框与队列均可把整条消息追加到本轮。项目文件引用仍须在新一轮发送。
-- **修改。** `PATCH /tasks/:id/queue/:itemId { text }` 修改内容并更换实际派发的 requestId，原提交回执不变；`DELETE` 移除；`POST …/send` 显式继续首项。任何仍有 `run` 的设备都可移除，审计失败也放行。
+- **编辑。** `GET /tasks/:id/queue/:itemId` 返回原文、附件引用、内容修订号，以及该项已指定的 `model`（如有）。`PATCH` 同一路径，带 `{ text, attachmentIds, contentRevision }` 保存。附件列表按交付顺序给出，传空列表移除全部，省略则保留原附件。有附件时文字可空。Host 按修订号拒绝覆盖其他设备的新修改，成功后沿用原位置与入队回执，更新内容修订号与实际派发的 requestId。
+- **移除与继续。** `DELETE /tasks/:id/queue/:itemId` 移除该项，`POST …/send` 显式继续首项。任何仍有 `run` 的设备都可移除，审计失败也放行。
 - **调序。** 声明 `catalog.features.queueControl` 的 Host 接受 `PUT /tasks/:id/queue { baseRevision, baseOrder, order }`。两份列表包含同一组可见项的 ID。Host 核对当前顺序与修订，再把完整新顺序写进 `queues.json`，下次自动派发也按此顺序取首项。初始修订为 0。另一设备已经排成目标顺序时直接成功，已改成其他顺序时返回 409 `queue-order`。正在发送或结果未知时不能调序。
-- **从队列追加。** `POST /tasks/:id/queue/:itemId/steer { runId, contentRevision }` 可以把任意可追加的项交给指定轮次。另一台设备已改过该项文字时，Host 拒绝旧版本，保留修改后的消息供人核对。Host 先写派发标识，复核原作者、编辑者和点击追加的设备，并由 Driver 在交付时核对轮次。Harness 确认接收后，该项移出队列，其他项保留顺序和暂停状态。轮次已结束或拒绝追加时，消息留在原位。结果未知时，只凭 Driver 已记录的消息确认送达，不能改走普通发送。已绑定特定模型或 Agent 上下文的消息仍等下一轮。
+- **从队列追加。** `POST /tasks/:id/queue/:itemId/steer { runId, contentRevision }` 可以把任意可追加的项交给指定轮次。另一台设备已改过该项文字或附件时，Host 拒绝旧版本，保留修改后的消息供人核对。Host 先写派发标识，复核原作者、编辑者和点击追加的设备，并由 Driver 在交付时核对轮次。Harness 确认接收后，该项移出队列，其他项保留顺序和暂停状态。轮次已结束或拒绝追加时，消息留在原位。结果未知时，只凭 Driver 已记录的消息确认送达，不能改走普通发送。已绑定特定模型或 Agent 上下文的消息仍等下一轮。
 - **继续的条件。** 只有 Driver 明确报告 `runOutcome` 为 `completed`、runId 匹配且没有审批才继续；只报告 idle 不算完成。失败、停止、未知结束或 Host 重启都暂停。停止在交给 Driver 之前就暂停队列。
-- **派发前复查。** 原设备仍有效、有 `run`、数据范围未变，以及会话、项目、Harness 指纹与模型；手动继续还复查当前设备。权限变化使该项 `dropped` 并暂停后续项。
+- **派发前复查。** 原设备、最后编辑的设备及附件上传设备仍有效、有 `run`、数据范围未变，并核对会话、项目、Harness 指纹与模型。手动继续还复查当前设备。权限变化使该项 `dropped` 并暂停后续项。
 - **审计与未知。** 排队和派发先审计，只写会话与队列 ID。派发前落盘 `sending`；结果未知时保留派发标识，公开为 `parked`，不能编辑；重启时 `sending` 同样按未知处理，人工重试由 Driver 的回执去重。
 - **存储。** `queues.json` 是 0600 的 strict 文件，顺序和内容的修订随排队项保存，旧项按修订 0 读取。它保留原设备、入口、数据范围、模型与两种请求标识，以及最后编辑的设备（`editor`）与文字里还有谁写过（`coauthors`：行级反馈的写下与修改设备、之前的编辑设备，只增不减，最多 256 台）；后两者只给 Host 核对模拟器输入授权，不发给设备。已发送或移除的回执不保留正文。删除会话清除其队列与回执。
 - 原生连接排队的项在正文窗口失效后保留为暂停项，不自动绑定新窗口。

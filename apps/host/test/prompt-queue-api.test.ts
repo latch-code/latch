@@ -359,6 +359,7 @@ describe('steering a running turn over HTTP', () => {
     hosts.push(host)
     const owner = await host.enroll({ listener: 'unix' })
     const sender = await host.enroll({ listener: 'unix' })
+    const readOnly = await host.enroll({ scopes: ['view'] })
     const harnessId = 'steer-files'
     await owner.confirmedJson('agents', {
       body: {
@@ -385,20 +386,37 @@ describe('steering a running turn over HTTP', () => {
       sender.json<{ queued: { id: string } }>(`${path}/prompt`, { body: { prompt, requestId: randomUUID(), queue: true, attachmentIds } })
     const first = await queue('For the next turn')
     const { queued: entry } = await queue('', [queued.id])
-    await owner.json(`${path}/queue/${entry.id}`, { method: 'PATCH', body: { text: 'Edited' } })
+    const editPath = `${path}/queue/${entry.id}`
+    expect((await readOnly.request(editPath)).status).toBe(403)
+    expect(await owner.json(editPath)).toEqual({ text: '', attachments: [queued], contentRevision: 0 })
+    await owner.json(editPath, { method: 'PATCH', body: { text: 'Edited' } })
+    const extra = await upload(owner, harnessId, 'Added by editor')
+    const discard = await upload(owner, harnessId, 'Remove this file')
+    const edit = (device: TestDevice, attachmentIds: string[], contentRevision: number) =>
+      device.request(editPath, { method: 'PATCH', body: { text: '', attachmentIds, contentRevision } })
+    expect((await edit(sender, [queued.id, extra.id], 1)).status).toBe(404)
+    expect((await edit(owner, [], 1)).status).toBe(400)
+    expect((await edit(owner, [discard.id, queued.id, extra.id], 1)).status).toBe(200)
+    expect((await edit(owner, [extra.id, queued.id], 1)).status).toBe(409)
+    expect((await edit(owner, [extra.id, queued.id], 2)).status).toBe(200)
+    expect((await edit(owner, [extra.id, queued.id], 2)).status).toBe(200)
+    expect(await sender.json(editPath)).toEqual({ text: '', attachments: [extra, queued], contentRevision: 3 })
+    expect((await owner.request(`attachments/${extra.id}`, { method: 'DELETE' })).status).toBe(409)
+    expect((await owner.request(`attachments/${discard.id}`, { method: 'DELETE' })).status).toBe(200)
     const running = await detail()
-    expect(running.queue?.[1]).toMatchObject({ id: entry.id, attachmentCount: 1, canSteer: true, contentRevision: 1 })
-    const steer = () => owner.json(`${path}/queue/${entry.id}/steer`, { body: { runId: running.summary.runId, contentRevision: 1 } })
+    expect(running.queue?.[1]).toMatchObject({ id: entry.id, attachmentCount: 2, canSteer: true, contentRevision: 3 })
+    const steer = () => owner.json(`${editPath}/steer`, { body: { runId: running.summary.runId, contentRevision: 3 } })
     expect(await Promise.all([steer(), steer()])).toEqual([{ steered: true }, { steered: true }])
     const latest = await detail()
     expect(latest.queue?.map(item => item.id)).toEqual([first.queued.id])
     expect(latest.messages.filter(message => message.steered)).toMatchObject([
       { text: '', requestId: body.requestId, attachments: [direct] },
-      { text: 'Edited', queuedAt: running.queue![1]!.queuedAt, attachments: [queued] },
+      { text: '', queuedAt: running.queue![1]!.queuedAt, attachments: [extra, queued] },
     ])
     for (const [ref, content] of [
       [direct, 'Direct contents'],
       [queued, 'Queued contents'],
+      [extra, 'Added by editor'],
     ] as const) {
       expect(await readFile(join(host.dataDir, 'attachments', sessionId, ref.id), 'utf8')).toBe(content)
     }

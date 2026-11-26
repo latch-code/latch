@@ -1349,10 +1349,6 @@
   gap: var(--sp-4);
   flex-shrink: 0;
 }
-.queue-edit-form {
-  display: grid;
-  gap: var(--sp-12);
-}
 @media (max-width: 767.98px) {
   .prompt-queue-row {
     min-height: 44px;

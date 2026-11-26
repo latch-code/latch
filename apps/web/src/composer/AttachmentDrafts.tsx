@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react'
+import type { AttachmentRef } from '@latch/protocol'
 import {
   Button,
   ConfirmDialog,
@@ -15,6 +16,7 @@ import {
 } from '@latch/ui'
 import { deliveryHint, draftSize, type AttachmentDraftController, type DraftAttachment } from '../hooks/useAttachments.ts'
 import { AttachmentTile, tileType, type TileType } from '../components/AttachmentTile.tsx'
+import { MessageAttachment } from '../components/MessageAttachments.tsx'
 import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { PictureGroup, usePictureViewer } from '../components/PictureViewer.tsx'
@@ -238,6 +240,21 @@ function DraftPreview({
   )
 }
 
+function RemoveAttachment({ name, locked, onRemove }: { name: string; locked: boolean; onRemove(): void }) {
+  // A toolbar icon button grows on touch screens; this button sits in the corner of a 64px tile.
+  return (
+    <button
+      type="button"
+      className="attachment-remove"
+      aria-label={COPY.remove(name)}
+      title={COPY.remove(name)}
+      disabled={locked}
+      onClick={onRemove}>
+      <Icon icon={CloseGlyph} size={12} />
+    </button>
+  )
+}
+
 /**
  * A compact tile of the file itself: a picture, a video's first frame with its play mark and length, a sound's length,
  * else its type and extension; the name under it, cut in the middle, and a round × on its corner. Progress and a
@@ -323,18 +340,7 @@ function DraftAttachmentCard({
         label={name}
         disabled={locked}
         {...(opens ? { onOpen: type === 'image' && url?.file === item.file ? picture.open : onPreview } : {})}
-        corner={
-          // A plain round ×: a toolbar's icon button grows its box on touch screens, which this corner cannot hold.
-          <button
-            type="button"
-            className="attachment-remove"
-            aria-label={COPY.remove(item.file.name)}
-            title={COPY.remove(item.file.name)}
-            disabled={locked}
-            onClick={() => controller.remove(item.key)}>
-            <Icon icon={CloseGlyph} size={12} />
-          </button>
-        }
+        corner={<RemoveAttachment name={item.file.name} locked={locked} onRemove={() => controller.remove(item.key)} />}
       />
       {state}
       {picture.viewer}
@@ -358,10 +364,12 @@ export function AttachmentDrafts({
   controller,
   locked,
   onRestore,
+  queued,
 }: {
   controller: AttachmentDraftController
   locked: boolean
   onRestore(text: string): boolean
+  queued?: { sessionId: string; refs: AttachmentRef[]; remove(id: string): void }
 }) {
   const [preview, setPreview] = useState<string>(),
     [confirm, setConfirm] = useState<string>()
@@ -382,9 +390,17 @@ export function AttachmentDrafts({
         </InlineNotice>
       )}
       {controller.heldBack && <InlineNotice tone="warn">{controller.heldBack}</InlineNotice>}
-      {controller.items.length > 0 && (
+      {(controller.items.length > 0 || !!queued?.refs.length) && (
         <div className="attachment-drafts" aria-label={COPY.attachments}>
           <PictureGroup>
+            {queued?.refs.map(ref => (
+              <MessageAttachment
+                key={ref.id}
+                attachment={ref}
+                sessionId={queued.sessionId}
+                corner={<RemoveAttachment name={ref.name} locked={locked} onRemove={() => queued.remove(ref.id)} />}
+              />
+            ))}
             {controller.items.map(item => (
               <DraftAttachmentCard
                 key={item.key}

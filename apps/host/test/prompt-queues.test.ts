@@ -137,6 +137,76 @@ describe('persistent Host prompt queues', () => {
     expect(options.releaseAttachments).toHaveBeenCalledTimes(1)
     expect(queue.holdsUpload(actor.deviceId, body.requestId)).toBe(false)
   })
+  it('keeps both sets of uploads through an uncertain edit, then releases only the removed files on retry', async () => {
+    const { queue, options, dataDir } = await fixture()
+    const hold = vi.fn<NonNullable<QueueOptions['holdAttachments']>>(async () => {})
+    options.holdAttachments = hold
+    options.releaseAttachments = vi.fn(async () => {})
+    const oldId = 'A'.repeat(22),
+      newId = 'B'.repeat(22)
+    const original = { ...input(), attachmentIds: [oldId] }
+    const editor = { ...actor, deviceId: 'editor' }
+    await queue.submit(actor, 'task', original)
+    const id = queue.view('task')[0]!.id
+    const file = join(dataDir, 'queues.json')
+    await rm(file)
+    await mkdir(file)
+    const edit = () => queue.edit('task', id, { text: '', attachmentIds: [newId], contentRevision: 0 }, editor)
+    await expect(edit()).rejects.toMatchObject({ code: 'queue-save-unknown' })
+    const editRequest = hold.mock.calls[1]![3]
+    expect(queue.holdsUpload(actor.deviceId, original.requestId)).toBe(true)
+    expect(queue.holdsUpload(editor.deviceId, editRequest)).toBe(true)
+    expect(options.releaseAttachments).not.toHaveBeenCalled()
+    await rm(file, { recursive: true })
+    await edit()
+    expect(options.releaseAttachments).toHaveBeenCalledWith(expect.objectContaining(actor), 'task', [oldId], original.requestId)
+    expect(queue.holdsUpload(actor.deviceId, original.requestId)).toBe(false)
+    const reopened = await PromptQueues.open(options)
+    expect(reopened.holdsUpload(editor.deviceId, editRequest)).toBe(true)
+    expect(reopened.heldAttachmentIds('task')).toEqual([newId])
+    await reopened.remove('task', id)
+    expect(options.releaseAttachments).toHaveBeenCalledWith(editor, 'task', [newId], editRequest)
+  })
+  it.each([
+    { change: 'text', before: 'Original', after: 'Edited', ids: [] },
+    { change: 'file order', before: 'Original', after: 'Original', ids: ['A'.repeat(22), 'B'.repeat(22)] },
+  ])('parks an uncertain $change edit with no new upload and retries the exact revision', async ({ before, after, ids }) => {
+    const { queue, detail, options, dataDir } = await fixture()
+    options.holdAttachments = vi.fn(async () => {})
+    await queue.submit(actor, 'task', { ...input(before), attachmentIds: ids })
+    const id = queue.view('task')[0]!.id
+    const file = join(dataDir, 'queues.json')
+    await rm(file)
+    await mkdir(file)
+    const edit = () => queue.edit('task', id, { text: after, attachmentIds: ids.toReversed(), contentRevision: 0 }, actor)
+    await expect(edit()).rejects.toMatchObject({ code: 'queue-save-unknown' })
+    completed(detail)
+    await queue.changed('task')
+    expect(options.send).not.toHaveBeenCalled()
+    expect(queue.view('task')).toMatchObject([{ state: 'parked', text: after, contentRevision: 1 }])
+    await rm(file, { recursive: true })
+    await edit()
+    const reopened = await PromptQueues.open(options)
+    expect(reopened.view('task')).toMatchObject([{ state: 'parked', text: after, contentRevision: 1 }])
+    expect(reopened.heldAttachmentIds('task')).toEqual(ids.toReversed())
+  })
+  it('checks the device that added a file even after a later text edit by another device', async () => {
+    const { queue, detail, options } = await fixture()
+    options.holdAttachments = vi.fn(async () => {})
+    const editor = { ...actor, deviceId: 'file-editor' }
+    await queue.submit(actor, 'task', input())
+    const id = queue.view('task')[0]!.id
+    await queue.edit('task', id, { text: '', attachmentIds: ['A'.repeat(22)], contentRevision: 0 }, editor)
+    await queue.edit('task', id, 'Use this file', actor)
+    vi.mocked(options.check).mockImplementation(async source => {
+      if (source.deviceId === editor.deviceId) throw new AppError(403, 'device-revoked', '已撤销')
+    })
+    completed(detail)
+    await queue.changed('task')
+    expect(options.send).not.toHaveBeenCalled()
+    expect(queue.view('task')[0]?.state).toBe('dropped')
+    await expect(queue.edit('task', id, 'Do not send', actor)).rejects.toMatchObject({ code: 'queue-settled' })
+  })
   it('retains attachment-only input across restart and sends edited text with the original upload claim', async () => {
     const { queue, detail, options } = await fixture()
     options.holdAttachments = vi.fn(async () => {})

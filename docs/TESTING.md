@@ -159,7 +159,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | 日志脱敏与秘密形状 | `tests/redact.test.ts`；新增秘密格式时补用例 |
 | Host 进程、数据目录锁、`pnpm latch`、`--disable-sigusr1` | `security.test.ts`、`cli.test.ts` |
 | 路径、项目目录与会话文件夹 | `paths.test.ts`、`projects.test.ts`、`session-folders.test.ts` |
-| 排队顺序与本轮追加 | `prompt-queues.test.ts`、`prompt-queue-api.test.ts` 检查并发、重启与未知结果。Web 的 `e2e/prompt-queue.e2e.ts` 和原生的 `native-swift.test.ts` 核对消息顺序，Web 另用假 Agent 核对从输入框和队列立即发送的图片字节 |
+| 排队编辑、顺序与本轮追加 | `prompt-queues.test.ts`、`prompt-queue-api.test.ts` 检查并发、重启与未知结果。`e2e/prompt-queue.e2e.ts` 和原生的 `native-swift.test.ts` 核对消息顺序。Web 用例还检查编辑时增删附件、保存或取消后恢复原草稿，以及假 Agent 收到的图片 |
 | 风险分级与审批 | `risk.test.ts`、`tests/runtime.test.ts`、`hub.test.ts`；Latch 内置的权限档位是 `tests/permission-modes.test.ts`、`builtin-modes.test.ts`、`apps/web/test/builtin-permission.test.ts` 与 `e2e/builtin-modes.e2e.ts` |
 | 审批与取消的回执 | `server.test.ts` 的 `receipts and cancels`、`session-meta.test.ts` |
 | 事件流与阅读位置 | `streaming.test.ts`、`apps/web/test/reading-position.test.ts`、`e2e/streaming-ui.e2e.ts`、`e2e/takeover.e2e.ts` |

@@ -1,4 +1,6 @@
+import type { AttachmentRef } from './attachments.ts'
 import type { HarnessLoginStatus } from './harnesses.ts'
+import type { ModelRef } from './settings.ts'
 import type { TokenUsage } from './types.ts'
 
 /** Metadata for a workspace view compiled into both the Host and Web distributions. */
@@ -165,6 +167,14 @@ export interface AgentProbeResult {
   diagnostic?: string
   checkedAt: string
   launchHash: string
+}
+
+/** The editable contents of one pending item. Upload ownership and dispatch receipts stay on the Host. */
+export interface QueuedPromptContent {
+  model?: ModelRef
+  text: string
+  attachments: AttachmentRef[]
+  contentRevision: number
 }
 
 /** Visible queue state; authority and deduplication receipts remain private to the Host. */
