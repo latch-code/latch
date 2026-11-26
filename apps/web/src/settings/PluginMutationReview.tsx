@@ -540,14 +540,17 @@ export function usePluginMutationReview(target: PluginMutationTarget | null) {
 export function PluginMutationReviewBody({
   name,
   review,
+  fallback,
   error,
   onRetry,
 }: {
   name?: string
   review: InstalledPluginReview | null
+  fallback?: PluginPackageReview | undefined
   error: string
   onRetry: () => void
 }) {
+  const shown = review ?? (!error && isPluginPackageReview(fallback) ? fallback : null)
   return (
     <div className="plugin-risk-facts">
       {name !== undefined && (
@@ -555,10 +558,10 @@ export function PluginMutationReviewBody({
           <VisibleText text={name} />
         </p>
       )}
-      {review ? (
+      {shown ? (
         <>
-          <PluginRiskFacts review={review} />
-          {review.confirmationRequired && <InlineNotice tone="warn">{COPY.onMac}</InlineNotice>}
+          <PluginRiskFacts review={shown} />
+          {shown.confirmationRequired && <InlineNotice tone="warn">{COPY.onMac}</InlineNotice>}
         </>
       ) : error ? (
         <InlineNotice tone="error" action={<Button onClick={onRetry}>{COPY.retry}</Button>}>

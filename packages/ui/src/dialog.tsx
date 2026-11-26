@@ -6,6 +6,7 @@ import {
   useId,
   useLayoutEffect,
   useRef,
+  useState,
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent,
@@ -429,6 +430,11 @@ export function Dialog({
 }) {
   const ref = useRef<HTMLDialogElement>(null)
   const titleId = useId()
+  const [shown, setShown] = useState({ open, secure })
+  if (shown.open !== open || (open && shown.secure !== secure)) {
+    setShown({ open, secure: open ? secure : shown.secure })
+  }
+  const activeSecure = open ? secure : shown.secure
   const modal = useModal(ref, open, onClose, dismissible)
   // On a phone a dialog is the bottom sheet every other layer becomes; a status docked at the bottom stays itself.
   const sheet = useMediaQuery(PHONE_QUERY) && placement === 'center' && !content.bare
@@ -441,7 +447,7 @@ export function Dialog({
       data-size={size}
       data-detent={sheet ? 'medium' : undefined}
       data-placement={placement === 'dock' ? 'dock' : undefined}
-      data-secure={secure ? '' : undefined}
+      data-secure={activeSecure ? '' : undefined}
       aria-labelledby={titleId}
       {...modal}>
       {sheet ? (

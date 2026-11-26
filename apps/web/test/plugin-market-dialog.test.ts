@@ -450,3 +450,136 @@ it('saves a draft, shows the files and the Host review before Apply, and applies
   await act(async () => buttons(dialog(), '完成')[0]!.click())
   expect(dialog().open).toBe(false)
 })
+
+it('keeps the open dialog steady across update checks, draft review transitions and closing', async () => {
+  const draftVersion = '1.2.0'
+  const draftRevision = '9'.repeat(64)
+  const commit = 'b'.repeat(40)
+  const draftBundle = { ...bundle, manifest: { ...bundle.manifest, version: draftVersion } }
+  const draftReview: PluginPackageReview = {
+    ...review,
+    revision: draftRevision,
+    version: draftVersion,
+    baseAppliedRevision: revision,
+    source: { kind: 'catalog', version: draftVersion, commit },
+    comparison: {
+      revision,
+      version: summary.version,
+      expandedPageCapabilities: false,
+      changedExecution: false,
+      manifestChanged: true,
+      changedSource: false,
+      changedFiles: [{ path: 'SKILL.md', change: 'modified' }],
+    },
+  }
+  const record: PluginPackageSummary = {
+    ...summary,
+    version: draftVersion,
+    revision: draftRevision,
+    catalog: { version: draftVersion, revision: draftRevision, commit },
+    catalogUpdate: { version: draftVersion, status: 'current' },
+    appliedVersion: summary.version,
+    appliedRevision: revision,
+    state: 'update-available',
+  }
+  const checked = (): PluginCatalogCheckResult => ({
+    plugins: Object.keys(catalogManifests).map(pluginId => ({
+      id: pluginId,
+      version: pluginId === id ? draftVersion : '1.0.0',
+      revision: pluginId === id ? draftRevision : revision,
+      commit,
+      ...(pluginId === id ? { updateStatus: 'current' as const } : {}),
+    })),
+  })
+  let holdPreview = false
+  let releasePreview!: () => void
+  let holdDraft = false
+  let releaseDraft!: () => void
+  let holdMutationReview = false
+  let releaseMutationReview!: () => void
+  let draftReads = 0
+  let mutationReads = 0
+  vi.stubGlobal('fetch', async (url: string) => {
+    const path = new URL(url, 'http://host.test').pathname.replace(/^.*\/plugin-packages/u, 'plugin-packages')
+    if (path === 'plugin-packages/catalog/check') return Response.json(checked())
+    if (path === 'plugin-packages') return Response.json({ packages: [record] })
+    if (path === 'plugin-packages/catalog/preview') {
+      if (holdPreview) {
+        await new Promise<void>(resolve => {
+          releasePreview = resolve
+        })
+      }
+      return Response.json({
+        bundle: draftBundle,
+        review: draftReview,
+        installed: { id, installId, revision: draftRevision, version: draftVersion, modified: false },
+        updateStatus: 'current',
+        updateAvailable: false,
+      } satisfies PluginCatalogPreview)
+    }
+    if (path === `plugin-packages/${id}`) {
+      draftReads++
+      if (holdDraft) {
+        await new Promise<void>(resolve => {
+          releaseDraft = resolve
+        })
+      }
+      return Response.json({ package: { ...record, bundle: draftBundle, review: draftReview } satisfies PluginPackageDetail })
+    }
+    if (path === `plugin-packages/${id}/review`) {
+      mutationReads++
+      if (holdMutationReview) {
+        await new Promise<void>(resolve => {
+          releaseMutationReview = resolve
+        })
+      }
+      return Response.json({ review: { ...draftReview, installId } })
+    }
+    return new Response(null, { status: 404 })
+  })
+
+  await render(admin('steady'))
+  await settle()
+  await act(async () => card('交接清单').click())
+  await settle()
+  expect(dialog().textContent).toContain('文件与源码')
+  expect(dialog().textContent).toContain('运行权限与风险')
+
+  // Clicking 检查更新 refreshes the catalog and preview without dropping the existing preview to a loading spinner.
+  holdPreview = true
+  await act(async () => buttons(dialog(), '检查更新')[0]!.click())
+  await settle()
+  expect(dialog().textContent).toContain('文件与源码')
+  expect(dialog().textContent).toContain('运行权限与风险')
+  expect(dialog().textContent).not.toContain('正在读取插件审阅信息')
+  holdPreview = false
+  await act(async () => releasePreview())
+  await settle()
+
+  // Clicking 审阅草稿 reads the draft and its apply review in parallel without collapsing the dialog to 正在读取草稿…
+  holdDraft = true
+  holdMutationReview = true
+  await act(async () => buttons(dialog(), '审阅草稿')[0]!.click())
+  await settle()
+  expect(draftReads).toBe(1)
+  expect(mutationReads).toBe(1)
+  expect(dialog().textContent).not.toContain('正在读取草稿')
+  expect(dialog().textContent).toContain('文件与源码')
+  holdDraft = false
+  holdMutationReview = false
+  await act(async () => {
+    releaseDraft()
+    releaseMutationReview()
+  })
+  await settle()
+  expect(dialog().getAttribute('data-secure')).toBe('')
+  expect(dialog().textContent).toContain('在哪里运行')
+  expect(dialog().textContent).toContain('运行权限与风险')
+  expect(draftReads).toBe(1)
+
+  // Closing from the secure review step keeps data-secure for immediate dismissal and never renders a stray 完成 footer.
+  await act(async () => buttons(dialog(), '取消')[0]!.click())
+  expect(dialog().open).toBe(false)
+  expect(dialog().getAttribute('data-secure')).toBe('')
+  expect(buttons(dialog(), '完成')).toHaveLength(0)
+})
