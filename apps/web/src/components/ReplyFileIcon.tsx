@@ -1,5 +1,5 @@
 import { Braces } from 'lucide-react'
-import { defineGlyph, Icon, TerminalGlyph, type IconComponent } from '@latch/ui'
+import { CheckGlyph, defineGlyph, FolderGlyph, Icon, TerminalGlyph, type IconComponent } from '@latch/ui'
 import { referenceIcon } from '../fileReference.ts'
 
 const go = defineGlyph(
@@ -40,6 +40,8 @@ const FORMATS = new Map<string, IconComponent>([
 ])
 
 /** A decorative file-type mark in prose; the path or the author's link text supplies the name. */
-export function ReplyFileIcon({ path }: { path: string }) {
-  return <Icon icon={referenceIcon(path, FORMATS)} size={14} />
+export function ReplyFileIcon({ path, folder, copied }: { path: string; folder?: boolean; copied?: boolean }) {
+  const glyph = folder ? FolderGlyph : referenceIcon(path, FORMATS)
+  const isFolder = glyph === FolderGlyph
+  return <Icon icon={copied ? CheckGlyph : glyph} size={isFolder ? 16 : 14} className={isFolder ? 'reply-folder-icon' : undefined} />
 }

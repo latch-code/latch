@@ -1,6 +1,6 @@
 import { chromium, type Browser } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rmdir, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { strToU8, zipSync } from 'fflate'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -12,7 +12,7 @@ import { visualContext, VISUAL_VIEWPORTS } from './helpers/visual.ts'
 
 const TECHNICAL_REPLY = [
   '### 接入与协议层',
-  '服务从 [main.go](main.go) 启动，[router.go](router.go) 负责注册路由。[idl/](idl/) 保存协议定义，请求和响应的例子见 [API.md](docs/API.md)。',
+  '服务从 [main.go](main.go) 启动，[router.go](router.go) 负责注册路由。[idl](idl) 保存协议定义，请求和响应的例子见 [API.md](docs/API.md)。',
   '',
   '- **请求入口**：`POST /chat` 接收消息，[router.go](router.go) 把请求交给 `HandleChat`。',
   '- **流式返回**：处理器通过 `SSE` 逐段发送结果。客户端按 `event_id` 记录位置，重连后继续接收。',
@@ -34,6 +34,11 @@ describe('authenticated file column', () => {
           name: 'Files',
           model: 'fixture',
           async *stream({ messages }) {
+            if (messages.some(message => message.role === 'user' && message.content === '项目目录在哪里')) {
+              yield { type: 'text', text: `主目录 [latch](<${host.workspaceRoot}>) 的构建配置见 [Makefile](Makefile)。` }
+              yield { type: 'finish', reason: 'stop' }
+              return
+            }
             if (messages.some(message => message.role === 'user' && message.content === '梳理请求入口')) {
               yield {
                 type: 'reasoning',
@@ -140,7 +145,8 @@ describe('authenticated file column', () => {
           const file = reply.getByRole('button', { name: '预览文件：main.go', exact: true })
           await file.waitFor()
           expect(await reply.getByRole('button', { name: '预览文件：router.go', exact: true }).count()).toBe(2)
-          expect(await reply.getByRole('button', { name: '预览文件：idl/', exact: true }).count()).toBe(1)
+          const folder = reply.getByRole('button', { name: '打开文件夹：idl', exact: true })
+          await folder.locator('.latch-glyph-folder').waitFor()
           expect(await reply.locator('code').allTextContents()).toEqual(['POST /chat', 'HandleChat', 'SSE', 'event_id'])
           expect(await reply.locator('code :is(a,button), :is(a,button) code, code[tabindex]').count()).toBe(0)
           const external = reply.getByRole('link', { name: 'SSE 协议说明', exact: true })
@@ -158,6 +164,26 @@ describe('authenticated file column', () => {
           expect(codeFill).not.toBe('rgba(0, 0, 0, 0)')
           expect(await fills('code')).toEqual([codeFill])
           expect(await fills('[data-file-chip]')).toEqual(['rgba(0, 0, 0, 0)'])
+          const ink = await folder.evaluate(button => {
+            const label = button.querySelector<HTMLElement>('.file-chip-text')!
+            const font = getComputedStyle(label)
+            const canvas = document.createElement('canvas').getContext('2d')!
+            canvas.font = `${font.fontWeight} ${font.fontSize} ${font.fontFamily}`
+            const { actualBoundingBoxAscent: ascent, actualBoundingBoxDescent: descent } = canvas.measureText(label.textContent!)
+            // An empty inline-block ends at the text baseline, including when touch adds a dotted underline.
+            const marker = document.createElement('span')
+            marker.style.display = 'inline-block'
+            label.append(marker)
+            const textCenter = marker.getBoundingClientRect().bottom + (descent - ascent) / 2
+            marker.remove()
+            const path = button.querySelector<SVGPathElement>('.latch-glyph-folder path')!
+            const bounds = path.getBoundingClientRect()
+            const stroke = parseFloat(getComputedStyle(path).strokeWidth) * path.getScreenCTM()!.d
+            return { centerOffset: bounds.top + bounds.height / 2 - textCenter, heightRatio: (bounds.height + stroke) / (ascent + descent) }
+          })
+          expect(Math.abs(ink.centerOffset)).toBeLessThanOrEqual(1)
+          expect(ink.heightRatio).toBeGreaterThanOrEqual(0.9)
+          expect(ink.heightRatio).toBeLessThanOrEqual(1.2)
           expect(await external.evaluate(node => getComputedStyle(node).textDecorationLine)).toContain('underline')
           if (viewport.touch)
             expect(await file.locator('.file-chip-text').evaluate(node => getComputedStyle(node).textDecorationLine)).toContain('underline')
@@ -201,11 +227,55 @@ describe('authenticated file column', () => {
             }
             await docFile.press('Enter')
             await preview.getByText('func HandleChat() {}', { exact: true }).waitFor()
+            await folder.click()
+            await expect.poll(() => page.getByRole('treeitem', { name: 'idl', exact: true }).getAttribute('aria-expanded')).toBe('true')
+            await page.getByText('空文件夹', { exact: true }).waitFor()
+            const idl = join(host.workspaceRoot, 'idl')
+            await rmdir(idl)
+            await writeFile(idl, 'interface definitions')
+            try {
+              await folder.click()
+              await preview.getByText('interface definitions', { exact: true }).waitFor()
+              await reply.getByRole('button', { name: '预览文件：idl', exact: true }).waitFor()
+            } finally {
+              await unlink(idl)
+              await mkdir(idl)
+            }
           }
         } finally {
           await context.close()
         }
       }
+    }
+  })
+  it('opens an absolute project folder before the batch lookup finishes and previews an extensionless file', async () => {
+    await writeFile(join(host.workspaceRoot, 'Makefile'), 'all: build')
+    const { sessionId: project } = await host.host.bridge.createTask({
+      prompt: '项目目录在哪里',
+      requestId: randomUUID(),
+      mode: 'chat',
+      model: { providerId: 'files', model: 'fixture' },
+    })
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN' })
+    try {
+      const page = await context.newPage()
+      await page.route('**/files/resolve', route => {
+        if (route.request().postDataJSON().paths.length > 1) return route.abort()
+        return route.continue()
+      })
+      await enrollBrowser(page, host, { name: '目录链接', scopes: ['admin'] })
+      await openSession(page, project)
+      const reply = page.locator('.message-content').filter({ hasText: '构建配置见' })
+      await reply.getByRole('button').filter({ hasText: 'latch' }).click()
+      const tree = page.getByRole('tree', { name: '项目文件夹' })
+      await tree.getByRole('treeitem', { name: 'Makefile', exact: true }).waitFor()
+      expect(await page.locator('.file-preview').count()).toBe(0)
+      const file = reply.getByRole('button', { name: '预览文件：Makefile', exact: true })
+      expect(await file.locator('.latch-glyph-folder').count()).toBe(0)
+      await file.click()
+      await page.getByRole('region', { name: '文件预览', exact: true }).getByText('all: build', { exact: true }).waitFor()
+    } finally {
+      await context.close()
     }
   })
   it('keeps the chosen line input when deferred find focus runs', async () => {

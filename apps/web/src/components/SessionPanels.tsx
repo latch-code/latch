@@ -135,6 +135,7 @@ export function SessionPanels({
   fileRevision,
   treeView,
   onTreeViewChange,
+  folderNavigation,
   onSurface,
   onSearchFiles,
   rootReveal,
@@ -199,6 +200,7 @@ export function SessionPanels({
   fileContext?: FileContext
   fileRevision?: string
   treeView?: FileTreeView
+  folderNavigation?: number
   onTreeViewChange?(view: FileTreeView): void
   onSearchFiles?(): void
   rootReveal?(rootId: string): (() => void) | undefined
@@ -376,7 +378,7 @@ export function SessionPanels({
       {fileContext && treeStarted && (
         <div className="session-file-tree" hidden={!showing('files')}>
           <FileTree
-            key={`${fileContextKey(fileContext)}:${fileRevision ?? ''}`}
+            key={`${fileContextKey(fileContext)}:${fileRevision ?? ''}:${folderNavigation ?? 0}`}
             context={fileContext}
             local={local}
             folders={summary?.folders ?? folders}

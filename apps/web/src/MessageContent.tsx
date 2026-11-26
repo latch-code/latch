@@ -29,7 +29,7 @@ import { FileOpenContext } from './preview/fileContext.ts'
 import { FileSandbox } from './preview/FileSandbox.tsx'
 import { drawableMedia, mediaTypeOf, resolveFileMedia, type ResolvedMedia } from './preview/fileImages.ts'
 import { InlineMedia } from './components/InlineMedia.tsx'
-import { KnownFilesContext, useKnownFiles } from './components/FileReferences.tsx'
+import { KnownFilesContext, ReplySettled, useKnownFiles } from './components/FileReferences.tsx'
 import { ReplyFileIcon } from './components/ReplyFileIcon.tsx'
 import { hasHiddenCharacters, VisibleText } from './components/VisibleText.tsx'
 import { codePathCandidate, linkTarget, namesPath, referenceName, referenceText, urlScheme } from './fileReference.ts'
@@ -351,8 +351,6 @@ function textOf(node: { type: string; value?: string; children?: unknown[] } | u
   return (node.children ?? []).map(child => textOf(child as Parameters<typeof textOf>[0])).join('')
 }
 
-/** Whether the reply stopped streaming: only then is its inline code asked about. */
-const ReplySettled = createContext(true)
 const SourceText = createContext('')
 const FrameRenderer = createContext<((input: FrameInput) => ReactNode) | undefined>(undefined)
 /**

@@ -30,7 +30,7 @@ it.each([
           model: 'fixture',
           async *stream({ messages }) {
             if (messages.findLast(message => message.role === 'user')?.content === '旧项目会话') throw new Error('旧会话的模型响应失败')
-            yield { type: 'text', text: '新项目收到了引用。' }
+            yield { type: 'text', text: '新项目收到了引用。\n\n[依赖目录](node_modules/pkg)' }
             yield { type: 'finish', reason: 'stop' }
           },
         })
@@ -53,6 +53,12 @@ it.each([
       await Promise.all([mkdir(oldPath), mkdir(newPath)])
       await writeFile(join(oldPath, 'old.txt'), '旧文件页签保留。\n')
       await writeFile(join(newPath, 'new.txt'), '新项目的引用内容。\n')
+      const dependencies = join(newPath, 'node_modules/pkg')
+      await mkdir(dependencies, { recursive: true })
+      if (width === 1440 && theme === 'dark')
+        await Promise.all(
+          Array.from({ length: 101 }, (_, i) => writeFile(join(dependencies, `item-${String(i).padStart(3, '0')}.txt`), '')),
+        )
       const oldProject = ((await (await owner.addFolders({ name: '旧项目', paths: [oldPath] })).json()) as { workspace: WorkspaceInfo })
         .workspace
       const newProject = ((await (await owner.addFolders({ name: '新项目', paths: [newPath] })).json()) as { workspace: WorkspaceInfo })
@@ -150,9 +156,26 @@ it.each([
       await expect.poll(() => starts.length).toBe(1)
       expect(starts[0]).toMatchObject({ workspaceId: newProject.id, fileRefs: [{ root: newProject.folders![0]!.id, path: 'new.txt' }] })
       await page.locator('main.workspace:not([inert]) .turn-reply').getByText('新项目收到了引用。', { exact: true }).waitFor()
+      if (width === 1440 && theme === 'dark') {
+        const link = page.getByRole('button', { name: '打开文件夹：node_modules/pkg', exact: true })
+        const folder = page.getByRole('treeitem', { name: 'node_modules/pkg', exact: true })
+        await link.click()
+        await page.getByRole('treeitem', { name: 'item-099.txt', exact: true }).waitFor()
+        expect(await folder.getAttribute('aria-selected')).toBe('true')
+        expect(await page.getByRole('treeitem', { name: 'item-100.txt', exact: true }).count()).toBe(0)
+        await folder.click()
+        await page.getByRole('treeitem', { name: 'item-099.txt', exact: true }).waitFor({ state: 'hidden' })
+        await link.click()
+        await page.getByRole('treeitem', { name: 'item-099.txt', exact: true }).waitFor()
+        expect(await folder.getAttribute('aria-expanded')).toBe('true')
+      }
       if (width !== 390) {
         await page.setViewportSize({ width: 390, height: 844 })
         await settleShell(page)
+      }
+      if (width === 1440 && theme === 'dark') {
+        await page.locator('.info-page-head').getByRole('button', { name: '返回', exact: true }).click()
+        await page.locator('.info-page').waitFor({ state: 'detached' })
       }
       await header.getByRole('button', { name: '返回会话列表', exact: true }).click()
       await openOld()

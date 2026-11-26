@@ -25,7 +25,7 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 - 安全错误文案按码取自 `src/core/securityCopy.ts`。
 - `permissions.ts` 只是展示，Host 再查；事件流用 `eventStream.ts`（fetch），不用 `EventSource`。
 - 本机按 `isLocalListener`；回环浏览器算远程。缺邀请或用掉后重领（ARCHITECTURE）。
-- 回复仅链接 http(s)、mailto，行内代码继承链接，文件用后缀图标、无 href。用户网址输入时可编辑、发出后可点，闭合围栏保留原文。
+- 仅链 http(s)、mailto，行内代码继承链接。路径无 href，文件按后缀配图，目录开树。网址输入可改、发出可点；闭合围栏保留原文。
 - 确认走 `withConfirmation`；未知留原请求，确认后解锁设置。草稿只存文字，按设备与会话存浏览器，14 天过期；像凭据的只存内存，摘录要 `all`；删会话、撤权或退出即清。项目失效保留草稿供显式继续（`composer/WorkspaceRecovery.tsx`）。
 - 用 `@latch/ui` 令牌、层、原语。对话/看板同底，各列滚动（DESIGN）。
 - Harness 与模型图标在 `src/assets/brands/`，许可在 `public/licenses/brands/`，用 `?no-inline`，缺图用中性图形，禁用字母。草稿开模型面板时读缺失选项（HARNESSES）。

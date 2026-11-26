@@ -20,7 +20,8 @@ import type { OutputsPanelTarget } from '../panel/outputs/GeneratedFilesPanel.ts
 import { TREE_FROM_FILES } from '../panel/changes/model.ts'
 import { useFileTabs } from '../preview/useFileTabs.ts'
 import { quoteDraft, type FileQuote } from '../preview/quote.ts'
-import { fileContextKey } from '../preview/fileContext.ts'
+import { fileContextKey, sessionFileTarget } from '../preview/fileContext.ts'
+import { viewOfFolder } from '../preview/treeFiles.ts'
 import { useAutoOpenOutputs } from '../hooks/useAutoOpenOutputs.ts'
 import type { ContextFileOpenTarget, FileContext } from '@latch/protocol'
 import {
@@ -691,6 +692,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   /** Another terminal asked for from 「+」 while the terminals already stand in the panel. */
   const [terminalRequest, setTerminalRequest] = useState(0)
   const [changesTarget, setChangesTarget] = useState<ChangesPanelTarget>()
+  const [folderNavigation, setFolderNavigation] = useState(0)
   const [outputsTarget, setOutputsTarget] = useState<OutputsPanelTarget>()
   const [changesTotals, setChangesTotals] = useState<ChangeTotals>()
   /**
@@ -864,11 +866,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     if (target.sessionId !== selectedId) choose(target.sessionId)
     const task = current?.summary.id === target.sessionId ? current.summary : snapshot.tasks.find(item => item.id === target.sessionId)
     const roots = task?.folders?.length ? task.folders : task?.cwd ? [{ id: 'default', path: task.cwd }] : []
-    const root = target.rootId
-      ? roots.find(root => root.id === target.rootId)
-      : (roots.find(root => target.reference.startsWith(`${root.path}/`)) ?? roots[0])
-    const reference = root && target.reference.startsWith(`${root.path}/`) ? target.reference.slice(root.path.length + 1) : target.reference
-    fileTabs.open({ ...target, reference, ...(root ? { rootId: root.id } : {}) })
+    fileTabs.open(sessionFileTarget(target, roots))
     setInfoPage(true)
   })
   const toolDiffNonce = useRef(0)
@@ -2298,6 +2296,16 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     if (showingTab('files')) closePanel()
     else showSurface({ kind: 'files' })
   }
+  const openFolder = useStableCallback((sessionId: string, root: string, path: string, replaceTabId?: string): void => {
+    if (!canBrowseFiles || fileContext?.kind !== 'session' || fileContext.sessionId !== sessionId) return
+    if (replaceTabId) {
+      if (fileTabs.active?.id === replaceTabId) fileTabs.close(replaceTabId, () => openFolder(sessionId, root, path))
+      return
+    }
+    fileTabs.setTreeView(viewOfFolder(root, path, fileTabs.treeView))
+    setFolderNavigation(previous => previous + 1)
+    showSurface({ kind: 'files' })
+  })
   const searchFiles = () => {
     setCommandMode('files')
     setCommandOpen(true)
@@ -2571,6 +2579,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     changesTotals,
     setChangesTotals,
     canBrowseFiles,
+    openFolder: canBrowseFiles && fileContext?.kind === 'session' ? openFolder : undefined,
+    folderNavigation,
     filesVisible,
     contextKey,
     storedSidebar,
