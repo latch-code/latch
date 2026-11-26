@@ -165,6 +165,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | 事件流与阅读位置 | `streaming.test.ts`、`apps/web/test/reading-position.test.ts`、`e2e/streaming-ui.e2e.ts`、`e2e/takeover.e2e.ts` |
 | 助手身份、工作电脑与原回执 | `agent-routes.test.ts` 检查绑定、拒绝来源、发送前改绑、重启后重试；`automations.test.ts` 检查定时授权；`e2e/multi-host-list.e2e.ts` 用两台临时 Host 验证目标运行与失效路径；`e2e/helper-chat.e2e.ts` 核对身份草稿和技能、工具选择。原生对应 `native-swift.test.ts` 与 `e2e/ios-screens.e2e.ts`。 |
 | ACP 进程：环境白名单、启动指纹、权限模式、子 Agent | `packages/harness-acp/test/` 的 `acp.test.ts`、`subagents.test.ts`、`replay.test.ts`；Cursor 的 SDK 路线是 `cursor-sdk.test.ts`（假 SDK 模块 `fixtures/fake-cursor-sdk.mjs`，从不连 Cursor） |
+| Antigravity 工具免询问 | `acp.test.ts` 在同一会话切回默认档，检查测试工具只在批准后写入文件。`e2e/harness-launch-options.e2e.ts` 在三种宽度选择档位，核对启动参数和界面标注 |
 | 模型服务、密钥与网关 | `providers.test.ts`、`config.test.ts`、`model-gateway.test.ts`；定义变量里的密钥是 `agent-env-secrets.test.ts` |
 | Git 受限运行器、工作树与交付 | `changes-git.test.ts`、`worktrees.test.ts`、`git-delivery.test.ts`、`git-hunks.test.ts`、`git-pr.test.ts`、`git-routes.test.ts`、`git-sync.test.ts`（获取、拉取、中止）、`git-clone.test.ts`（克隆，经假 `ssh`）、`branch-switch.test.ts` 与 `branch-routes.test.ts`（切换分支；`e2e/branch-switch.e2e.ts`）、`native.test.ts`（PR 自动续办的原生验证窗口与会话引用限制） |
 | 待办投递、来源与证据 | `work-threads.test.ts`（原请求、同轮提问与私有范围）、`native.test.ts`（正文窗口、PR 评论响应字节预算）、`apps/web/test/workbench-evidence.test.ts`（SHA）、`e2e/task-flow.e2e.ts`（浏览器、假 ACP 与假 GitHub CLI） |

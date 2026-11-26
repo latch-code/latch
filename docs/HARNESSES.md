@@ -197,7 +197,7 @@ profile 的 `minimumVersion` 是它的命令支持的最低版本，用 `<命令
 | Claude Agent | — | `default` | `plan`、`default`、`acceptEdits`、`auto`、`bypassPermissions` | ExitPlanMode 只留 `exit-plan-default` | 可读回；适配器新会话默认进 `auto`，每轮前设回；直连新会话以 `default` 开始，模式由线经 SDK 设置并报告 |
 | Cursor | `--mode` 或 `--force` 启动参数 | `agent` | `ask`、`plan`、`agent`、`agent-force` | `allow-always` | ACP 报告前三档；force 只标为启动设置 |
 | Cursor 经 SDK | 创建或恢复 agent 时的工具名单与沙箱 | `read-only` | `read-only`、`sandbox`、`full` | 不询问，没有选项 | 运行器报告它交给 SDK 的档位 |
-| Antigravity | — | `default` | `default`、`accept-edits`、`auto` | — | 可读回 |
+| Antigravity | 「不再询问」用启动参数 `--dangerously-skip-permissions` | `default` | `default`、`accept-edits`、`auto`、`turbo` | — | 原生模式可读回；`turbo` 只标为启动设置 |
 | Grok Build | 预设参数 `--permission-mode default` | 无 | 无 | — | 不报告模式（`readback: 'none'`），不生成档位；`/always-approve` 不列出、不转发（`modeCommands`） |
 
 **DeepSeek Harness。**
@@ -231,6 +231,9 @@ profile 的 `minimumVersion` 是它的命令支持的最低版本，用 `<命令
 
 - `plan` 只追加规划指令，不保证只读：保留原生名称，不归入权限档位，只由人显式选择，不参与跨 Harness 的只读档位继承。
 - `default` 下 CLI 自己的 `toolPermission`、允许与拒绝规则仍优先，可能直接改文件。Latch 设定并读回 mode，但不据此断言每次工具调用都询问；CLI 请求审批时只给单次选择。
+- `auto` 会评估命令，遇到高风险操作仍可能询问。选「不再询问」（`turbo`）时，Latch 给这个会话的 `agy acp` 加上 `--dangerously-skip-permissions`。切回普通档时，Latch 停掉带参数的进程，用普通参数恢复同一会话，再按所选档位和 CLI 自己的规则处理工具请求。进入或离开「不再询问」都要等会话空闲。
+- `agy` 1.5.17 带或不带这个参数开会话，ACP 都报告 `default`。因此「不再询问」标为「启动设置 · 未独立读回」，只表示 Latch 已经按选择启动该进程。[Google 的 ACP 权限说明](https://antigravity.google/docs/ide/extensions/acp/#permissions)
+- 如果自定义 Harness 的启动参数已经固定开启 `--dangerously-skip-permissions`，原生模式仍可选，所有模式都沿用免询问。要恢复询问，先从该定义移除这个参数，再开新会话。
 - 用 `session/resume` 恢复。恢复后 CLI 报告的模型与思考回到它的默认值（`resumeResetsOptions`）：下一条消息发出前 Latch 按会话原先显示的值重设并逐项读回（先模型、后思考），CLI 不再提供或没有采用时这条消息不发出。所以这两项的「核对」不重新打开会话，结果保持未知；权限模式照常核对。
 - 服务端拒绝一轮时 CLI 只发一段固定正文并以 `end_turn` 结束，不报告原因。profile 的 `terminatedReplies` 记下这段正文：一轮的全部回复正好是它（首尾空白除外）时记为失败，那条回复沿用原消息 ID 并标为失败；只是包含这段文字的仍是普通回复。只对 Antigravity 生效。
 - 创建空会话可能加载扩展，所以模型列表只在人请求时读取。
@@ -775,7 +778,7 @@ DeepSeek Harness 用 API 密钥时，密钥是 DeepSeek 发给这个人的，Dee
 | Cursor | `ask`、`plan`（官方名称） | `agent` | — | — | `agent-force` |
 | Cursor 经 SDK | `read-only` | — | `sandbox` | — | `full` |
 | Claude Agent | `plan` | `default` | `acceptEdits` | `auto` | `bypassPermissions` |
-| Antigravity | — | `default` | `accept-edits` | `auto` | — |
+| Antigravity | — | `default` | `accept-edits` | `auto` | `turbo` |
 | Latch 内置 | `plan` | `ask` | `rule` | `model` | `never` |
 
 Latch 内置的档位由 Latch 自己执行：它不改调用的风险等级，只决定谁来回答，规则见 [PLUGIN-DEVELOPMENT.md](PLUGIN-DEVELOPMENT.md#权限档位)。
@@ -883,7 +886,7 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 **应用。**
 
 - 开始请求带 `config: [{ configId, value }]`（最多 16 项，同一项只能一次），计入请求摘要。Latch 内置 Harness 用 `model`，`config` 只收一项权限档位（`mode` 或 `~mode`，见 [PLUGIN-DEVELOPMENT.md](PLUGIN-DEVELOPMENT.md#权限档位)），别的返回 400 `config-unsupported`。
-- `session/new` 之后、第一条提示之前，依次设置模型、Agent 为这个模型提供的其他选项、模式；模式交给「权限模式」的设置与读回。Cursor 的 force 只报告启动配置完成，不冒充读回。
+- `session/new` 之后、第一条提示之前，依次设置模型、Agent 为这个模型提供的其他选项、模式；模式交给「权限模式」的设置与读回。Cursor 的 force 和 Antigravity 的「不再询问」只报告启动配置完成。
 - **不再提供时。** 选的模型、模式或其他选项 Agent 不再提供、被拒绝或没采用：这一轮失败、不发提示，文字说出它的名字与下一次会用什么。失败之前照常设好草稿里的其他选择并读回模式，所以会话显示的就是之后运行的。Agent 要先登录时，还没设好的选择留到登录后的那次发送（尚未实现：会话详情不带还没设好的选择）。
 - **审计。** `task.l3.start-requested` 与 `task.l3.started` 带 `configHash`（所选内容的摘要，不原样记录）。
 - **我的 Agent 默认项。** Host 从定义的 `engineOptions` 生成同一份开始配置并冻结在原 `requestId` 的选择回执里；开始请求不接受另传的 `config`。

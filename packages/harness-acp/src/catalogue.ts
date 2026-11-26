@@ -79,11 +79,12 @@ export function startCatalogue(
   },
 ): AcpCatalogue {
   const { startMode } = input
-  const options = input.options.map(option =>
-    input.isMode(option) && startMode !== undefined && option.options.some(value => value.value === startMode)
-      ? { ...option, category: 'mode', currentValue: startMode }
-      : option,
-  )
+  const options = input.options.map(option => {
+    if (!input.isMode(option) || startMode === undefined || !option.options.some(value => value.value === startMode)) return option
+    const initial = { ...option, category: 'mode', currentValue: startMode }
+    if (startMode !== option.currentValue) delete initial.source
+    return initial
+  })
   const kept = prior?.definitionHash === input.definitionHash ? prior.perModel : []
   return {
     definitionHash: input.definitionHash,

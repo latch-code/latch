@@ -5,6 +5,7 @@ import { AGENT_PRESETS, isReservedAgentEnvName, isRetiredAgentPreset, runsPreset
 import { AppError, type ConfigChangeClass } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { resolveCommand } from './command.ts'
+import { antigravityFixedPermissions, antigravitySkipsPermissions } from './profiles/antigravity.ts'
 import {
   CURSOR_SDK_PROFILE,
   FALLBACK_PROFILES,
@@ -112,11 +113,12 @@ export function selectProfile(record: AgentRecord, locate: CommandLocator = reso
   // adapter that is the same program (`opencode acp`) is picked by its arguments.
   const viaFallback = preset !== undefined && runsPresetFallback(preset, name, record.args)
   const route = viaFallback ? preset!.fallback! : preset
-  const profile = preset
+  let profile = preset
     ? cursorSdkRoute(preset.id, viaFallback, record)
       ? CURSOR_SDK_PROFILE
       : (viaFallback ? FALLBACK_PROFILES : HARNESS_PROFILES).get(preset.id)
     : undefined
+  if (profile?.presetId === 'antigravity' && antigravitySkipsPermissions(record.args)) profile = antigravityFixedPermissions
   const configEnv = profile?.permission.configEnv ?? []
   const redirected = Object.keys(record.env)
     .filter(key => matchesName(configEnv, key))

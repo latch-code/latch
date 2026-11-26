@@ -1197,6 +1197,11 @@ export class AgentRuntime implements Bridge {
       this.loaded = true
       let changed = false
       for (const task of Object.values(this.state.tasks)) {
+        // A restart can interrupt a flag change after ACP reported but before the chosen launch was committed.
+        if (this.restoreLaunchFlag(task)) {
+          this.touch(task)
+          changed = true
+        }
         if (task.acp.routeMove) {
           this.unfinishedMove(task)
           changed = true
@@ -3786,12 +3791,12 @@ export class AgentRuntime implements Bridge {
     this.assertNotChecking(sessionId)
     const mode = this.isModeOption(task, option)
     options.authorize?.()
-    if (mode && this.selection.profile?.processMode) {
+    if (mode && this.changesProcessMode(task, value)) {
       await this.assertWorkspace(task)
       this.assertNotChecking(sessionId)
       return this.writeProcessMode(task, value, options, reach)
     }
-    if (option.source === 'launch') {
+    if (!mode && option.source === 'launch') {
       await this.assertWorkspace(task)
       this.assertNotChecking(sessionId)
       return this.writeLaunchThinking(task, option, value, options, reach)
@@ -3896,6 +3901,7 @@ export class AgentRuntime implements Bridge {
     if (
       this.selection.profile?.processMode?.unread
       && task.config?.some(option => option.id === configId && this.isModeOption(task, option))
+      && this.changesProcessMode(task, value)
     )
       return { kind: 'unread' }
     const busy = (): ConfigReading | undefined => {
@@ -3934,7 +3940,7 @@ export class AgentRuntime implements Bridge {
       const current = this.state.tasks[sessionId]
       const option = current?.config?.find(item => item.id === configId)
       if (!current || !option) return { kind: 'unread' }
-      if (this.selection.profile?.processMode && this.isModeOption(current, option))
+      if (this.isModeOption(current, option) && this.changesProcessMode(current, option.currentValue))
         await this.rememberProcessMode(current, option.currentValue)
       const asked =
         option.currentValue === value || this.selection.profile?.configValueMatches?.(configId, value, option.currentValue) === true
@@ -3972,7 +3978,32 @@ export class AgentRuntime implements Bridge {
       throw new AppError(409, 'config-check-running', '正在确认设置，结束后再试。')
   }
 
-  /** The process setting is changed only while idle; the public service, not the environment, proves it took effect. */
+  private changesProcessMode(task: AcpTask, value: string): boolean {
+    const processMode = this.selection.profile?.processMode
+    if (!processMode) return false
+    const only = processMode.only
+    return !only || value === only || task.acp.launchMode === only || this.lives.get(task.summary.id)?.launchMode === only
+  }
+
+  private restoreLaunchFlag(task: AcpTask): boolean {
+    const flag = this.selection.profile?.processMode?.only
+    const option = this.modeOption(task)
+    if (!flag || !option) return false
+    if (task.acp.launchMode === flag) {
+      if (option.currentValue === flag && option.source === 'launch') return false
+      option.currentValue = flag
+      option.source = 'launch'
+    } else {
+      if (option.currentValue !== flag && option.source !== 'launch') return false
+      const ordinary = this.expectedMode(task)
+      if (ordinary === undefined) return false
+      option.currentValue = ordinary
+      delete option.source
+    }
+    return true
+  }
+
+  /** The process setting is changed only while idle. A flag the agent cannot attest is shown as a launch setting. */
   private async writeProcessMode(task: AcpTask, value: string, options: SetConfigOptions, reach: { sent: boolean }): Promise<void> {
     const id = task.summary.id
     const live = this.lives.get(id)
@@ -4002,9 +4033,19 @@ export class AgentRuntime implements Bridge {
         if (option) await this.applyMode(id, binding, option, value, this.lifetime.signal)
       }
       if (this.modeOption(task)?.currentValue !== value) throw new AppError(503, 'config-outcome-unknown', '没有读到所选权限档位，请核对。')
-      task.acp.expectedMode = value
-      await this.rememberProcessMode(task, value)
+      await this.rememberProcessMode(task, value, options)
       this.notify(id)
+    } catch (error) {
+      // A failed restart must not leave an uncommitted flag running for the next prompt.
+      const replacement = this.lives.get(id)
+      if (replacement && replacement !== live) await replacement.wire.stop('stop', this.limits.stopGraceMs)
+      if (this.restoreLaunchFlag(task)) {
+        this.touch(task)
+        this.mark()
+        this.notify(id)
+        await this.flush()
+      }
+      throw error
     } finally {
       this.processModeChanges.delete(id)
       this.leave(this.holds, id)
@@ -4021,7 +4062,7 @@ export class AgentRuntime implements Bridge {
     const ladder = this.profile?.modeLadder
     if (this.profile?.approvals !== 'none' || !ladder) return
     const asked = config.find(item => item.configId === LADDER_MODE || item.configId === 'mode')?.value
-    if (asked !== undefined && !ladder.includes(asked))
+    if (asked !== undefined && !ladder.includes(asked) && this.profile.modeTiers?.[asked]?.tier !== 'never')
       throw new AppError(
         409,
         'permission-ask-unavailable',
@@ -4030,8 +4071,10 @@ export class AgentRuntime implements Bridge {
   }
 
   private startProcessMode(config?: ReadonlyArray<{ configId: string; value: string }>): string | undefined {
-    if (!this.selection.profile?.processMode) return undefined
+    const processMode = this.selection.profile?.processMode
+    if (!processMode) return undefined
     const chosen = config?.find(item => item.configId === LADDER_MODE || item.configId === 'mode')?.value ?? this.profile?.expectedMode
+    if (processMode.only && chosen !== processMode.only) return undefined
     if (!chosen || !this.profile?.modeLadder?.includes(chosen)) throw new AppError(400, 'config-value-invalid', '权限档位不在可选范围内。')
     return chosen
   }
@@ -4051,7 +4094,7 @@ export class AgentRuntime implements Bridge {
 
   private withLaunchThinking(options: SessionConfigOption[], selected?: AcpRecord['launchThinking']): SessionConfigOption[] {
     if (options.some(option => option.category === 'thought_level' && option.source !== 'launch')) return options
-    const remaining = options.filter(option => option.source !== 'launch')
+    const remaining = options.filter(option => option.category !== 'thought_level' || option.source !== 'launch')
     const model = remaining.find(option => option.category === 'model')?.currentValue
     const thinking = this.selection.profile?.launchThinking?.(model, selected)
     return thinking ? [...remaining, thinking] : remaining
@@ -4404,10 +4447,12 @@ export class AgentRuntime implements Bridge {
     return value
   }
 
-  private async rememberProcessMode(task: AcpTask, mode: string): Promise<void> {
-    const folders = storedFolders(task.acp)
-    const launch = this.currentLaunch(await this.projectConfig(task.acp.cwd, folders), folders, task.acp.route, mode)
-    task.acp.launchMode = mode
+  private async rememberProcessMode(task: AcpTask, mode: string, write?: SetConfigOptions): Promise<void> {
+    const launch = await this.assertLaunch(task.acp.cwd, confirmedOf(task.acp), mode)
+    write?.authorize?.()
+    if (write) task.acp.expectedMode = mode
+    if (launch.launchMode) task.acp.launchMode = launch.launchMode
+    else delete task.acp.launchMode
     task.acp.launchHash = launch.hash
     this.touch(task)
     this.mark()
@@ -4836,7 +4881,9 @@ export class AgentRuntime implements Bridge {
     }
     const definitionHash = launchHash(definition)
     const routed = this.launchRoute(route, selection)
-    const launchMode = selection.profile?.processMode ? (mode ?? profile?.expectedMode) : undefined
+    const processMode = selection.profile?.processMode
+    const chosen = mode ?? profile?.expectedMode
+    const launchMode = processMode && (!processMode.only || chosen === processMode.only) ? chosen : undefined
     const hash =
       project?.digest || passed || routed || launchMode
         ? launchHash({
@@ -5213,16 +5260,14 @@ export class AgentRuntime implements Bridge {
   }
 
   /** The launch of a session in `cwd` with the folders it passes, unless it is no longer the one on record. */
-  private async assertLaunch(cwd: string, confirmed: Confirmed): Promise<Launch> {
+  private async assertLaunch(cwd: string, confirmed: Confirmed, nextMode?: string): Promise<Launch> {
     this.assertConfirmed(confirmed)
-    const launch = this.currentLaunch(
-      await this.projectConfig(cwd, confirmed.folders),
-      confirmed.folders,
-      confirmed.route,
-      confirmed.launchMode,
-    )
-    if (launch.hash === confirmed.launchHash) return launch
-    if (this.carryMoved(confirmed, launch, await this.projectConfig(cwd, confirmed.folders))) return launch
+    const project = await this.projectConfig(cwd, confirmed.folders)
+    const launch = this.currentLaunch(project, confirmed.folders, confirmed.route, confirmed.launchMode)
+    if (launch.hash === confirmed.launchHash || this.carryMoved(confirmed, launch, project))
+      return nextMode === undefined
+        ? launch
+        : this.launchOf(launch.command, this.agent.args, this.selection, project, confirmed.folders, confirmed.route, nextMode)
     // A session confirmed before project configuration counted stored only the definition's fingerprint.
     throw launch.definitionHash === (confirmed.definitionHash ?? confirmed.launchHash) ? this.projectConfigChanged() : definitionChanged()
   }
@@ -5381,13 +5426,15 @@ export class AgentRuntime implements Bridge {
     const expected = this.expectedMode(task)
     if (expected === undefined) return
     const option = this.modeOption(task)
+    const flag = this.selection.profile?.processMode?.only
+    const launched = !flag || (expected === flag) === (binding.live.launchMode === flag)
     // A mode the Harness's own policy forbids (a mark of Latch's own wire) is never asked for: the person sees why.
     const forbidden = option?.options.find(value => value.value === expected)?.unavailable
     if (forbidden && option?.currentValue !== expected) {
       this.securityEvent({ type: 'permission-unverified', sessionId: taskId })
       throw new AppError(409, 'permission-unverified', `${forbidden}，未发送本轮输入。请在「权限」里换一档。`)
     }
-    if (option && (option.currentValue !== expected || this.unconfirmed.has(taskId))) {
+    if (launched && option && (option.currentValue !== expected || this.unconfirmed.has(taskId))) {
       try {
         await this.applyMode(taskId, binding, option, expected, signal)
       } catch (error) {
@@ -5398,7 +5445,7 @@ export class AgentRuntime implements Bridge {
     }
     const current = this.state.tasks[taskId]
     if (current?.acp.drift) throw permissionDrift()
-    if (current && !this.unconfirmed.has(taskId) && this.modeOption(current)?.currentValue === expected) return
+    if (launched && current && !this.unconfirmed.has(taskId) && this.modeOption(current)?.currentValue === expected) return
     this.securityEvent({ type: 'permission-unverified', sessionId: taskId })
     throw new AppError(409, 'permission-unverified', `无法确认 ${this.agent.name} 已进入预期的权限模式，未发送本轮输入。`)
   }
@@ -6398,14 +6445,10 @@ export class AgentRuntime implements Bridge {
       },
     })
     const processMode = this.selection.profile?.processMode
-    const mode =
-      this.processModeChanges.get(key)?.value ?? (this.checking.has(key) ? undefined : (confirmed.launchMode ?? this.profile?.expectedMode))
     // A resumed private chat keeps its own persisted mode; this read never repairs/widens it for another Agent.
-    const processSettings = await processMode?.prepare(
-      sessionTmpDir,
-      consultationRun && this.state.tasks[key]?.acp.acpSessionId ? undefined : mode,
-      consultationExecution,
-    )
+    const readMode = this.checking.has(key) || (consultationRun && this.state.tasks[key]?.acp.acpSessionId)
+    const mode = readMode ? undefined : (this.processModeChanges.get(key)?.value ?? confirmed.launchMode ?? this.profile?.expectedMode)
+    const processSettings = await processMode?.prepare(sessionTmpDir, mode, consultationExecution)
     this.assertOpen()
     // Opened as late as it can be: the route's files name the gateway's address. Closed again if anything before the
     // spawn fails.
@@ -6441,11 +6484,14 @@ export class AgentRuntime implements Bridge {
       ? undefined
       : this.state.tasks[key]?.config?.find(option => option.category === 'thought_level')?.currentValue
     try {
+      const args = [...this.agent.args, ...this.folderArgs(confirmed.folders)]
+      const end = processMode?.only ? args.indexOf('--') : -1
+      args.splice(end === -1 ? args.length : end, 0, ...(processSettings?.args ?? []))
       wire = openWire(
         this.selection.profile?.wire,
         {
           command,
-          args: [...this.agent.args, ...this.folderArgs(confirmed.folders), ...(processSettings?.args ?? []), ...(delivered?.args ?? [])],
+          args: [...args, ...(delivered?.args ?? [])],
           cwd,
           env: agentEnvironment({
             resolvedCommand: command,
@@ -8142,11 +8188,18 @@ export class AgentRuntime implements Bridge {
         const option = this.modeOption(task)
         const before = option?.currentValue
         // Tracked even when the value is not one of the offered modes: an unknown mode must not read as the old one.
+        let reported = parsed.data.currentModeId
         if (option) {
-          option.currentValue = parsed.data.currentModeId
+          const fromMode = this.selection.profile?.processMode?.fromMode
+          if (fromMode) {
+            const { source: _source, ...native } = option
+            const projected = fromMode({ ...native, currentValue: reported }, live.launchMode)
+            task.config = task.config?.map(item => (item === option ? projected : item))
+            reported = projected.currentValue
+          } else option.currentValue = reported
           this.unconfirmed.delete(taskId)
         }
-        this.observeMode(task, before, parsed.data.currentModeId)
+        this.observeMode(task, before, reported)
         break
       }
       case 'config_option_update': {

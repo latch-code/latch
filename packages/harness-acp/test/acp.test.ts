@@ -1937,6 +1937,14 @@ describe('ACP project folders', () => {
 describe('ACP permission mode', () => {
   const qwen = (env: Record<string, string> = {}, options: AcpAgentOptions = {}) =>
     preset('qwen', { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: QWEN_MODES, FAKE_ACP_INITIAL_MODE: 'default', ...env }, options)
+  const agyEnv = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'default,accept-edits,auto,plan', FAKE_ACP_CAPS: 'resume' }
+  const skipPermissions = '--dangerously-skip-permissions'
+  const agyCommand = (args: string[]) =>
+    setup(
+      { ...agyEnv, FAKE_ACP_AGENT },
+      { idleMs: 60_000 },
+      { presetId: 'antigravity', args: [join(import.meta.dirname, 'fixtures', 'antigravity-permissions.mjs'), ...args] },
+    )
 
   it('reads Antigravity default before prompting and treats its instruction-only plan as no narrower permission', async () => {
     const fixture = await preset('antigravity', {
@@ -1956,6 +1964,165 @@ describe('ACP permission mode', () => {
     await bridge.setConfig!(sessionId, 'mode', 'plan')
     await bridge.prompt(sessionId, 'echo chosen plan', rid())
     expect((await settled(bridge, sessionId)).config?.find(option => option.id === 'mode')?.currentValue).toBe('plan')
+  })
+
+  it('uses the Antigravity bypass flag only in Turbo and waits for approval before executing the same command after switching back', async () => {
+    const args = ['acp', '--disable-telemetry', '--process-per-session']
+    const fixture = await agyCommand(args)
+    const command = 'opencode-tool command'
+    const marker = join(fixture.workspace, 'opencode-tool-ran')
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo hello', requestId: rid() })
+    const first = await settled(bridge, sessionId)
+    expect(first.permission).toMatchObject({ expectedMode: 'default', readback: 'mode' })
+    expect(first.config?.find(option => option.category === 'mode')?.options.map(option => option.value)).toEqual(
+      expect.arrayContaining(['default', 'accept-edits', 'auto', 'plan', 'turbo']),
+    )
+
+    await bridge.setConfig!(sessionId, 'mode', 'auto')
+    await bridge.prompt(sessionId, command, rid())
+    const auto = await until(bridge, sessionId, detail => detail.approvals.length === 1)
+    expect(auto.permission).toMatchObject({ expectedMode: 'auto', readback: 'mode' })
+    expect(await bridge.decide(auto.approvals[0]!.id, 'reject')).toBe(true)
+    await settled(bridge, sessionId)
+    await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect((await fixture.log()).filter(entry => entry.event === 'start').map(entry => entry.argv)).toEqual([args])
+
+    await bridge.setConfig!(sessionId, 'mode', 'turbo')
+    await bridge.prompt(sessionId, command, rid())
+    const turbo = await settled(bridge, sessionId)
+    expect(turbo.summary.status).toBe('idle')
+    expect(turbo.config?.find(option => option.category === 'mode')).toMatchObject({ currentValue: 'turbo', source: 'launch' })
+    expect(turbo.permission).toMatchObject({ expectedMode: 'turbo', readback: 'none', modeTiers: { turbo: { tier: 'never' } } })
+    expect(await readFile(marker, 'utf8')).toBe('bash')
+    expect(await bridge.readConfig!(sessionId, 'mode', 'turbo')).toEqual({ kind: 'unread' })
+    await rm(marker)
+
+    await bridge.setConfig!(sessionId, 'mode', 'default')
+    await bridge.prompt(sessionId, command, rid())
+    const waiting = await until(bridge, sessionId, detail => detail.approvals.length === 1)
+    expect(waiting.summary.status).toBe('waiting-approval')
+    expect(waiting.permission).toMatchObject({ expectedMode: 'default', readback: 'mode' })
+    await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await bridge.decide(waiting.approvals[0]!.id, 'allow')).toBe(true)
+    expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+    expect(await readFile(marker, 'utf8')).toBe('bash')
+
+    const log = await fixture.log()
+    expect(log.filter(entry => entry.event === 'start').map(entry => entry.argv)).toEqual([args, [...args, skipPermissions], args])
+    const agentSessionId = received(log, 'session/prompt')[0]!.params?.sessionId
+    expect(agentSessionId).toEqual(expect.any(String))
+    expect(received(log, 'session/resume').map(entry => entry.params?.sessionId)).toEqual([agentSessionId, agentSessionId])
+    expect(received(log, 'session/set_config_option').map(entry => entry.params?.value)).not.toContain('turbo')
+  })
+
+  it('retains Turbo across a restart when chosen for the first turn and still offers default to the next draft', async () => {
+    const fixture = await preset('antigravity', agyEnv)
+    let bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: 'echo first',
+      requestId: rid(),
+      config: [{ configId: LADDER_MODE, value: 'turbo' }],
+    })
+    const first = await settled(bridge, sessionId)
+    expect(first.summary.status).toBe('idle')
+    expect(first.config?.find(option => option.category === 'mode')).toMatchObject({ currentValue: 'turbo', source: 'launch' })
+    const draftMode = bridge.catalogue!()?.options.find(option => option.category === 'mode')
+    expect(draftMode?.currentValue).toBe('default')
+    expect(draftMode?.source).toBeUndefined()
+
+    await bridge.close()
+    bridge = await fixture.open()
+    await bridge.prompt(sessionId, 'recall', rid())
+    const restored = await settled(bridge, sessionId)
+    expect(assistants(restored).at(-1)?.text).toBe('recall: 1 earlier')
+    expect(restored.config?.find(option => option.category === 'mode')).toMatchObject({ currentValue: 'turbo', source: 'launch' })
+    expect((await fixture.log()).filter(entry => entry.event === 'start').map(entry => entry.argv)).toEqual([
+      [skipPermissions],
+      [skipPermissions],
+    ])
+  })
+
+  it('keeps the committed Antigravity mode visible and closes the replacement when authorization for the change is revoked', async () => {
+    const fixture = await preset('antigravity', agyEnv)
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: 'echo first',
+      requestId: rid(),
+      config: [{ configId: LADDER_MODE, value: 'turbo' }],
+    })
+    expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+    const wire = vi.spyOn(AcpWire.prototype, 'request')
+    let checksAfterResume = 0
+    try {
+      await expect(
+        bridge.setConfig!(sessionId, 'mode', 'default', {
+          authorize() {
+            // The replacement has answered with default. Revoke after attachment, just before the new launch is committed.
+            const resume = wire.mock.calls.findIndex(([method]) => method === 'session/resume')
+            if (wire.mock.settledResults[resume]?.type === 'fulfilled' && ++checksAfterResume === 2)
+              throw new AppError(403, 'permission-denied', 'revoked')
+          },
+        }),
+      ).rejects.toMatchObject({ code: 'permission-denied' })
+    } finally {
+      wire.mockRestore()
+    }
+    const failed = await bridge.detail(sessionId)
+    expect(failed.permission?.expectedMode).toBe('turbo')
+    expect(failed.config?.find(option => option.category === 'mode')).toMatchObject({ currentValue: 'turbo', source: 'launch' })
+    const log = await fixture.log()
+    const replacement = received(log, 'session/resume')[0]!.pid
+    expect(log).toContainEqual(expect.objectContaining({ event: 'start', pid: replacement, argv: [] }))
+    expect(log).toContainEqual(expect.objectContaining({ event: 'exit', pid: replacement }))
+    await bridge.prompt(sessionId, 'recall', rid())
+    expect(assistants(await settled(bridge, sessionId)).at(-1)?.text).toBe('recall: 1 earlier')
+    const after = await fixture.log()
+    const resumed = received(after, 'session/prompt').at(-1)!.pid
+    expect(resumed).not.toBe(replacement)
+    expect(after).toContainEqual(expect.objectContaining({ event: 'start', pid: resumed, argv: [skipPermissions] }))
+  })
+
+  it('keeps native Antigravity modes available and describes their permissions when the definition already bypasses prompts', async () => {
+    const fixture = await agyCommand(['acp', skipPermissions])
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'opencode-tool command', requestId: rid() })
+    const first = await settled(bridge, sessionId)
+    expect(assistants(first).at(-1)?.text).toBe('executed')
+    expect(first.permission?.expectedMode).toBe('default')
+    const nativeModes = ['default', 'accept-edits', 'auto', 'plan']
+    expect(first.config?.find(option => option.category === 'mode')?.options.map(option => option.value)).toEqual(nativeModes)
+    expect(nativeModes.map(native => first.permission?.modeTiers?.[native])).toMatchObject([
+      { tier: 'never', name: '默认' },
+      { tier: 'never', name: 'Accept edits' },
+      { tier: 'never', name: 'Auto' },
+      { tier: 'never', name: 'Plan' },
+    ])
+    expect(first.permission?.modeGlyphs?.plan).toBe('plan')
+    expect(await bridge.classifyConfigChange!(sessionId, 'mode', 'plan')).toBe('wider')
+    for (const native of ['plan', 'auto']) {
+      await bridge.setConfig!(sessionId, 'mode', native)
+      await bridge.prompt(sessionId, 'opencode-tool command', rid())
+      const detail = await settled(bridge, sessionId)
+      expect(detail.config?.find(option => option.category === 'mode')?.currentValue).toBe(native)
+      expect(assistants(detail).at(-1)?.text).toBe('executed')
+    }
+    expect((await fixture.log()).filter(entry => entry.event === 'start').map(entry => entry.argv)).toEqual([['acp', skipPermissions]])
+  })
+
+  it('honors an explicit false Antigravity flag and inserts the chosen Turbo flag before the end of options', async () => {
+    const definitionArgs = ['acp', skipPermissions, `${skipPermissions}=false`, '--', skipPermissions]
+    const fixture = await setup(agyEnv, {}, { presetId: 'antigravity', args: [FAKE_ACP_AGENT, ...definitionArgs] })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo', requestId: rid() })
+    const first = await settled(bridge, sessionId)
+    expect(first.permission?.modeTiers?.default?.tier).toBe('ask')
+    expect(first.config?.find(option => option.category === 'mode')?.options.map(option => option.value)).toContain('turbo')
+    await bridge.setConfig!(sessionId, 'mode', 'turbo')
+    await bridge.prompt(sessionId, 'recall', rid())
+    expect(assistants(await settled(bridge, sessionId)).at(-1)?.text).toBe('recall: 1 earlier')
+    const starts = (await fixture.log()).filter(entry => entry.event === 'start').map(entry => entry.argv)
+    expect(starts).toEqual([definitionArgs, ['acp', skipPermissions, `${skipPermissions}=false`, skipPermissions, '--', skipPermissions]])
   })
 
   describe('a turn Antigravity terminated without a reason', () => {
