@@ -108,6 +108,32 @@ describe('inline media in a reply', () => {
     }
   })
 
+  it('marks punctuation separators around local media links directionally without altering non-media lists', () => {
+    const mediaList = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text: '- 真实截图：[a.png](out/a.png)、[b.png](out/b.png)。',
+      }),
+    )
+    expect(mediaList).toContain('<span class="media-sep" data-sep="between">、</span>')
+    expect(mediaList).toContain('<span class="media-sep" data-sep="after">。</span>')
+    expect(mediaList).toContain('真实截图：')
+
+    const mixed = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text: '已更新 [a.png](out/a.png) 然后是文字、[b.ts](src/b.ts)，以及 [c.png](out/c.png)，请查看。',
+      }),
+    )
+    expect(mixed).toContain('然后是文字<span class="media-sep" data-sep="before">、</span>')
+    expect(mixed).toContain('<span class="media-sep" data-sep="after">，</span>请查看。')
+
+    const plainFiles = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text: '- 改动：[a.ts](src/a.ts)、[b.ts](src/b.ts)。',
+      }),
+    )
+    expect(plainFiles).not.toContain('media-sep')
+  })
+
   it('draws an agent’s picture as a tile until a session can authorize it', () => {
     const html = renderToStaticMarkup(
       createElement(MessageAttachments, {

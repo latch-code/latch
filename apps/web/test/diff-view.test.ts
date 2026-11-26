@@ -86,6 +86,18 @@ describe('DiffView modes', () => {
     expect(out).not.toContain('还有 12 行改动')
   })
 
+  it('keeps multi-file compact diffs collapsed as file rows with per-file actions instead of expanding inline', () => {
+    const out = html({
+      diffs: [edit, created],
+      mode: 'compact',
+      fileActions: (diff, index) => createElement('button', null, `打开 ${index}:${diff.path}`),
+    })
+    expect(out).toContain('aria-expanded="false"')
+    expect(out).toContain('打开 0:src/app.ts')
+    expect(out).toContain('打开 1:src/new.ts')
+    expect(out).not.toContain('diff-compact-foot')
+  })
+
   it('fills the gutter and annotation slots only when given, and head actions beside the header, not inside it', () => {
     expect(html({ diffs: [edit], mode: 'full', ...open })).not.toContain('diff-gutter')
     const out = html({

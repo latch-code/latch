@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Message, TaskDetail } from '@latch/protocol'
-import { fileHistories } from '../src/preview/fileHistory.ts'
+import { fileHistories, recordedFileHistory } from '../src/preview/fileHistory.ts'
 const summary: TaskDetail['summary'] = {
   harnessId: 'standard',
   id: 'session',
@@ -79,5 +79,29 @@ describe('per-file recorded history', () => {
       path: 'report.md',
     })
     expect(fileHistories({ summary: { ...legacy, id: 'other' }, messages: [] })).toEqual([])
+  })
+
+  it('resolves recorded tool diffs inside frozen roots as previewable and outside roots as transient diff-only history', () => {
+    const inside = edit('one', 'main', 'report.md')
+    const outside1 = edit('out1', 'main', '/outside/notes.ts')
+    const outside2 = edit('out2', 'main', '/outside/notes.ts')
+    const pending = edit('wait', 'main', '/outside/notes.ts', 'awaiting-approval')
+    const detail = {
+      summary,
+      messages: [{ id: 'u1', role: 'user' as const, text: 'edit' }, inside, outside1, outside2, pending],
+    }
+    const inRoot = recordedFileHistory(detail, 'one', 0)
+    expect(inRoot?.insideRoot).toBe(true)
+    expect(inRoot?.history.root).toBe('main')
+    expect(inRoot?.history.path).toBe('report.md')
+
+    const outRoot = recordedFileHistory(detail, 'out1', 0)
+    expect(outRoot?.insideRoot).toBe(false)
+    expect(outRoot?.history.path).toBe('/outside/notes.ts')
+    expect(outRoot?.history.entries.map(entry => entry.id)).toEqual(['out1:0', 'out2:0'])
+    expect(outRoot?.history.currentTurnId).toBe('u1')
+
+    expect(recordedFileHistory(detail, 'wait', 0)).toBeUndefined()
+    expect(recordedFileHistory(detail, 'missing', 0)).toBeUndefined()
   })
 })

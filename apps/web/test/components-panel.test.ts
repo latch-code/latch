@@ -73,15 +73,15 @@ const render = (element: Parameters<typeof renderToStaticMarkup>[0]) => renderTo
 describe('what the panel can open', () => {
   it('offers only what exists and is allowed here, in one order, each fixed panel with its letter', () => {
     expect(
-      panelChoices({ browser: true, terminal: true, files: true, changes: true, delivery: true, overview: true }).map(row => [
-        row.label,
-        row.letter,
-      ]),
+      panelChoices({ browser: true, terminal: true, files: true, changes: true, outputs: true, delivery: true, overview: true }).map(
+        row => [row.label, row.letter],
+      ),
     ).toEqual([
       ['浏览器', 'B'],
       ['终端', 'T'],
       ['文件', 'F'],
       ['改动', 'D'],
+      ['生成文件', 'G'],
       ['交付', 'P'],
       ['概要', 'O'],
     ])

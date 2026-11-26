@@ -10,8 +10,11 @@ import {
   type ChangeList,
   type ChangeReceipt,
   type DiscardPreview,
+  type OutputsCleanupPreview,
+  type OutputsCleanupResult,
   type RewindPreview,
   type RewindReceipt,
+  type SessionOutputsList,
   type TaskDetail,
   type TurnChanges,
 } from '@latch/protocol'
@@ -403,4 +406,153 @@ describe('splitChangeNote', () => {
     expect(splitChangeNote('hello')).toEqual({ text: 'hello' })
     expect(splitChangeNote('[Latch] 说明\n\nhello')).toEqual({ note: '[Latch] 说明', text: 'hello' })
   })
+})
+
+describe('gitignored turn filtering and generated outputs cleanup', () => {
+  it('omits gitignored artifacts from turn changes while listing and safely cleaning unchanged outputs', async () => {
+    let workspace = ''
+    const t = await startTestHost({
+      demo: false,
+      plugins: [
+        {
+          id: 'outputs-fixture',
+          name: 'Fixture',
+          version: '1',
+          description: '',
+          activate(ctx) {
+            ctx.registerProvider({
+              id: 'writer',
+              name: 'Fixture',
+              model: 'fixture',
+              async *stream() {
+                await new Promise(resolve => setTimeout(resolve, 40))
+                await mkdir(join(workspace, 'test-results', 'shots'), { recursive: true })
+                await mkdir(join(workspace, 'docs'), { recursive: true })
+                await writeFile(join(workspace, 'src-added.ts'), 'export const x = 1\n')
+                await writeFile(join(workspace, 'test-results', 'shots', 'one.png'), 'png-bytes-1')
+                await writeFile(join(workspace, 'test-results', 'shots', 'edited.png'), 'png-bytes-2')
+                await writeFile(join(workspace, 'docs', 'guide.html'), '<h1>Guide</h1>')
+                yield { type: 'text', text: '生成完毕。' }
+                yield { type: 'finish', reason: 'stop' }
+              },
+            })
+          },
+        },
+      ],
+    })
+    hosts.push(t)
+    workspace = t.workspaceRoot
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], {
+        cwd: t.workspaceRoot,
+        env: { PATH: process.env.PATH, HOME: t.root, GIT_CONFIG_NOSYSTEM: '1' },
+        stdio: 'pipe',
+      })
+    git('init', '-q', '-b', 'main')
+    await writeFile(join(t.workspaceRoot, '.gitignore'), '/test-results/\n')
+    await writeFile(join(t.workspaceRoot, 'tracked.txt'), 'committed\n')
+    git('add', '.')
+    git('commit', '-q', '-m', 'init')
+
+    const owner = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'] })
+    await t.host.security.devices.setScopes(owner.id, { dataScope: 'all' }, { listener: 'unix' }, 'lpc-local')
+
+    const created = await owner.request('tasks', {
+      method: 'POST',
+      body: {
+        prompt: 'run e2e',
+        requestId: randomUUID(),
+        mode: 'agent',
+        workspaceId: 'default',
+        model: { providerId: 'writer', model: 'fixture' },
+      },
+    })
+    expect(created.status).toBe(201)
+    const { sessionId } = (await created.json()) as { sessionId: string }
+
+    await expect
+      .poll(async () => (await owner.json<{ turns: TurnChanges[] }>(`tasks/${sessionId}/changes/turns`)).turns.at(-1)?.state, SLOW)
+      .toBe('settled')
+    await expect
+      .poll(
+        async () =>
+          (await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages.some(m => (m.outputs?.length ?? 0) >= 3 && !m.outputsPending),
+        SLOW,
+      )
+      .toBe(true)
+
+    // 1. Turn changes exclude `/test-results/` while keeping unignored files (`src-added.ts`, `docs/guide.html`).
+    const turnList = await owner.json<ChangeList>(`tasks/${sessionId}/changes?scope=turn`)
+    expect(turnList.files.map(item => item.path)).toEqual(['docs/guide.html', 'src-added.ts'])
+
+    // Modify one generated screenshot after the turn settled: cleanup must refuse to delete it!
+    await writeFile(join(t.workspaceRoot, 'test-results', 'shots', 'edited.png'), 'user-annotated-bytes')
+
+    // 2. Outputs endpoint classifies gitIgnored vs unignored and detects post-turn modification.
+    const outputs = await owner.json<SessionOutputsList>(`tasks/${sessionId}/outputs`)
+    expect(outputs.files).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: 'test-results/shots/one.png', gitIgnored: true, exists: true, removable: true }),
+        expect.objectContaining({
+          path: 'test-results/shots/edited.png',
+          gitIgnored: true,
+          exists: true,
+          changedSince: true,
+          removable: false,
+        }),
+        expect.objectContaining({ path: 'docs/guide.html', exists: true, removable: true }),
+      ]),
+    )
+    expect(outputs.files.some(item => item.path === 'src-added.ts')).toBe(false)
+
+    // 3. Preview and execute cleanup (including an arbitrary non-output file `tracked.txt`, which must be skipped!).
+    const wanted = [
+      { root: 'default', path: 'test-results/shots/one.png' },
+      { root: 'default', path: 'test-results/shots/edited.png' },
+      { root: 'default', path: 'tracked.txt' },
+    ]
+    const preview = await owner.json<OutputsCleanupPreview>(`tasks/${sessionId}/outputs/cleanup/preview`, {
+      method: 'POST',
+      body: { files: wanted },
+    })
+    expect(preview.remove).toBe(1)
+    expect(preview.removes).toEqual([{ root: 'default', path: 'test-results/shots/one.png' }])
+    expect(preview.skipped).toBe(2)
+    expect(preview.notRemoved).toEqual(
+      expect.arrayContaining([
+        { root: 'default', path: 'test-results/shots/edited.png', reason: 'changed-since' },
+        { root: 'default', path: 'tracked.txt', reason: 'not-retained' },
+      ]),
+    )
+
+    const requestId = randomUUID()
+    const cleaned = await owner.json<OutputsCleanupResult>(`tasks/${sessionId}/outputs/cleanup`, {
+      method: 'POST',
+      body: { files: wanted, confirm: preview.planHash, requestId },
+    })
+    expect(cleaned).toMatchObject({ removed: 1, skipped: 2 })
+    expect(existsSync(join(t.workspaceRoot, 'test-results', 'shots', 'one.png'))).toBe(false)
+    expect(existsSync(join(t.workspaceRoot, 'test-results', 'shots', 'edited.png'))).toBe(true)
+    expect(existsSync(join(t.workspaceRoot, 'tracked.txt'))).toBe(true)
+
+    // Replay with the same requestId returns the cached receipt without failing on stale hash.
+    const replay = await owner.json<OutputsCleanupResult>(`tasks/${sessionId}/outputs/cleanup`, {
+      method: 'POST',
+      body: { files: wanted, confirm: preview.planHash, requestId },
+    })
+    expect(replay).toMatchObject({ removed: 1, skipped: 2, replay: true })
+
+    // Delete the remaining unmodified deliverable `docs/guide.html` and verify its empty parent directory `docs/` is pruned!
+    const docPreview = await owner.json<OutputsCleanupPreview>(`tasks/${sessionId}/outputs/cleanup/preview`, {
+      method: 'POST',
+      body: { files: [{ root: 'default', path: 'docs/guide.html' }] },
+    })
+    expect(docPreview.remove).toBe(1)
+    await owner.json<OutputsCleanupResult>(`tasks/${sessionId}/outputs/cleanup`, {
+      method: 'POST',
+      body: { files: [{ root: 'default', path: 'docs/guide.html' }], confirm: docPreview.planHash, requestId: randomUUID() },
+    })
+    expect(existsSync(join(t.workspaceRoot, 'docs'))).toBe(false)
+    expect(await audited(t)).toEqual(['change.outputs-clean', 'change.outputs-clean'])
+  }, 30_000)
 })

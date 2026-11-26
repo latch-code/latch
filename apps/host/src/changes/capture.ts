@@ -153,7 +153,7 @@ export const stateOf = (entry: Entry): FileState => ({
  * The changes from one record to the next. A file present on only one side counts as added or deleted only when the
  * other side's folder was walked to the end; otherwise it is left out and the result is partial.
  */
-export function compare(before: Manifest, after: Manifest): { changes: Change[]; partial: boolean } {
+export function compare(before: Manifest, after: Manifest, omittedKeys?: ReadonlySet<string>): { changes: Change[]; partial: boolean } {
   const walkedBefore = new Set(before.complete),
     walkedAfter = new Set(after.complete)
   const changes: Change[] = []
@@ -164,7 +164,7 @@ export function compare(before: Manifest, after: Manifest): { changes: Change[];
     const { root, path } = splitKey(key)
     if (a && b && sameEntry(a, b)) continue
     // An older head may contain a path the current walk omits. Its absence does not record a deletion.
-    if (a && !b && isIgnoredPath(path)) continue
+    if (a && !b && (isIgnoredPath(path) || omittedKeys?.has(key))) continue
     if ((a && !b && !walkedAfter.has(root)) || (!a && b && !walkedBefore.has(root))) {
       partial = true
       continue

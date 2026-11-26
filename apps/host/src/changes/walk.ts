@@ -3,8 +3,10 @@ import type { BigIntStats, Dirent } from 'node:fs'
 import { lstat, readdir, realpath, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isFileMention } from '@latch/protocol'
+import { openRootGitIgnore, type RootGitIgnore } from '../files/git-ignore-scope.ts'
 import { isIgnoredPath, isSecretLookingPath } from '../files/ignore.ts'
 import { ProtectedPaths, type FileRoot } from '../files/resolve.ts'
+import type { GitReader } from './git.ts'
 
 export interface WalkedFile {
   root: string
@@ -26,6 +28,8 @@ export interface Walk {
   files: Map<string, WalkedFile>
   /** Folders walked to the end. In any other, a file missing from `files` may still exist. */
   complete: Set<string>
+  /** True when `.gitignore` in that folder omits `path` from the walk. */
+  isGitIgnored(root: string, path: string): Promise<boolean>
 }
 
 export interface WalkLimits {
@@ -34,6 +38,12 @@ export interface WalkLimits {
   depth: number
   /** `Date.now()` after which the walk stops where it is. */
   deadline: number
+}
+
+export interface WalkGitOptions {
+  honourGitignore?: boolean
+  git?: GitReader
+  gitEntries?: number
 }
 
 export const fileKey = (root: string, path: string) => `${root}\n${path}`
@@ -96,11 +106,25 @@ export async function realRoots(folders: readonly FileRoot[], guard: ProtectedIn
  * Walks each folder depth-first in name order, skipping ignored names, symlinks, other non-regular files and protected
  * paths. Stops at the limits and leaves that folder out of `complete`; so does a directory it cannot read.
  */
-export async function walkFolders(roots: readonly FileRoot[], guard: ProtectedIndex, limits: WalkLimits): Promise<Walk> {
+export async function walkFolders(
+  roots: readonly FileRoot[],
+  guard: ProtectedIndex,
+  limits: WalkLimits,
+  gitOptions?: WalkGitOptions,
+): Promise<Walk> {
   const files = new Map<string, WalkedFile>(),
-    complete = new Set<string>()
+    complete = new Set<string>(),
+    gitScopes = new Map<string, RootGitIgnore>()
   let entries = 0
   for (const root of roots) {
+    const gitIgnore = gitOptions?.honourGitignore
+      ? await openRootGitIgnore(root, {
+          ...(gitOptions.git ? { git: gitOptions.git } : {}),
+          ...(gitOptions.gitEntries !== undefined ? { entryLimit: gitOptions.gitEntries } : {}),
+          deadlineMs: Math.max(50, limits.deadline - Date.now()),
+        })
+      : undefined
+    if (gitIgnore) gitScopes.set(root.id, gitIgnore)
     let finished = true
     const stack: Array<{ relative: string; depth: number }> = [{ relative: '', depth: 0 }]
     while (stack.length) {
@@ -122,12 +146,22 @@ export async function walkFolders(roots: readonly FileRoot[], guard: ProtectedIn
         finished = false
         break
       }
-      const children = names
+      const candidates = names
         .map(entry => ({ entry, path: relative ? `${relative}/${entry.name}` : entry.name }))
         .filter(
           ({ entry, path }) => (entry.isFile() || entry.isDirectory()) && !isIgnoredPath(path) && isFileMention({ root: root.id, path }),
         )
         .toSorted((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+      const children: typeof candidates = []
+      for (const candidate of candidates) {
+        if (gitIgnore?.inRepo) {
+          const omitted = candidate.entry.isDirectory()
+            ? await gitIgnore.isIgnoredDir(candidate.path)
+            : await gitIgnore.isIgnored(candidate.path)
+          if (omitted) continue
+        }
+        children.push(candidate)
+      }
       const infos = await Promise.all(
         children.map(({ entry }) =>
           lstat(join(directory, entry.name), { bigint: true }).catch((error: unknown) => {
@@ -160,5 +194,9 @@ export async function walkFolders(roots: readonly FileRoot[], guard: ProtectedIn
     }
     if (finished) complete.add(root.id)
   }
-  return { files, complete }
+  return {
+    files,
+    complete,
+    isGitIgnored: async (root, path) => (await gitScopes.get(root)?.isIgnored(path)) ?? false,
+  }
 }

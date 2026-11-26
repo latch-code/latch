@@ -504,24 +504,56 @@
   white-space: pre;
 }
 .file-history-entry {
-  padding: var(--sp-12);
+  padding: 0;
   border-bottom: 1px solid var(--line);
 }
 .file-history-entry h3 {
   margin: 0;
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
   font-weight: 500;
+  color: var(--ink-2);
+}
+.file-history-earlier {
+  margin: var(--sp-8) var(--sp-12);
 }
 .code-review {
+  --diff-indent: 0ch;
   container-type: inline-size;
   container-name: code-review;
+}
+.code-review-path {
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+}
+.code-review-folder {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+.code-review-name {
+  flex-shrink: 0;
+  color: var(--ink);
+  font-weight: 500;
 }
 .code-review-controls {
   flex-wrap: wrap;
 }
 .code-review-layout {
   display: flex;
+  align-items: center;
   gap: var(--sp-4);
   margin-left: auto;
 }
@@ -530,6 +562,7 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
+  border-top: 1px solid var(--line);
 }
 .code-review-files {
   display: flex;
@@ -576,19 +609,62 @@
 }
 .file-history-entry-heading {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: var(--sp-12);
+  gap: var(--sp-8);
+  min-height: 32px;
+  padding: var(--sp-4) var(--sp-12);
+  background: var(--canvas);
+}
+.file-history-entry[data-focused] > .file-history-entry-heading {
+  background: var(--hover);
+  box-shadow: inset 2px 0 0 var(--line-strong);
+}
+.file-history-entry[data-focused] > .file-history-entry-heading h3 {
+  color: var(--ink);
+}
+.file-history-entry-meta {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--sp-4);
 }
 .file-history-entry-heading time {
   flex-shrink: 0;
+  padding: 0;
   white-space: nowrap;
 }
 .code-review .diff-body {
   max-height: none;
 }
 .code-review .diff-view {
-  margin-bottom: 0;
+  margin: 0;
+}
+/* File history keeps both sides' line numbers visible even in full mode, while keeping word highlights and gap bands. */
+.code-review .diff-view[data-mode='full'] .diff-line {
+  grid-template-columns: 36px 36px minmax(0, 1fr);
+}
+.code-review .diff-view[data-mode='full'] :is(.diff-ln-old, .diff-ln-new) {
+  display: block;
+}
+.code-review .diff-view[data-mode='full'] .diff-ln-one {
+  display: none;
+}
+.code-review[data-wrap] .diff-table {
+  min-width: 0;
+}
+.code-review[data-wrap] .diff-body,
+.code-review[data-wrap] .diff-split-side {
+  overflow-x: hidden;
+}
+.code-review[data-wrap] .diff-side-row {
+  width: auto;
+}
+.code-review[data-wrap] :is(.diff-line, .diff-side-row) > .diff-text {
+  overflow-wrap: anywhere;
+  padding-inline-start: calc(var(--diff-indent, 0ch) + 2ch);
+  text-indent: calc(-1 * (var(--diff-indent, 0ch) + 2ch));
+  white-space: pre-wrap;
 }
 @container code-review (max-width: 640px) {
   .code-review-content {
@@ -606,8 +682,9 @@
   }
 }
 @media (max-width: 767.98px) {
-  .code-review .diff-line {
-    grid-template-columns: 28px 28px 14px minmax(0, 1fr);
+  .code-review .diff-line,
+  .code-review .diff-view[data-mode='full'] .diff-line {
+    grid-template-columns: 28px 28px minmax(0, 1fr);
   }
   .code-review .diff-ln-old,
   .code-review .diff-ln-new {
@@ -790,6 +867,16 @@
 }
 .message-media-caption {
   display: block;
+}
+/* Punctuation separators stranded beside block media (or omitted duplicate media) hide instead of taking a line of their own. */
+:is(.inline-media, .message-media, .media-omitted) + .media-sep:not([data-sep='before']),
+:is(strong, em, del, s, mark, span, sub, sup):has(> :is(.inline-media, .message-media, .media-omitted))
+  + .media-sep:not([data-sep='before']),
+.media-sep:not([data-sep='after']):has(+ :is(.inline-media, .message-media, .media-omitted)),
+.media-sep:not([data-sep='after']):has(
+    + :is(strong, em, del, s, mark, span, sub, sup) > :is(.inline-media, .message-media, .media-omitted)
+  ) {
+  display: none;
 }
 .message-attachments[data-inline] .message-attachment-media {
   flex: 1 1 100%;

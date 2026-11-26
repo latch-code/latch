@@ -18,4 +18,10 @@ export const CHANGE_ACTIONS = {
   // 从这里编辑 with 同时把文件退回: every turn from that message on, `turnId` the first of them.
   'change.rewind': turnPlan,
   'change.discard': z.strictObject({ ...plan, scope: z.enum(['turn', 'uncommitted']), turnId: opaqueId.optional() }),
+  'change.outputs-clean': z.strictObject({
+    sessionId: opaqueId,
+    remove: count,
+    skipped: count,
+    planHash: hex64,
+  }),
 } as const satisfies Record<string, ZodType>

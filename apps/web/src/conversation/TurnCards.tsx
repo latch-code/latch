@@ -236,6 +236,7 @@ export function TurnCards({
   const locale = useLocale()
   const summary = useMemo(() => turnSummary(turn, list, changedOutputs(usable, seen ?? [])), [locale, turn, list, usable, seen])
   const produced = useMemo(() => producedFiles(seen ?? []), [seen])
+  const outputMessageId = useMemo(() => turn.replies.findLast(reply => (reply.outputs?.length ?? 0) > 0)?.id, [turn.replies])
   const turnId = record?.turnId
   const openable = firstOpenable(summary.files)
   const target = (file?: SummaryFile): ChangesTarget => {
@@ -423,7 +424,7 @@ export function TurnCards({
   if (onlyProduced) {
     return (
       <div ref={cardRef} className="turn-cards">
-        <ProducedFiles files={produced} actions={undoControl} />
+        <ProducedFiles files={produced} actions={undoControl} turnId={turnId} messageId={outputMessageId} />
         {confirm}
         <PartialNote list={list} />
         {notes}
@@ -472,7 +473,7 @@ export function TurnCards({
           </div>
         </Collapse>
       </section>
-      <ProducedFiles files={produced} />
+      <ProducedFiles files={produced} turnId={turnId} messageId={outputMessageId} />
       {notes}
     </div>
   )

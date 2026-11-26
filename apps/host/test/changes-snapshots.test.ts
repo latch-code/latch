@@ -80,6 +80,36 @@ describe('walking session folders', () => {
     expect([...walk.files.values()].map(file => file.path)).toEqual(['checkouts/MermaidKit/Diagram.swift'])
     expect(walk.complete.has('main')).toBe(true)
   })
+
+  it('honours .gitignore inside Git repositories while keeping plain non-Git folders untouched', async () => {
+    const f = await fixture()
+    await writeFile(join(f.root, '.gitignore'), '/test-results/\n*.snap\n')
+    await mkdir(join(f.root, 'test-results/shots'), { recursive: true })
+    await writeFile(join(f.root, 'test-results/shots/a.png'), 'png')
+    await writeFile(join(f.root, 'a.snap'), 'snap')
+    await writeFile(join(f.root, 'keep.ts'), 'export {}\n')
+
+    // Without .git, .gitignore does not hide files in a plain folder.
+    const plain = await walkFolders(
+      f.roots,
+      f.guard,
+      { entries: 1000, depth: 32, deadline: Date.now() + 10_000 },
+      { honourGitignore: true },
+    )
+    expect([...plain.files.values()].map(file => file.path).toSorted()).toEqual([
+      '.gitignore',
+      'a.snap',
+      'keep.ts',
+      'test-results/shots/a.png',
+    ])
+
+    // Once .git exists, .gitignore prunes `/test-results/` and `*.snap`.
+    await mkdir(join(f.root, '.git'))
+    const repo = await walkFolders(f.roots, f.guard, { entries: 1000, depth: 32, deadline: Date.now() + 10_000 }, { honourGitignore: true })
+    expect([...repo.files.values()].map(file => file.path).toSorted()).toEqual(['.gitignore', 'keep.ts'])
+    expect(await repo.isGitIgnored('main', 'test-results/shots/a.png')).toBe(true)
+    expect(await repo.isGitIgnored('main', 'keep.ts')).toBe(false)
+  })
 })
 
 describe('capturing a record', () => {

@@ -148,6 +148,7 @@ const actionLabels: Readonly<Record<string, string>> = {
   'change.redo': 'Redid changes',
   'change.rewind': 'Reverted files before editing',
   'change.discard': 'Discarded changes',
+  'change.outputs-clean': 'Cleaned up generated files',
   'provider.secret.set': 'Saved model key',
   'provider.secret.cleared': 'Cleared model key',
   'provider.fallbacks.changed': 'Changed fallback models',

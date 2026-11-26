@@ -65,6 +65,7 @@ import { stripAnsi } from '../conversation/ansi.ts'
 import { AnsiText, ShellLine } from '../conversation/CommandText.tsx'
 import { commandFolder, reportedFolder } from '../conversation/commandView.ts'
 import { KindGlyph, type RowKind } from '../conversation/KindGlyph.tsx'
+import { ToolDiffOpenContext } from '../conversation/changesLink.ts'
 import { defineCopy, useLocale, formatNumber, plural } from '../core/i18n.ts'
 
 const COPY = defineCopy(
@@ -398,16 +399,25 @@ function CommandEvidence({
   )
 }
 
-/** A single edit opens on its changed lines; a batch opens on this call's file names. */
-function ToolDiff({ diffs }: { diffs: FileDiff[] }) {
+/** A tool edit stays compact in the transcript and opens the file's full diff in the side panel when one is available. */
+function ToolDiff({ diffs, messageId, rootId }: { diffs: FileDiff[]; messageId?: string; rootId?: string }) {
+  const openToolDiff = useContext(ToolDiffOpenContext)
   const [full, setFull] = useState(false)
-  if (full || diffs.length > 1) return <DiffView diffs={diffs} mode="full" />
+  const canOpenSidePanel = openToolDiff !== null && messageId !== undefined
+  if (full || (!canOpenSidePanel && diffs.length > 1)) return <DiffView diffs={diffs} mode="full" />
   return (
     <DiffView
       diffs={diffs}
       mode="compact"
-      fileActions={() => (
-        <Button size="xs" variant="ghost" icon={DiffGlyph} onClick={() => setFull(true)}>
+      fileActions={(diff, index) => (
+        <Button
+          size="xs"
+          variant="ghost"
+          icon={DiffGlyph}
+          onClick={() => {
+            if (canOpenSidePanel) openToolDiff({ messageId, diffIndex: index, diff, ...(rootId ? { rootId } : {}) })
+            else setFull(true)
+          }}>
           {COPY.fullDiff}
         </Button>
       )}
@@ -698,7 +708,7 @@ export const ToolCard = memo(
                     output={showOutput ? output : undefined}
                   />
                 )}
-                {applied && <ToolDiff diffs={diffs} />}
+                {applied && <ToolDiff diffs={diffs} {...(message ? { messageId: message.id } : {})} {...(rootId ? { rootId } : {})} />}
                 {!applied && files.length > 0 && (
                   <p className="tool-files">
                     {files.map(path => (

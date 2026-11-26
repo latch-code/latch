@@ -30,6 +30,7 @@ import { AppError, type ProjectFolder } from '@latch/sdk'
 import { canonicalJson } from '@latch/core/node-kit'
 import { excludeFromBackup } from '../backup.ts'
 import { isIgnoredPath } from '../files/ignore.ts'
+import { openRootGitIgnore } from '../files/git-ignore-scope.ts'
 import type { FileRoot, ManagedHomeAccess } from '../files/resolve.ts'
 import { RUN_ID } from '../session-meta.ts'
 import { attributeChange, editsByFile, uncoveredEdits, type FolderSpellings } from './attribution.ts'
@@ -505,10 +506,28 @@ export class ChangesEngine {
 
   // ---- snapshots ---------------------------------------------------------------------------------------------------
 
-  private async snapshot(project: ProjectState, roots: readonly FileRoot[], guard: ProtectedIndex, previous: Manifest | undefined) {
+  private async snapshot(
+    project: ProjectState,
+    roots: readonly FileRoot[],
+    guard: ProtectedIndex,
+    previous: Manifest | undefined,
+  ): Promise<{ manifest: Manifest; omittedKeys: ReadonlySet<string> }> {
     const deadline = this.now() + this.limits.captureMs
-    const walk = await walkFolders(roots, guard, { entries: this.limits.walkEntries, depth: this.limits.walkDepth, deadline })
-    return capture(roots, walk, previous, {
+    const walk = await walkFolders(
+      roots,
+      guard,
+      { entries: this.limits.walkEntries, depth: this.limits.walkDepth, deadline },
+      { honourGitignore: true, ...(this.git ? { git: this.git } : {}), gitEntries: this.limits.gitEntries },
+    )
+    const omittedKeys = new Set<string>()
+    if (previous) {
+      for (const key of Object.keys(previous.files)) {
+        if (walk.files.has(key)) continue
+        const { root, path } = splitKey(key)
+        if (!isIgnoredPath(path) && (await walk.isGitIgnored(root, path))) omittedKeys.add(key)
+      }
+    }
+    const manifest = await capture(roots, walk, previous, {
       objects: project.objects,
       storeDev: project.storeDev,
       copyLimit: this.limits.copyLimit,
@@ -518,6 +537,53 @@ export class ChangesEngine {
       room: { bytes: Math.max(0, this.limits.projectBytes - (await this.retained(project, 'pinned'))) },
       now: this.now,
     })
+    return { manifest, omittedKeys }
+  }
+
+  /**
+   * Filter over stored `Change` entries: leaves out hardcoded build/dependency names and, in Git folders, untracked
+   * paths matched by `.gitignore` (including turns recorded before `.gitignore` changed).
+   */
+  private async snapshotScope(
+    sessionId: string,
+    folders: readonly ProjectFolder[],
+    state: Pick<SessionState, 'head' | 'turns'>,
+  ): Promise<(change: Change) => boolean> {
+    const candidates = new Map<string, { root: string; path: string }>()
+    for (const turn of state.turns) {
+      for (const change of [...turn.between, ...turn.changes]) {
+        if (isIgnoredPath(change.path)) continue
+        const key = fileKey(change.root, change.path)
+        if (!candidates.has(key)) candidates.set(key, { root: change.root, path: change.path })
+      }
+    }
+    if (!candidates.size) return inSnapshotScope
+    const configured: readonly FileRoot[] = folders.length ? folders : (state.head?.folders ?? [])
+    if (!configured.length) return inSnapshotScope
+    const guard = await this.protectedIndex(sessionId, configured)
+    const roots = await realRoots(configured, guard)
+    if (!roots.length) return inSnapshotScope
+    const scopes = new Map(
+      await Promise.all(
+        roots.map(
+          async root =>
+            [
+              root.id,
+              await openRootGitIgnore(root, {
+                ...(this.git ? { git: this.git } : {}),
+                entryLimit: this.limits.gitEntries,
+                deadlineMs: this.limits.captureMs,
+              }),
+            ] as const,
+        ),
+      ),
+    )
+    const gitIgnored = new Set<string>()
+    for (const [key, { root, path }] of candidates) {
+      if (await scopes.get(root)?.isIgnored(path)) gitIgnored.add(key)
+    }
+    if (!gitIgnored.size) return inSnapshotScope
+    return change => !isIgnoredPath(change.path) && !gitIgnored.has(fileKey(change.root, change.path))
   }
 
   /**
@@ -537,8 +603,8 @@ export class ChangesEngine {
       if (!roots.length) return
       const startedAt = this.now()
       const previous = state.head && sameFolders(state.head.folders, roots) ? state.head : undefined
-      const head = await this.snapshot(project, roots, guard, previous)
-      const between = previous ? compare(previous, head) : { changes: [], partial: false }
+      const { manifest: head, omittedKeys } = await this.snapshot(project, roots, guard, previous)
+      const between = previous ? compare(previous, head, omittedKeys) : { changes: [], partial: false }
       state.head = head
       // The message that carried a note has reached the engine with this turn; what no message carried stays due.
       const told = <T extends { note?: TurnNote }>(holder: T): T =>
@@ -598,14 +664,42 @@ export class ChangesEngine {
       notCovered: string[] = []
     if (start && state.turns.at(-1) === turn) {
       const guard = await this.protectedIndex(state.id, start.folders)
-      const end = await this.snapshot(project, await realRoots(start.folders, guard), guard, start)
-      const compared = compare(start, end)
+      const roots = await realRoots(start.folders, guard)
+      const { manifest: end, omittedKeys } = await this.snapshot(project, roots, guard, start)
+      const compared = compare(start, end, omittedKeys)
       changes = compared.changes
       partial ||= compared.partial
       if (edits) {
         const spellings = this.spellings(start, folders)
         await this.attribute(project, changes, edits, spellings)
-        notCovered = uncoveredEdits(edits, spellings)
+        const scopes = new Map(
+          await Promise.all(
+            roots.map(
+              async root =>
+                [
+                  root.id,
+                  await openRootGitIgnore(root, {
+                    ...(this.git ? { git: this.git } : {}),
+                    entryLimit: this.limits.gitEntries,
+                    deadlineMs: this.limits.captureMs,
+                  }),
+                ] as const,
+            ),
+          ),
+        )
+        const omittedEdits = new Set<string>()
+        for (const edit of edits) {
+          if (typeof edit.path !== 'string' || !edit.path) continue
+          for (const folder of spellings) {
+            const rel = edit.path.startsWith('/')
+              ? folder.paths
+                  .map(base => (edit.path.startsWith(`${base}/`) ? edit.path.slice(base.length + 1) : undefined))
+                  .find(value => value !== undefined)
+              : edit.path.replaceAll('\\', '/').replace(/^\.\//u, '')
+            if (rel && (await scopes.get(folder.id)?.isIgnored(rel))) omittedEdits.add(fileKey(folder.id, rel))
+          }
+        }
+        notCovered = uncoveredEdits(edits, spellings, (folderId, rel) => omittedEdits.has(fileKey(folderId, rel)))
       }
       state.head = end
     } else partial = true
@@ -718,11 +812,16 @@ export class ChangesEngine {
   private async livePairs(sessionId: string, record: Manifest): Promise<{ pairs: Pair[]; partial: boolean }> {
     const guard = await this.protectedIndex(sessionId, record.folders)
     const roots = await realRoots(record.folders, guard)
-    const walk = await walkFolders(roots, guard, {
-      entries: this.limits.walkEntries,
-      depth: this.limits.walkDepth,
-      deadline: this.now() + this.limits.captureMs,
-    })
+    const walk = await walkFolders(
+      roots,
+      guard,
+      {
+        entries: this.limits.walkEntries,
+        depth: this.limits.walkDepth,
+        deadline: this.now() + this.limits.captureMs,
+      },
+      { honourGitignore: true, ...(this.git ? { git: this.git } : {}), gitEntries: this.limits.gitEntries },
+    )
     const recorded = new Set(record.complete)
     const pairs: Pair[] = []
     let partial = roots.length < record.folders.length
@@ -731,7 +830,7 @@ export class ChangesEngine {
         now = walk.files.get(key)
       const { root, path } = splitKey(key)
       if (before && now && before.sig === now.sig) continue
-      if (before && !now && isIgnoredPath(path)) continue
+      if (before && !now && (isIgnoredPath(path) || (await walk.isGitIgnored(root, path)))) continue
       if ((before && !now && !walk.complete.has(root)) || (!before && now && !recorded.has(root))) {
         partial = true
         continue
@@ -756,10 +855,15 @@ export class ChangesEngine {
     return turn
   }
 
-  private async turnPairs(state: SessionState, turn: TurnRecord): Promise<{ pairs: Pair[]; partial: boolean }> {
+  private async turnPairs(
+    state: SessionState,
+    turn: TurnRecord,
+    folders: readonly ProjectFolder[],
+  ): Promise<{ pairs: Pair[]; partial: boolean }> {
     if (turn.state === 'running')
       return state.head && state.turns.at(-1) === turn ? this.livePairs(state.id, state.head) : { pairs: [], partial: true }
-    const pairs = turn.changes.filter(inSnapshotScope).map((change): Pair => ({
+    const keep = await this.snapshotScope(state.id, folders, state)
+    const pairs = turn.changes.filter(keep).map((change): Pair => ({
       root: change.root,
       path: change.path,
       ...(change.before ? { before: { from: 'record', state: change.before } } : {}),
@@ -771,7 +875,8 @@ export class ChangesEngine {
   }
 
   /** The oldest retained turn's start against now: every recorded change since, then the work tree now. */
-  private async sessionPairs(state: SessionState): Promise<{ pairs: Pair[]; partial: boolean }> {
+  private async sessionPairs(state: SessionState, folders: readonly ProjectFolder[]): Promise<{ pairs: Pair[]; partial: boolean }> {
+    const keep = await this.snapshotScope(state.id, folders, state)
     const merged = new Map<string, Pair>()
     let partial = false
     const apply = (change: { root: string; path: string; before?: Side; after?: Side }, flag?: 'byCommand' | 'byUser') => {
@@ -786,9 +891,9 @@ export class ChangesEngine {
     state.turns.forEach((turn, index) => {
       partial ||= turn.partial ?? false
       if (index > 0)
-        for (const change of turn.between.filter(inSnapshotScope))
+        for (const change of turn.between.filter(keep))
           apply({ ...change, before: side(change.before), after: side(change.after) }, 'byUser')
-      for (const change of turn.changes.filter(inSnapshotScope))
+      for (const change of turn.changes.filter(keep))
         apply(
           { ...change, before: side(change.before), after: side(change.after) },
           change.by === 'command' || change.by === 'mixed' ? 'byCommand' : undefined,
@@ -831,7 +936,8 @@ export class ChangesEngine {
     if (scope === 'turn' || scope === 'session') {
       const turn = scope === 'turn' ? this.turnOf(state, turnId) : state.turns[0]
       if (!turn) return { project, state, pairs: [], list: { unavailable: 'no-turns' } }
-      const { pairs, partial } = scope === 'turn' ? await this.turnPairs(state, turn) : await this.sessionPairs(state)
+      const { pairs, partial } =
+        scope === 'turn' ? await this.turnPairs(state, turn, session.folders) : await this.sessionPairs(state, session.folders)
       return {
         project,
         state,
@@ -999,17 +1105,41 @@ export class ChangesEngine {
     return this.track(async () => {
       const project = await this.project(input.session.projectId)
       const state = await this.session(project, input.session.id)
+      const keep = await this.snapshotScope(input.session.id, input.session.folders, state)
       return state.turns.map(turn => ({
         turnId: turn.turnId,
         startedAt: turn.startedAt,
         ...(turn.settledAt ? { settledAt: turn.settledAt } : {}),
         state: turn.state === 'settled' ? 'settled' : state.running === turn.turnId ? 'running' : 'interrupted',
-        ...(turn.state === 'settled' ? { files: turn.changes.filter(inSnapshotScope).length } : {}),
+        ...(turn.state === 'settled' ? { files: turn.changes.filter(keep).length } : {}),
         ...(turn.undone ? { undone: true as const } : {}),
         ...(turn.note && !turn.note.told ? { notePending: true as const } : {}),
         ...(turn.otherSessions?.length ? { otherSessions: turn.otherSessions } : {}),
       }))
     })
+  }
+
+  /** Latest content hashes recorded in settled turns for files created during the session, as a fallback for older output records. */
+  async recordedHashes(input: { session: ChangesSession }): Promise<Map<string, string>> {
+    checkSession(input.session)
+    return this.track(async () => {
+      const project = await this.project(input.session.projectId)
+      const state = await this.session(project, input.session.id)
+      const hashes = new Map<string, string>()
+      for (const turn of state.turns) {
+        if (turn.state !== 'settled' || turn.undone) continue
+        for (const change of turn.changes) {
+          const key = fileKey(change.root, change.path)
+          if (!change.after) hashes.delete(key)
+          else if (change.after.hash) hashes.set(key, change.after.hash)
+        }
+      }
+      return hashes
+    })
+  }
+
+  get gitReader(): GitReader | undefined {
+    return this.git
   }
 
   /**
@@ -1131,7 +1261,8 @@ export class ChangesEngine {
     if (turn.state !== 'settled') return { block: 'not-settled' }
     if (!only && direction === 'undo' && turn.undone) return { block: 'undone' }
     if (!only && direction === 'redo' && !turn.undone) return { block: 'not-undone' }
-    const changes = turn.changes.filter(change => inSnapshotScope(change) && (!only || only.has(fileKey(change.root, change.path))))
+    const keep = await this.snapshotScope(session.id, session.folders, state)
+    const changes = turn.changes.filter(change => keep(change) && (!only || only.has(fileKey(change.root, change.path))))
     if (!changes.length) return { block: 'no-changes' }
     const roots = await this.writableRoots(state, session, await this.protectedIndex(session.id, session.folders))
     const steps: Step[] = [],
@@ -1312,9 +1443,10 @@ export class ChangesEngine {
       for (const id of new Set(entries.map(entry => entry.turn.turnId))) perTurn.get(id)![field]++
     }
     // Each file's history over these turns, in order.
+    const keep = await this.snapshotScope(session.id, session.folders, state)
     const history = new Map<string, Array<{ turn: TurnRecord; change: Change }>>()
     for (const turn of turns)
-      for (const change of turn.changes.filter(inSnapshotScope)) {
+      for (const change of turn.changes.filter(keep)) {
         const key = fileKey(change.root, change.path)
         const list = history.get(key) ?? []
         list.push({ turn, change })

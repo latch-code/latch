@@ -10,11 +10,13 @@ import {
   type FileDiff,
   type FileMention,
   type Message,
+  type OutputsCleanupResult,
   type RewindPreview,
   readsProjectFiles,
 } from '@latch/protocol'
 import { AppError, type ProjectFolder } from '@latch/sdk'
 import { ChangesEngine, type BeforeWrite, type ChangesSession } from '../changes/engine.ts'
+import { cleanupOutputs, listSessionOutputs, previewOutputsCleanup } from '../changes/outputs.ts'
 import type { FileEditHooks } from '../files/index.ts'
 import { errorText, json, jsonBody, safeDecode } from '../http-util.ts'
 import { isInsidePath } from '../paths.ts'
@@ -22,6 +24,7 @@ import { projectIdOf } from '../session-lifecycle.ts'
 import type { Caller, CallerRequest, DeviceCaller, RouteContext, RouteModule } from './registry.ts'
 
 const TASK_PATH = /^\/link\/api\/tasks\/([^/]+)\/changes(?:\/(file|patch|turns|discard|discard\/preview|rewind|rewind\/preview))?$/u
+const OUTPUTS_PATH = /^\/link\/api\/tasks\/([^/]+)\/outputs(?:\/(cleanup|cleanup\/preview))?$/u
 const TURN_PATH = /^\/link\/api\/tasks\/([^/]+)\/turns\/([^/]+)\/(undo|redo)$/u
 const ACTIVE_STATUSES = new Set(['running', 'waiting-approval'])
 
@@ -33,6 +36,12 @@ const messageId = z.string().min(1).max(256)
 const rewindPreviewSchema = z.strictObject({ messageId })
 const rewindSchema = z.strictObject({
   messageId,
+  requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
+  confirm: z.string().regex(/^[0-9a-f]{64}$/u),
+})
+const outputsPreviewSchema = z.strictObject({ files })
+const outputsCleanupSchema = z.strictObject({
+  files,
   requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
   confirm: z.string().regex(/^[0-9a-f]{64}$/u),
 })
@@ -143,6 +152,7 @@ export function createChangeRoutes(context: RouteContext): ChangeRoutes {
   const open = new Map<string, OpenRun>()
   /** A run's settlement under way, which the session's next run waits for: it would otherwise find the run still open. */
   const settling = new Map<string, Promise<void>>()
+  const cleanupReceipts = new Map<string, OutputsCleanupResult>()
 
   /** Told once both turns are on record; no run waits for this. */
   async function noteOverlap(run: OpenRun, others: readonly OpenRun[]): Promise<void> {
@@ -296,9 +306,93 @@ export function createChangeRoutes(context: RouteContext): ChangeRoutes {
       const session = await writable(caller, safeDecode(turn[1]!))
       const changes = await engine()
       const request = { session, turnId: safeDecode(turn[2]!), requestId: input.requestId, beforeWrite: auditFirst(caller) }
-      json(res, turn[3] === 'undo' ? await changes.undoTurn(request) : await changes.redoTurn(request))
+      const receipt = turn[3] === 'undo' ? await changes.undoTurn(request) : await changes.redoTurn(request)
+      json(res, receipt)
       refresh(session.id)
       return true
+    }
+    const outputsMatch = OUTPUTS_PATH.exec(path)
+    if (outputsMatch) {
+      const sessionId = safeDecode(outputsMatch[1]!),
+        sub = outputsMatch[2]
+      if (method === 'GET' && sub === undefined) {
+        requireScope(caller, 'view')
+        assertFilesVisible(caller, 'view')
+        limits.files.take(caller.device.id)
+        const [{ session }, detail, changes] = await Promise.all([sessionOf(sessionId), hub.detail(sessionId), engine()])
+        const fallbackHashes = await changes.recordedHashes({ session })
+        const body = await listSessionOutputs({
+          sessionId,
+          folders: session.folders,
+          messages: detail.messages,
+          protectedPaths: context.guardedPaths,
+          ...(context.managedHome ? { managedHome: context.managedHome } : {}),
+          fallbackHashes,
+          ...(changes.gitReader ? { git: changes.gitReader } : {}),
+        })
+        assertFilesVisible(caller, 'view')
+        json(res, body)
+        return true
+      }
+      if (method === 'POST' && sub === 'cleanup/preview') {
+        requireScope(caller, 'run')
+        const input = outputsPreviewSchema.parse(await jsonBody(req))
+        const session = await writable(caller, sessionId)
+        const [detail, changes] = await Promise.all([hub.detail(sessionId), engine()])
+        const fallbackHashes = await changes.recordedHashes({ session })
+        const preview = await previewOutputsCleanup({
+          sessionId,
+          folders: session.folders,
+          messages: detail.messages,
+          wanted: input.files,
+          protectedPaths: context.guardedPaths,
+          ...(context.managedHome ? { managedHome: context.managedHome } : {}),
+          fallbackHashes,
+          ...(changes.gitReader ? { git: changes.gitReader } : {}),
+        })
+        assertFilesVisible(caller, 'run')
+        json(res, preview)
+        return true
+      }
+      if (method === 'POST' && sub === 'cleanup') {
+        requireScope(caller, 'run')
+        const input = outputsCleanupSchema.parse(await jsonBody(req))
+        const session = await writable(caller, sessionId)
+        const replayKey = `${sessionId}\n${input.requestId}\n${input.confirm}`
+        const cached = cleanupReceipts.get(replayKey)
+        if (cached) {
+          json(res, { ...cached, replay: true as const })
+          return true
+        }
+        const [detail, changes] = await Promise.all([hub.detail(sessionId), engine()])
+        const fallbackHashes = await changes.recordedHashes({ session })
+        const result = await cleanupOutputs({
+          sessionId,
+          folders: session.folders,
+          messages: detail.messages,
+          wanted: input.files,
+          confirm: input.confirm,
+          protectedPaths: context.guardedPaths,
+          ...(context.managedHome ? { managedHome: context.managedHome } : {}),
+          fallbackHashes,
+          ...(changes.gitReader ? { git: changes.gitReader } : {}),
+          beforeWrite: async plan => {
+            assertFilesVisible(caller, 'run')
+            await audited({
+              action: 'change.outputs-clean',
+              actor: actorOf(caller),
+              target: sessionId,
+              detail: plan,
+            })
+          },
+        })
+        cleanupReceipts.set(replayKey, result)
+        if (cleanupReceipts.size > 512) cleanupReceipts.delete(cleanupReceipts.keys().next().value!)
+        json(res, result)
+        refresh(session.id)
+        return true
+      }
+      return false
     }
     const task = TASK_PATH.exec(path)
     if (!task) return false

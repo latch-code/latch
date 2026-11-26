@@ -90,3 +90,52 @@ export function fileHistories(detail: Pick<TaskDetail, 'summary' | 'messages'>):
   for (const history of groups.values()) history.currentTurnId = turnId
   return [...groups.values()]
 }
+
+/**
+ * Finds the recorded edit history for a specific tool call's diff. Files inside the session's frozen roots reuse
+ * `fileHistories` (and can switch to Host preview); recorded edits outside those roots stay diff-only and transient.
+ */
+export function recordedFileHistory(
+  detail: Pick<TaskDetail, 'summary' | 'messages'>,
+  messageId: string,
+  diffIndex: number,
+): { history: FileHistory; insideRoot: boolean } | undefined {
+  const entryId = `${messageId}:${diffIndex}`
+  const inside = fileHistories(detail).find(file => file.entries.some(entry => entry.id === entryId))
+  if (inside) return { history: inside, insideRoot: true }
+  const source = detail.messages.find(message => message.id === messageId && message.role === 'tool')
+  const targetDiff = source ? appliedDiffs(source)[diffIndex] : undefined
+  if (!targetDiff) return undefined
+  const targetKey = normalize(targetDiff.path) ?? targetDiff.path
+  let turnId: string | undefined
+  const entries: FileHistory['entries'] = []
+  for (const message of detail.messages) {
+    if (message.role === 'user') turnId = message.id
+    if (message.role !== 'tool') continue
+    for (const [index, diff] of appliedDiffs(message).entries()) {
+      if ((normalize(diff.path) ?? diff.path) !== targetKey) continue
+      entries.push({
+        id: `${message.id}:${index}`,
+        toolId: message.id,
+        ...(turnId ? { turnId } : {}),
+        tool: message.tool?.toolTitle
+          ? shownToolTitle(message.tool.toolTitle, message.toolName)
+          : (message.tool?.title ?? FILE_HISTORY_COPY.toolEdit),
+        ...(message.startedAt ? { at: message.startedAt } : {}),
+        diff,
+      })
+    }
+  }
+  if (entries.length === 0) return undefined
+  return {
+    insideRoot: false,
+    history: {
+      root: '',
+      folder: '',
+      path: targetDiff.path,
+      target: { sessionId: detail.summary.id, reference: targetDiff.path, view: 'changes' },
+      ...(turnId ? { currentTurnId: turnId } : {}),
+      entries,
+    },
+  }
+}

@@ -264,11 +264,17 @@ describe('tool rows and command blocks', () => {
           await firstDiff.locator('.diff-add', { hasText: 'first edit' }).waitFor()
           expect(await firstDiff.innerText()).not.toContain('second edit')
           await firstDiff.getByRole('button', { name: '查看完整改动', exact: true }).click()
-          await firstDiff.locator('.diff-add', { hasText: 'first edit' }).waitFor()
-          expect(await firstDiff.locator('.diff-path').getAttribute('title')).toBe('/latch-fixture/agent-notes/store.ts')
-          expect(await firstDiff.innerText()).not.toContain('second edit')
+          // The transcript stays compact while the right panel opens directly onto this edit's full diff.
+          expect(await firstDiff.locator('.diff-compact').count()).toBe(1)
+          const history = wide.getByRole('region', { name: '文件历史改动', exact: true })
+          const firstEntry = history.getByRole('region', { name: '第 1 次修改', exact: true })
+          const secondEntry = history.getByRole('region', { name: '第 2 次修改', exact: true })
+          await firstEntry.locator('.diff-add', { hasText: 'first edit' }).waitFor()
+          expect(await firstEntry.locator('.diff-path').getAttribute('title')).toBe('/latch-fixture/agent-notes/store.ts')
+          expect(await secondEntry.locator('.diff-file-header').getAttribute('aria-expanded')).toBe('false')
+          expect(await history.locator('.diff-add', { hasText: 'second edit' }).count()).toBe(0)
           expect(
-            await firstDiff
+            await firstEntry
               .locator('.diff-path-name')
               .evaluate(
                 name =>
@@ -276,12 +282,16 @@ describe('tool rows and command blocks', () => {
                   && name.getBoundingClientRect().right <= name.parentElement!.getBoundingClientRect().right + 1,
               ),
           ).toBe(true)
-          await edits.first().scrollIntoViewIfNeeded()
           await noHorizontalOverflow(wide)
           await wide.screenshot({ path: `${OUTPUT}/edit--${width}--${theme}.png`, animations: 'disabled' })
+          if (width < 768) await wide.getByRole('button', { name: '返回', exact: true }).click()
+          else if (width < 1024) await wide.getByRole('button', { name: '侧边面板', exact: true }).click()
           await edits.nth(1).locator('.tool-card-header').click()
           await edits.nth(1).locator('.diff-remove', { hasText: 'first edit' }).waitFor()
           await edits.nth(1).locator('.diff-add', { hasText: 'second edit' }).waitFor()
+          await edits.nth(1).getByRole('button', { name: '查看完整改动', exact: true }).click()
+          await secondEntry.locator('.diff-add', { hasText: 'second edit' }).waitFor()
+          expect(await firstEntry.locator('.diff-file-header').getAttribute('aria-expanded')).toBe('false')
         } catch (error) {
           await page.screenshot({ path: `${OUTPUT}/failed-${width}-${theme}.png` })
           throw error

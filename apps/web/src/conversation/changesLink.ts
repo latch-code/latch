@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo } from 'react'
+import type { FileDiff } from '@latch/protocol'
 import { FileSession } from '../components/FileChip.tsx'
 import { FileOpenContext } from '../preview/fileContext.ts'
 
@@ -9,6 +10,20 @@ export interface ChangesTarget {
   path?: string
 }
 
+/** A specific recorded tool diff opened from a work row into the right panel. */
+export interface ToolDiffTarget {
+  messageId: string
+  diffIndex: number
+  diff: FileDiff
+  rootId?: string
+}
+
+/** Where a conversation turn's generated-files card opens in the 生成文件 panel. */
+export interface OutputsOpenTarget {
+  turnId?: string
+  messageId?: string
+}
+
 /** The conversation's way into the right panel's changes. */
 export interface ChangesLink {
   open: (target: ChangesTarget) => void
@@ -17,6 +32,8 @@ export interface ChangesLink {
 }
 
 export const ChangesLinkContext = createContext<ChangesLink | null>(null)
+export const ToolDiffOpenContext = createContext<((target: ToolDiffTarget) => void) | null>(null)
+export const OutputsOpenContext = createContext<((target?: OutputsOpenTarget) => void) | null>(null)
 
 /** The shell's link, or, where no shell provides one (a transcript alone), the session's per-file history. */
 export function useChangesLink(): ChangesLink | null {
