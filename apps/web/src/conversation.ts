@@ -17,7 +17,7 @@ import { unwrapShell, type UnwrappedCommand } from './core/shellUnwrap.ts'
 import { stripAnsi } from './conversation/ansi.ts'
 import { APPROVAL_COPY, DECISION_COPY, JUDGED_COPY } from './core/securityCopy.ts'
 import { absoluteTime, argumentView, basename, clockTime, dayClockTime, formatDuration, messageTime, sameDay, sumUsage } from './format.ts'
-import { diffLines, previousState } from './diff.ts'
+import { diffCounts, previousState } from './diff.ts'
 import { toolKind } from './icons.tsx'
 import { thinkingWord } from './composer/modelReasoning.ts'
 import { currentLocale, defineCopy, listText, plural } from './core/i18n.ts'
@@ -793,7 +793,7 @@ export function diffStat(tool: Message['tool']): { add: number; del: number } | 
   let add = 0
   let del = 0
   for (const diff of tool.diffs) {
-    const view = diffLines(diff.oldText, diff.newText)
+    const view = diffCounts(diff)
     add += view.added
     del += view.removed
   }
@@ -924,9 +924,6 @@ export function toolDuration(message: Message, now: number): { ms: number; live:
   if (message.state === 'running') return { ms: Math.max(0, now - start), live: true }
   return undefined
 }
-
-/** Whether a tool's changes are evidence that stays in view: its diffs. */
-export const hasDiffs = (message: Message) => (message.tool?.diffs?.length ?? 0) > 0
 
 // ---- Reasoning -------------------------------------------------------------------------------------------------------
 

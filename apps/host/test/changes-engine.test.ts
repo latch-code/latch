@@ -7,8 +7,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FileDiff } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { ChangesEngine, type ChangeLimits, type ChangesSession } from '../src/changes/engine.ts'
-import { findGit } from '../src/changes/git.ts'
+import { findGit, GitReader } from '../src/changes/git.ts'
+import { ObjectStore } from '../src/changes/objects.ts'
+import { directoryKey, SessionFiles } from '../src/changes/records.ts'
 import type { ChangeWritePlan } from '../src/changes/types.ts'
+import { fileKey } from '../src/changes/walk.ts'
 
 const git = findGit()
 const cleanup: Array<() => Promise<void>> = []
@@ -255,6 +258,51 @@ describe('the session scope', () => {
 })
 
 describe('retention and recovery', () => {
+  it('keeps the only copy of a deleted file from a newly ignored directory until its recorded turn expires', async () => {
+    const f = await fixture({ turnsPerSession: 2 })
+    const { session } = f
+    await writeFile(f.file('notes.txt'), 'only copy')
+    await f.engine.beginTurn({ session, turnId: 'run-1' })
+    await rm(f.file('notes.txt'))
+    await writeFile(f.file('source.ts'), 'source')
+    await f.engine.settleTurn({ session, turnId: 'run-1', outcome: 'completed' })
+    await f.engine.close()
+
+    // Place the recorded deletion and a head entry under the names used by an older scanner.
+    const project = join(f.dataDir, 'snapshots', directoryKey(session.projectId))
+    const records = new SessionFiles(join(project, 'sessions', directoryKey(session.id)), session.id, session.projectId)
+    const turns = await records.readTurns()
+    const deleted = turns[0]!.changes.find(change => change.path === 'notes.txt')!
+    deleted.path = '.build/local/notes.txt'
+    await records.writeTurns(turns)
+    const head = (await records.readHead())!
+    head.files[fileKey('main', '.pnpm-store/v11/index.db')] = head.files[fileKey('main', 'source.ts')]!
+    await records.writeHead(head)
+
+    const restarted = await f.open()
+    cleanup.push(() => restarted.close())
+    const object = new ObjectStore(join(project, 'objects')).pathOf(deleted.before!.hash!)
+    await restarted.recover()
+    expect(await readFile(object, 'utf8')).toBe('only copy')
+    for (const scope of ['turn', 'session'] as const) {
+      expect((await restarted.list({ session, scope })).files.map(file => file.path)).toEqual(['source.ts'])
+    }
+    expect(await restarted.turns({ session })).toMatchObject([{ files: 1 }])
+    expect(await restarted.previewRewind({ session, turnIds: ['run-1'] })).toMatchObject({ available: true, restore: 0, remove: 1 })
+    const receipt = await restarted.undoTurn({ session, turnId: 'run-1', requestId: 'undo-legacy', beforeWrite: f.beforeWrite })
+    expect(receipt).toMatchObject({ restored: 0, removed: 1 })
+    expect(existsSync(f.file(deleted.path))).toBe(false)
+    expect((await records.readTurns())[0]!.changes).toContainEqual(deleted)
+    expect((await records.readHead())!.files).toEqual(head.files)
+    await restarted.beginTurn({ session, turnId: 'run-2' })
+    expect((await records.readTurns())[1]!.between.map(change => change.path)).toEqual(['source.ts'])
+    await restarted.settleTurn({ session, turnId: 'run-2', outcome: 'completed' })
+    await restarted.recover()
+    expect(await readFile(object, 'utf8')).toBe('only copy')
+    await restarted.beginTurn({ session, turnId: 'run-3' })
+    expect(existsSync(object)).toBe(false)
+  })
+
   it('keeps the latest turns per session and removes content nothing refers to', async () => {
     const f = await fixture({ turnsPerSession: 2 })
     const objects = async () => {
@@ -361,6 +409,14 @@ describe.skipIf(!git)('撤销全部改动 for uncommitted changes', () => {
       ['tracked.txt', 'M', false],
       ['untracked.txt', 'A', false],
     ])
+    const reads = vi.spyOn(GitReader.prototype, 'blobs')
+    try {
+      const detail = await f.engine.file({ session: f.session, scope: 'uncommitted', file: { root: 'main', path: 'tracked.txt' } })
+      expect(detail.file).toMatchObject({ add: 1, del: 1 })
+      expect(reads.mock.calls.flatMap(([, ids]) => ids)).toHaveLength(1)
+    } finally {
+      reads.mockRestore()
+    }
     const writes = vi.fn(f.beforeWrite)
     expect(await f.engine.discard({ session: f.session, target: { scope: 'uncommitted' }, beforeWrite: writes })).toEqual({
       restored: 2,

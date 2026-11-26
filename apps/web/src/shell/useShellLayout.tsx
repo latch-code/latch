@@ -2153,19 +2153,9 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       ...(edited ? { view: 'changes' as const } : {}),
     })
   })
-  const shownChanges = fileTabs.active?.target.view === 'changes' ? fileTabs.active.target.reference : undefined
-  const tabFile = changesOpen && !fileTabs.active ? changesTarget?.file : undefined
   const changesLink = useMemo<ChangesLink | null>(
-    () =>
-      catalog?.features?.filePreview || changesTabReads
-        ? {
-            open: openChanges,
-            panelOpen: columnOpen,
-            turns: changesTabReads,
-            ...(tabFile ? { selected: tabFile } : shownChanges ? { selected: { path: shownChanges } } : {}),
-          }
-        : null,
-    [catalog?.features?.filePreview, changesTabReads, openChanges, columnOpen, shownChanges, tabFile],
+    () => (catalog?.features?.filePreview || changesTabReads ? { open: openChanges, turns: changesTabReads } : null),
+    [catalog?.features?.filePreview, changesTabReads, openChanges],
   )
   // The title, its ⋯ and the sidebar row draw the one session menu; 同步最新状态 lives in the connection's notice.
   const titleMenu = summary ? sessionMenu(summary) : []

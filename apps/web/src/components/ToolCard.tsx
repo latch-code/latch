@@ -3,6 +3,7 @@ import { Camera, CircleDashed, FolderOpen, RotateCcw, TimerOff } from 'lucide-re
 import type { Approval, FileDiff, Message, ToolDecision, ToolDetail } from '@latch/protocol'
 import { previousState } from '../diff.ts'
 import {
+  appliedDiffs,
   blockedLine,
   blockedReason,
   approvalCommand,
@@ -10,7 +11,6 @@ import {
   decisionLine,
   diffStat,
   failureReason,
-  hasDiffs,
   isReview,
   ranDespite,
   rowKind,
@@ -24,13 +24,12 @@ import {
   type CommandLine,
   type ShownToolState,
 } from '../conversation.ts'
-import { useChangesLink } from '../conversation/changesLink.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { argumentView, basename, formatDuration } from '../format.ts'
 import { TerminalFillButton } from './TerminalFillButton.tsx'
 import { PlanText } from '../composer/ApprovalDrawer.tsx'
 import { ArgumentList } from './ArgumentList.tsx'
-import { DiffView, type DiffViewFile } from './DiffView.tsx'
+import { DiffView } from './DiffView.tsx'
 import { FileChip, FileRootContext, FileSession, type FileSessionInfo } from './FileChip.tsx'
 import { toolFileTargets, useKnownFiles } from './FileReferences.tsx'
 import { DecisionRecord, DecisionWords } from './DecisionRecord.tsx'
@@ -91,8 +90,7 @@ const COPY = defineCopy(
     screenshotTitle: '截图会发给模型服务',
     screenshotInfo: 'Agent 的截图作为工具结果交给模型服务；页面上的个人信息不会自动打码。',
     retry: '重试',
-    open: '打开文件',
-    openChanges: '在改动中打开',
+    fullDiff: '查看完整改动',
   },
   {
     cancelled: 'Cancelled',
@@ -117,8 +115,7 @@ const COPY = defineCopy(
     screenshotInfo:
       'Agent screenshots go to the model service as tool results. Personal information on the screen isn’t redacted automatically.',
     retry: 'Retry',
-    open: 'Open file',
-    openChanges: 'Open in Changes',
+    fullDiff: 'View full diff',
   },
 )
 
@@ -401,6 +398,23 @@ function CommandEvidence({
   )
 }
 
+/** A single edit opens on its changed lines; a batch opens on this call's file names. */
+function ToolDiff({ diffs }: { diffs: FileDiff[] }) {
+  const [full, setFull] = useState(false)
+  if (full || diffs.length > 1) return <DiffView diffs={diffs} mode="full" />
+  return (
+    <DiffView
+      diffs={diffs}
+      mode="compact"
+      fileActions={() => (
+        <Button size="xs" variant="ghost" icon={DiffGlyph} onClick={() => setFull(true)}>
+          {COPY.fullDiff}
+        </Button>
+      )}
+    />
+  )
+}
+
 /**
  * One tool call as a work row on the turn's rail: its kind's glyph, the verb, the object (a file's path in mono with its
  * folder quieter than its name), the lines it changed, and at the row's end its state (a spinner while it runs, a red ✕
@@ -409,9 +423,8 @@ function CommandEvidence({
  * output opens with it. While it runs, and once it failed or its result is unknown, it is a block: the last lines of the
  * output the tool reported under it, none wrapped, with a block caret only while it still runs and a red rail on its
  * left when it failed. A failed row says why on one line, with 重试 when this device may resend the turn. Opening a row
- * shows what it did under its words: a file edit's short preview (never while the right panel is open: there the row
- * stays one line and selects its file in 改动), a command's evidence, otherwise its arguments and whole output. A
- * pending approval is decided in the drawer above the composer; here the row only says what it is.
+ * shows what it did under its words: the diff this call reported, a command's evidence, or its arguments and output.
+ * A pending approval is decided in the drawer above the composer; here the row only says what it is.
  */
 export const ToolCard = memo(
   function ToolCard({
@@ -432,7 +445,6 @@ export const ToolCard = memo(
   }) {
     useLocale()
     const bodyId = useId()
-    const link = useChangesLink()
     const session = useContext(FileSession)
     const state: ToolState = message?.state ?? (approval ? 'awaiting-approval' : 'completed')
     const facts = message ? { ...message, state } : undefined
@@ -448,26 +460,23 @@ export const ToolCard = memo(
     const label = toolLabel({ tool, toolName, state })
     // A command its Harness classified as reads, listings or searches is drawn as one of those rows.
     const kind = rowKind({ tool, toolName, state })
-    const diffs = tool?.diffs ?? approval?.tool?.diffs ?? []
+    const diffs = message && !approval ? appliedDiffs(message) : []
     // While a call runs its plain-text form is still its input; only what it reported is output.
     const output = state === 'running' ? (tool?.output ?? '') : facts ? shownToolOutput(facts) : ''
     const language = state === 'completed' && message ? readOutputLanguage(message) : undefined
     const running = state === 'running' && !frozen
-    const [choice, setChoice] = useState<boolean | null>(null)
-    // The diff of a call its approval kept from running, or the harness refused, is no evidence of a change.
-    const applied = !approval && message !== null && hasDiffs(message) && unrun === undefined && shown !== 'blocked'
-    const newFile = applied && diffs.length === 1 && previousState(diffs[0]!) === 'none'
+    const [expanded, setExpanded] = useState(false)
+    const applied = diffs.length > 0
+    const newFile = diffs.length === 1 && previousState(diffs[0]!) === 'none'
     // A new file says its length in its words; its added lines would only repeat that.
     const stat = useMemo(() => (applied && !newFile ? diffStat(tool) : undefined), [applied, newFile, tool])
-    const open = approval ? false : (choice ?? false)
-    const panelEdit = applied && link?.panelOpen === true
-    const selected = panelEdit && diffs.some(diff => diff.path === link.selected?.path)
+    const open = !approval && expanded
     const showOutput = message !== null && state !== 'awaiting-approval' && state !== 'queued'
     // In the desktop app, the files a finished tool read or wrote become path chips once the Host says they are files.
     const input = argumentView(tool?.input)
     const folder = input.kind === 'entries' ? input.entries.find(([key]) => key === 'folder')?.[1] : undefined
     const rootId = folder && /^[A-Za-z0-9_-]{1,32}$/u.test(folder) ? folder : undefined
-    const files = useKnownFiles(message ? toolFileTargets(message) : [], state === 'completed' || state === 'failed', rootId)
+    const files = useKnownFiles(!applied && message ? toolFileTargets(message) : [], state === 'completed' || state === 'failed', rootId)
     const failed = shown === 'failed'
     const block = shown === 'blocked' ? tool?.blocked : undefined
     const wholeReason = block ? blockedReason(block) : undefined
@@ -519,16 +528,13 @@ export const ToolCard = memo(
     ) : state === 'queued' ? (
       <CircleDashed size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
     ) : null
-    const openInChanges = (diff: DiffViewFile) => {
-      link?.open({ path: diff.path, ...(rootId ? { root: rootId } : {}) })
-    }
     // The row's tooltip: the call's full heading when the row shortens it, a titled tool's ID, and an allowance's record.
     const tooltip = [
       title !== label.object ? title : undefined,
       line && line.reported !== title && line.reported !== object ? line.reported : undefined,
       tool?.toolTitle && toolName && toolName !== label.object ? toolName : undefined,
       decision?.outcome === 'allowed' ? decisionLine(decision, 0).full : undefined,
-      // Latch 内置's model judged this call: who decided and why, also where an edit's row opens in Changes.
+      // Latch 内置's model judged this call: who decided and why.
       judged?.own ? [JUDGED_COPY.ownBrief(judged.outcome, judged.reason).label, judged.reason].filter(Boolean).join('：') : undefined,
     ]
       .filter(Boolean)
@@ -608,7 +614,6 @@ export const ToolCard = memo(
         )}
       </StatusWords>
     )
-    const hasDetails = !panelEdit
     // Only what the tool itself reported is output: a command's plain-text form is not.
     const tail = well && !open && tool?.output ? commandTail(withoutToolCode(tool.output)) : ''
     // The tail shows the last lines; the reason is the first one that says something, which a long output scrolls off.
@@ -619,30 +624,20 @@ export const ToolCard = memo(
         <article
           className={`tool-card tool-${shown}${command ? ' is-command' : ''}${well ? ' is-block' : ''}`}
           data-kind={newFile ? 'new' : kind}
-          data-open={open && hasDetails ? '' : undefined}
-          data-selected={selected ? '' : undefined}
+          data-open={open ? '' : undefined}
           {...(message ? { 'data-message-id': message.id } : {})}>
           <div className="tool-tray">
             <button
               type="button"
               className="tool-card-header"
-              aria-expanded={hasDetails ? open : undefined}
-              aria-controls={hasDetails ? bodyId : undefined}
+              aria-expanded={open}
+              aria-controls={bodyId}
               title={tooltip || undefined}
               onClick={() => {
-                if (panelEdit) openInChanges(diffs[0]!)
-                else setChoice(!open)
+                setExpanded(!open)
               }}>
               {heading}
-              {hasDetails && (
-                <ChevronRightGlyph
-                  className="process-chevron"
-                  size={12}
-                  nonScalingStroke
-                  strokeWidth={ICON_STROKE[12]}
-                  aria-hidden="true"
-                />
-              )}
+              <ChevronRightGlyph className="process-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
               <span className="process-fill" />
               <span className="process-end">
                 {message && <ToolTime message={message} frozen={frozen} />}
@@ -684,86 +679,67 @@ export const ToolCard = memo(
                 )}
               </p>
             )}
-            {hasDetails && (
-              <Collapse
-                id={bodyId}
-                open={open}
-                lazy
-                onReveal={() => {
-                  setChoice(true)
-                }}>
-                <div className="tool-card-body">
-                  {evidence && (
-                    <CommandEvidence
-                      line={evidence}
-                      showLine={!headed || cut}
-                      folder={commandFolder(reportedFolder(tool?.input), sessionRoots(session))}
-                      state={shown}
-                      settled={state !== 'awaiting-approval' && state !== 'queued'}
-                      running={running}
-                      output={showOutput ? output : undefined}
-                    />
-                  )}
-                  {applied && link && (
-                    <DiffView
-                      diffs={diffs}
-                      mode="compact"
-                      fileActions={diff => (
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          icon={DiffGlyph}
-                          onClick={() => {
-                            openInChanges(diff)
-                          }}>
-                          {previousState(diff) === 'none' ? COPY.open : COPY.openChanges}
-                        </Button>
-                      )}
-                    />
-                  )}
-                  {applied && !link && <DiffView diffs={diffs} mode="compact" />}
-                  {!applied && files.length > 0 && (
-                    <p className="tool-files">
-                      {files.map(path => (
-                        <FileChip key={path} path={path} />
-                      ))}
-                    </p>
-                  )}
-                  {wholeReason && (
-                    <p className="tool-block-reason">
-                      <VisibleText text={wholeReason} />
-                    </p>
-                  )}
-                  {judgedNote && (
-                    <Hint inline className="tool-judged-note" label={judgedNote.label}>
-                      {judgedNote.detail}
-                    </Hint>
-                  )}
-                  {/* A review's input is the agent's whole event, its status still the one it began with: its own words say it. */}
-                  {/* A command shown without its wrapper keeps the reported line here, whole. */}
-                  {/* What else a call was given; a command's line and folder are shown above. */}
-                  {tool?.plan && <PlanText text={tool.plan} />}
-                  {!review && !applied && (
-                    <ArgumentList
-                      text={tool?.input}
-                      covered={[
-                        ...(evidence ? [evidence.reported, reportedFolder(tool?.input) ?? ''] : [label.object]),
-                        ...(tool?.plan ? [tool.plan] : []),
-                      ]}
-                      quiet
-                    />
-                  )}
-                  {showOutput
-                    && !applied
-                    && !evidence
-                    && (output ? (
-                      <ToolOutput text={output} running={running} language={language} />
-                    ) : (
-                      !running && <p className="muted-line">{COPY.noOutput}</p>
+            <Collapse
+              id={bodyId}
+              open={open}
+              lazy
+              onReveal={() => {
+                setExpanded(true)
+              }}>
+              <div className="tool-card-body">
+                {evidence && (
+                  <CommandEvidence
+                    line={evidence}
+                    showLine={!headed || cut}
+                    folder={commandFolder(reportedFolder(tool?.input), sessionRoots(session))}
+                    state={shown}
+                    settled={state !== 'awaiting-approval' && state !== 'queued'}
+                    running={running}
+                    output={showOutput ? output : undefined}
+                  />
+                )}
+                {applied && <ToolDiff diffs={diffs} />}
+                {!applied && files.length > 0 && (
+                  <p className="tool-files">
+                    {files.map(path => (
+                      <FileChip key={path} path={path} />
                     ))}
-                </div>
-              </Collapse>
-            )}
+                  </p>
+                )}
+                {wholeReason && (
+                  <p className="tool-block-reason">
+                    <VisibleText text={wholeReason} />
+                  </p>
+                )}
+                {judgedNote && (
+                  <Hint inline className="tool-judged-note" label={judgedNote.label}>
+                    {judgedNote.detail}
+                  </Hint>
+                )}
+                {/* A review's input is the agent's whole event, its status still the one it began with: its own words say it. */}
+                {/* A command shown without its wrapper keeps the reported line here, whole. */}
+                {/* What else a call was given; a command's line and folder are shown above. */}
+                {tool?.plan && <PlanText text={tool.plan} />}
+                {!review && !applied && (
+                  <ArgumentList
+                    text={tool?.input}
+                    covered={[
+                      ...(evidence ? [evidence.reported, reportedFolder(tool?.input) ?? ''] : [label.object]),
+                      ...(tool?.plan ? [tool.plan] : []),
+                    ]}
+                    quiet
+                  />
+                )}
+                {showOutput
+                  && !applied
+                  && !evidence
+                  && (output ? (
+                    <ToolOutput text={output} running={running} language={language} />
+                  ) : (
+                    !running && <p className="muted-line">{COPY.noOutput}</p>
+                  ))}
+              </div>
+            </Collapse>
           </div>
           {/* A call the agent reports as run after it was not allowed: one line under the row says so. */}
           {contradicted && <DecisionRecord decision={contradicted} />}

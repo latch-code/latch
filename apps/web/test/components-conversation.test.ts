@@ -868,7 +868,7 @@ describe('the turn footer', () => {
     const html = renderToStaticMarkup(
       createElement(
         ChangesLinkContext.Provider,
-        { value: { open: noop, panelOpen: false, turns: true } as ChangesLink },
+        { value: { open: noop, turns: true } as ChangesLink },
         createElement(TurnFooter, {
           turn: { key: 'u', user: { id: 'u', role: 'user', text: 'hi', turnId: 't1' }, replies: [] },
           actions: { onCopy: noop },
@@ -890,19 +890,10 @@ describe('a file edit and the right panel', () => {
       ),
     )
 
-  it('stays one line while the panel is open, with nothing to expand, and marks the file the panel shows', () => {
-    const open = row({ open: noop, panelOpen: true })
-    expect(open).not.toContain('aria-expanded')
-    expect(open).not.toContain('process-chevron')
-    expect(open).not.toContain('data-selected')
-    expect(row({ open: noop, panelOpen: true, selected: { path: 'src/a.ts' } })).toContain('data-selected')
-    expect(row({ open: noop, panelOpen: true, selected: { path: 'src/b.ts' } })).not.toContain('data-selected')
-  })
-
-  it('offers its preview while the panel is closed', () => {
-    const closed = row({ open: noop, panelOpen: false })
-    expect(closed).toContain('aria-expanded="false"')
-    expect(closed).toContain('process-chevron')
+  it.each([null, { open: noop, turns: true }])('offers the inline edit whether or not the changes panel is available', link => {
+    const html = row(link)
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).toContain('process-chevron')
   })
 })
 

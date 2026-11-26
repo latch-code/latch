@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compactLines, diffLines, openedGap, previousState, splitLines, wordHighlights, wordRanges } from '../src/diff.ts'
+import { compactLines, diffCounts, diffLines, openedGap, previousState, splitLines, wordHighlights, wordRanges } from '../src/diff.ts'
 
 const numbered = (count: number, change?: (index: number) => string | undefined) =>
   Array.from({ length: count }, (_, index) => change?.(index + 1) ?? `line ${index + 1}`).join('\n') + '\n'
@@ -31,6 +31,17 @@ describe('line diff', () => {
         ],
       },
     ])
+  })
+
+  it.each([
+    [undefined, 'new\r\nfile\r\n'],
+    ['before\n', ''],
+    ['keep\na\nb\na\nc\nend', 'keep\nb\na\nb\nend'],
+    [numbered(1100), numbered(1100, n => (n === 1 || n === 1100 ? 'changed' : undefined))],
+  ])('counts the same changed lines before and after opening the diff', (oldText, newText) => {
+    const diff = { path: 'example.ts', oldText, newText: newText! }
+    const { added, removed } = diffLines(diff.oldText, diff.newText)
+    expect(diffCounts(diff)).toEqual({ added, removed })
   })
 
   it('calls a file new only when the producer reported it missing', () => {

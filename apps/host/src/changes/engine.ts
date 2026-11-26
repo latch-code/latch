@@ -29,6 +29,7 @@ import {
 import { AppError, type ProjectFolder } from '@latch/sdk'
 import { canonicalJson } from '@latch/core/node-kit'
 import { excludeFromBackup } from '../backup.ts'
+import { isIgnoredPath } from '../files/ignore.ts'
 import type { FileRoot, ManagedHomeAccess } from '../files/resolve.ts'
 import { RUN_ID } from '../session-meta.ts'
 import { attributeChange, editsByFile, uncoveredEdits, type FolderSpellings } from './attribution.ts'
@@ -61,6 +62,8 @@ import { ProtectedIndex, fileKey, realRoots, signature, splitKey, walkFolders } 
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0
 const REQUEST_ID = /^[A-Za-z0-9_-]{8,128}$/u
 const PROJECT_ID = /^[A-Za-z0-9_-]{1,64}$/u
+// Keep the original change arrays for object retention. Only the current scope is shown or written back.
+const inSnapshotScope = (change: Change) => !isIgnoredPath(change.path)
 
 /** A session as the engine needs it: its ID, its project, and its folders as frozen when it was created. */
 export interface ChangesSession {
@@ -184,7 +187,6 @@ interface Scoped {
   pairs: Pair[]
   git?: GitScope
   list: Partial<ChangeList>
-  contents: Contents
 }
 
 type Current = { mode: number; sig: string; hash?: string } | null | undefined
@@ -729,6 +731,7 @@ export class ChangesEngine {
         now = walk.files.get(key)
       const { root, path } = splitKey(key)
       if (before && now && before.sig === now.sig) continue
+      if (before && !now && isIgnoredPath(path)) continue
       if ((before && !now && !walk.complete.has(root)) || (!before && now && !recorded.has(root))) {
         partial = true
         continue
@@ -756,7 +759,7 @@ export class ChangesEngine {
   private async turnPairs(state: SessionState, turn: TurnRecord): Promise<{ pairs: Pair[]; partial: boolean }> {
     if (turn.state === 'running')
       return state.head && state.turns.at(-1) === turn ? this.livePairs(state.id, state.head) : { pairs: [], partial: true }
-    const pairs = turn.changes.map((change): Pair => ({
+    const pairs = turn.changes.filter(inSnapshotScope).map((change): Pair => ({
       root: change.root,
       path: change.path,
       ...(change.before ? { before: { from: 'record', state: change.before } } : {}),
@@ -783,8 +786,9 @@ export class ChangesEngine {
     state.turns.forEach((turn, index) => {
       partial ||= turn.partial ?? false
       if (index > 0)
-        for (const change of turn.between) apply({ ...change, before: side(change.before), after: side(change.after) }, 'byUser')
-      for (const change of turn.changes)
+        for (const change of turn.between.filter(inSnapshotScope))
+          apply({ ...change, before: side(change.before), after: side(change.after) }, 'byUser')
+      for (const change of turn.changes.filter(inSnapshotScope))
         apply(
           { ...change, before: side(change.before), after: side(change.after) },
           change.by === 'command' || change.by === 'mixed' ? 'byCommand' : undefined,
@@ -825,9 +829,8 @@ export class ChangesEngine {
     const project = await this.project(session.projectId)
     const state = await this.session(project, session.id)
     if (scope === 'turn' || scope === 'session') {
-      const contents = new Contents({ objects: project.objects }, this.limits.readBytes)
       const turn = scope === 'turn' ? this.turnOf(state, turnId) : state.turns[0]
-      if (!turn) return { project, state, pairs: [], list: { unavailable: 'no-turns' }, contents }
+      if (!turn) return { project, state, pairs: [], list: { unavailable: 'no-turns' } }
       const { pairs, partial } = scope === 'turn' ? await this.turnPairs(state, turn) : await this.sessionPairs(state)
       return {
         project,
@@ -839,11 +842,9 @@ export class ChangesEngine {
           ...(scope === 'turn' && turn.state === 'running' ? { running: true as const } : {}),
           ...(partial ? { partial: true as const } : {}),
         },
-        contents,
       }
     }
     const git = await this.gitScope(session, scope)
-    const blobs = await this.blobsFor(git, this.limits.readBytes)
     return {
       project,
       state,
@@ -856,7 +857,6 @@ export class ChangesEngine {
         ...(git.unavailable ? { unavailable: git.unavailable } : {}),
         ...(git.conflict ? { conflict: git.conflict } : {}),
       },
-      contents: new Contents({ objects: project.objects, blobs: oid => blobs.get(oid) }, this.limits.readBytes),
     }
   }
 
@@ -891,6 +891,13 @@ export class ChangesEngine {
     return blobs
   }
 
+  /** Load earlier Git contents only for the pairs the caller will compare. */
+  private async contentsFor(scoped: Scoped, pairs: Pair[], budget: number, blobBudget = budget): Promise<Contents> {
+    if (!scoped.git) return new Contents({ objects: scoped.project.objects }, budget)
+    const blobs = await this.blobsFor({ ...scoped.git, pairs }, blobBudget)
+    return new Contents({ blobs: oid => blobs.get(oid) }, budget)
+  }
+
   /** A scope's changed files; `turnId` picks the turn for `turn` (default: the latest). */
   async list(input: { session: ChangesSession; scope: ChangeScope; turnId?: string }): Promise<ChangeList> {
     checkSession(input.session)
@@ -898,7 +905,8 @@ export class ChangesEngine {
     return this.track(async () => {
       const scoped = await this.scoped(input.session, input.scope, input.turnId)
       const files: ChangedFile[] = []
-      for (const pair of scoped.pairs) files.push(describe(pair, await compareSides(pair, scoped.contents)))
+      const contents = await this.contentsFor(scoped, scoped.pairs, this.limits.readBytes)
+      for (const pair of scoped.pairs) files.push(describe(pair, await compareSides(pair, contents, 'counts')))
       files.sort((a, b) => a.root.localeCompare(b.root) || a.path.localeCompare(b.path))
       const totals = { files: files.length, add: 0, del: 0 }
       for (const file of files) {
@@ -939,11 +947,7 @@ export class ChangesEngine {
         item => item.root === input.file.root && (item.path === input.file.path || item.oldPath === input.file.path),
       )
       if (!pair) throw new AppError(404, 'change-file-missing', '这个文件在这个范围里没有改动。')
-      let contents = new Contents({ objects: scoped.project.objects }, TEXT_LIMIT * 2)
-      if (scoped.git) {
-        const blobs = await this.blobsFor({ ...scoped.git, pairs: [pair] }, TEXT_LIMIT)
-        contents = new Contents({ blobs: oid => blobs.get(oid) }, TEXT_LIMIT * 2)
-      }
+      const contents = await this.contentsFor(scoped, [pair], TEXT_LIMIT * 2)
       const compared = await compareSides(pair, contents)
       const context = typeof input.context === 'number' && !Number.isNaN(input.context) ? Math.max(0, Math.floor(input.context)) : 3
       return {
@@ -961,11 +965,7 @@ export class ChangesEngine {
     checkScope(input.scope)
     return this.track(async () => {
       const scoped = await this.scoped(input.session, input.scope, input.turnId)
-      let contents = new Contents({ objects: scoped.project.objects }, this.limits.patchBytes * 2)
-      if (scoped.git) {
-        const blobs = await this.blobsFor(scoped.git, this.limits.patchBytes)
-        contents = new Contents({ blobs: oid => blobs.get(oid) }, this.limits.patchBytes * 2)
-      }
+      const contents = await this.contentsFor(scoped, scoped.pairs, this.limits.patchBytes * 2, this.limits.patchBytes)
       const prefix = (root: string) => (input.session.folders.length > 1 ? `${root}/` : '')
       let text = '',
         files = 0,
@@ -1004,7 +1004,7 @@ export class ChangesEngine {
         startedAt: turn.startedAt,
         ...(turn.settledAt ? { settledAt: turn.settledAt } : {}),
         state: turn.state === 'settled' ? 'settled' : state.running === turn.turnId ? 'running' : 'interrupted',
-        ...(turn.state === 'settled' ? { files: turn.changes.length } : {}),
+        ...(turn.state === 'settled' ? { files: turn.changes.filter(inSnapshotScope).length } : {}),
         ...(turn.undone ? { undone: true as const } : {}),
         ...(turn.note && !turn.note.told ? { notePending: true as const } : {}),
         ...(turn.otherSessions?.length ? { otherSessions: turn.otherSessions } : {}),
@@ -1131,7 +1131,7 @@ export class ChangesEngine {
     if (turn.state !== 'settled') return { block: 'not-settled' }
     if (!only && direction === 'undo' && turn.undone) return { block: 'undone' }
     if (!only && direction === 'redo' && !turn.undone) return { block: 'not-undone' }
-    const changes = turn.changes.filter(change => !only || only.has(fileKey(change.root, change.path)))
+    const changes = turn.changes.filter(change => inSnapshotScope(change) && (!only || only.has(fileKey(change.root, change.path))))
     if (!changes.length) return { block: 'no-changes' }
     const roots = await this.writableRoots(state, session, await this.protectedIndex(session.id, session.folders))
     const steps: Step[] = [],
@@ -1314,7 +1314,7 @@ export class ChangesEngine {
     // Each file's history over these turns, in order.
     const history = new Map<string, Array<{ turn: TurnRecord; change: Change }>>()
     for (const turn of turns)
-      for (const change of turn.changes) {
+      for (const change of turn.changes.filter(inSnapshotScope)) {
         const key = fileKey(change.root, change.path)
         const list = history.get(key) ?? []
         list.push({ turn, change })

@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { countChanges, decodeText, diffLines, patchHunks, splitText, toHunks } from '../src/changes/diff.ts'
+import { countChanges, countTextChanges, decodeText, diffLines, patchHunks, splitText, toHunks } from '../src/changes/diff.ts'
 
 const git = ['/opt/homebrew/bin/git', '/usr/local/bin/git', '/Library/Developer/CommandLineTools/usr/bin/git', '/usr/bin/git'].find(path =>
   existsSync(path),
@@ -37,7 +37,9 @@ describe('line diffs for changes', () => {
       const before = lines.join('\n') + (random(2) ? '\n' : ''),
         after = changed.join('\n') + (random(2) ? '\n' : '')
       const [a, b] = [splitText(before), splitText(after)]
-      const hunks = patchHunks(diffLines(a, b), a, b)
+      const ops = diffLines(a, b)
+      expect(countTextChanges(a, b)).toEqual(countChanges(ops))
+      const hunks = patchHunks(ops, a, b)
       await writeFile(join(directory, 'f.txt'), before)
       if (hunks) {
         await writeFile(join(directory, 'p.diff'), `diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n${hunks}`)
@@ -79,6 +81,14 @@ describe('line diffs for changes', () => {
     const few = lines.slice()
     for (let index = 0; index < 300; index++) few[(index * 97) % few.length] = `changed ${index}`
     expect(countChanges(diffLines(splitText(lines.join('\n')), splitText(few.join('\n'))))).toEqual({ add: 300, del: 300 })
+  })
+
+  it('keeps line numbers for a change block larger than the JavaScript argument limit', () => {
+    const after = splitText('line\n'.repeat(150_000))
+    const ops = diffLines(splitText('old\n'), after)
+    expect(ops).toHaveLength(after.lines.length + 1)
+    expect(ops[0]).toEqual({ kind: 'remove', text: 'old', oldLine: 1 })
+    expect(ops.at(-1)).toEqual({ kind: 'add', text: 'line', newLine: 150_000 })
   })
 
   it('treats NUL bytes and invalid UTF-8 as binary and keeps a byte-order mark', () => {

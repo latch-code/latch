@@ -730,11 +730,6 @@
     opacity: 0;
   }
 }
-/* A file the right panel is showing. */
-.tool-card[data-selected] > .tool-tray > .tool-card-header {
-  background: var(--hover);
-}
-
 /* Reasoning: a work row whose body is the reported thinking, in the muted ink, at most 320 high. */
 .thinking {
   display: flex;

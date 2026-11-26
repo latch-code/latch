@@ -105,8 +105,8 @@ function myers(a: Int32Array, b: Int32Array, limit: number): number[] | undefine
   return undefined
 }
 
-/** The edit script from `before` to `after`, removals before additions in each changed block, with line numbers. */
-export function diffLines(before: Text, after: Text): DiffOp[] {
+/** Common edges and the edit script between them. An absent script replaces the whole middle. */
+function changedMiddle(before: Text, after: Text) {
   const a = keys(before),
     b = keys(after)
   let start = 0
@@ -117,6 +117,10 @@ export function diffLines(before: Text, after: Text): DiffOp[] {
     endA--
     endB--
   }
+  const widthA = endA - start,
+    widthB = endB - start
+  const limit = Math.min(EDIT_LIMIT, Math.floor(WORK_LIMIT / (widthA + widthB)))
+  if (!widthA || !widthB || Math.abs(widthA - widthB) > limit) return { start, endA, endB }
   const ids = new Map<string, number>()
   const tokens = (lines: string[], from: number, to: number) =>
     Int32Array.from(lines.slice(from, to), line => {
@@ -126,38 +130,62 @@ export function diffLines(before: Text, after: Text): DiffOp[] {
     })
   const midA = tokens(a, start, endA),
     midB = tokens(b, start, endB)
-  const middle =
-    midA.length && midB.length ? myers(midA, midB, Math.min(EDIT_LIMIT, Math.floor(WORK_LIMIT / (midA.length + midB.length)))) : undefined
-  const script = [
-    ...Array<number>(start).fill(EQUAL),
-    ...(middle ?? [...Array<number>(midA.length).fill(REMOVE), ...Array<number>(midB.length).fill(ADD)]),
-    ...Array<number>(a.length - endA).fill(EQUAL),
-  ]
+  return { start, endA, endB, script: myers(midA, midB, limit) }
+}
+
+/** List rows need the same edit counts as the patch, without materializing a DiffOp for every line. */
+export function countTextChanges(before: Text, after: Text): { add: number; del: number } {
+  const { start, endA, endB, script } = changedMiddle(before, after)
+  if (!script) return { add: endB - start, del: endA - start }
+  let add = 0,
+    del = 0
+  for (const op of script) {
+    if (op === ADD) add++
+    else if (op === REMOVE) del++
+  }
+  return { add, del }
+}
+
+/** The edit script from `before` to `after`, removals before additions in each changed block, with line numbers. */
+export function diffLines(before: Text, after: Text): DiffOp[] {
+  const { start, endA, endB, script } = changedMiddle(before, after)
   const ops: DiffOp[] = []
   let oldLine = 0,
-    newLine = 0,
-    removed: DiffOp[] = [],
-    added: DiffOp[] = []
-  const flush = () => {
-    ops.push(...removed, ...added)
-    removed = []
-    added = []
-  }
-  for (const op of script) {
-    if (op === EQUAL) {
-      flush()
+    newLine = 0
+  const context = (count: number) => {
+    for (let i = 0; i < count; i++) {
       oldLine++
       newLine++
       ops.push({ kind: 'context', text: before.lines[oldLine - 1]!, oldLine, newLine })
-    } else if (op === REMOVE) {
-      oldLine++
-      removed.push({ kind: 'remove', text: before.lines[oldLine - 1]!, oldLine })
-    } else {
-      newLine++
-      added.push({ kind: 'add', text: after.lines[newLine - 1]!, newLine })
     }
   }
-  flush()
+  const changesThrough = (oldEnd: number, newEnd: number) => {
+    while (oldLine < oldEnd) {
+      oldLine++
+      ops.push({ kind: 'remove', text: before.lines[oldLine - 1]!, oldLine })
+    }
+    while (newLine < newEnd) {
+      newLine++
+      ops.push({ kind: 'add', text: after.lines[newLine - 1]!, newLine })
+    }
+  }
+  context(start)
+  if (script) {
+    let removed = 0,
+      added = 0
+    for (const op of script) {
+      if (op === REMOVE) removed++
+      else if (op === ADD) added++
+      else {
+        changesThrough(oldLine + removed, newLine + added)
+        removed = 0
+        added = 0
+        context(1)
+      }
+    }
+  }
+  changesThrough(endA, endB)
+  context(before.lines.length - oldLine)
   return ops
 }
 

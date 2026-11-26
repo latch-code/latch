@@ -66,6 +66,20 @@ describe('walking session folders', () => {
     const walk = await f.walk({ entries: 2 })
     expect(walk.complete.has('main')).toBe(false)
   })
+
+  it('prunes dependency stores and build checkouts before they can consume the walk budget', async () => {
+    const f = await fixture()
+    const caches = ['.pnpm-store/v11', 'native/ios/.build/xcode-packages/checkouts/MermaidKit', 'native/ios/.derived-data', 'DerivedData']
+    for (const directory of caches) {
+      await mkdir(join(f.root, directory), { recursive: true })
+      await Promise.all(Array.from({ length: 20 }, (_, i) => writeFile(join(f.root, directory, `file-${i}`), 'generated')))
+    }
+    await mkdir(join(f.root, 'checkouts/MermaidKit'), { recursive: true })
+    await writeFile(join(f.root, 'checkouts/MermaidKit/Diagram.swift'), 'source')
+    const walk = await f.walk({ entries: 15 })
+    expect([...walk.files.values()].map(file => file.path)).toEqual(['checkouts/MermaidKit/Diagram.swift'])
+    expect(walk.complete.has('main')).toBe(true)
+  })
 })
 
 describe('capturing a record', () => {

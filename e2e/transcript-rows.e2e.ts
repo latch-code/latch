@@ -40,8 +40,10 @@ async function turn(sessionId) {
   tool({ toolCallId: 'read_2', title: 'Read a long path', kind: 'read', status: 'completed', locations: [{ path: cwd + '/${LONG}' }] })
   await wait(20)
   say('\\n\\n保存时把省略的密钥字段当成了空字符串。')
-  tool({ toolCallId: 'edit_1', title: 'Edit store.ts', kind: 'edit', status: 'in_progress', locations: [{ path: cwd + '/src/settings/store.ts' }] })
-  tool({ toolCallId: 'edit_1', status: 'completed', content: [{ type: 'diff', path: cwd + '/src/settings/store.ts', oldText: 'a\\nb\\nc\\n', newText: 'a\\nB\\nC\\nD\\n' }] }, 'tool_call_update')
+  const edited = '/latch-fixture/agent-notes/store.ts'
+  tool({ toolCallId: 'edit_1', title: 'Edit store.ts', kind: 'edit', status: 'in_progress', locations: [{ path: edited }] })
+  tool({ toolCallId: 'edit_1', status: 'completed', content: [{ type: 'diff', path: edited, oldText: 'a\\nb\\nc\\n', newText: 'a\\nB\\nC\\nfirst edit\\n' }] }, 'tool_call_update')
+  tool({ toolCallId: 'edit_2', title: 'Edit store.ts', kind: 'edit', status: 'completed', content: [{ type: 'diff', path: edited, oldText: 'first edit\\n', newText: 'second edit\\n' }] })
   tool({ toolCallId: 'run_m', title: 'Write notes', kind: 'execute', status: 'completed', rawInput: { command: "/bin/zsh -lc 'cat <<EOF > notes.txt\\nfirst\\nEOF'", cwd }, content: [text('written')] })
   tool({ toolCallId: 'run_1', title: ${JSON.stringify(FAILING)}, kind: 'execute', status: 'in_progress', rawInput: { command: ${JSON.stringify(FAILING)} } })
   tool({ toolCallId: 'run_1', status: 'failed', content: [text(' ✓ keeps the key when the field is omitted\\n × clears the key when the field is an empty string\\n   AssertionError: expected kept to equal empty\\n\\n Test Files  1 failed (1)\\n      Tests  1 failed | 11 passed (12)')] }, 'tool_call_update')
@@ -189,8 +191,13 @@ describe('tool rows and command blocks', () => {
     }
     return page
   }
-  async function open(width: number, height: number, theme: 'light' | 'dark', title: string): Promise<Page> {
-    const page = width < 768 ? phone : wide
+  async function open(
+    width: number,
+    height: number,
+    theme: 'light' | 'dark',
+    title: string,
+    page = width < 768 ? phone : wide,
+  ): Promise<Page> {
     await page.setViewportSize({ width, height })
     await page.emulateMedia({ colorScheme: theme })
     await page.reload()
@@ -246,6 +253,35 @@ describe('tool rows and command blocks', () => {
           else expect(await edit.locator('.process-stat').innerText()).toBe('+3 −2')
           await noHorizontalOverflow(page)
           await page.screenshot({ path: `${OUTPUT}/a-running--${width}--${theme}.png`, animations: 'disabled' })
+          if (width < 768) {
+            await edit.locator('.tool-card-header').click()
+            expect(await edit.locator('.diff-view').count()).toBe(0)
+            await open(width, height, theme, '命令块的会话', wide)
+          }
+          const edits = wide.locator('.tool-card[data-kind="edit"]')
+          await edits.first().locator('.tool-card-header').click()
+          const firstDiff = edits.first().locator('.diff-view')
+          await firstDiff.locator('.diff-add', { hasText: 'first edit' }).waitFor()
+          expect(await firstDiff.innerText()).not.toContain('second edit')
+          await firstDiff.getByRole('button', { name: '查看完整改动', exact: true }).click()
+          await firstDiff.locator('.diff-add', { hasText: 'first edit' }).waitFor()
+          expect(await firstDiff.locator('.diff-path').getAttribute('title')).toBe('/latch-fixture/agent-notes/store.ts')
+          expect(await firstDiff.innerText()).not.toContain('second edit')
+          expect(
+            await firstDiff
+              .locator('.diff-path-name')
+              .evaluate(
+                name =>
+                  name.scrollWidth <= name.clientWidth + 1
+                  && name.getBoundingClientRect().right <= name.parentElement!.getBoundingClientRect().right + 1,
+              ),
+          ).toBe(true)
+          await edits.first().scrollIntoViewIfNeeded()
+          await noHorizontalOverflow(wide)
+          await wide.screenshot({ path: `${OUTPUT}/edit--${width}--${theme}.png`, animations: 'disabled' })
+          await edits.nth(1).locator('.tool-card-header').click()
+          await edits.nth(1).locator('.diff-remove', { hasText: 'first edit' }).waitFor()
+          await edits.nth(1).locator('.diff-add', { hasText: 'second edit' }).waitFor()
         } catch (error) {
           await page.screenshot({ path: `${OUTPUT}/failed-${width}-${theme}.png` })
           throw error

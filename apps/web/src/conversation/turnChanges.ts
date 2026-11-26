@@ -1,7 +1,7 @@
-import type { ChangedFile, ChangeList, ChangeReceipt, FileChange, FileDiff, Message, TurnChanges, UndoBlock } from '@latch/protocol'
+import type { ChangedFile, ChangeList, ChangeReceipt, FileChange, Message, TurnChanges, UndoBlock } from '@latch/protocol'
 import { parseTime } from '../core/hostClock.ts'
 import { appliedDiffs, type Turn } from '../conversation.ts'
-import { diffLines } from '../diff.ts'
+import { diffCounts } from '../diff.ts'
 import { BLOCKED_COPY, TURN_CHANGES_COPY } from './turnChanges.copy.ts'
 
 /*
@@ -68,23 +68,20 @@ const fromList = (list: ChangeList): TurnSummary => ({
   del: list.totals.del,
 })
 
-/** A turn's latest word on each file it edited, as the tools recorded it; a later edit of a file replaces an earlier one. */
+/** The edits this turn's tools reported, counted together for each path. */
 function editedFiles(replies: readonly Message[]): SummaryFile[] {
-  const byPath = new Map<string, FileDiff[]>()
+  const byPath = new Map<string, { path: string; add: number; del: number }>()
   for (const message of replies) {
     if (message.role !== 'tool') continue
-    for (const diff of appliedDiffs(message)) byPath.set(diff.path, [...(byPath.get(diff.path) ?? []), diff])
-  }
-  return [...byPath].map(([path, diffs]) => {
-    let add = 0
-    let del = 0
-    for (const diff of diffs) {
-      const view = diffLines(diff.oldText, diff.newText)
-      add += view.added
-      del += view.removed
+    for (const diff of appliedDiffs(message)) {
+      const file = byPath.get(diff.path) ?? { path: diff.path, add: 0, del: 0 }
+      const counts = diffCounts(diff)
+      file.add += counts.added
+      file.del += counts.removed
+      byPath.set(diff.path, file)
     }
-    return { path, add, del }
-  })
+  }
+  return [...byPath.values()]
 }
 
 /** Files the turn changed: from the Host's record when there is one, else its tools' edits and the watched changes. */

@@ -1,5 +1,6 @@
 # Every workspace project that has dependencies gets its own node_modules.
 node_modules/
+.pnpm-store/
 /dist/
 # The website's build output and Astro's generated types.
 /apps/site/dist

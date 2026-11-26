@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { open, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
+import { isIgnoredPath } from '../files/ignore.ts'
 import type { FileRoot } from '../files/resolve.ts'
 import { hasSecretContent, isSecretPath } from '../files/secrets.ts'
 import { SNIFF_BYTES } from '../files/sniff.ts'
@@ -162,6 +163,8 @@ export function compare(before: Manifest, after: Manifest): { changes: Change[];
       b = after.files[key]
     const { root, path } = splitKey(key)
     if (a && b && sameEntry(a, b)) continue
+    // An older head may contain a path the current walk omits. Its absence does not record a deletion.
+    if (a && !b && isIgnoredPath(path)) continue
     if ((a && !b && !walkedAfter.has(root)) || (!a && b && !walkedBefore.has(root))) {
       partial = true
       continue

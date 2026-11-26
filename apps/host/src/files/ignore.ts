@@ -6,8 +6,12 @@ import { isSecretPath } from './secrets.ts'
 export const IGNORED_NAMES: ReadonlySet<string> = new Set([
   '.git',
   'node_modules',
+  '.pnpm-store',
   'dist',
   'build',
+  '.build',
+  '.derived-data',
+  'deriveddata',
   '.next',
   '.venv',
   '__pycache__',

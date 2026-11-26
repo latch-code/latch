@@ -14,10 +14,6 @@ export interface ChangesLink {
   open: (target: ChangesTarget) => void
   /** A turn alone can be opened: the 改动 tab is there, not only a file's history. */
   turns?: boolean
-  /** The right panel is open, so a file edit stays one line and a click selects its file there. */
-  panelOpen: boolean
-  /** The file the panel shows now. */
-  selected?: { root?: string; path: string }
 }
 
 export const ChangesLinkContext = createContext<ChangesLink | null>(null)
@@ -31,7 +27,6 @@ export function useChangesLink(): ChangesLink | null {
     if (shell) return shell
     if (!session || !openFile) return null
     return {
-      panelOpen: false,
       open: target => {
         if (target.path)
           openFile({ sessionId: session.id, reference: target.path, ...(target.root ? { rootId: target.root } : {}), view: 'changes' })

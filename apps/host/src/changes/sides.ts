@@ -13,6 +13,7 @@ import {
   EMPTY_TEXT,
   TEXT_LIMIT,
   countChanges,
+  countTextChanges,
   decodeText,
   diffLines,
   patchHunks,
@@ -63,6 +64,7 @@ export interface Compared {
   before: Loaded
   after: Loaded
   hidden?: Hidden
+  counts?: { add: number; del: number }
   ops?: DiffOp[]
 }
 
@@ -137,14 +139,15 @@ const sideMode = (side: Side) =>
 const executable = (side: Side) => (sideMode(side) & 0o111) !== 0
 
 /** Both sides' content and, when both are text, their line diff; a missing side counts as empty text. */
-export async function compareSides(pair: Pair, contents: Contents): Promise<Compared> {
+export async function compareSides(pair: Pair, contents: Contents, detail: 'lines' | 'counts' = 'lines'): Promise<Compared> {
   const [before, after] = await Promise.all([
     pair.before ? contents.load(pair.before, pair.oldPath ?? pair.path) : Promise.resolve<Loaded>({ text: EMPTY_TEXT }),
     pair.after ? contents.load(pair.after, pair.path) : Promise.resolve<Loaded>({ text: EMPTY_TEXT }),
   ])
   const hidden = PRIORITY.find(reason => before.hidden === reason || after.hidden === reason)
-  const ops = !hidden && before.text && after.text ? diffLines(before.text, after.text) : undefined
-  return { before, after, ...(hidden ? { hidden } : {}), ...(ops ? { ops } : {}) }
+  if (hidden || !before.text || !after.text) return { before, after, ...(hidden ? { hidden } : {}) }
+  if (detail === 'counts') return { before, after, counts: countTextChanges(before.text, after.text) }
+  return { before, after, ops: diffLines(before.text, after.text) }
 }
 
 /** The pair as a row of the change list. */
@@ -155,7 +158,7 @@ export function describe(pair: Pair, compared: Compared): ChangedFile {
     path: pair.path,
     ...(pair.oldPath ? { oldPath: pair.oldPath } : {}),
     status: !pair.before ? 'A' : !pair.after ? 'D' : pair.oldPath ? 'R' : 'M',
-    ...(ops ? countChanges(ops) : {}),
+    ...(compared.counts ?? (ops ? countChanges(ops) : {})),
     ...(pair.byCommand ? { byCommand: true as const } : {}),
     ...(pair.byUser ? { byUser: true as const } : {}),
     ...(pair.byPerson ? { byPerson: true as const } : {}),

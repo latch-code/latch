@@ -1419,9 +1419,8 @@ describe('visual capture of the real product', () => {
       await settleMotion(target)
       await recorder.capture(target, viewport, 'session-done-fold', 'the folded process opened')
 
-      // The write is one row; it opens to a short preview, coloured, with the way to the whole change.
-      // A's default overview column routes file rows to the panel; close it to exercise the inline preview.
-      if (viewport.name === 'desktop') await closeDetails(target, viewport)
+      // Opening an edit shows its own diff in the conversation, including beside an open desktop panel.
+      if (viewport.name === 'desktop') await openDetails(target, viewport)
       const write = target.locator('.tool-card[data-kind="edit"] .tool-card-header').last()
       await reachable(write)
       await write.click()
@@ -1430,6 +1429,7 @@ describe('visual capture of the real product', () => {
       await write.scrollIntoViewIfNeeded()
       await settleMotion(target)
       await recorder.capture(target, viewport, 'session-diff', 'done session with a file edit opened to its preview')
+      if (viewport.name === 'desktop') await closeDetails(target, viewport)
 
       await openSession(target, viewport, sessions.plan)
       await shows(target, 'planned')

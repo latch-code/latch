@@ -78,7 +78,7 @@ export function splitLines(text: string): string[] {
   return lines
 }
 
-function operations(a: string[], b: string[]): Array<{ kind: DiffLineKind; text: string }> {
+function compareMiddle(a: string[], b: string[]) {
   let start = 0
   while (start < a.length && start < b.length && a[start] === b[start]) start++
   let endA = a.length
@@ -87,25 +87,50 @@ function operations(a: string[], b: string[]): Array<{ kind: DiffLineKind; text:
     endA--
     endB--
   }
-  const ops: Array<{ kind: DiffLineKind; text: string }> = []
-  for (let index = 0; index < start; index++) ops.push({ kind: 'context', text: a[index]! })
   const midA = a.slice(start, endA)
   const midB = b.slice(start, endB)
   const m = midA.length
   const n = midB.length
-  if (m * n > MAX_CELLS) {
-    for (const text of midA) ops.push({ kind: 'remove', text })
-    for (const text of midB) ops.push({ kind: 'add', text })
-  } else {
-    // Suffix LCS lengths; ties prefer removal first, as unified diffs conventionally do.
-    const width = n + 1
-    const table = new Uint32Array((m + 1) * width)
+  const width = n + 1
+  let table: Uint32Array | undefined
+  if (m && n && m * n <= MAX_CELLS) {
+    table = new Uint32Array((m + 1) * width)
     for (let i = m - 1; i >= 0; i--) {
       for (let j = n - 1; j >= 0; j--) {
         table[i * width + j] =
           midA[i] === midB[j] ? table[(i + 1) * width + j + 1]! + 1 : Math.max(table[(i + 1) * width + j]!, table[i * width + j + 1]!)
       }
     }
+  }
+  return { start, midA, midB, table }
+}
+
+type DiffCounts = Pick<LineDiff, 'added' | 'removed'>
+const countsByEdit = new WeakMap<FileDiff, DiffCounts>()
+
+/** A folded tool row and its turn summary only need counts. Keep those with the immutable message and build hunks on opening. */
+export function diffCounts(diff: FileDiff): DiffCounts {
+  const known = countsByEdit.get(diff)
+  if (known) return known
+  const { midA, midB, table } = compareMiddle(splitLines(diff.oldText ?? ''), splitLines(diff.newText))
+  const common = table?.[0] ?? 0
+  const counts = { added: midB.length - common, removed: midA.length - common }
+  countsByEdit.set(diff, counts)
+  return counts
+}
+
+function operations(a: string[], b: string[]): Array<{ kind: DiffLineKind; text: string }> {
+  const { start, midA, midB, table } = compareMiddle(a, b)
+  const ops: Array<{ kind: DiffLineKind; text: string }> = []
+  for (let index = 0; index < start; index++) ops.push({ kind: 'context', text: a[index]! })
+  if (!table) {
+    for (const text of midA) ops.push({ kind: 'remove', text })
+    for (const text of midB) ops.push({ kind: 'add', text })
+  } else {
+    // Suffix LCS lengths; ties prefer removal first, as unified diffs conventionally do.
+    const m = midA.length
+    const n = midB.length
+    const width = n + 1
     let i = 0
     let j = 0
     while (i < m && j < n) {
@@ -124,7 +149,7 @@ function operations(a: string[], b: string[]): Array<{ kind: DiffLineKind; text:
     for (; i < m; i++) ops.push({ kind: 'remove', text: midA[i]! })
     for (; j < n; j++) ops.push({ kind: 'add', text: midB[j]! })
   }
-  for (let index = endA; index < a.length; index++) ops.push({ kind: 'context', text: a[index]! })
+  for (let index = start + midA.length; index < a.length; index++) ops.push({ kind: 'context', text: a[index]! })
   return ops
 }
 
