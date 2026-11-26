@@ -211,7 +211,7 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 **两个空间。** Code 与我的 Agent 是两个空间，开关不是列表筛选；另一空间有待处理时带琥珀点。应用与设置是共用目的地，按 Host 能力与设备权限决定是否出现（[routes.ts](../apps/web/src/shell/routes.ts)）。切换保留会话、阅读位置、草稿与面板。我的 Agent 的空间不出现 Harness 与模型（只在创建与资料的设置里）；应用见 [APP-PAGES.md](APP-PAGES.md#壳层)。
 
 **侧栏底部。** 两个空间共用一行图标（[SpaceNav.tsx](../apps/web/src/shell/SpaceNav.tsx) 的 `NavFoot`）：左边设置、额度与用量、应用，名称与快捷键在提示框里，连不上时设置带琥珀或红点；右端「检查更新」。侧栏收起时与看板时标题行放设置、额度与用量与检查更新；图轨与手机页头（375 以上）放同一个检查更新。
-「检查更新」（[UpdateCheck.tsx](../apps/web/src/shell/UpdateCheck.tsx)）比较本页、Host 此刻提供的页面（`build.json`）与 Host 启动时的构建，桌面端另问应用自己的更新器；检查中转圈，有可做的带琥珀点，点开按原有规则给「重新载入」「重启 Latch」或通向设置 › 关于；没有更新源的构建只检查这台 Mac 上的构建。
+「检查更新」（[UpdateCheck.tsx](../apps/web/src/shell/UpdateCheck.tsx)）比较本页、Host 此刻提供的页面（`build.json`）与 Host 启动时的构建，桌面端另问应用自己的更新器，管理设备（`admin`）另检查已启用外部 Harness 的新版本、版本过旧与程序变更；检查中转圈，有可做的带琥珀点，点开按原有规则给「重新载入」「重启 Latch」或通向设置 › 关于，并列出需处理的外部 Harness（复制或填入终端升级命令，或打开设置 › Harness 确认新程序）；没有更新源的构建只检查这台 Mac 上的构建与外部 Harness。
 
 **手机的页面栈。** [PhoneSessionList.tsx](../apps/web/src/components/PhoneSessionList.tsx)。
 

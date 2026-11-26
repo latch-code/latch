@@ -1,8 +1,10 @@
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { existsSync } from 'node:fs'
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import type { DeviceScope, TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -263,6 +265,94 @@ describe('the shell', () => {
     await openSessions(page)
     expect(await page.locator('.app-shell').getAttribute('data-sidebar')).toBe('collapsed')
     await page.context().close()
+  })
+
+  it('surfaces external Harness updates on 检查更新 across desktop, dark mode and phone, and opens the Harness in settings', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-update-check-e2e-'))
+    const bin = join(root, 'bin')
+    const pkg = join(root, 'lib', 'node_modules', '@deepseek-ai', 'dsh', 'bin')
+    await mkdir(bin)
+    await mkdir(pkg, { recursive: true })
+    await writeFile(
+      join(pkg, 'dsh'),
+      ['#!/bin/sh', 'if [ "$1" = --version ]; then echo 0.2.2; exit 0; fi', `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`, ''].join(
+        '\n',
+      ),
+    )
+    await chmod(join(pkg, 'dsh'), 0o755)
+    await symlink(join(pkg, 'dsh'), join(bin, 'dsh'))
+    const updateHost = await startTestHost({
+      hostName: '更新验收电脑',
+      detectPreset: preset => (preset.id === 'dsh' ? { found: true, path: join(bin, 'dsh') } : { found: false }),
+      loginPrograms: name => (existsSync(join(bin, name)) ? join(bin, name) : undefined),
+      commandDirectories: () => [bin],
+      harnessUpdates: {
+        home: '/nonexistent',
+        claudeDir: join(root, 'claude'),
+        fetch: async () => new Response(JSON.stringify({ latest: '0.3.0' }), { status: 200 }),
+      },
+    })
+    try {
+      const owner = await updateHost.enroll({ listener: 'unix' })
+      await owner.confirmedJson('agents', {
+        method: 'POST',
+        body: { id: 'dsh', name: 'DeepSeek Harness', presetId: 'dsh', command: 'dsh', args: ['--profile', 'acp'], env: {} },
+      })
+
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', reducedMotion: 'reduce' })
+      context.setDefaultTimeout(15_000)
+      const page = await context.newPage()
+      await enrollBrowser(page, updateHost, { name: '更新检查桌面', scopes: ['view', 'run', 'admin'] })
+      await connected(page)
+
+      const trigger = page.getByRole('button', { name: '检查更新', exact: true }).filter({ visible: true }).first()
+      await trigger.locator('.icon-dot').waitFor()
+      await trigger.click()
+      const dialog = page.getByRole('dialog', { name: '检查更新', exact: true })
+      await dialog.getByText('DeepSeek Harness', { exact: true }).waitFor()
+      await dialog.getByText('0.2.2 → 0.3.0', { exact: true }).waitFor()
+      await dialog.getByRole('button', { name: '复制升级命令', exact: true }).waitFor()
+
+      await mkdir(CONNECTION_SHOTS, { recursive: true })
+      await page.emulateMedia({ colorScheme: 'light' })
+      await page.screenshot({ path: `${CONNECTION_SHOTS}/update-check-1440-light.png`, animations: 'disabled' })
+      await page.emulateMedia({ colorScheme: 'dark' })
+      await page.screenshot({ path: `${CONNECTION_SHOTS}/update-check-1440-dark.png`, animations: 'disabled' })
+      await noHorizontalOverflow(page)
+
+      await dialog.getByRole('button', { name: '在设置中打开 DeepSeek Harness', exact: true }).click()
+      const settings = page.getByRole('dialog', { name: '设置', exact: true })
+      await settings.getByText('有新版本', { exact: true }).waitFor()
+      await page.keyboard.press('Escape')
+      await page.keyboard.press('Escape')
+      await settings.waitFor({ state: 'detached' })
+
+      // Tablet (820x1180) and phone (390x844) rendering.
+      await page.setViewportSize({ width: 820, height: 1180 })
+      const railTrigger = page.getByRole('button', { name: '检查更新', exact: true }).filter({ visible: true }).first()
+      await railTrigger.locator('.icon-dot').waitFor()
+      await railTrigger.click()
+      await dialog.getByText('0.2.2 → 0.3.0', { exact: true }).waitFor()
+      await page.screenshot({ path: `${CONNECTION_SHOTS}/update-check-820-dark.png`, animations: 'disabled' })
+      await noHorizontalOverflow(page)
+      await page.keyboard.press('Escape')
+      await dialog.waitFor({ state: 'hidden' })
+
+      await page.setViewportSize({ width: 390, height: 844 })
+      await backToPhoneSessions(page)
+      const phoneTrigger = page.getByRole('button', { name: '检查更新', exact: true }).filter({ visible: true }).first()
+      await phoneTrigger.locator('.icon-dot').waitFor()
+      await phoneTrigger.click()
+      await dialog.getByText('0.2.2 → 0.3.0', { exact: true }).waitFor()
+      await page.emulateMedia({ colorScheme: 'light' })
+      await page.screenshot({ path: `${CONNECTION_SHOTS}/update-check-390-light.png`, animations: 'disabled' })
+      await noHorizontalOverflow(page)
+
+      await context.close()
+    } finally {
+      await updateHost.close()
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('slides the session list over on tablets, with 设置 at its foot', async () => {

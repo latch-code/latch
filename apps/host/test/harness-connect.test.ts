@@ -222,7 +222,7 @@ describe('a newer DeepSeek Harness on npm', () => {
     const owner = await t.enroll({ listener: 'unix' })
     const body = { id: 'dsh', name: 'DeepSeek Harness', presetId: 'dsh', command: 'dsh', args: ['--profile', 'acp'], env: {} }
     await owner.confirmedJson('agents', { method: 'POST', body })
-    return { root, owner }
+    return { root, owner, host: t }
   }
 
   it('is never asked by a Host the start script did not open it on', async () => {
@@ -252,6 +252,32 @@ describe('a newer DeepSeek Harness on npm', () => {
     expect(listed.presets.find(preset => preset.id === 'dsh')?.detected?.update).toEqual(update)
     await owner.json('agents')
     expect(asked).toEqual(['https://registry.npmjs.org/-/package/@deepseek-ai%2Fdsh/dist-tags'])
+  })
+
+  it('projects Harness updates into the catalog for admin devices only, and clears them once re-checked after upgrading', async () => {
+    const fetch: FetchLike = async () => new Response(JSON.stringify({ latest: '0.3.0' }), { status: 200 })
+    const claudeDir = join(await directory(), 'claude')
+    const { root, owner, host } = await npmDshHost({ harnessUpdates: { home: '/nonexistent', fetch, claudeDir } })
+    const viewer = await host.enroll({ scopes: ['view'] })
+
+    await owner.json('agents?recheck=0')
+    const update = { current: '0.2.2', latest: '0.3.0', command: 'npm i -g @deepseek-ai/dsh@latest' }
+    const ownerSnapshot = await owner.json<{ catalog: { harnesses: Array<{ id: string; update?: unknown }> } }>('snapshot')
+    expect(ownerSnapshot.catalog.harnesses.find(item => item.id === 'dsh')?.update).toEqual(update)
+    const viewerSnapshot = await viewer.json<{ catalog: { harnesses: Array<{ id: string; update?: unknown }> } }>('snapshot')
+    expect(viewerSnapshot.catalog.harnesses.find(item => item.id === 'dsh')?.update).toBeUndefined()
+
+    const pkg = join(root, 'lib', 'node_modules', '@deepseek-ai', 'dsh', 'bin', 'dsh')
+    await writeFile(
+      pkg,
+      ['#!/bin/sh', 'if [ "$1" = --version ]; then echo 0.3.0; exit 0; fi', `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`, ''].join(
+        '\n',
+      ),
+    )
+    await chmod(pkg, 0o755)
+    await owner.json('agents')
+    const refreshed = await owner.json<{ catalog: { harnesses: Array<{ id: string; update?: unknown }> } }>('snapshot')
+    expect(refreshed.catalog.harnesses.find(item => item.id === 'dsh')?.update).toBeUndefined()
   })
 })
 
