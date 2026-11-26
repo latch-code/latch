@@ -55,7 +55,8 @@ export interface ResolvedFile {
 
 export type Resolution =
   | { status: 'ok'; file: ResolvedFile; line?: number; column?: number }
-  | { status: Exclude<ResolveStatus, 'ok'>; line?: number; column?: number }
+  | { status: 'folder'; directory?: { root: string; path: string }; line?: number; column?: number }
+  | { status: Exclude<ResolveStatus, 'ok' | 'folder'>; line?: number; column?: number }
 
 /** Why an action is not offered for a file the Host resolved. */
 export type ActionRefusal = 'file-secret' | 'file-type-refused' | 'file-preview-unverified' | 'file-content-mismatch' | 'file-not-text'
@@ -233,7 +234,8 @@ async function resolveCandidate(candidate: string, roots: readonly FileRoot[], o
   if (await options.protectedPaths.contains(located.real)) return { status: 'protected' }
   if (!located.exists) return { status: 'missing' }
   const real = located.real
-  if (real === root.path) return { status: 'folder' }
+  const relativePath = relative(root.path, real).split(sep).join('/')
+  if (real === root.path) return { status: 'folder', directory: { root: root.id, path: '' } }
   await options.hooks?.afterResolve?.(real)
   let handle: Awaited<ReturnType<typeof open>>
   try {
@@ -249,7 +251,7 @@ async function resolveCandidate(candidate: string, roots: readonly FileRoot[], o
   }
   try {
     const info = await handle.stat({ bigint: true })
-    if (info.isDirectory()) return { status: 'folder' }
+    if (info.isDirectory()) return { status: 'folder', directory: { root: root.id, path: relativePath } }
     if (!info.isFile()) return { status: 'not-file' }
     const buffer = Buffer.alloc(Number(info.size < BigInt(SNIFF_BYTES) ? info.size : BigInt(SNIFF_BYTES)))
     const { bytesRead } = buffer.length === 0 ? { bytesRead: 0 } : await handle.read(buffer, 0, buffer.length, 0)
@@ -258,7 +260,6 @@ async function resolveCandidate(candidate: string, roots: readonly FileRoot[], o
     const again = await realpath(real).catch(() => undefined)
     if (!now || now.dev !== info.dev || now.ino !== info.ino || again !== real) return { status: 'missing' }
     const head = new Uint8Array(buffer.subarray(0, bytesRead))
-    const relativePath = relative(root.path, real).split(sep).join('/')
     const name = basename(real)
     return {
       status: 'ok',

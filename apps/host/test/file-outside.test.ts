@@ -304,6 +304,21 @@ describe('files a conversation names outside its folders', () => {
     }
   })
 
+  it('returns tree locations only for folders the device can browse', async () => {
+    const f = await fixture()
+    const child = join(f.workspace, 'docs', 'examples')
+    await mkdir(child, { recursive: true })
+    await symlink(child, join(f.workspace, 'alias'))
+    f.detail.messages.push({ id: 'folder', role: 'assistant', text: `[示例](${child})` })
+    const outside = join(f.elsewhere, 'folder.png')
+    expect(await f.resolve('files', [f.workspace, 'alias', outside])).toEqual([
+      { input: f.workspace, status: 'folder', code: 'file-folder', directory: { root: 'primary', path: '' } },
+      { input: 'alias', status: 'folder', code: 'file-folder', directory: { root: 'primary', path: 'docs/examples' } },
+      { input: outside, status: 'folder', code: 'file-folder' },
+    ])
+    expect(await f.resolve('work', [child])).toEqual([{ input: child, status: 'folder', code: 'file-folder' }])
+  })
+
   it('refuses Latch data, the program folder, credential stores, secrets, CLI logins, links and folders', async () => {
     const f = await fixture()
     const answers = await f.resolve('all', [

@@ -556,7 +556,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
     }
     const files = []
     for (const path of [...new Set(input.paths)]) {
-      let result: Awaited<ReturnType<typeof resolveReference>> | undefined
+      let result: Awaited<ReturnType<typeof resolveReference>>
       let outside: OutsideBinding | undefined
       if (references && !isReferenceListed(path, references, resolveOptions.roots, options.home)) {
         const target = await outsideNamed(path)
@@ -590,7 +590,14 @@ export function createFileRoutes(options: FileRoutesOptions) {
         }
       }
       if (result.status !== 'ok') {
-        files.push({ input: path, status: result.status, code: STATUS_CODE[result.status].code, ...position })
+        const directory = result.status === 'folder' && readsProjectFiles(caller.device.dataScope) ? result.directory : undefined
+        files.push({
+          input: path,
+          status: result.status,
+          code: STATUS_CODE[result.status].code,
+          ...(directory ? { directory } : {}),
+          ...position,
+        })
         continue
       }
       const { file } = result

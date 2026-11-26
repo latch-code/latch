@@ -3,6 +3,9 @@ import type { ContextFileOpenTarget, FileContext, FileOpenTarget, WorkspaceFileO
 
 export type PreviewTarget = FileOpenTarget | (WorkspaceFileOpenTarget & { view?: never; attachmentId?: never })
 export const FileOpenContext = createContext<((target: ContextFileOpenTarget) => void) | undefined>(undefined)
+export const FolderOpenContext = createContext<
+  ((sessionId: string, root: string, path: string, replaceTabId?: string) => void) | undefined
+>(undefined)
 
 export function contextOf(target: ContextFileOpenTarget): FileContext {
   return 'sessionId' in target
@@ -26,4 +29,18 @@ export function targetIn(context: FileContext, reference: string, rootId?: strin
     reference,
     ...(rootId ? { rootId } : {}),
   }
+}
+
+/** Use a known root for tab identity. Leave a path that could cross roots for the Host to resolve as written. */
+export function sessionFileTarget(target: FileOpenTarget, roots: readonly { id: string; path: string }[]): FileOpenTarget {
+  const { reference } = target
+  if (!target.rootId && reference.split('/').includes('..')) return target
+  const root = target.rootId
+    ? roots.find(root => root.id === target.rootId)
+    : (roots.find(root => reference === root.path || reference.startsWith(`${root.path}/`))
+      ?? (/^(?:\/|~\/|file:)/iu.test(reference) ? undefined : roots[0]))
+  if (!root) return target
+  const prefix = `${root.path}/`
+  const path = reference.startsWith(prefix) ? reference.slice(prefix.length).replace(/^\/+/u, '') || root.path : reference
+  return { ...target, reference: path, rootId: root.id }
 }

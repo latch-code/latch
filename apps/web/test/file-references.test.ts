@@ -91,6 +91,40 @@ describe('folder-qualified references', () => {
 })
 
 describe('asking main which references are files', () => {
+  it('rechecks folders when a turn removes one or replaces it with an extensionless file', async () => {
+    vi.useFakeTimers()
+    let first = true
+    const known = new KnownFiles('task-1', async () =>
+      first
+        ? {
+            status: 'ok',
+            known: [],
+            folders: new Map([
+              ['latch', { kind: 'folder', directory: { root: 'default', path: 'latch' } }],
+              ['old', { kind: 'folder' }],
+            ]),
+          }
+        : { status: 'ok', known: ['latch'] },
+    )
+    known.want('latch')
+    known.want('old')
+    await vi.runAllTimersAsync()
+    expect(known.answer('latch')).toEqual({ kind: 'folder', directory: { root: 'default', path: 'latch' } })
+    const changes = vi.fn()
+    known.subscribe(changes)
+    first = false
+    known.recheck()
+    await vi.runAllTimersAsync()
+    expect(known.isFile('latch')).toBe(true)
+    expect(known.answer('old')).toBe('unavailable')
+    expect(changes).toHaveBeenCalledOnce()
+    first = true
+    known.recheck(true)
+    await vi.runAllTimersAsync()
+    expect(known.answer('latch')).toMatchObject({ kind: 'folder' })
+    known.close()
+  })
+
   it('asks once for everything gathered together, never twice for the same reference, 64 at a time', async () => {
     vi.useFakeTimers()
     const { known, batches } = store(['deck.pptx'])

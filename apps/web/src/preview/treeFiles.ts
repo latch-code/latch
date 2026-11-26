@@ -23,14 +23,25 @@ export function soleFolder(listing: FileDirectoryListing | undefined): string | 
 }
 
 export const treeKey = (root: string, path: string): string => JSON.stringify([root, path])
+export function resolvedFolder(value: unknown): FileMention | undefined {
+  if (isFileMention(value)) return value
+  if (
+    value
+    && typeof value === 'object'
+    && 'path' in value
+    && value.path === ''
+    && 'root' in value
+    && typeof value.root === 'string'
+    && /^[A-Za-z0-9_-]{1,32}$/u.test(value.root)
+  )
+    return { root: value.root, path: '' }
+  return undefined
+}
 export function treeLocation(key: string): FileMention | undefined {
   try {
     const value: unknown = JSON.parse(key)
     if (!Array.isArray(value) || value.length !== 2) return
-    const mention = { root: value[0], path: value[1] }
-    if (mention.path === '' && typeof mention.root === 'string' && /^[A-Za-z0-9_-]{1,32}$/u.test(mention.root))
-      return { root: mention.root, path: '' }
-    return isFileMention(mention) ? mention : undefined
+    return resolvedFolder({ root: value[0], path: value[1] })
   } catch {
     return undefined
   }
@@ -83,4 +94,24 @@ export interface FileTreeView {
   expanded: readonly string[]
   selected?: string
   showHidden: boolean
+  /** The person explicitly asked to locate the selected folder. Consumed by the mounted tree. */
+  reveal?: true
+}
+
+export const TREE_BRANCH_LIMIT = 32
+
+/** Open the folder and its parents first, preserving other expanded rows within the tree's limit. */
+export function viewOfFolder(root: string, path: string, previous?: FileTreeView): FileTreeView {
+  const folders = [treeKey(root, '')]
+  let dir = ''
+  for (const name of path ? path.split('/') : []) {
+    dir = dir ? `${dir}/${name}` : name
+    folders.push(treeKey(root, dir))
+  }
+  return {
+    expanded: [...new Set([...folders, ...(previous?.expanded ?? [])])].slice(0, TREE_BRANCH_LIMIT),
+    selected: treeKey(root, path),
+    showHidden: previous?.showHidden ?? false,
+    reveal: true,
+  }
 }

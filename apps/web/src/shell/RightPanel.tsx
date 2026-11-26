@@ -341,6 +341,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
       fileContext={canBrowseFiles && fileContext ? fileContext : undefined}
       fileRevision={JSON.stringify(summary?.folders ?? workspaceForFiles?.folders ?? workspaceForFiles?.path)}
       treeView={fileTabs.treeView}
+      folderNavigation={shell.folderNavigation}
       onTreeViewChange={fileTabs.setTreeView}
       onSearchFiles={searchFiles}
       {...(folderShell && project

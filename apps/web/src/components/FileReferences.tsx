@@ -1,14 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { FileOpenContext } from '../preview/fileContext.ts'
+import { resolvedFolder } from '../preview/treeFiles.ts'
 import { api } from '../core/api.ts'
-import type { Message } from '@latch/protocol'
-import { shellFiles, type FileKnownResult, type ShellFiles } from '../core/shell.ts'
+import type { FileMention, Message } from '@latch/protocol'
+import { shellFiles, type FileKnownResult } from '../core/shell.ts'
 import { argumentView } from '../format.ts'
 import { toolKind } from '../icons.tsx'
 
-// References that are not links (inline code such as `deck.pptx` or `src/app.ts:12`, and the files a tool read or
-// wrote) become path chips in the desktop app once the Host says they name a file it would act on. Main asks the Host
-// about a whole batch at once; everything else stays as it was written.
+// Replies share one batch lookup for explicit path links, inline code and tool targets.
 
 /** What one question to main carries: what one resolve request takes. */
 const BATCH = 64
@@ -19,18 +18,32 @@ const GATHER_MS = 120
 const BUSY_RETRY_MS = 500
 const BUSY_RETRIES = 5
 
-type Known = (sessionId: string, paths: string[], rootId?: string) => ReturnType<NonNullable<ShellFiles['known']>>
+export const ReplySettled = createContext(true)
+type FolderAnswer = { kind: 'folder'; directory?: FileMention }
+type PathAnswer = 'file' | 'unavailable' | FolderAnswer
+type KnownResult = FileKnownResult & { folders?: Map<string, FolderAnswer> }
+type Known = (sessionId: string, paths: string[], rootId?: string) => Promise<KnownResult>
+
 const apiKnown: Known = async (sessionId, paths, rootId) => {
-  const result = await api<{ files: Array<{ input: string; status: string }> }>(`tasks/${encodeURIComponent(sessionId)}/files/resolve`, {
-    method: 'POST',
-    body: { paths, ...(rootId ? { rootId } : {}) },
-  })
-  return { status: 'ok', known: result.files.filter(file => file.status === 'ok').map(file => file.input) }
+  const result = await api<{ files: Array<{ input: string; status: string; directory?: unknown }> }>(
+    `tasks/${encodeURIComponent(sessionId)}/files/resolve`,
+    {
+      method: 'POST',
+      body: { paths, ...(rootId ? { rootId } : {}) },
+    },
+  )
+  const folders = new Map<string, FolderAnswer>()
+  for (const entry of result.files) {
+    if (entry.status !== 'folder') continue
+    const directory = resolvedFolder(entry.directory)
+    folders.set(entry.input, { kind: 'folder', ...(directory ? { directory } : {}) })
+  }
+  return { status: 'ok', known: result.files.filter(file => file.status === 'ok').map(file => file.input), folders }
 }
 
 /** The answers for one session: which references are files, asked in batches. */
 export class KnownFiles {
-  private readonly answers = new Map<string, boolean>()
+  private readonly answers = new Map<string, PathAnswer>()
   private readonly queued = new Set<string>()
   private readonly asking = new Set<string>()
   private readonly listeners = new Set<() => void>()
@@ -51,8 +64,24 @@ export class KnownFiles {
     }
   }
 
+  answer(path: string, rootId?: string): PathAnswer | undefined {
+    return this.answers.get(rootId ? `${rootId}\0${path}` : path)
+  }
+
   isFile(path: string, rootId?: string): boolean {
-    return this.answers.get(rootId ? `${rootId}\0${path}` : path) === true
+    return this.answer(path, rootId) === 'file'
+  }
+
+  /** Follow the reference the person pressed, even if the directory was replaced since the reply was displayed. */
+  async refreshFolder(path: string, rootId?: string): Promise<PathAnswer | undefined> {
+    const result = await this.known(this.sessionId, [path], rootId).catch(() => undefined)
+    if (this.closed) return undefined
+    if (result?.status !== 'ok') return 'unavailable'
+    const answer = result.folders?.get(path) ?? (result.known.includes(path) ? 'file' : 'unavailable')
+    this.answers.set(rootId ? `${rootId}\0${path}` : path, answer)
+    this.version++
+    for (const listener of this.listeners) listener()
+    return answer
   }
 
   /** Asks about a reference once, with the others gathered at the same time. */
@@ -64,13 +93,9 @@ export class KnownFiles {
     this.schedule(GATHER_MS)
   }
 
-  /** A turn settled: a reference that named no file before may name one now (the agent wrote it later). */
-  recheck(): void {
-    for (const [path, isFile] of this.answers)
-      if (!isFile) {
-        this.answers.delete(path)
-        this.queued.add(path)
-      }
+  /** After a turn the same name may be a file, a directory or gone. Older desktop shells only recognise files. */
+  recheck(includeFiles = false): void {
+    for (const [path, answer] of this.answers) if ((includeFiles || answer !== 'file') && !this.asking.has(path)) this.queued.add(path)
     if (this.queued.size > 0) this.schedule(GATHER_MS)
   }
 
@@ -97,7 +122,7 @@ export class KnownFiles {
       this.queued.delete(path)
       this.asking.add(path)
     }
-    const result = await this.known(this.sessionId, paths, rootId).catch((): FileKnownResult => ({
+    const result = await this.known(this.sessionId, paths, rootId).catch((): KnownResult => ({
       status: 'failed',
       code: 'shell-failed',
     }))
@@ -113,9 +138,11 @@ export class KnownFiles {
     const found = new Set(result.status === 'ok' ? result.known : [])
     let changed = false
     for (const path of batch) {
-      const isFile = found.has(rootId ? path.slice(rootId.length + 1) : path)
-      changed ||= isFile
-      this.answers.set(path, isFile)
+      const input = rootId ? path.slice(rootId.length + 1) : path
+      const folder = result.folders?.get(input)
+      const answer = folder ?? (found.has(input) ? 'file' : 'unavailable')
+      changed ||= (this.answers.get(path) ?? 'unavailable') !== answer
+      this.answers.set(path, answer)
     }
     if (changed) {
       this.version++
@@ -147,9 +174,9 @@ export function FileReferences({ sessionId, active, children }: { sessionId: str
   }, [sessionId, known])
   const wasActive = useRef(active)
   useEffect(() => {
-    if (wasActive.current && !active) store?.recheck()
+    if (wasActive.current && !active) store?.recheck(!!preview)
     wasActive.current = active
-  }, [active, store])
+  }, [active, store, preview])
   return <KnownFilesContext.Provider value={store}>{children}</KnownFilesContext.Provider>
 }
 
@@ -157,7 +184,7 @@ export function FileReferences({ sessionId, active, children }: { sessionId: str
  * The references among `paths` the Host says are files. `ask`: whether they may be asked about now (a reply that
  * stopped streaming, a tool that finished); until then nothing is sent.
  */
-export function useKnownFiles(paths: readonly string[], ask: boolean, rootId?: string): string[] {
+function usePathAnswers(paths: readonly string[], ask: boolean, rootId?: string) {
   const store = useContext(KnownFilesContext)
   const subscribe = useCallback((listener: () => void) => store?.subscribe(listener) ?? (() => {}), [store])
   useSyncExternalStore(
@@ -170,6 +197,16 @@ export function useKnownFiles(paths: readonly string[], ask: boolean, rootId?: s
     if (!store || !ask) return
     for (const path of key ? key.split('\n') : []) store.want(path, rootId)
   }, [store, ask, key, rootId])
+  return store
+}
+
+export function useKnownFolder(path: string, ask: boolean, rootId?: string) {
+  const answer = usePathAnswers([path], ask, rootId)?.answer(path, rootId)
+  return typeof answer === 'object' ? answer : undefined
+}
+
+export function useKnownFiles(paths: readonly string[], ask: boolean, rootId?: string): string[] {
+  const store = usePathAnswers(paths, ask, rootId)
   return store ? paths.filter(path => store.isFile(path, rootId)) : []
 }
 

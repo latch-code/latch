@@ -30,7 +30,16 @@ import { referenceIcon } from '../fileReference.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { editorLabel, openInEditor, useEditors } from '../components/OpenInEditor.tsx'
 import { FileOpenContext, fileContextBody, fileContextKey, fileRoute, targetIn } from './fileContext.ts'
-import { readTreeFile, soleFolder, treeChanges, treeFullPath, treeKey as branchKey, treeLocation, type FileTreeView } from './treeFiles.ts'
+import {
+  readTreeFile,
+  soleFolder,
+  treeChanges,
+  treeFullPath,
+  treeKey as branchKey,
+  treeLocation,
+  TREE_BRANCH_LIMIT as CACHE_LIMIT,
+  type FileTreeView,
+} from './treeFiles.ts'
 import { rowOf } from '../components/overlays.tsx'
 import { ContentSearch } from './ContentSearch.tsx'
 import { defineCopy } from '../core/i18n.ts'
@@ -129,7 +138,6 @@ type TreeRow = {
   chain?: string[]
 }
 const PAGE_SIZE = 100
-const CACHE_LIMIT = 32
 
 /** Lazily reads one directory. Collapsed branches never issue recursive requests. */
 export function FileTree({
@@ -171,6 +179,7 @@ export function FileTree({
   const [branches, setBranches] = useState<Record<string, Branch>>({})
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set(initialView?.expanded ?? []))
   const [selected, setSelected] = useState<string | undefined>(initialView?.selected)
+  const reveal = useRef(initialView?.reveal && initialView.selected ? treeLocation(initialView.selected) : undefined)
   const [showHidden, setShowHidden] = useState(initialView?.showHidden ?? false)
   /** 搜索内容 stands in for the tree while open; the tree keeps what it had expanded. `count` refocuses the field. */
   const [contentOpen, setContentOpen] = useState<{ count: number } | null>(null)
@@ -264,7 +273,15 @@ export function FileTree({
           throw new MessageError(COPY.invalidFolder)
         if (!controller.signal.aborted) {
           loadedBranches.current.add(key)
-          setBranches(previous => ({ ...previous, [key]: { listing: result, shown: previous[key]?.shown ?? PAGE_SIZE } }))
+          const target = reveal.current
+          const prefix = path ? `${path}/` : ''
+          const child = target?.root === root && target.path.startsWith(prefix) ? target.path.slice(prefix.length).split('/')[0] : undefined
+          const index = child ? result.entries.findIndex(entry => entry.name === child) : -1
+          if (child && index < 0 && !result.truncated && !showHidden) setShowHidden(true)
+          setBranches(previous => ({
+            ...previous,
+            [key]: { listing: result, shown: Math.max(previous[key]?.shown ?? PAGE_SIZE, index + 1) },
+          }))
         }
       } catch (cause) {
         if (!controller.signal.aborted)
@@ -435,6 +452,11 @@ export function FileTree({
   const byKey = new Map(rows.map(row => [row.key, row]))
   // The selection can name a folder a merged row has since absorbed.
   const current = rows.find(row => row.key === selected || (selected !== undefined && row.chain?.includes(selected)))?.key
+  useEffect(() => {
+    if (loading || !current || !reveal.current || selected !== branchKey(reveal.current.root, reveal.current.path)) return
+    tree.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
+    reveal.current = undefined
+  }, [current, selected, loading])
   const focusRow = (key: string) => {
     setSelected(key)
     requestAnimationFrame(() =>
