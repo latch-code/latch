@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react'
-import type { AttachmentRef } from '@latch/protocol'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent } from 'react'
+import type { AttachmentRef, FileMetadata } from '@latch/protocol'
 import {
   Button,
   ConfirmDialog,
@@ -7,20 +7,32 @@ import {
   Icon,
   IconButton,
   InlineNotice,
+  Loading,
+  Menu as UiMenu,
   Modal,
-  ModalHeader,
   TextAreaField,
+  CodeGlyph,
   FileGlyph,
+  MoreGlyph,
   PlusGlyph,
   CloseGlyph,
 } from '@latch/ui'
 import { deliveryHint, draftSize, type AttachmentDraftController, type DraftAttachment } from '../hooks/useAttachments.ts'
-import { AttachmentTile, tileType, type TileType } from '../components/AttachmentTile.tsx'
+import { AttachmentTile, draftDocumentKind, extOf, isMarkdownFile, tileType } from '../components/AttachmentTile.tsx'
+import { FileSession } from '../components/FileChip.tsx'
 import { MessageAttachment } from '../components/MessageAttachments.tsx'
 import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
-import { VisibleText } from '../components/VisibleText.tsx'
 import { PictureGroup, usePictureViewer } from '../components/PictureViewer.tsx'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
+import { DocumentPreview } from '../preview/DocumentPreview.tsx'
+import { FileOpenContext } from '../preview/fileContext.ts'
+import { FileSandbox } from '../preview/FileSandbox.tsx'
+import { HighlightedCode } from '../preview/HighlightedCode.tsx'
+import { languageForPath } from '../preview/highlight-protocol.ts'
+import { MarkdownPreview } from '../preview/MarkdownPreview.tsx'
+import { ViewerActionsProvider, useViewerActionsHost } from '../preview/viewerActions.tsx'
+
+const PREVIEW_TEXT_BYTES = 256 * 1024
 
 const COPY = defineCopy(
   {
@@ -47,6 +59,11 @@ const COPY = defineCopy(
     possibleSecret: '这个附件可能包含密钥',
     confirmDetail: '确认后，附件内容会随消息发送给当前模型服务或 Harness。请先检查内容。',
     confirm: '确认添加',
+    source: '源码',
+    moreActions: '预览选项',
+    reading: '正在读取内容…',
+    readFailed: '无法读取这个附件的内容。',
+    truncatedText: '文件较大，仅显示前 256 KB。',
     close: '关闭',
   },
   {
@@ -74,6 +91,11 @@ const COPY = defineCopy(
     confirmDetail:
       'After you confirm, the attachment goes to the current model service or Harness with your message. Review its contents first.',
     confirm: 'Confirm attachment',
+    source: 'Source',
+    moreActions: 'Preview options',
+    reading: 'Reading…',
+    readFailed: 'Could not read this attachment.',
+    truncatedText: 'Large file · Showing the first 256 KB.',
     close: 'Close',
   },
 )
@@ -84,6 +106,32 @@ const uploadBytes = (value: number) =>
     : value < 1024 * 1024
       ? `${(value / 1024).toFixed(1)} KB`
       : `${(value / 1024 / 1024).toFixed(1)} MB`
+
+export function decodePreviewBytes(bytes: ArrayBuffer, truncated = false): string {
+  const head = new Uint8Array(bytes)
+  const encoding = head[0] === 0xff && head[1] === 0xfe ? 'utf-16le' : head[0] === 0xfe && head[1] === 0xff ? 'utf-16be' : 'utf-8'
+  const decoded = new TextDecoder(encoding).decode(bytes)
+  // Slicing raw UTF-8 at 256 KiB can split a multi-byte character at the cut, leaving one trailing U+FFFD.
+  return truncated && encoding === 'utf-8' && decoded.endsWith('\ufffd') ? decoded.slice(0, -1) : decoded
+}
+
+/** Whether a draft tile opens a preview: media, text, code, Markdown, CSV and Office/PDF documents. */
+export function canPreviewDraft(input: {
+  name: string
+  mime?: string
+  kind?: AttachmentRef['kind']
+  size: number
+  pastedText?: string
+  status: DraftAttachment['status']
+}): boolean {
+  if (input.status !== 'ready' && input.status !== 'confirm') return false
+  if (input.pastedText !== undefined) return true
+  const type = tileType(input)
+  if (['image', 'video', 'audio', 'text', 'code'].includes(type)) return true
+  const doc = draftDocumentKind(input)
+  if (!doc) return false
+  return input.status === 'ready' || doc === 'csv'
+}
 
 /** A paste into the input: files become attachments, and so does a long text, as a file; the rest is the input's. */
 export function pasteAttachments(event: ClipboardEvent, controller: AttachmentDraftController) {
@@ -182,6 +230,11 @@ export function AttachmentButton({
     </>
   )
 }
+
+/**
+ * Every composer preview shares the dimmed window stage (`picture-viewer`): media stands frameless in the middle, and
+ * documents, Markdown, code and pasted text float as a clean reading sheet without a dialog header frame behind them.
+ */
 function DraftPreview({
   item,
   onClose,
@@ -195,73 +248,221 @@ function DraftPreview({
   onRestore(text: string): void
   locked: boolean
 }) {
-  const [url, setUrl] = useState(''),
-    [text, setText] = useState(item.pastedText ?? '')
-  const type = tileType({ name: item.file.name, mime: item.ref?.mime ?? item.file.type, ...(item.ref ? { kind: item.ref.kind } : {}) })
+  const mime = item.ref?.mime || item.file.type
+  const type = tileType({ name: item.file.name, mime, ...(item.ref ? { kind: item.ref.kind } : {}) })
+  const media = type === 'video' || type === 'audio'
+  const pasted = item.pastedText !== undefined
+  // A file flagged for secrets stays plain text and never enters a sandboxed frame or worker.
+  const sensitive = item.status === 'confirm' || item.secretAcknowledged === true
+  const docKind =
+    !pasted && !media && !sensitive && item.status === 'ready'
+      ? draftDocumentKind({ name: item.file.name, mime, size: item.file.size })
+      : undefined
+  const markdown = !pasted && !media && !docKind && isMarkdownFile({ name: item.file.name, mime })
+
+  const [url, setUrl] = useState('')
+  const [text, setText] = useState<string | undefined>(item.pastedText)
+  const [readFailed, setReadFailed] = useState(false)
+  const [sourceMode, setSourceMode] = useState(false)
+  const pressedStage = useRef(false)
+  const viewer = useViewerActionsHost()
+
   useEffect(() => {
-    if (type === 'image' || type === 'video' || type === 'audio') {
-      const value = URL.createObjectURL(item.file)
-      setUrl(value)
-      return () => URL.revokeObjectURL(value)
+    setSourceMode(false)
+  }, [item.key])
+
+  useEffect(() => {
+    if (!media) {
+      setUrl('')
+      return
     }
-    if (item.pastedText === undefined)
-      void item.file
-        .slice(0, 256 * 1024)
-        .text()
-        .then(setText)
-  }, [item.file, type])
-  if (type === 'video') {
-    return (
-      <Modal label={item.file.name} variant="dialog" onClose={onClose} className="picture-viewer attachment-preview-video">
-        {/* Frameless over the dimmed window, matching PictureViewer; clicking beside the video closes it. */}
-        <div
-          className="picture-viewer-frame"
-          onClick={event => event.stopPropagation()}
-          onKeyDown={event => {
-            if (event.key === 'Escape') event.stopPropagation()
-          }}>
+    const value = URL.createObjectURL(item.file)
+    setUrl(value)
+    return () => URL.revokeObjectURL(value)
+  }, [item.file, media])
+
+  useEffect(() => {
+    if (item.pastedText !== undefined) {
+      setText(item.pastedText)
+      setReadFailed(false)
+      return
+    }
+    if (media || docKind !== undefined) return
+    let cancelled = false
+    setText(undefined)
+    setReadFailed(false)
+    void item.file
+      .slice(0, PREVIEW_TEXT_BYTES)
+      .arrayBuffer()
+      .then(
+        bytes => {
+          if (!cancelled) setText(decodePreviewBytes(bytes, item.file.size > PREVIEW_TEXT_BYTES))
+        },
+        () => {
+          if (!cancelled) setReadFailed(true)
+        },
+      )
+    return () => {
+      cancelled = true
+    }
+  }, [item.file, item.pastedText, media, docKind])
+
+  const docFile = useMemo<FileMetadata | undefined>(
+    () =>
+      docKind
+        ? {
+            handle: item.key,
+            name: item.file.name,
+            root: 'attachment',
+            path: item.file.name,
+            ext: extOf(item.file.name),
+            kind: docKind,
+            mime: mime || 'application/octet-stream',
+            size: item.file.size,
+            mtime: item.file.lastModified || 0,
+            etag: `"${item.ref?.sha256.slice(0, 32) ?? item.key}"`,
+            limit: item.file.size,
+            secret: false,
+            source: 'attachment',
+            attachmentId: item.ref?.id ?? item.key,
+            actions: { preview: true, download: false, reveal: false, quicklook: false, open: false },
+          }
+        : undefined,
+    [docKind, item.file, item.key, item.ref, mime],
+  )
+
+  const readLocal = useCallback(
+    async (start?: number, end?: number, signal?: AbortSignal) => {
+      signal?.throwIfAborted()
+      const begin = start ?? 0
+      const finish = end === undefined ? item.file.size : Math.min(item.file.size, end + 1)
+      const bytes = await item.file.slice(begin, finish).arrayBuffer()
+      signal?.throwIfAborted()
+      return bytes
+    },
+    [item.file],
+  )
+
+  const onStagePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    pressedStage.current = event.target === event.currentTarget
+  }
+  const onStageClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (pressedStage.current && event.target === event.currentTarget) onClose()
+    pressedStage.current = false
+  }
+
+  const label = pasted ? COPY.pastedText : item.file.name
+  const truncated = !pasted && !media && !docFile && item.file.size > PREVIEW_TEXT_BYTES
+  const sourceToggle =
+    viewer.source ?? (markdown && !sensitive ? { showing: sourceMode, onToggle: () => setSourceMode(value => !value) } : null)
+
+  return (
+    <Modal label={label} variant="dialog" onClose={onClose} className="picture-viewer attachment-preview">
+      <div
+        className="picture-viewer-frame"
+        onClick={event => event.stopPropagation()}
+        onKeyDown={event => {
+          if (event.key === 'Escape') event.stopPropagation()
+        }}>
+        {media ? (
           <div
-            className="picture-viewer-stage attachment-preview-video-stage"
+            className="picture-viewer-stage attachment-preview-stage"
+            data-media={type}
             tabIndex={-1}
             data-autofocus=""
-            onClick={event => {
-              if (event.target === event.currentTarget) onClose()
-            }}>
-            {url && <video className="attachment-preview-video-player" src={url} controls playsInline autoPlay />}
+            onPointerDown={onStagePointerDown}
+            onClick={onStageClick}>
+            {url && type === 'video' ? (
+              <video className="attachment-preview-video-player" src={url} controls playsInline autoPlay />
+            ) : url ? (
+              <audio className="attachment-preview-audio-player" src={url} controls autoPlay />
+            ) : null}
           </div>
-          <div className="picture-viewer-actions">
-            <IconButton label={COPY.close} icon={CloseGlyph} size="md" data-layer-close="" onClick={onClose} />
-          </div>
-        </div>
-      </Modal>
-    )
-  }
-  return (
-    <Modal label={item.file.name} variant="dialog" onClose={onClose} className="attachment-preview">
-      <ModalHeader title={item.file.name} onClose={onClose} />
-      <div className="ui-modal-body">
-        {url && type === 'audio' ? (
-          <audio src={url} controls autoPlay />
-        ) : url ? (
-          <img src={url} alt={item.file.name} />
-        ) : item.pastedText !== undefined ? (
-          <TextAreaField label={COPY.pastedText} value={text} maxLength={256 * 1024} onChange={event => setText(event.target.value)} />
         ) : (
-          <pre>
-            <VisibleText text={text} />
-          </pre>
+          <div
+            className="picture-viewer-stage attachment-preview-stage"
+            data-sheet=""
+            onPointerDown={onStagePointerDown}
+            onClick={onStageClick}>
+            <div
+              className="attachment-preview-sheet"
+              data-document={docFile ? '' : undefined}
+              data-pasted={pasted ? '' : undefined}
+              {...(pasted ? {} : { tabIndex: -1, 'data-autofocus': '' })}>
+              {pasted ? (
+                <>
+                  <div className="attachment-preview-body">
+                    <TextAreaField
+                      label={COPY.pastedText}
+                      value={text ?? ''}
+                      maxLength={PREVIEW_TEXT_BYTES}
+                      onChange={event => setText(event.target.value)}
+                    />
+                  </div>
+                  <footer className="ui-modal-footer attachment-preview-footer">
+                    <Button disabled={locked} onClick={() => onRestore(text ?? '')}>
+                      {COPY.restoreText}
+                    </Button>
+                    <Button disabled={locked} variant="primary" onClick={() => onReplace(text ?? '')}>
+                      {COPY.save}
+                    </Button>
+                  </footer>
+                </>
+              ) : docFile ? (
+                <ViewerActionsProvider value={viewer.value}>
+                  <DocumentPreview
+                    file={docFile}
+                    versionKey={item.key}
+                    read={readLocal}
+                    renderFrame={input => <FileSandbox {...input} />}
+                  />
+                </ViewerActionsProvider>
+              ) : (
+                <div className="attachment-preview-body">
+                  {truncated && (
+                    <p className="attachment-preview-note" role="status">
+                      {COPY.truncatedText}
+                    </p>
+                  )}
+                  {readFailed ? (
+                    <InlineNotice tone="error">{COPY.readFailed}</InlineNotice>
+                  ) : text === undefined ? (
+                    <Loading label={COPY.reading} />
+                  ) : markdown && !sensitive && !sourceMode ? (
+                    <div className="attachment-preview-markdown">
+                      <FileSession.Provider value={undefined}>
+                        <FileOpenContext.Provider value={undefined}>
+                          <MarkdownPreview text={text} path={item.file.name} renderFrame={input => <FileSandbox {...input} />} />
+                        </FileOpenContext.Provider>
+                      </FileSession.Provider>
+                    </div>
+                  ) : (
+                    <pre className="attachment-preview-code">
+                      <code>
+                        <HighlightedCode code={text} language={languageForPath(item.file.name)} enabled={!sensitive} />
+                      </code>
+                    </pre>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         )}
+        <div className="picture-viewer-actions">
+          {sourceToggle && (
+            <IconButton label={COPY.source} icon={CodeGlyph} size="md" pressed={sourceToggle.showing} onClick={sourceToggle.onToggle} />
+          )}
+          {viewer.menu.length > 0 && (
+            <UiMenu
+              label={COPY.moreActions}
+              align="end"
+              sections={[{ id: 'renderer', items: [...viewer.menu] }]}
+              trigger={props => <IconButton {...props} label={COPY.moreActions} icon={MoreGlyph} size="md" />}
+            />
+          )}
+          <IconButton label={COPY.close} icon={CloseGlyph} size="md" data-layer-close="" onClick={onClose} />
+        </div>
       </div>
-      {item.pastedText !== undefined && (
-        <footer className="ui-modal-footer">
-          <Button disabled={locked} onClick={() => onRestore(text)}>
-            {COPY.restoreText}
-          </Button>
-          <Button disabled={locked} variant="primary" onClick={() => onReplace(text)}>
-            {COPY.save}
-          </Button>
-        </footer>
-      )}
     </Modal>
   )
 }
@@ -300,7 +501,8 @@ function DraftAttachmentCard({
   onConfirm(): void
 }) {
   const name = item.pastedText === undefined ? item.file.name : COPY.pastedCount(item.pastedText.length)
-  const type = tileType({ name: item.file.name, mime: item.ref?.mime ?? item.file.type, ...(item.ref ? { kind: item.ref.kind } : {}) })
+  const mime = item.ref?.mime || item.file.type
+  const type = tileType({ name: item.file.name, mime, ...(item.ref ? { kind: item.ref.kind } : {}) })
   const drawn = type === 'image' || type === 'video' || type === 'audio'
   const [url, setUrl] = useState<{ file: File; url: string }>()
   useEffect(() => {
@@ -310,9 +512,16 @@ function DraftAttachmentCard({
     return () => URL.revokeObjectURL(value)
   }, [item.file, drawn])
   const failed = item.status === 'failed' || item.status === 'refused'
-  const opens = (item.status === 'ready' || item.status === 'confirm') && previewable(type)
-  // A picture is looked at large the same way as one in a message (its own file, so nothing to download); the rest in
-  // the composer's own preview.
+  const opens = canPreviewDraft({
+    name: item.file.name,
+    mime,
+    ...(item.ref ? { kind: item.ref.kind } : {}),
+    size: draftSize(item),
+    ...(item.pastedText === undefined ? {} : { pastedText: item.pastedText }),
+    status: item.status,
+  })
+  // A picture is looked at large the same way as one in a message (its own file, so nothing to download); the rest open
+  // on the same dimmed stage in the composer's own preview.
   const face = useRef<HTMLButtonElement>(null)
   const picture = usePictureViewer(
     type === 'image' && opens && url?.file === item.file
@@ -383,8 +592,6 @@ function DraftAttachmentCard({
     </div>
   )
 }
-/** What the composer's own preview shows: pictures, videos, sounds and text; other files only show their tile. */
-const previewable = (type: TileType) => ['image', 'video', 'audio', 'text', 'code'].includes(type)
 
 export function AttachmentDrafts({
   controller,

@@ -909,10 +909,14 @@
 .picture-viewer :is(.picture-viewer-actions, .picture-viewer-steps) .ui-icon-button {
   --icon-button-radius: var(--r-full);
 }
-.picture-viewer :is(.picture-viewer-actions, .picture-viewer-steps) .ui-icon-button:hover:not([aria-disabled='true']) {
+.picture-viewer
+  :is(.picture-viewer-actions, .picture-viewer-steps)
+  .ui-icon-button:is(:hover:not([aria-disabled='true']), [aria-pressed='true'], [aria-expanded='true']) {
   color: var(--tip-ink);
 }
-.picture-viewer :is(.picture-viewer-actions, .picture-viewer-steps) .ui-icon-button:hover:not([aria-disabled='true'])::before {
+.picture-viewer
+  :is(.picture-viewer-actions, .picture-viewer-steps)
+  .ui-icon-button:is(:hover:not([aria-disabled='true']), [aria-pressed='true'], [aria-expanded='true'])::before {
   background-color: color-mix(in srgb, var(--tip-ink) 14%, transparent);
 }
 .picture-viewer :is(.picture-viewer-actions, .picture-viewer-steps) .ui-icon-button:active:not([aria-disabled='true'])::before {

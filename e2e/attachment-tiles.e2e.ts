@@ -12,6 +12,22 @@ const pdf = Buffer.from(
   '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n',
 )
 const source = Buffer.from('export function total(values: number[]): number {\n  return values.reduce((sum, value) => sum + value, 0)\n}\n')
+const markdown = Buffer.from(
+  [
+    '# 应用内更新调研',
+    '',
+    '围绕桌面端自动更新机制的对比记录：',
+    '',
+    '| 项目 | 渠道 | 自动下载 |',
+    '| --- | --- | --- |',
+    '| Orca | GitHub Releases | 默认关闭 |',
+    '| T3 Code | Stable / Nightly | 默认开启 |',
+    '',
+    '```ts',
+    'export const checkIntervalHours = 24',
+    '```',
+  ].join('\n'),
+)
 
 /** A picture and a short video drawn by the page itself, so the test needs no media files or encoder. */
 async function media(page: Page): Promise<{ png: Buffer; webm: Buffer }> {
@@ -180,6 +196,51 @@ describe('attachment tiles', () => {
       await page.screenshot({ path: `${OUT}/draft-video-1440-dark.png`, animations: 'disabled' })
       await page.emulateMedia({ colorScheme: 'light' })
       await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+
+      // Code opens on the same frameless stage with syntax highlighting, and clicking beside the sheet closes it.
+      await drafts.getByRole('button', { name: 'total.ts', exact: true }).click()
+      const codeDialog = page.getByRole('dialog', { name: 'total.ts', exact: true })
+      await codeDialog.locator('.attachment-preview-code .syn-keyword').first().waitFor()
+      expect(await codeDialog.locator('.ui-modal-surface').evaluate(node => getComputedStyle(node).backgroundColor)).toBe(
+        'rgba(0, 0, 0, 0)',
+      )
+      expect(await codeDialog.locator('.ui-modal-header').count()).toBe(0)
+      await page.screenshot({ path: `${OUT}/draft-code-1440-light.png`, animations: 'disabled' })
+      await page.mouse.click(24, 24)
+      await expect.poll(() => codeDialog.count()).toBe(0)
+
+      // Markdown renders headings, GFM tables and highlighted code on the frameless stage, with a source toggle in the top-right pill.
+      await home.getByLabel('选择附件', { exact: true }).setInputFiles({
+        name: 'update-notes.md',
+        mimeType: 'text/markdown',
+        buffer: markdown,
+      })
+      await expect.poll(() => drafts.locator('.attachment-draft[data-state="ready"]').count()).toBe(5)
+      await drafts.getByRole('button', { name: 'update-notes.md', exact: true }).click()
+      const mdDialog = page.getByRole('dialog', { name: 'update-notes.md', exact: true })
+      await mdDialog.getByRole('heading', { name: '应用内更新调研', exact: true }).waitFor()
+      expect(await mdDialog.locator('table tbody tr').count()).toBe(2)
+      expect(await mdDialog.locator('.ui-modal-surface').evaluate(node => getComputedStyle(node).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+      expect(await mdDialog.locator('.ui-modal-header').count()).toBe(0)
+      for (const width of [390, 820, 1440]) {
+        await page.setViewportSize({ width, height: 960 })
+        for (const theme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme: theme })
+          expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+          await page.screenshot({ path: `${OUT}/draft-markdown-${width}-${theme}.png`, animations: 'disabled' })
+        }
+      }
+      await page.setViewportSize({ width: 1440, height: 960 })
+      await page.emulateMedia({ colorScheme: 'light' })
+      const sourceToggle = mdDialog.getByRole('button', { name: '源码', exact: true })
+      await sourceToggle.click()
+      expect(await sourceToggle.getAttribute('aria-pressed')).toBe('true')
+      await mdDialog.locator('.attachment-preview-code').getByText('# 应用内更新调研').waitFor()
+      await page.screenshot({ path: `${OUT}/draft-markdown-source-1440-light.png`, animations: 'disabled' })
+      await mdDialog.getByRole('button', { name: '关闭', exact: true }).click()
+      await drafts.getByRole('button', { name: '移除附件 update-notes.md', exact: true }).click()
+      await expect.poll(() => drafts.locator('.attachment-draft').count()).toBe(4)
+
       await home.getByRole('textbox', { name: '新会话消息', exact: true }).fill('看看这些附件')
       await home.getByRole('button', { name: '发送', exact: true }).click()
       await page.getByText('已收到附件。', { exact: true }).waitFor()
