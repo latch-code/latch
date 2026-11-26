@@ -1163,14 +1163,9 @@ button.overview-agent-line:hover,
   line-height: var(--lh-work-card);
 }
 /* The glyph of the decision carries the tone: amber while it waits for you, red only for a failure. */
-.work-decision-result > strong > .ui-icon,
-.question-kind {
+.work-decision-result > strong > .ui-icon {
   flex-shrink: 0;
   color: var(--amber-icon);
-}
-.question-kind {
-  display: inline-grid;
-  place-items: center;
 }
 /* Red stays on the glyph; the title is the muted verb and its object in ink. */
 .work-decision-result > strong[data-tone='failed'] > .ui-icon,
@@ -1225,11 +1220,17 @@ button.overview-agent-line:hover,
   min-height: 60px;
   padding-block: var(--sp-12);
 }
-.question-card[data-presentation] .question-heading {
-  color: var(--ink);
+.question-card[data-presentation='workbench'] .question-title {
   font-size: var(--fs-work-card);
   line-height: var(--lh-work-card);
   font-weight: 600;
+}
+.question-card[data-presentation='workbench'] .question-kind,
+.question-card[data-presentation='workbench'] .question-badges {
+  min-height: var(--lh-work-card);
+}
+.question-card[data-presentation='workbench'] .question-kind {
+  height: var(--lh-work-card);
 }
 .workbench-phone-heading {
   display: flex;

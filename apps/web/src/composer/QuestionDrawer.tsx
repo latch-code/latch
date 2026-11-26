@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { AgentQuestion, QuestionAnswer, QuestionReceipt, QuestionResult, QuestionSubmission } from '@latch/protocol'
-import { Button, Drawer, Icon, InlineNotice, Kbd, MessageGlyph, Tooltip } from '@latch/ui'
+import { Badge, Button, ChevronRightGlyph, Drawer, EditGlyph, Icon, InlineNotice, Kbd, MessageGlyph } from '@latch/ui'
 import { api, ApiError, inlineError, MessageError } from '../core/api.ts'
-import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
+import { VisibleText } from '../components/VisibleText.tsx'
 import { cardTakesKeys, useArmed } from './useArmed.ts'
 import { defineCopy, listText } from '../core/i18n.ts'
 
@@ -17,6 +17,7 @@ const COPY = defineCopy(
     question: 'Harness 提问',
     asks: ' 想问你',
     multiple: '可多选',
+    recommended: '推荐',
     other: '其他…',
     notAllowed: '此设备没有回答权限。',
     answeredElsewhere: '已在别处回答',
@@ -37,6 +38,7 @@ const COPY = defineCopy(
     question: 'Harness question',
     asks: ' asks',
     multiple: 'Choose any',
+    recommended: 'Recommended',
     other: 'Other…',
     notAllowed: 'This device cannot answer questions.',
     answeredElsewhere: 'Answered elsewhere',
@@ -48,6 +50,35 @@ const COPY = defineCopy(
     answeredSuffix: ' questions',
   },
 )
+
+/** Generic envelope sentences harnesses send in ACP form elicitation when the real text is on each question. */
+const BOILERPLATE_PROMPTS = [
+  /^the agent has (?:a )?questions?(?: for you)?[.!:]?$/iu,
+  /^(?:please )?answer the following questions?\.?$/iu,
+  /^[^\n]{1,60}(?:有几个问题|的提问)[。.!！]?$/u,
+]
+
+const RECOMMENDED_PREFIX = /^(?:\(\s*recommended\s*\)|（\s*推荐\s*）|\[\s*recommended\s*\]|【\s*推荐\s*】)\s*[:：\-—]?\s*/iu
+const RECOMMENDED_SUFFIX = /\s*(?:\(\s*recommended\s*\)|（\s*推荐\s*）|\[\s*recommended\s*\]|【\s*推荐\s*】)$/iu
+
+/** Returns the question-set preamble only when it adds real context beyond the current question and protocol boilerplate. */
+export function meaningfulQuestionPrompt(question: Pick<AgentQuestion, 'prompt' | 'questions'>, currentLabel?: string): string | undefined {
+  const text = question.prompt.trim()
+  if (!text) return undefined
+  const label = (currentLabel ?? question.questions[0]?.label ?? '').trim()
+  if (text === label) return undefined
+  if (BOILERPLATE_PROMPTS.some(pattern => pattern.test(text))) return undefined
+  return question.prompt
+}
+
+/** Splits an agent's `(Recommended)` / `（推荐）` marker from an option label so it renders as a quiet badge. */
+export function parseOptionLabel(raw: string): { label: string; recommended: boolean } {
+  const withoutPrefix = raw.replace(RECOMMENDED_PREFIX, '')
+  if (withoutPrefix !== raw && withoutPrefix.trim()) return { label: withoutPrefix, recommended: true }
+  const withoutSuffix = raw.replace(RECOMMENDED_SUFFIX, '')
+  if (withoutSuffix !== raw && withoutSuffix.trim()) return { label: withoutSuffix, recommended: true }
+  return { label: raw, recommended: false }
+}
 
 export interface QuestionActions {
   deviceId: string
@@ -318,6 +349,7 @@ export function QuestionDrawer({
   const answer = draft.answers[draft.step]!
   const options = current.options
   const armed = useArmed(`${question.id}:${draft.step}`)
+  const titleId = useId()
   const card = useRef<HTMLElement>(null)
   const pageKeys = presentation !== 'workbench' || firstKeys
   const [numeric, setNumeric] = useState(false)
@@ -346,6 +378,9 @@ export function QuestionDrawer({
     }
   }, [locked, armed, canAnswer, options, state, pageKeys])
   const last = draft.step === question.questions.length - 1
+  const prompt = meaningfulQuestionPrompt(question, current.label)
+  const otherSelected = draft.other.includes(current.id)
+  const savedOther = otherSelected ? answer.other?.trim() : undefined
   return (
     <Drawer
       ref={card}
@@ -361,52 +396,109 @@ export function QuestionDrawer({
         <span className="question-kind" aria-hidden="true">
           <Icon icon={MessageGlyph} size={16} />
         </span>
-        <span>
-          {presentation ? (
-            <VisibleText text={current.label} />
-          ) : (
-            <>
+        <div className="question-title-group">
+          {!presentation && (
+            <span className="question-asker">
               {asker}
               {COPY.asks}
-            </>
+            </span>
           )}
-        </span>
-        {question.questions.length > 1 && (
-          <span className="question-count">
-            {draft.step + 1}/{question.questions.length}
-          </span>
+          <p id={titleId} className="question-title">
+            <VisibleText text={current.label} />
+          </p>
+        </div>
+        {(current.multiple || question.questions.length > 1) && (
+          <div className="question-badges">
+            {current.multiple && <Badge>{COPY.multiple}</Badge>}
+            {question.questions.length > 1 && (
+              <span className="question-count">
+                {draft.step + 1}/{question.questions.length}
+              </span>
+            )}
+          </div>
         )}
       </div>
-      {context}
-      {question.prompt !== current.label && (
-        <p className="question-prompt">
-          <VisibleText text={question.prompt} />
-        </p>
+      {(context !== undefined || prompt !== undefined) && (
+        <div className="question-meta">
+          {context}
+          {prompt !== undefined && (
+            <p className="question-prompt">
+              <VisibleText text={prompt} />
+            </p>
+          )}
+        </div>
       )}
-      <p className="question-label" hidden={!!presentation && !current.multiple}>
-        <VisibleText text={current.label} />
-        {current.multiple && <span className="question-hint">{COPY.multiple}</span>}
-      </p>
       {canAnswer && (
-        <div className="question-options" role="group" aria-label={escapeHiddenCharacters(current.label)}>
-          {options.map((option, index) => (
-            <Tooltip key={option.id} content={option.description ? escapeHiddenCharacters(option.description) : undefined}>
+        <div
+          className="question-options"
+          role="group"
+          aria-labelledby={titleId}
+          onKeyDown={event => {
+            if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+            const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('.question-option:not(:disabled)')]
+            const at = items.indexOf(event.target as HTMLButtonElement)
+            if (at < 0 || items.length < 2) return
+            event.preventDefault()
+            items[(at + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus()
+          }}>
+          {options.map((option, index) => {
+            const checked = answer.optionIds.includes(option.id)
+            const parsed = parseOptionLabel(option.label)
+            const shortcutActive = index < 9 && armed && !locked && numeric
+            return (
               <button
+                key={option.id}
                 type="button"
                 className="question-option"
                 disabled={locked}
                 aria-disabled={armed ? undefined : true}
-                aria-pressed={answer.optionIds.includes(option.id)}
+                aria-pressed={checked}
+                aria-keyshortcuts={shortcutActive ? String(index + 1) : undefined}
                 onClick={() => {
                   if (armed) state.choose(option.id)
                 }}>
-                {index < 9 && armed && !locked && numeric && <Kbd>{index + 1}</Kbd>}
-                <VisibleText text={option.label} />
+                <span
+                  className={current.multiple ? 'question-check' : 'question-radio'}
+                  data-checked={checked ? '' : undefined}
+                  aria-hidden="true"
+                />
+                <span className="question-option-body">
+                  <span className="question-option-title">
+                    {parsed.recommended && <Badge className="question-recommended">{COPY.recommended}</Badge>}
+                    <VisibleText text={parsed.label} />
+                  </span>
+                  {option.description && (
+                    <span className="question-option-description">
+                      <VisibleText text={option.description} />
+                    </span>
+                  )}
+                </span>
+                {index < 9 && (
+                  <span className="question-option-key" data-active={shortcutActive ? '' : undefined} aria-hidden="true">
+                    <Kbd>{index + 1}</Kbd>
+                  </span>
+                )}
               </button>
-            </Tooltip>
-          ))}
-          <button type="button" className="question-option question-other" disabled={locked} onClick={onOther}>
-            {COPY.other}
+            )
+          })}
+          <button
+            type="button"
+            className="question-option question-other"
+            disabled={locked}
+            aria-label={COPY.other}
+            aria-pressed={otherSelected ? true : undefined}
+            onClick={onOther}>
+            <span className="question-other-icon" data-checked={otherSelected ? '' : undefined} aria-hidden="true">
+              <Icon icon={EditGlyph} size={14} />
+            </span>
+            <span className="question-option-body">
+              <span className="question-option-title">{COPY.other}</span>
+              {savedOther && (
+                <span className="question-option-description">
+                  <VisibleText text={savedOther} />
+                </span>
+              )}
+            </span>
           </button>
         </div>
       )}
@@ -464,9 +556,15 @@ export function QuestionResultCard({ text, messageId }: { text: string; messageI
   return (
     <details className="question-result" data-message-id={messageId}>
       <summary>
-        {COPY.answeredPrefix}
-        {result.answers.length}
-        {COPY.answeredSuffix}
+        <span className="question-result-icon" aria-hidden="true">
+          <Icon icon={MessageGlyph} size={16} />
+        </span>
+        <span>
+          {COPY.answeredPrefix}
+          {result.answers.length}
+          {COPY.answeredSuffix}
+        </span>
+        <Icon icon={ChevronRightGlyph} size={12} className="question-result-chevron" />
       </summary>
       <dl>
         {result.answers.map((answer, index) => (

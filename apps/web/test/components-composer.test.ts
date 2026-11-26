@@ -2,10 +2,11 @@ import { createElement } from 'react'
 import { testHarness } from '@latch/testkit'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Approval, AppSnapshot, HostCatalog, Message, TaskSummary } from '@latch/protocol'
+import type { AgentQuestion, Approval, AppSnapshot, HostCatalog, Message, TaskSummary } from '@latch/protocol'
 import { useViewport } from '../src/breakpoints.ts'
 import { workspaceSections } from '../src/components/Pickers.tsx'
 import { Composer } from '../src/composer/Composer.tsx'
+import { meaningfulQuestionPrompt, parseOptionLabel, QuestionDrawer, type QuestionDrawerState } from '../src/composer/QuestionDrawer.tsx'
 import { SessionFolders } from '../src/shell/SessionEnvironment.tsx'
 import { DiffView, PREVIOUS_NOTES } from '../src/components/DiffView.tsx'
 import { allowsByKey, approvalKeyCaps, ApprovalDrawer, isApprovalAllowKey, type ApprovalStatus } from '../src/composer/ApprovalDrawer.tsx'
@@ -1038,5 +1039,130 @@ describe('composer', () => {
     expect(html).toContain('这台设备不能发送消息')
     expect(html).not.toContain('<textarea')
     expect(html).not.toContain('aria-label="发送"')
+  })
+})
+
+describe('QuestionDrawer', () => {
+  const questionState = (question: AgentQuestion, overrides: Partial<QuestionDrawerState['draft']> = {}): QuestionDrawerState => ({
+    question,
+    draft: {
+      step: 0,
+      answers: question.questions.map(item => ({ questionId: item.id, optionIds: [] })),
+      other: [],
+      ...overrides,
+    },
+    busy: false,
+    error: '',
+    locked: false,
+    complete: false,
+    choose: noop,
+    answerOther: noop,
+    back: noop,
+    next: noop,
+    send: noop,
+  })
+
+  it('drops generic protocol boilerplate prompts while keeping real question context', () => {
+    const questions = [{ id: 'q0', label: '文档类附件你希望采用哪种交互？', multiple: false, options: [] }]
+    expect(meaningfulQuestionPrompt({ prompt: 'The agent has a question.', questions })).toBeUndefined()
+    expect(meaningfulQuestionPrompt({ prompt: 'The agent has a question for you:', questions })).toBeUndefined()
+    expect(meaningfulQuestionPrompt({ prompt: 'Please answer the following questions.', questions })).toBeUndefined()
+    expect(meaningfulQuestionPrompt({ prompt: 'Codex 有几个问题', questions })).toBeUndefined()
+    expect(meaningfulQuestionPrompt({ prompt: 'Claude Agent 的提问', questions })).toBeUndefined()
+    expect(meaningfulQuestionPrompt({ prompt: '文档类附件你希望采用哪种交互？', questions })).toBeUndefined()
+    expect(meaningfulQuestionPrompt({ prompt: '开始实现之前，确认一下你的偏好。', questions })).toBe('开始实现之前，确认一下你的偏好。')
+  })
+
+  it('extracts leading or trailing Recommended markers into a badge without losing plain labels', () => {
+    expect(parseOptionLabel('(Recommended) 全屏压暗舞台：媒体直接无框居中')).toEqual({
+      label: '全屏压暗舞台：媒体直接无框居中',
+      recommended: true,
+    })
+    expect(parseOptionLabel('PostgreSQL（推荐）')).toEqual({
+      label: 'PostgreSQL',
+      recommended: true,
+    })
+    expect(parseOptionLabel('(Recommended)')).toEqual({
+      label: '(Recommended)',
+      recommended: false,
+    })
+    expect(parseOptionLabel('直接在右侧面板打开')).toEqual({
+      label: '直接在右侧面板打开',
+      recommended: false,
+    })
+  })
+
+  it('renders single and multi-select questions once with inline option descriptions, recommended badges, and saved custom answers', () => {
+    setLocale('zh-CN')
+    const question: AgentQuestion = {
+      id: 'q-design',
+      toolCallId: 'call-1',
+      state: 'pending',
+      prompt: 'The agent has a question.',
+      questions: [
+        {
+          id: 'preview',
+          label: '文档类附件希望采用哪种交互？',
+          multiple: false,
+          options: [
+            { id: 'stage', label: '(Recommended) 全屏压暗舞台', description: '与大图和视频保持一致' },
+            { id: 'panel', label: '右侧文件预览面板' },
+          ],
+        },
+        {
+          id: 'checks',
+          label: '运行哪些检查？',
+          multiple: true,
+          options: [
+            { id: 'unit', label: '单元测试' },
+            { id: 'e2e', label: '浏览器回归' },
+          ],
+        },
+      ],
+    }
+
+    const step1 = renderToStaticMarkup(
+      createElement(QuestionDrawer, {
+        presentation: 'conversation',
+        state: questionState(question, {
+          answers: [
+            { questionId: 'preview', optionIds: [], other: '手机用底部表单' },
+            { questionId: 'checks', optionIds: ['unit'] },
+          ],
+          other: ['preview'],
+        }),
+        asker: 'Antigravity',
+        canAnswer: true,
+        onOther: noop,
+      }),
+    )
+    expect(step1).not.toContain('The agent has a question.')
+    expect(step1).not.toContain('(Recommended)')
+    expect(step1).toContain('推荐')
+    expect(step1).toContain('全屏压暗舞台')
+    expect(step1).toContain('与大图和视频保持一致')
+    expect(step1).toContain('手机用底部表单')
+    expect(step1).toContain('question-radio')
+    expect(step1.match(/文档类附件希望采用哪种交互？/gu)).toHaveLength(1)
+
+    const step2 = renderToStaticMarkup(
+      createElement(QuestionDrawer, {
+        presentation: 'conversation',
+        state: questionState(question, {
+          step: 1,
+          answers: [
+            { questionId: 'preview', optionIds: ['stage'] },
+            { questionId: 'checks', optionIds: ['unit'] },
+          ],
+        }),
+        asker: 'Antigravity',
+        canAnswer: true,
+        onOther: noop,
+      }),
+    )
+    expect(step2.match(/运行哪些检查？/gu)).toHaveLength(1)
+    expect(step2).toContain('可多选')
+    expect(step2).toContain('question-check')
+    expect(step2).toContain('2/2')
   })
 })
