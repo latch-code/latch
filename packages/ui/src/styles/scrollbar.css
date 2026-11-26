@@ -1,6 +1,13 @@
 /* Keep the drag target wider than the ink. Touch and high-contrast mode use the platform indicator.
-   The thumb shows only while its element scrolls (`revealScrollbarsWhileScrolling`) or under the pointer for dragging. */
+   The thumb shows while its element scrolls (`revealScrollbarsWhileScrolling`) or under the pointer for dragging,
+   fading through `--ui-scroll-alpha` (reset on every element so a scrolling parent never lights up a nested scroller). */
 @media (hover: hover) and (pointer: fine) and (forced-colors: none) {
+  * {
+    --ui-scroll-alpha: 0;
+  }
+  .ui-scrolling {
+    --ui-scroll-alpha: 1;
+  }
   @supports selector(::-webkit-scrollbar) {
     ::-webkit-scrollbar {
       width: var(--sp-10);
@@ -17,11 +24,8 @@
     ::-webkit-scrollbar-thumb {
       border: 3px solid transparent;
       border-radius: var(--r-full);
-      background-color: transparent;
+      background-color: color-mix(in srgb, var(--scroll-thumb) calc(var(--ui-scroll-alpha) * 100%), transparent);
       background-clip: padding-box;
-    }
-    .ui-scrolling::-webkit-scrollbar-thumb {
-      background-color: var(--scroll-thumb);
     }
     ::-webkit-scrollbar-thumb:vertical {
       min-height: var(--sp-24);
@@ -39,10 +43,7 @@
   @supports not selector(::-webkit-scrollbar) {
     * {
       scrollbar-width: thin;
-      scrollbar-color: transparent transparent;
-    }
-    .ui-scrolling {
-      scrollbar-color: var(--scroll-thumb) transparent;
+      scrollbar-color: color-mix(in srgb, var(--scroll-thumb) calc(var(--ui-scroll-alpha) * 100%), transparent) transparent;
     }
   }
 }
