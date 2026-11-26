@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AttachmentCapabilities } from '@latch/protocol'
-import { durationText, nameParts, tileType } from '../src/components/AttachmentTile.tsx'
+import { draftDocumentKind, durationText, isMarkdownFile, nameParts, tileType } from '../src/components/AttachmentTile.tsx'
+import { canPreviewDraft, decodePreviewBytes } from '../src/composer/AttachmentDrafts.tsx'
 import { addRefusal, attachmentLimits, deliveryHint } from '../src/hooks/useAttachments.ts'
 
 const MB = 1024 * 1024
@@ -68,5 +69,32 @@ describe('what a tile shows', () => {
     expect(nameParts('a.png')).toEqual({ head: 'a.png', tail: '' })
     expect(durationText(2.4)).toBe('0:02')
     expect(durationText(3723)).toBe('1:02:03')
+  })
+  it('recognises Markdown and document drafts that open in the stage preview, while holding binary docs back on secret review', () => {
+    expect(isMarkdownFile({ name: 'notes.md', mime: 'text/plain' })).toBe(true)
+    expect(isMarkdownFile({ name: 'README.markdown' })).toBe(true)
+    expect(isMarkdownFile({ name: 'doc.txt', mime: 'text/markdown; charset=utf-8' })).toBe(true)
+    expect(isMarkdownFile({ name: 'notes.txt', mime: 'text/plain' })).toBe(false)
+
+    expect(draftDocumentKind({ name: 'report.pdf', size: 1024 })).toBe('pdf')
+    expect(draftDocumentKind({ name: 'data.csv', size: 1024 })).toBe('csv')
+    expect(draftDocumentKind({ name: 'sheet.xlsx', size: 1024 })).toBe('xlsx')
+    expect(draftDocumentKind({ name: 'legacy.doc', size: 1024 })).toBeUndefined()
+    expect(draftDocumentKind({ name: 'huge.docx', size: 60 * MB })).toBeUndefined()
+
+    expect(canPreviewDraft({ name: 'notes.md', size: 120, status: 'ready' })).toBe(true)
+    expect(canPreviewDraft({ name: 'report.pdf', size: 120, status: 'ready' })).toBe(true)
+    expect(canPreviewDraft({ name: 'report.pdf', size: 120, status: 'confirm' })).toBe(false)
+    expect(canPreviewDraft({ name: 'data.csv', size: 120, status: 'confirm' })).toBe(true)
+    expect(canPreviewDraft({ name: 'archive.zip', size: 120, status: 'ready' })).toBe(false)
+    expect(canPreviewDraft({ name: 'notes.md', size: 120, status: 'uploading' })).toBe(false)
+  })
+  it('decodes UTF-16 BOM text and drops a trailing split UTF-8 character on truncated previews', () => {
+    const utf16le = new Uint8Array([0xff, 0xfe, 0x61, 0x00, 0x2d, 0x4e]).buffer
+    expect(decodePreviewBytes(utf16le)).toBe('a中')
+
+    const full = new TextEncoder().encode('你好世界')
+    const split = full.slice(0, full.length - 1).buffer
+    expect(decodePreviewBytes(split, true)).toBe('你好世')
   })
 })

@@ -27,6 +27,16 @@
 .attachment-draft > .attachment-tile {
   flex: 0 0 64px;
 }
+.attachment-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
 /* A failure says why beside its tile, briefly, with what to do. */
 .attachment-draft:is([data-state='failed'], [data-state='refused'], [data-state='confirm']) {
   width: auto;
@@ -89,7 +99,7 @@
 }
 button.attachment-tile-face {
   cursor: pointer;
-  transition: border-color var(--m-micro, 120ms) ease;
+  transition: border-color var(--m-micro) var(--e-micro);
 }
 button.attachment-tile-face:hover:not(:disabled) {
   border-color: var(--line-strong);
@@ -123,6 +133,10 @@ button.attachment-tile-face:disabled {
   font-weight: 600;
   line-height: var(--lh-meta);
 }
+.attachment-tile-ext[data-caption] {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
 .attachment-tile-play {
   position: absolute;
   display: grid;
@@ -150,9 +164,12 @@ button.attachment-tile-face:disabled {
   line-height: var(--lh-meta);
   font-variant-numeric: tabular-nums;
 }
-.attachment-tile-ext[data-caption] {
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
+.attachment-tile[data-type='audio'] .attachment-tile-duration {
+  inset-inline: 0;
+  margin-inline: auto;
+  width: max-content;
+  background: none;
+  color: var(--muted);
 }
 .attachment-tile-progress {
   position: absolute;
@@ -169,7 +186,7 @@ button.attachment-tile-face:disabled {
   inline-size: 40%;
   border-radius: inherit;
   background: var(--ink-2);
-  transition: inline-size 160ms linear;
+  transition: inline-size var(--m-enter) linear;
 }
 @media (prefers-reduced-motion: no-preference) {
   .attachment-tile-progress > span:not([style]) {
@@ -263,376 +280,19 @@ button.attachment-tile-face:disabled {
     inset: -13px;
   }
 }
-.attachment-state {
-  display: -webkit-box;
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: 164px;
-  overflow: hidden;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  padding-block-start: var(--sp-2);
-}
-.attachment-draft:is([data-state='failed'], [data-state='refused']) > .attachment-state {
-  color: var(--red);
-}
-/* Progress is on the tile and the size on hover: the line stays for screen readers. */
-.attachment-draft:is([data-state='uploading'], [data-state='ready']) > .attachment-state {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-.attachment-draft > .attachment-retry {
-  position: absolute;
-  inset-block-end: 0;
-  inset-inline-start: calc(64px + var(--sp-16));
-}
-.attachment-draft:is([data-state='failed'], [data-state='confirm']) {
-  min-height: 92px;
-}
-.attachment-tile {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-4);
-  min-width: 0;
-  width: 100%;
-}
-.attachment-tile-face {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 100%;
-  aspect-ratio: 1;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
-  background: var(--sunken);
-  color: var(--muted);
-  font: inherit;
-  appearance: none;
-}
-button.attachment-tile-face {
-  cursor: pointer;
-  transition: border-color var(--m-micro, 120ms) ease;
-}
-button.attachment-tile-face:hover:not(:disabled) {
-  border-color: var(--line-strong);
-}
-button.attachment-tile-face:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-button.attachment-tile-face:disabled {
-  cursor: default;
-}
-.attachment-tile-face > img,
-.attachment-tile-face > video {
-  position: absolute;
-  inset: 0;
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  pointer-events: none;
-}
-.attachment-tile-type {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--sp-2);
-}
-.attachment-tile-ext {
-  color: var(--ink-2);
-  font-size: var(--fs-meta);
-  font-weight: 600;
-  line-height: var(--lh-meta);
-}
-.attachment-tile-play {
-  position: absolute;
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  padding-inline-start: 2px;
-  border-radius: var(--r-full);
-  background: color-mix(in srgb, var(--tip-bg) 64%, transparent);
-  color: var(--tip-ink);
-  backdrop-filter: blur(6px);
-}
-.attachment-tile-play svg {
-  fill: currentColor;
-}
-.attachment-tile-duration {
-  position: absolute;
-  inset-inline-end: var(--sp-4);
-  inset-block-end: var(--sp-4);
-  padding: 0 var(--sp-4);
-  border-radius: var(--r-4);
-  background: color-mix(in srgb, var(--tip-bg) 64%, transparent);
-  color: var(--tip-ink);
-  font-size: var(--fs-meta);
-  line-height: var(--lh-meta);
-  font-variant-numeric: tabular-nums;
-}
-.attachment-tile-ext[data-caption] {
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-.attachment-tile-progress {
-  position: absolute;
-  inset-inline: var(--sp-6);
-  inset-block-end: var(--sp-6);
-  height: 3px;
-  overflow: hidden;
-  border-radius: var(--r-full);
-  background: var(--track);
-}
-.attachment-tile-progress > span {
-  display: block;
-  height: 100%;
-  inline-size: 40%;
-  border-radius: inherit;
-  background: var(--ink-2);
-  transition: inline-size 160ms linear;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .attachment-tile-progress > span:not([style]) {
-    animation: attachment-busy 1.1s ease-in-out infinite;
-  }
-}
-@keyframes attachment-busy {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(250%);
-  }
-}
-.attachment-draft[data-state='uploading'] .attachment-tile-face > :is(img, video) {
-  filter: saturate(0.4) brightness(0.92);
-}
-.attachment-tile[data-failed] > .attachment-tile-face {
-  border-color: var(--red-line);
-}
-.attachment-tile-name {
-  display: flex;
-  min-width: 0;
-  color: var(--ink-2);
-  font-size: var(--fs-meta);
-  line-height: var(--lh-meta);
-}
-.attachment-tile-head {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.attachment-tile-tail {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-.attachment-state {
-  display: -webkit-box;
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: 164px;
-  overflow: hidden;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  padding-block-start: var(--sp-2);
-}
-.attachment-draft:is([data-state='failed'], [data-state='refused']) > .attachment-state {
-  color: var(--red);
-}
-/* Progress is on the tile and the size on hover: the line stays for screen readers. */
-.attachment-draft:is([data-state='uploading'], [data-state='ready']) > .attachment-state {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-.attachment-draft > .attachment-retry {
-  position: absolute;
-  inset-block-end: 0;
-  inset-inline-start: calc(64px + var(--sp-16));
-}
-.attachment-draft:is([data-state='failed'], [data-state='confirm']) {
-  min-height: 92px;
-}
-.attachment-tile {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-4);
-  min-width: 0;
-  width: 100%;
-}
-.attachment-tile-face {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 100%;
-  aspect-ratio: 1;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
-  background: var(--sunken);
-  color: var(--muted);
-  font: inherit;
-  appearance: none;
-}
-button.attachment-tile-face {
-  cursor: pointer;
-  transition: border-color var(--m-micro, 120ms) ease;
-}
-button.attachment-tile-face:hover:not(:disabled) {
-  border-color: var(--line-strong);
-}
-button.attachment-tile-face:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-button.attachment-tile-face:disabled {
-  cursor: default;
-}
-.attachment-tile-face > img,
-.attachment-tile-face > video {
-  position: absolute;
-  inset: 0;
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  pointer-events: none;
-}
-.attachment-tile-type {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--sp-2);
-}
-.attachment-tile-ext {
-  color: var(--ink-2);
-  font-size: var(--fs-meta);
-  font-weight: 600;
-  line-height: var(--lh-meta);
-}
-.attachment-tile-play {
-  position: absolute;
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  padding-inline-start: 2px;
-  border-radius: var(--r-full);
-  background: color-mix(in srgb, var(--tip-bg) 64%, transparent);
-  color: var(--tip-ink);
-  backdrop-filter: blur(6px);
-}
-.attachment-tile-play svg {
-  fill: currentColor;
-}
-.attachment-tile-duration {
-  position: absolute;
-  inset-inline-end: var(--sp-4);
-  inset-block-end: var(--sp-4);
-  padding: 0 var(--sp-4);
-  border-radius: var(--r-4);
-  background: color-mix(in srgb, var(--tip-bg) 64%, transparent);
-  color: var(--tip-ink);
-  font-size: var(--fs-meta);
-  line-height: var(--lh-meta);
-  font-variant-numeric: tabular-nums;
-}
-.attachment-tile[data-type='audio'] .attachment-tile-duration {
-  inset-inline: 0;
-  margin-inline: auto;
-  width: max-content;
-  background: none;
-  color: var(--muted);
-}
-.attachment-tile-progress {
-  position: absolute;
-  inset-inline: var(--sp-6);
-  inset-block-end: var(--sp-6);
-  height: 3px;
-  overflow: hidden;
-  border-radius: var(--r-full);
-  background: var(--track);
-}
-.attachment-tile-progress > span {
-  display: block;
-  height: 100%;
-  inline-size: 40%;
-  border-radius: inherit;
-  background: var(--ink-2);
-  transition: inline-size 160ms linear;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .attachment-tile-progress > span:not([style]) {
-    animation: attachment-busy 1.1s ease-in-out infinite;
-  }
-}
-@keyframes attachment-busy {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(250%);
-  }
-}
-.attachment-draft[data-state='uploading'] .attachment-tile-face > :is(img, video) {
-  filter: saturate(0.4) brightness(0.92);
-}
-.attachment-tile[data-failed] > .attachment-tile-face {
-  border-color: var(--red-line);
-}
-.attachment-tile-name {
-  display: flex;
-  min-width: 0;
-  color: var(--ink-2);
-  font-size: var(--fs-meta);
-  line-height: var(--lh-meta);
-}
-.attachment-tile-head {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.attachment-tile-tail {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-.attachment-state {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-4);
-  min-width: 0;
-  overflow-wrap: anywhere;
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption-para);
-}
-.attachment-preview img {
-  display: block;
-  max-width: 100%;
-  max-height: 60vh;
-  margin-inline: auto;
-  object-fit: contain;
-}
-.attachment-preview-video-stage {
+
+/*
+ * Composer attachment previews over the dimmed window (`picture-viewer`): video and audio stand frameless in the
+ * middle, while documents, Markdown, code and pasted text float on one clean reading sheet with top-right pill actions.
+ */
+.attachment-preview-stage {
   touch-action: auto;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.attachment-preview-stage[data-sheet] {
+  padding: calc(var(--sp-64) + env(safe-area-inset-top)) max(var(--sp-32), env(safe-area-inset-right))
+    max(var(--sp-32), env(safe-area-inset-bottom)) max(var(--sp-32), env(safe-area-inset-left));
 }
 .attachment-preview-video-player {
   display: block;
@@ -644,28 +304,100 @@ button.attachment-tile-face:disabled {
   outline: none;
   animation: ui-sheet-in var(--m-sheet) var(--e-sheet);
 }
-.attachment-preview-video-player:focus-visible {
+.attachment-preview-audio-player {
+  display: block;
+  margin: auto;
+  width: min(var(--layer-md), 100%);
+  max-width: 100%;
+  border-radius: var(--r-full);
+  box-shadow: var(--sh-dialog);
+  outline: none;
+  animation: ui-sheet-in var(--m-sheet) var(--e-sheet);
+}
+.attachment-preview-video-player:focus-visible,
+.attachment-preview-audio-player:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+.attachment-preview-sheet {
+  --surface: var(--pop);
+  display: flex;
+  flex-direction: column;
+  margin: auto;
+  width: min(var(--layer-xl), 100%);
+  min-width: 0;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+  border-radius: var(--modal-radius);
+  background: var(--pop);
+  color: var(--ink);
+  box-shadow: var(--sh-dialog);
+  outline: none;
+  animation: ui-sheet-in var(--m-sheet) var(--e-sheet);
+}
+.attachment-preview-sheet[data-document] {
+  height: 100%;
+}
+.attachment-preview-sheet:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.attachment-preview-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--sp-24) var(--sp-32);
+}
+.attachment-preview-note {
+  margin: 0 0 var(--sp-12);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.attachment-preview-markdown {
+  color: var(--ink);
+  font-size: var(--fs-prose);
+  line-height: var(--lh-prose);
+}
+.attachment-preview-code {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+.attachment-preview-code > code {
+  font: inherit;
+  white-space: inherit;
+}
+.attachment-preview-sheet[data-pasted] textarea {
+  min-height: 240px;
+}
+.attachment-preview-footer {
+  border-top: 1px solid var(--line);
 }
 @media (max-width: 767.98px) {
   .attachment-preview-video-player {
     border-radius: 0;
   }
+  .attachment-preview-stage[data-media='audio'] {
+    padding-inline: max(var(--sp-16), env(safe-area-inset-right)) max(var(--sp-16), env(safe-area-inset-left));
+  }
+  .attachment-preview-stage[data-sheet] {
+    padding: calc(var(--sp-64) + env(safe-area-inset-top)) max(var(--sp-12), env(safe-area-inset-right))
+      max(var(--sp-16), env(safe-area-inset-bottom)) max(var(--sp-12), env(safe-area-inset-left));
+  }
+  .attachment-preview-body {
+    padding: var(--sp-20) var(--sp-16);
+  }
 }
-.attachment-preview audio {
-  display: block;
-  width: 100%;
-}
-.attachment-preview pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-height: 60vh;
-  overflow: auto;
-}
-.attachment-preview textarea {
-  min-height: 200px;
-}
+
 .message-attachments {
   display: flex;
   flex-wrap: wrap;

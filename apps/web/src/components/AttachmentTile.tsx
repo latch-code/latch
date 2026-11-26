@@ -6,6 +6,7 @@ import { VisibleText } from './VisibleText.tsx'
 
 /** What a tile shows: the media itself where a browser can draw it, else a typed tile with the file's extension. */
 export type TileType = 'image' | 'video' | 'audio' | 'pdf' | 'code' | 'text' | 'sheet' | 'doc' | 'archive' | 'file'
+export type DraftDocumentKind = 'pdf' | 'csv' | 'docx' | 'xlsx' | 'pptx'
 
 const CODE = new Set([
   'ts',
@@ -37,13 +38,33 @@ const CODE = new Set([
   'sql',
   'svg',
 ])
-const extOf = (name: string) => (name.includes('.') ? name.split('.').at(-1)!.toLowerCase() : '')
+export const extOf = (name: string) => (name.includes('.') ? name.split('.').at(-1)!.toLowerCase() : '')
+const baseMime = (mime?: string) => (mime ?? '').split(';')[0]!.trim().toLowerCase()
 /** Pictures a browser decodes everywhere; HEIC and the like get a typed tile. */
 const DRAWN = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp', 'image/avif'])
 
+export function isMarkdownFile(input: { name: string; mime?: string }): boolean {
+  const ext = extOf(input.name),
+    mime = baseMime(input.mime)
+  return mime === 'text/markdown' || ['md', 'markdown', 'mdx'].includes(ext)
+}
+
+export function draftDocumentKind(input: { name: string; mime?: string; size: number }): DraftDocumentKind | undefined {
+  const ext = extOf(input.name),
+    mime = baseMime(input.mime)
+  if (mime === 'application/pdf' || ext === 'pdf') return 'pdf'
+  if (mime === 'text/csv' || mime === 'text/tab-separated-values' || ext === 'csv' || ext === 'tsv') return 'csv'
+  if (input.size > 0 && input.size <= 50 * 1024 * 1024) {
+    if (mime.endsWith('wordprocessingml.document') || ext === 'docx') return 'docx'
+    if (mime.endsWith('spreadsheetml.sheet') || ext === 'xlsx') return 'xlsx'
+    if (mime.endsWith('presentationml.presentation') || ext === 'pptx') return 'pptx'
+  }
+  return undefined
+}
+
 export function tileType(input: { name: string; mime?: string; kind?: AttachmentRef['kind'] }): TileType {
   const ext = extOf(input.name),
-    mime = input.mime ?? ''
+    mime = baseMime(input.mime)
   if (input.kind === 'image' || DRAWN.has(mime)) return 'image'
   // Browsers call a .ts file MPEG-TS video; it is far more often source.
   if (CODE.has(ext) && input.kind !== 'file') return 'code'
@@ -55,8 +76,8 @@ export function tileType(input: { name: string; mime?: string; kind?: Attachment
     return 'doc'
   if (mime === 'application/zip' || ['zip', 'gz', 'tgz', 'rar', '7z', 'tar'].includes(ext)) return 'archive'
   if (CODE.has(ext)) return 'code'
-  if (input.kind === 'text' || ['txt', 'md', 'markdown', 'log', 'rtf'].includes(ext)) return 'text'
-  return DRAWN.has(input.mime ?? '') || ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext) ? 'image' : 'file'
+  if (input.kind === 'text' || ['txt', 'md', 'markdown', 'mdx', 'log', 'rtf'].includes(ext)) return 'text'
+  return DRAWN.has(mime) || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'avif'].includes(ext) ? 'image' : 'file'
 }
 const GLYPH: Record<TileType, IconComponent> = {
   image: ImageGlyph,
