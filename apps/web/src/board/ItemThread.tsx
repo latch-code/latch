@@ -62,7 +62,7 @@ const COPY = defineCopy(
     recipient: '发给',
     remoteScope: '只向工作电脑发送这条发言。',
     makePrivate: '发送后，此待办将永久设为私有。',
-    bindingChanged: '工作电脑或 Agent 绑定已变更，请重新选择收件人。',
+    bindingChanged: '工作电脑或 Agent 绑定已改变，请重新选择收件人。',
     session: '会话',
     noChat: '还没有聊天',
     noMatch: '没有匹配的会话或 Agent',

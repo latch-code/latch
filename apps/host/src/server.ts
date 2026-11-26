@@ -2755,7 +2755,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     // threads lost their 待办, and pruning then would delete every thread.
     if (workItems.fromFile) await workThreads.prune(itemId => workItems.get(itemId) !== undefined)
     startupCleanup.push(() => workThreads.flush())
+    let agentMentions: AgentMentions
     const harnessHub = await HarnessHub.open({
+      withNextPrompt: (id, requestId, submit) => {
+        const owner = sessionOwner(id)
+        return agentMentions && owner ? agentMentions.withNextPrompt(owner, id, requestId, submit) : submit()
+      },
       confirmedConsultationPreset(id) {
         const record = config.settings().agents.find(agent => agent.id === id)
         return !!record?.enabled && runsPresetCommand(record) && versionReadable(record)
@@ -3455,14 +3460,25 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           [actor.deviceId, ...(input.editor ? [input.editor.deviceId] : []), ...(input.coauthors ?? [])],
           reference || actor.dataScope !== 'all' || (input.editor !== undefined && input.editor.dataScope !== 'all'),
           () =>
-            harnessHub.prompt(sessionId, input.text, input.requestId, {
-              ...(agentContext ? { agentContext } : {}),
-              ...(input.model ? { model: input.model } : {}),
-              ...(input.queuedAt ? { queuedAt: input.queuedAt } : {}),
-              ...(input.teamRequest ? { teamRequest: true } : {}),
-              ...(attachments ? { attachments } : {}),
-              ...(reference ? { outsideContent: true as const } : {}),
-            }),
+            harnessHub.prompt(
+              sessionId,
+              input.text,
+              input.requestId,
+              {
+                ...(agentContext ? { agentContext } : {}),
+                ...(input.model ? { model: input.model } : {}),
+                ...(input.queuedAt ? { queuedAt: input.queuedAt } : {}),
+                ...(input.teamRequest ? { teamRequest: true } : {}),
+                ...(attachments ? { attachments } : {}),
+                ...(reference ? { outsideContent: true as const } : {}),
+              },
+              () => {
+                assertWritable(sessionId)
+                checkPrivateSession(queuedCaller(actor), sessionId, true)
+                if (input.editor) checkPrivateSession(queuedCaller(input.editor), sessionId, true)
+                for (const { actor: uploader } of uploads) checkPrivateSession(queuedCaller(uploader), sessionId, true)
+              },
+            ),
         )
         for (const group of uploads) await bindPromptAttachments(group.actor.deviceId, group.ids, sessionId)
         if (input.itemId) queueAudits.delete(input.itemId)
@@ -4839,7 +4855,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       })
     }
     startupCleanup.push(() => automations.close())
-    const agentMentions = await AgentMentions.open(dataDir, {
+    agentMentions = await AgentMentions.open(dataDir, {
       owners: () => new Set([GENERAL_AGENT_ID, ...customAgents.list().map(agent => agent.id)]),
       access(caller, write) {
         agentAccess(caller, write)
@@ -6894,20 +6910,38 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           if (agent.id === owner || (only !== undefined && agent.id !== only)) return []
           if ('mode' in agent && agentPlans.unavailable(agent)) return []
           const mode = consultationReceiver(agent, grant)
-          return mode ? [{ id: agent.id, name: agent.name, description: agent.description, mode }] : []
+          return mode ? [{ id: agent.id, harnessId: agent.harnessId, name: agent.name, description: agent.description, mode }] : []
         })
       }
       authorize()
       if (tool === LIST_AGENTS) {
         // Names and duties may have been imported. Mark that material before the model sees it, as for a peer's answer.
         await harnessHub.markOutsideContent(sessionId, 'agent-mention')
+        let targets = localTargets()
+        let chats = customAgents.chats()
+        const statuses = new Map<string, TaskStatus>()
+        const harnessIds = new Set(
+          targets.flatMap(target => {
+            const chat = chats[target.id]
+            return chat?.state === 'ready' ? [harnessHub.ownerOf(chat.sessionId) ?? target.harnessId] : []
+          }),
+        )
+        if (harnessIds.size) {
+          for (const task of await harnessHub.listTasks(harnessIds)) statuses.set(task.id, task.status)
+          // A grant or unique chat may have changed while a driver was listing its sessions.
+          targets = localTargets()
+          chats = customAgents.chats()
+        }
         return JSON.stringify(
-          localTargets().map(({ id, name, description, mode }) => ({
-            mode,
-            id,
-            name: redactKnownSecrets(name),
-            description: redactKnownSecrets(description),
-          })),
+          targets.map(({ id, name, description, mode }) => {
+            const chat = chats[id]
+            let busy: boolean | null = null
+            if (chat?.state === 'ready') {
+              const status = statuses.get(chat.sessionId)
+              if (status) busy = ACTIVE_STATUSES.has(status)
+            } else if (chat) busy = chat.state === 'starting'
+            return { id, mode, busy, name: redactKnownSecrets(name), description: redactKnownSecrets(description) }
+          }),
         )
       }
       const { agentId, question } = consultInput.parse(args)
@@ -11551,10 +11585,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       recheck(caller, 'run')
       if (fileRefs.length && !projectFiles(caller)) throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
       if (attachments.length) await attachmentStore.claim(caller.device.id, input.attachmentIds!, input.requestId, id)
-      try {
+      const authorizeDispatch = () => {
         recheck(caller, 'run')
+        assertWritable(id)
         if (fileRefs.length && !projectFiles(caller)) throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
         if (agentTurn) agentAccess(caller, true)
+        else checkPrivateSession(caller, id, true)
+        writers.authorizeMention?.()
+      }
+      try {
+        authorizeDispatch()
         await withSimulatorPrompt(
           [caller.device.id, ...coauthors],
           mentionsConversationReference(input.prompt)
@@ -11581,7 +11621,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 ...(outsideContent || mentionsConversationReference(input.prompt) ? { outsideContent: true as const } : {}),
                 ...(unattended ? { unattended: true as const } : {}),
               },
-              writers.authorizeMention,
+              authorizeDispatch,
             ),
         )
       } catch (cause) {

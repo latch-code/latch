@@ -105,6 +105,8 @@ export interface HarnessMount {
 }
 
 export interface HubOptions {
+  /** Before a follow-up can replace a driver's last-run evidence on a personal chat. */
+  withNextPrompt?: (sessionId: string, requestId: string, submit: () => Promise<void>) => Promise<void>
   /** Whether the ACP definition still runs the locally confirmed, unmodified preset that its tool guard belongs to. */
   confirmedConsultationPreset?: (harnessId: string) => boolean
   /** Checked immediately before giving a new request to its driver, including after an async prompt note. */
@@ -651,9 +653,10 @@ export class HarnessHub implements Bridge {
     })())
   }
 
-  async listTasks(): Promise<TaskSummary[]> {
+  async listTasks(harnessIds?: ReadonlySet<string>): Promise<TaskSummary[]> {
     const merged: TaskSummary[] = []
-    for (const [member, tasks] of await this.discover()) {
+    const members = this.members().filter(member => !harnessIds || harnessIds.has(member.driver.id))
+    for (const [member, tasks] of await this.discover(members)) {
       for (const task of tasks) if (this.routes.get(task.id) === member.driver.id) merged.push(listed(this.present(member.driver.id, task)))
     }
     return merged.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -1257,14 +1260,16 @@ export class HarnessHub implements Bridge {
     // As above: without a note to read, `accept` follows the route directly.
     const text = this.promptNote ? await this.withNote(this.promptNote, sessionId, prompt, requestId) : prompt
     try {
-      await this.accept(member, bridge =>
-        withHarnessPromptSource({ method: 'prompt', sessionId, requestId, text: prompt }, () => {
-          this.options.assertAgentWorksHere?.(this.agentOf(sessionId)?.customAgentId)
-          const authorize = authorizeMention ?? options?.authorizeConsultation
-          authorize?.()
-          return options ? bridge.prompt(sessionId, text, requestId, options) : bridge.prompt(sessionId, text, requestId)
-        }),
-      )
+      await this.accept(member, bridge => {
+        const submit = () =>
+          withHarnessPromptSource({ method: 'prompt', sessionId, requestId, text: prompt }, () => {
+            this.options.assertAgentWorksHere?.(this.agentOf(sessionId)?.customAgentId)
+            const authorize = authorizeMention ?? options?.authorizeConsultation
+            authorize?.()
+            return options ? bridge.prompt(sessionId, text, requestId, options) : bridge.prompt(sessionId, text, requestId)
+          })
+        return this.options.withNextPrompt ? this.options.withNextPrompt(sessionId, requestId, submit) : submit()
+      })
     } finally {
       if (options?.freshContext) await this.dropSeedPrefix(member, sessionId)
     }
@@ -1558,8 +1563,7 @@ export class HarnessHub implements Bridge {
   }
 
   /** Lists every driver; one failing driver is logged and skipped instead of failing the whole listing. */
-  private async discover(): Promise<Array<[Member, DriverTaskSummary[]]>> {
-    const members = this.members()
+  private async discover(members = this.members()): Promise<Array<[Member, DriverTaskSummary[]]>> {
     const settled = await Promise.allSettled(members.map(member => member.bridge.listTasks()))
     const listed: Array<[Member, DriverTaskSummary[]]> = []
     settled.forEach((result, index) => {

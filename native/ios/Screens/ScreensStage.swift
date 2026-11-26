@@ -344,7 +344,7 @@ import UIKit
             model.sessionId = "ses_review"; model.detail = conversation()
             var store = PhoneProposalStore(); let token = store.begin(review); store.finish(review, token: token, list: json(proposalsText), windowOpen: true); model.proposals = store
             profile = name != "agent-chat"; profilePart = name == "agent-memory" ? .memory : .activity
-        case "agent-new", "agent-mentions", "agent-consultation":
+        case "agent-new", "agent-mentions", "agent-consultation", "agent-consultation-approval":
             if name == "agent-mentions" {
                 model.snapshot = patched(model.snapshot) { root in
                     root["catalog"] = patched(root["catalog"]!) { catalog in
@@ -355,9 +355,12 @@ import UIKit
                 }
             }
             model.tab = .agents; model.agentPath = [review]; chat(model, owner: review, session: nil)
-            if name == "agent-consultation" {
+            if name.hasPrefix("agent-consultation") {
                 chat(model, owner: daily, session: "ses_daily_talk")
-                model.snapshot = patched(model.snapshot) { $0["tasks"] = .array(($0["tasks"]?.array ?? []) + [json(dailyConversation)["summary"]]) }
+                model.snapshot = patched(model.snapshot) {
+                    $0["tasks"] = .array(($0["tasks"]?.array ?? []) + [consultationDetail["summary"]])
+                    if name == "agent-consultation-approval" { $0["approvals"] = .array(consultationDetail["approvals"].array) }
+                }
             }
         case "agent-work-computer":
             let hostId = String(repeating: "b", count: 52)
@@ -485,11 +488,19 @@ import UIKit
         if path.contains("/library") { return .ready(json(libraryText)) }
         if path.hasSuffix("/results") { return .ready(json(#"{"results":[]}"#)) }
         if path.hasSuffix("/computer") { return .ready(json(path.contains(daily) ? computerText : #"{"computer":{"desktop":true},"missed":[]}"#)) }
+        if scene.hasPrefix("agent-consultation"), path == "/link/api/tasks/ses_daily_talk" { return .ready(consultationDetail) }
         if path.hasSuffix("/mentions") {
+            if scene == "agent-consultation-approval", path == PhoneAgentMentions.path(review) {
+                return .ready(json("""
+                    {"mentions":[{"id":"example-approval","requestId":"example-0000000002","sourceAgentId":"\(review)","targetAgentId":"\(daily)",
+                      "initiator":"agent","consultationMode":"own-permissions","targetSessionId":"ses_daily_talk","targetMessageId":"request-1",
+                      "text":"把这次审阅的待办整理成三条。","status":"waiting-approval","approval":{"id":"consultation-approval","runId":"consultation-run"}}]}
+                    """))
+            }
             if scene == "agent-consultation", path == PhoneAgentMentions.path(review) {
                 return .ready(json("""
                     {"mentions":[{"id":"example","requestId":"example-0000000001","sourceAgentId":"\(review)","targetAgentId":"\(daily)",
-                      "initiator":"agent","consultationMode":"text-only","targetSessionId":"ses_daily_talk","text":"把这次审阅的待办整理成三条。","status":"completed",
+                      "initiator":"agent","consultationMode":"text-only","targetSessionId":"ses_daily_talk","targetMessageId":"request-1","text":"把这次审阅的待办整理成三条。","status":"completed",
                       "reply":{"messageId":"reply-1","text":"先补齐空列表测试，再核对重复提交，最后在手机上确认回复的显示。"}}]}
                     """))
             }
@@ -511,6 +522,39 @@ import UIKit
         if id == daily || id == docs { return .ready(json(dailyDetail.replacingOccurrences(of: daily, with: id))) }
         if id == checks { return .ready(json(runs)) }
         return .missing
+    }
+
+    private static var consultationDetail: NativeJSON {
+        patched(json(dailyConversation)) { detail in
+            let message = json(#"{"id":"request-1","role":"user","text":"把这次审阅的待办整理成三条。"}"#)
+            if scene == "agent-consultation-approval" {
+                detail["messages"] = .array([message])
+                detail["summary"] = patched(detail["summary"] ?? .null) {
+                    $0["status"] = .string("waiting-approval"); $0["runId"] = .string("consultation-run")
+                }
+                detail["approvals"] = json(#"[{"id":"consultation-approval","sessionId":"ses_daily_talk","risk":"R1","toolName":"write_file","tool":{"title":"写入「原审批.txt」"}}]"#)
+            } else {
+                detail["messages"] = .array([message,
+                    json(#"{"id":"reply-1","role":"assistant","text":"先补齐空列表测试，再核对重复提交，最后在手机上确认回复的显示。"}"#),
+                    json(#"{"id":"request-2","role":"user","text":"继续下一个任务。"}"#)
+                ])
+            }
+        }
+    }
+
+    static func finishConsultationApproval(_ path: String, fields: [String: NativeJSON], model: PhoneModel) -> Bool {
+        guard scene == "agent-consultation-approval" else { return false }
+        let stop = path == "/link/api/tasks/ses_daily_talk/cancel" && fields["runId"] == .string("consultation-run")
+        let decide = path == "/link/api/approvals/consultation-approval" && ["allow", "reject"].contains(fields["decision"]?.string ?? "")
+        guard stop || decide else { return false }
+        model.snapshot = patched(model.snapshot) { snapshot in
+            snapshot["tasks"] = .array((snapshot["tasks"]?.array ?? []).map { task in
+                guard task["id"].string == "ses_daily_talk" else { return task }
+                return patched(task) { $0["runId"] = .string("later-run") }
+            })
+            snapshot["approvals"] = json(#"[{"id":"later-approval","sessionId":"ses_daily_talk","risk":"R1","toolName":"write_file","tool":{"title":"写入「下一轮.txt」"}}]"#)
+        }
+        return true
     }
 
     private static var computerText: String { """

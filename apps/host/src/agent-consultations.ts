@@ -11,7 +11,7 @@ export const CONSULT_TOOLS = [
   {
     name: LIST_AGENTS,
     description:
-      'Find local colleagues by name and responsibility. If another colleague may hold information you need, look here for a suitable agent and ask it with consult_personal_agent. The person does not need to name or @ a colleague.',
+      'Find local colleagues by name and responsibility. Prefer a colleague with busy=false; null means availability is unknown. If another colleague may hold information you need, look here for a suitable agent and ask it with consult_personal_agent. The person does not need to name or @ a colleague.',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     title: '查看可联系的 Agent',
   },
@@ -130,11 +130,13 @@ export class ConsultationReplies {
     const deadline = Date.now() + 45_000
     // Subscribe before the initial reread: the target could have settled while its dispatch receipt was being returned.
     let nextRead = 0
+    let interval = 300
     let resume: (() => void) | undefined
     const wake = () => resume?.()
     const changed = (sessionId: string) => {
       if (sessionId !== mention.targetSessionId) return
       nextRead = 0
+      interval = 300
       wake()
     }
     this.listeners.add(changed)
@@ -145,7 +147,8 @@ export class ConsultationReplies {
         authorize()
         if (Date.now() >= Math.min(nextRead, deadline)) {
           // A silent driver still gets checked. A notification arriving during this read must survive it.
-          nextRead = Date.now() + 5_000
+          nextRead = Date.now() + interval
+          interval = Math.min(5_000, interval * 2)
           mention = await read()
           signal.throwIfAborted()
           if ((mention.status !== 'running' && mention.status !== 'sending') || Date.now() >= deadline) {

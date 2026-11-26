@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, test } from 'vitest'
-import type { Approval, Message, TaskSummary } from '@latch/protocol'
+import { afterEach, expect, test, vi } from 'vitest'
+import type { Approval, Message, TaskDetail, TaskSummary } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
+import { AgentJournal } from '../src/agent-journal.ts'
 import { AgentMentions } from '../src/agent-mentions.ts'
 import type { DeviceCaller } from '../src/routes/registry.ts'
 
@@ -26,19 +27,14 @@ async function fixture(emptyChats = false) {
   const approvals: Approval[] = []
   let loseAnswer = false
   let audited = 0
+  const detail = vi.fn<() => Promise<TaskDetail>>(async () => ({ summary, cursor: 0, liveText: '', approvals, messages }))
   const open = async () => {
     const service = await AgentMentions.open(directory, {
       access() {},
       owner() {},
       owners: () => new Set([source, target]),
       slot: async () => (emptyChats ? { state: 'empty' } : { state: 'ready', sessionId: 'target' }),
-      detail: async () => ({
-        summary,
-        cursor: 0,
-        liveText: '',
-        approvals,
-        messages,
-      }),
+      detail,
       async audit() {
         audited++
       },
@@ -67,6 +63,7 @@ async function fixture(emptyChats = false) {
     open,
     directory,
     delivered,
+    detail,
     messages,
     labels,
     summary,
@@ -95,6 +92,155 @@ test('a lost delivery is read without re-sending and a restart reuses the exact 
   })
   expect(f.audits()).toBe(1)
   expect(f.delivered.size).toBe(1)
+})
+
+test('concurrent reads return the observed outcome before disk and keep it across a later turn and restart', async () => {
+  const f = await fixture()
+  f.summary.status = 'running'
+  delete f.summary.runOutcome
+  const service = await f.open()
+  const sent = await service.send(caller, source, body())
+  const writes = vi.spyOn(AgentJournal.prototype, 'change')
+  try {
+    f.summary.status = 'idle'
+    f.summary.runOutcome = 'completed'
+    const read = () => service.get(caller, source, sent.id)
+    expect((await Promise.all([read(), read()])).map(receipt => receipt.status)).toEqual(['completed', 'completed'])
+    expect(writes).not.toHaveBeenCalled()
+    f.messages.push({ role: 'user', id: 'later', text: 'The next question' })
+    f.summary.status = 'running'
+    delete f.summary.runOutcome
+    expect((await read()).status).toBe('completed')
+    await service.close()
+    expect(writes).toHaveBeenCalledTimes(1)
+    expect((await (await f.open()).get(caller, source, sent.id)).status).toBe('completed')
+  } finally {
+    writes.mockRestore()
+  }
+})
+
+test('a read racing a replacement prompt durably records the exact older terminal before acknowledging it', async () => {
+  const f = await fixture()
+  f.summary.status = 'running'
+  delete f.summary.runOutcome
+  const service = await f.open()
+  const receipt = await service.send(caller, source, body())
+  f.summary.status = 'idle'
+  f.summary.runOutcome = 'completed'
+  const stale = structuredClone(await f.detail())
+  let deliver!: (value: TaskDetail) => void
+  let started!: () => void
+  const reading = new Promise<void>(resolve => {
+    started = resolve
+  })
+  const held = new Promise<TaskDetail>(resolve => {
+    deliver = resolve
+  })
+  f.detail.mockImplementationOnce(() => {
+    started()
+    return held
+  })
+  const read = service.get(caller, source, receipt.id)
+  await reading
+  await service.withNextPrompt(target, 'target', 'replacement', async () => {
+    f.summary.status = 'running'
+    delete f.summary.runOutcome
+    f.messages.push({ role: 'user', id: 'replacement', text: 'Next turn' })
+  })
+  deliver(stale)
+  expect((await read).status).toBe('completed')
+  // Open from disk immediately without draining the old process's work by gracefully closing it.
+  expect((await (await f.open()).get(caller, source, receipt.id)).status).toBe('completed')
+})
+
+test('a concurrent read sees the exact outcome checkpointed while its driver read was in progress', async () => {
+  const f = await fixture()
+  f.summary.status = 'running'
+  delete f.summary.runOutcome
+  const service = await f.open()
+  const receipt = await service.send(caller, source, body())
+  let release!: () => void
+  let started!: () => void
+  const reading = new Promise<void>(resolve => {
+    started = resolve
+  })
+  const held = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const detail = f.detail.getMockImplementation()!
+  f.detail.mockImplementationOnce(async () => {
+    started()
+    await held
+    return detail()
+  })
+  const slow = service.get(caller, source, receipt.id)
+  await reading
+  f.summary.status = 'idle'
+  f.summary.runOutcome = 'completed'
+  expect((await service.get(caller, source, receipt.id)).status).toBe('completed')
+  await service.withNextPrompt(target, 'target', 'replacement', async () => {
+    f.summary.status = 'running'
+    delete f.summary.runOutcome
+    f.messages.push({ role: 'user', id: 'replacement', text: 'Next turn' })
+  })
+  release()
+  expect((await slow).status).toBe('completed')
+})
+
+test.each([false, true])(
+  'checkpoints the last target outcome before its first follow-up even if no client rereads it (restart: %s)',
+  async restart => {
+    const f = await fixture()
+    f.summary.status = 'running'
+    delete f.summary.runOutcome
+    const service = await f.open()
+    const receipt = await service.send(caller, source, body())
+    const submit = vi.fn(async () => {})
+    await expect(service.withNextPrompt(target, 'target', 'replacement', submit)).rejects.toMatchObject({ code: 'task-running' })
+    expect(submit).not.toHaveBeenCalled()
+    const [dispatchId] = f.delivered
+    await service.withNextPrompt(target, 'target', dispatchId!, submit)
+    expect(submit).toHaveBeenCalledOnce()
+    if (restart) await service.close()
+    f.summary.status = 'idle'
+    f.summary.runOutcome = 'completed'
+    const current = restart ? await f.open() : service
+    await current.withNextPrompt(target, 'target', 'replacement', async () => {
+      f.summary.status = 'running'
+      delete f.summary.runOutcome
+      f.messages.push({ role: 'user', id: 'replacement', text: 'Next turn' })
+      expect((await (await f.open()).get(caller, source, receipt.id)).status).toBe('completed')
+    })
+  },
+)
+
+test('an unknown outcome write blocks replacement and still lets shutdown release its resources', async () => {
+  const f = await fixture()
+  f.summary.status = 'running'
+  delete f.summary.runOutcome
+  const service = await f.open()
+  const receipt = await service.send(caller, source, body())
+  f.summary.status = 'idle'
+  f.summary.runOutcome = 'completed'
+  const agents = join(f.directory, 'agents')
+  const unavailable = join(f.directory, 'agents-unavailable')
+  await rename(agents, unavailable)
+  try {
+    expect((await service.get(caller, source, receipt.id)).status).toBe('completed')
+    const submit = vi.fn(async () => {})
+    await expect(service.withNextPrompt(target, 'target', 'replacement', submit)).rejects.toMatchObject({ code: 'agent-write-unknown' })
+    expect(submit).not.toHaveBeenCalled()
+    await expect(service.close()).resolves.toBeUndefined()
+  } finally {
+    await rename(unavailable, agents)
+  }
+  const reopened = await f.open()
+  await reopened.withNextPrompt(target, 'target', 'replacement', async () => {
+    f.summary.status = 'running'
+    delete f.summary.runOutcome
+    f.messages.push({ role: 'user', id: 'replacement', text: 'Next turn' })
+  })
+  await expect(reopened.get(caller, source, receipt.id)).resolves.toMatchObject({ status: 'completed' })
 })
 
 test('links a pending decision only to the delivered turn, including before it has a reply', async () => {

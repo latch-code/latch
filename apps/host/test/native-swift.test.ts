@@ -2179,12 +2179,26 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           { id: 'chat', agent: { customAgentId: target }, status: 'waiting-approval', runId: 'run' },
           { id: 'remote', agent: { customAgentId: remote } },
         ],
-        approvals: [{ id: 'approval', sessionId: 'chat' }],
+        approvals: [
+          { id: 'unrelated-approval', sessionId: 'chat' },
+          { id: 'approval', sessionId: 'chat' },
+        ],
       },
+    }
+    const detail = {
+      summary: input.snapshot.tasks[0],
+      messages: [
+        { id: 'u1', role: 'user' },
+        { id: 'reply-1', role: 'assistant', text: 'Original answer' },
+        { id: 'u2', role: 'user' },
+        { id: 'reply-2', role: 'assistant', text: 'Later answer' },
+      ],
+      approvals: input.snapshot.approvals,
     }
     expect(
       await invoke({
         ...input,
+        detail,
         consultations: [
           { ...base, approval, consultationMode: 'own-permissions' },
           { ...base, approval: { ...approval, runId: 'old-run' } },
@@ -2195,7 +2209,10 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
             initiator: 'person',
             consultationMode: 'own-permissions',
           })),
-          { ...base, consultationMode: 'text-only', reply: { more: true } },
+          { ...base, consultationMode: 'text-only', targetMessageId: 'u1', reply: { messageId: 'reply-1', more: true } },
+          { ...base, targetMessageId: 'u1', reply: { messageId: 'reply-2' } },
+          { ...base, approval, targetMessageId: 'u1' },
+          { ...base, targetMessageId: 'u2' },
           { ...base, targetSessionId: 'previous' },
           { ...base, targetSessionId: undefined },
           { ...base, targetAgentId: remote, targetSessionId: 'remote' },
@@ -2203,14 +2220,29 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       }),
     ).toEqual({
       receipts: [
-        { action: '在对方聊天查看审批', mode: 'own-permissions' },
-        ...Array.from({ length: 5 }, () => ({ action: '打开对方聊天' })),
-        { action: '在对方聊天查看完整回复', mode: 'text-only' },
+        { action: '在对方聊天查看审批', mode: 'own-permissions', record: 'approval' },
+        {},
+        {},
+        ...Array.from({ length: 3 }, () => ({ action: '打开对方聊天' })),
+        { action: '在对方聊天查看完整回复', mode: 'text-only', record: 'reply-1' },
+        { action: '在对方聊天查看回复' },
+        { action: '在对方聊天查看审批' },
+        { action: '在对方聊天查看本轮消息', record: 'u2' },
         {},
         {},
         {},
       ],
     })
+    expect(await invoke({ ...input, detail, after: { ...input.snapshot, approvals: [] }, consultations: [{ ...base, approval }] })).toEqual(
+      { receipts: [{ action: '在对方聊天查看审批' }] },
+    )
+    const restricted = { ...input.snapshot, device: { ...input.snapshot.device, dataScope: 'work' } }
+    expect(await invoke({ ...input, detail, after: restricted, consultations: [{ ...base, approval }] })).toEqual({
+      receipts: [{ action: '在对方聊天查看审批' }],
+    })
+    expect(
+      await invoke({ ...input, detail, after: { ...input.snapshot, agentChats: {} }, consultations: [{ ...base, targetMessageId: 'u1' }] }),
+    ).toEqual({ receipts: [{ action: '在对方聊天查看本轮消息' }] })
   })
   it('does not report locally cleared private Agent data as an unconfirmed Host write', async () => {
     expect(

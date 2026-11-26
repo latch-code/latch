@@ -64,15 +64,32 @@ describe('waiting for a consultation receipt', () => {
     expect(read).toHaveBeenCalledTimes(2)
   })
 
-  it('returns the live receipt at the deadline even with a silent driver', async () => {
+  it('picks up a silent completion on the first 300ms retry', async () => {
+    const read = vi
+      .fn<() => Promise<AgentMention>>()
+      .mockResolvedValueOnce(sent)
+      .mockResolvedValue({ ...sent, status: 'completed' })
+    const waiting = new ConsultationReplies().wait(sent, { read, signal: new AbortController().signal, authorize: () => {} })
+    await vi.advanceTimersByTimeAsync(299)
+    expect(read).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(waiting).resolves.toMatchObject({ status: 'completed' })
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it('backs off to five seconds for a silent driver, reading the exact receipt once more at the deadline', async () => {
     const replies = new ConsultationReplies()
-    const read = vi.fn(async () => sent)
+    const reads: number[] = []
+    const read = async () => {
+      reads.push(Date.now())
+      return sent
+    }
     const waiting = replies.wait(sent, { read, signal: new AbortController().signal, authorize: () => {} })
     await vi.advanceTimersByTimeAsync(44_999)
-    expect(read).toHaveBeenCalledTimes(9)
+    expect(reads).toEqual([0, 300, 900, 2_100, 4_500, 9_300, 14_300, 19_300, 24_300, 29_300, 34_300, 39_300, 44_300])
     await vi.advanceTimersByTimeAsync(1)
     await expect(waiting).resolves.toEqual(sent)
-    expect(read).toHaveBeenCalledTimes(10)
+    expect(reads.at(-1)).toBe(45_000)
     expect(vi.getTimerCount()).toBe(0)
   })
 

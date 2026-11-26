@@ -16,7 +16,9 @@ struct AgentsTabView: View {
             AgentList(selection: selection)
                 .syncTabBar(hidden: false)
         } detail: {
-            if let id = model.agentPath.first { AgentChat(id: id).id([model.generation.uuidString, id]) }
+            if let id = model.agentPath.first {
+                NavigationStack { AgentChat(id: id) }.id([model.generation.uuidString, id])
+            }
             else {
                 ContentUnavailableView("选择 Agent", systemImage: "person.crop.circle")
                     .frame(maxWidth: .infinity, maxHeight: .infinity).background(PhoneTheme.canvas)

@@ -1710,7 +1710,7 @@ const FIXED = defineCopy<Record<string, string>>(
     'no-receipt': '工作电脑上还没有可以查看的回合。',
     'agent-mention-reference': '这条消息含有会话引用，请移除引用后再发送文字。',
     'post-invalid': '请检查发言长度，并移除隐藏控制字符后重试。',
-    'source-changed': '待办或工作电脑绑定已变更，请刷新待办。',
+    'source-changed': '待办或工作电脑绑定已改变，请刷新待办。',
     'delivery-unknown': '未确认送达。请刷新状态，或重试这条发言。',
     'not-delivered': '工作电脑未接收这条发言。请检查目标 Agent 与设备权限。',
     'host-unavailable': '连不上这台 Mac 上的 Latch，请确认它还在运行。',

@@ -30,7 +30,8 @@ import {
   type DeviceFs,
 } from '../src/auth.ts'
 import { deviceFingerprint } from '../src/crypto.ts'
-import { paramsHash, PresenceService } from '../src/presence.ts'
+import { PolicyStore } from '../src/policy.ts'
+import { createPresenceBackend, paramsHash, PresenceService } from '../src/presence.ts'
 
 const cleanups: Array<() => Promise<void> | void> = []
 afterEach(async () => {
@@ -1342,6 +1343,31 @@ describe('enrollment', () => {
     context.presence.denyNext()
     await expect(submit()).rejects.toMatchObject({ status: 403, code: 'invitation-invalid' })
     expect(context.presence.requests).toHaveLength(2)
+  })
+
+  it('requires target-local presence to enroll a new HTTPS work computer even with a valid invitation on Linux', async () => {
+    const dataDir = tempDir()
+    const directory = join(dataDir, 'auth')
+    const audit = await AuditLog.open(join(dataDir, 'audit'))
+    cleanups.push(() => audit.close())
+    const policy = await PolicyStore.open({ dataDir, audit, platform: 'linux' })
+    const devices = await DeviceStore.open({ directory, hostId, audit })
+    cleanups.push(() => devices.close())
+    const backend = createPresenceBackend({ platform: 'linux', policy, codeRoot: dataDir })
+    const presence = new PresenceService({ hostId, audit, backend, blockingTasks: async () => [] })
+    const enrollments = new EnrollmentService({ hostId, devices, audit, presence, directory })
+    const key = testDeviceKey()
+    const invitation = await enrollments.createInvitation({ origin: tls.origin, listener: tls.listener, scopes: ['view', 'run'] }, actor)
+    expect(await backend.availability()).toMatchObject({ status: 'unavailable', reason: 'platform' })
+    expect(await enrollments.info(tls)).toMatchObject({
+      presence: { status: 'unavailable' },
+      offlineCodeAccepted: false,
+    })
+    await expect(enrollments.create({ publicKey: key.spki, name: 'Source Mac', invitation: invitation.code }, tls)).rejects.toMatchObject({
+      status: 503,
+      code: 'presence-unavailable',
+    })
+    expect(devices.list()).toHaveLength(0)
   })
 
   it('accepts a one-time offline code on host.sock only, and never uses it up elsewhere', async () => {
