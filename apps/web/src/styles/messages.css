@@ -683,11 +683,12 @@
   white-space: nowrap;
 }
 .process-end > .process-time,
+.process-end > .tool-card-state[data-hover-reveal],
 .thinking-toggle > .process-time {
   opacity: 0;
   transition: opacity var(--m-micro) var(--e-micro);
 }
-.tool-card-header:is(:hover, :focus-visible) > .process-end > .process-time,
+.tool-card-header:is(:hover, :focus-visible) > .process-end > :is(.process-time, .tool-card-state[data-hover-reveal]),
 .thinking-toggle:is(:hover, :focus-visible) > .process-time,
 .thinking.is-live .process-time {
   opacity: 1;
@@ -698,6 +699,10 @@
 @media (hover: none) {
   .process-end > .process-time {
     opacity: 1;
+  }
+  /* Touch screens have no hover; opening the row already shows 「由模型代你决定」, so keep the row edge free. */
+  .process-end > .tool-card-state[data-hover-reveal] {
+    display: none;
   }
 }
 .process-failed {

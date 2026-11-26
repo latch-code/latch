@@ -389,24 +389,42 @@ describe('tool cards', () => {
     const approved = row('completed', { by: 'Codex', outcome: 'approved' })
     expect(approved).toContain('Codex 的模型审阅')
     expect(words(approved)).toBe('放行')
+    expect(approved).not.toContain('data-hover-reveal')
     // Who decided is said in the opened row, a short label with the note behind ⓘ, not in a hover-only tooltip.
     expect(approved).not.toContain(JUDGED_COPY.reviewNote('Codex'))
     expect(JUDGED_COPY.reviewBrief('Codex')).toEqual({ label: '模型的判断，不是你的批准', detail: JUDGED_COPY.reviewNote('Codex') })
     // A denial is the model's verdict: the call did not run, and the row says who stopped it, not that it failed.
     const denied = row('failed', { by: 'Codex', outcome: 'denied' })
     expect(words(denied)).toBe('拦下')
+    expect(denied).not.toContain('data-hover-reveal')
     expect(denied).not.toContain('失败')
-    expect(words(row('failed', { by: 'Codex', outcome: 'none' }))).toBe('没有判断')
+    const none = row('failed', { by: 'Codex', outcome: 'none' })
+    expect(words(none)).toBe('没有判断')
+    expect(none).not.toContain('data-hover-reveal')
     // A review still running has no verdict yet.
     expect(words(row('running', { by: 'Codex', outcome: 'approved' }))).toBe('')
-    // A call that ran unasked says so; one that failed before it ran claims nothing.
+    // A call that ran unasked keeps 没有问你 hidden until hovered/focused; one that failed before it ran claims nothing.
     const unasked = row('completed', { by: 'Qwen Code', outcome: 'unasked' }, 'execute')
     expect(words(unasked)).toBe('没有问你')
+    expect(unasked).toContain('data-hover-reveal=""')
     expect(unasked).not.toContain('的模型审阅')
     expect(unasked).not.toContain('title="Qwen Code')
     expect(JUDGED_COPY.unaskedBrief('Qwen Code').detail).toBe(JUDGED_COPY.unaskedNote('Qwen Code'))
     expect(words(row('failed', { by: 'Qwen Code', outcome: 'unasked' }, 'execute'))).toBe('')
-    // Duration sits before the state words so every row's 没有问你 lines up at the right edge.
+    // An interrupted call with `unasked` still shows its interruption state permanently, not behind hover.
+    const interruptedUnasked = renderToStaticMarkup(
+      createElement(ToolCard, {
+        message: tool({
+          state: 'failed',
+          interrupted: true,
+          tool: { kind: 'read', title: 'Read file', judged: { by: 'Qwen Code', outcome: 'unasked' } },
+          toolName: 'Read',
+        }),
+      }),
+    )
+    expect(words(interruptedUnasked)).toBe('已中断 · 结果未知')
+    expect(interruptedUnasked).not.toContain('data-hover-reveal')
+    // Duration sits before the state words so every row's 没有问你 lines up at the right edge when revealed.
     const timedUnasked = renderToStaticMarkup(
       createElement(ToolCard, {
         message: tool({
@@ -418,6 +436,7 @@ describe('tool cards', () => {
         }),
       }),
     )
+    expect(timedUnasked).toContain('data-hover-reveal=""')
     expect(timedUnasked.indexOf('process-time')).toBeGreaterThan(-1)
     expect(timedUnasked.indexOf('process-time')).toBeLessThan(timedUnasked.indexOf('tool-card-state'))
   })

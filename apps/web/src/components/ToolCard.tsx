@@ -584,19 +584,27 @@ export const ToolCard = memo(
         )}
       </>
     )
+    const primaryStateWords =
+      stateWords[shown] ?? (shown === 'interrupted' ? (state === 'failed' ? COPY.interruptedUnknown : COPY.interrupted) : undefined)
+    // Auto/model-judged tiers without per-call verdicts mark every call `unasked`; reveal that label only on hover/focus.
+    const hoverRevealState =
+      state !== 'awaiting-approval'
+      && !(decision && unrun)
+      && primaryStateWords === undefined
+      && judged?.outcome === 'unasked'
+      && judgedWords !== undefined
     const stateSlot = (
       <StatusWords
         state={shown}
         className={`tool-card-state state-${shown}`}
         // A result that is unknown looks the same under every customisation (tokens.css).
-        data-lock={shown === 'unknown' || shown === 'interrupted' ? '' : undefined}>
+        data-lock={shown === 'unknown' || shown === 'interrupted' ? '' : undefined}
+        data-hover-reveal={hoverRevealState ? '' : undefined}>
         {/* An allowance is on record in the row's tooltip; the slot says only a call its approval kept from running. */}
         {state === 'awaiting-approval' ? null : decision && unrun ? (
           <DecisionWords decision={decision} />
         ) : (
-          (stateWords[shown]
-          ?? (shown === 'interrupted' ? (state === 'failed' ? COPY.interruptedUnknown : COPY.interrupted) : undefined)
-          ?? judgedWords)
+          (primaryStateWords ?? judgedWords)
         )}
       </StatusWords>
     )
