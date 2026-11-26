@@ -41,8 +41,8 @@ const COPY = defineCopy(
   {
     consult: '允许主动联系其他 Agent',
     consultDetail: '你直接发消息时，它每轮可联系同一台电脑上的一位 Agent。对方使用自己的模型和接单设置。',
-    consultLegacy: '当前沿用之前授权的联系范围。扩大后，它也可以联系按自身权限接单的本机 Agent。',
-    consultUpgrade: '允许联系其他本机 Agent',
+    consultLegacy: '当前沿用之前授权的联系范围。扩大后，它也可以联系同一台电脑上按自身权限接单的 Agent。',
+    consultUpgrade: '允许联系同一台电脑上的其他 Agent',
     consultUnavailable: '当前运行方式不支持主动联系其他 Agent。',
     receive: '允许按自身权限接单',
     receiveDetail: '默认只回复文字。开启后，这位 Agent 接到委托时可以使用自己聊天中的工具和权限。',

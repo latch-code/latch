@@ -181,7 +181,7 @@ it('shows a desktop Agent-initiated consultation in place and returns to the sam
     await profile.getByRole('button', { name: '设置', exact: true }).click()
     expect(await profile.getByRole('switch', { name: '允许主动联系其他 Agent', exact: true }).getAttribute('aria-checked')).toBe('true')
     await profile.getByText(/当前沿用之前授权的联系范围/u).waitFor()
-    const expandConsent = profile.getByRole('button', { name: '允许联系其他本机 Agent', exact: true })
+    const expandConsent = profile.getByRole('button', { name: '允许联系同一台电脑上的其他 Agent', exact: true })
     const receive = profile.getByRole('switch', { name: '允许按自身权限接单', exact: true })
     expect(await receive.getAttribute('aria-checked')).toBe('false')
     for (const [width, height, scheme] of [
