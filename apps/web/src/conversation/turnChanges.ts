@@ -117,7 +117,9 @@ const DOCUMENT_KINDS: ReadonlySet<string> = new Set(['pptx', 'pdf', 'docx', 'xls
 /** What the turn made for the person to open or clean up, as opposed to repository code it edited: documents, media and ignored outputs. */
 export const producedFiles = (outputs: readonly FileChange[]) =>
   outputs.filter(
-    file => file.change === 'created' && (file.gitIgnored === true || (file.kind !== undefined && DOCUMENT_KINDS.has(file.kind))),
+    file =>
+      (file.change === 'created' || file.fresh === true)
+      && (file.gitIgnored === true || (file.kind !== undefined && DOCUMENT_KINDS.has(file.kind))),
   )
 
 /** Who may press 撤销本轮 or 恢复 on this device, as the Host will check it. */
