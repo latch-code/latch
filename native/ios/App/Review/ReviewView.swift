@@ -138,7 +138,7 @@ struct ReviewView: View {
                 }
             }
         }
-        .toolbar(.hidden, for: .tabBar)
+        .syncTabBar(hidden: true)
         .safeAreaInset(edge: .bottom, spacing: 0) { if !target.taskReview || canRead { foot } }
         .navigationDestination(isPresented: $delivering) {
             DeliveryView(sessionId: target.sessionId) { path in target.file = path; target.scope = .uncommitted; delivering = false; Task { await store.load(model, target: target) } }

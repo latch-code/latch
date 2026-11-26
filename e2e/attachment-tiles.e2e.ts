@@ -169,10 +169,16 @@ describe('attachment tiles', () => {
       await expect.poll(opacity).toBe('1')
       await remove.blur()
       await page.emulateMedia({ colorScheme: 'light' })
-      // The video plays in the composer's own preview.
+      // The video plays frameless over the dimmed window, matching PictureViewer.
       await drafts.getByRole('button', { name: 'screen-recording.webm', exact: true }).click()
       const dialog = page.getByRole('dialog', { name: 'screen-recording.webm', exact: true })
       await expect.poll(() => dialog.locator('video').evaluate((video: HTMLVideoElement) => video.readyState >= 2)).toBe(true)
+      expect(await dialog.locator('.ui-modal-surface').evaluate(node => getComputedStyle(node).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+      expect(await dialog.locator('.ui-modal-header').count()).toBe(0)
+      await page.screenshot({ path: `${OUT}/draft-video-1440-light.png`, animations: 'disabled' })
+      await page.emulateMedia({ colorScheme: 'dark' })
+      await page.screenshot({ path: `${OUT}/draft-video-1440-dark.png`, animations: 'disabled' })
+      await page.emulateMedia({ colorScheme: 'light' })
       await dialog.getByRole('button', { name: '关闭', exact: true }).click()
       await home.getByRole('textbox', { name: '新会话消息', exact: true }).fill('看看这些附件')
       await home.getByRole('button', { name: '发送', exact: true }).click()

@@ -1,5 +1,6 @@
 import LatchNativeCore
 import SwiftUI
+import UIKit
 
 struct ConversationView: View {
     @EnvironmentObject private var model: PhoneModel
@@ -55,7 +56,8 @@ struct ConversationView: View {
         .navigationBarBackButtonHidden(back != nil)
         .toolbar { header }
         // Beside the list on an iPad the tabs stay; a pushed conversation on a phone needs the room.
-        .toolbar(width == .compact ? .hidden : .automatic, for: .tabBar)
+        // Inside 我的 Agent (frame != nil), AgentChat owns tab bar visibility.
+        .modifier(ConversationTabBar(owned: frame == nil, hidden: width == .compact))
         .sheet(item: $preview, onDismiss: { PreviewFiles.clear() }) { NativePreviewView(item: $0) }
         .sheet(item: $filePanel, onDismiss: {
             if filePanel == nil, readingPanel != nil { cancelFile() }
@@ -338,7 +340,7 @@ struct ConversationView: View {
                     }
                 }
                 .padding(.leading, 16).padding(.trailing, 8).frame(minHeight: 52)
-                .background(PhoneTheme.raised, in: Capsule()).overlay(Capsule().stroke(PhoneTheme.lineStrong))
+                .background(PhoneTheme.raised, in: Capsule()).overlay(Capsule().strokeBorder(PhoneTheme.lineStrong))
                 .padding(.horizontal, 12).padding(.bottom, 8)
             } else {
                 QuotaLimitLine(harnessId: summary["harnessId"].string ?? "")
@@ -422,6 +424,144 @@ private struct SessionFilesPresentation: Identifiable {
     var id: SessionFilesContext { context }
 }
 
+private struct ConversationTabBar: ViewModifier {
+    let owned: Bool
+    let hidden: Bool
+    @ViewBuilder func body(content: Content) -> some View {
+        if owned { content.syncTabBar(hidden: hidden) } else { content }
+    }
+}
+
+@MainActor enum PhoneKeyboard {
+    static func dismiss() {
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            for window in windowScene.windows { window.endEditing(true) }
+        }
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+}
+
+/** Marks an overlay (such as 回到最新) whose taps should not simultaneously trigger tap-to-dismiss on the transcript. */
+struct KeyboardDismissExclusion: UIViewRepresentable {
+    func makeUIView(context: Context) -> KeyboardDismissExcludedView {
+        let view = KeyboardDismissExcludedView()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        return view
+    }
+    func updateUIView(_ view: KeyboardDismissExcludedView, context: Context) {}
+}
+
+final class KeyboardDismissExcludedView: UIView {}
+
+/** Resigns the focused editor when tapping anywhere in the transcript area without delaying buttons, links or scrolling. */
+private struct KeyboardDismissOnTap: UIViewRepresentable {
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeUIView(context: Context) -> AnchorView {
+        let view = AnchorView()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        view.onWindowChange = { [weak coordinator = context.coordinator] anchor, window in
+            coordinator?.attach(anchor: anchor, window: window)
+        }
+        return view
+    }
+    func updateUIView(_ view: AnchorView, context: Context) {
+        context.coordinator.attach(anchor: view, window: view.window)
+    }
+    static func dismantleUIView(_ view: AnchorView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
+    final class AnchorView: UIView {
+        var onWindowChange: ((AnchorView, UIWindow?) -> Void)?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            onWindowChange?(self, window)
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        private weak var anchor: AnchorView?
+        private weak var attachedWindow: UIWindow?
+        private lazy var tap: UITapGestureRecognizer = {
+            let gesture = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+            gesture.cancelsTouchesInView = false
+            gesture.delaysTouchesBegan = false
+            gesture.delaysTouchesEnded = false
+            gesture.delegate = self
+            return gesture
+        }()
+
+        func attach(anchor: AnchorView, window: UIWindow?) {
+            self.anchor = anchor
+            guard attachedWindow !== window else { return }
+            attachedWindow?.removeGestureRecognizer(tap)
+            attachedWindow = window
+            window?.addGestureRecognizer(tap)
+        }
+
+        func detach() {
+            attachedWindow?.removeGestureRecognizer(tap)
+            attachedWindow = nil
+            anchor = nil
+        }
+
+        @objc private func handleTap() {
+            attachedWindow?.endEditing(true)
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard let anchor, let window = attachedWindow, anchor.window === window, !anchor.isHidden else { return false }
+            guard Self.hasActiveTextInput(in: window), !Self.isCoveredByPresentedModal(anchor) else { return false }
+            let point = touch.location(in: anchor)
+            guard anchor.bounds.contains(point) else { return false }
+            if Self.hitsExcludedRegion(at: touch.location(in: window), in: window) { return false }
+            var current = touch.view
+            while let view = current {
+                if view is UIControl { return false }
+                if let textView = view as? UITextView, textView.isEditable { return false }
+                if view is UITextField { return false }
+                current = view.superview
+            }
+            return true
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
+        }
+
+        private static func hasActiveTextInput(in view: UIView) -> Bool {
+            if view.isFirstResponder, (view as? UITextView)?.isEditable == true || view is UITextField { return true }
+            return view.subviews.contains { hasActiveTextInput(in: $0) }
+        }
+
+        private static func isCoveredByPresentedModal(_ view: UIView) -> Bool {
+            var responder: UIResponder? = view
+            while let current = responder {
+                if var vc = current as? UIViewController {
+                    while true {
+                        if vc.presentedViewController != nil { return true }
+                        guard let parent = vc.parent else { return false }
+                        vc = parent
+                    }
+                }
+                responder = current.next
+            }
+            return false
+        }
+
+        private static func hitsExcludedRegion(at windowPoint: CGPoint, in root: UIView) -> Bool {
+            if let marker = root as? KeyboardDismissExcludedView, !marker.isHidden, marker.alpha > 0.01 {
+                let local = marker.convert(windowPoint, from: nil)
+                if marker.bounds.contains(local) { return true }
+            }
+            return root.subviews.contains { hitsExcludedRegion(at: windowPoint, in: $0) }
+        }
+    }
+}
+
 extension View {
     /** The keyboard resizes this stack. The transcript ends above the controls even midway through a long reply. */
     func conversationDock<Dock: View>(@ViewBuilder _ dock: () -> Dock) -> some View {
@@ -429,9 +569,11 @@ extension View {
             self.frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
                 .scrollDismissesKeyboard(.interactively)
+                .background(KeyboardDismissOnTap())
             dock()
         }
-        .background(PhoneTheme.canvas)
+        // Extend the canvas behind the keyboard without expanding the layout stack into keyboard safe area.
+        .background { PhoneTheme.canvas.ignoresSafeArea(.all) }
     }
 }
 

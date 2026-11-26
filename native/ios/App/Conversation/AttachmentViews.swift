@@ -173,7 +173,7 @@ struct AttachmentRows: View {
         }
         .padding(.leading, 6).padding(.trailing, 4).frame(height: 52)
         .background(PhoneTheme.raised, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(borderColor(item)))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(borderColor(item)))
     }
     @ViewBuilder private func thumbnail(_ item: PhoneAttachDraft) -> some View {
         if item.kind == .image, let preview = item.thumbnail, let image = UIImage(data: preview) {

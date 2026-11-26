@@ -13,9 +13,19 @@ struct ConversationReader<Content: View>: View {
     @State private var away = false
     @State private var movement = ReadingMovement()
     @State private var choosingTurn = false
+    @State private var pendingTurn: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        if #available(iOS 18, *) {
+            ModernConversationReader(session: session, contentEpoch: contentEpoch, offersTurnIndex: offersTurnIndex,
+                submittedPrompt: submittedPrompt, content: { content })
+        } else {
+            legacyBody
+        }
+    }
+
+    private var legacyBody: some View {
         ScrollViewReader { reader in
             GeometryReader { bounds in
                 ScrollView {
@@ -24,6 +34,7 @@ struct ConversationReader<Content: View>: View {
                         Color.clear.frame(height: 1).id(ConversationAnchor.latest).accessibilityHidden(true)
                     }
                     .environment(\.revealTurn, RevealTurn(session: session) { turn in
+                        movement.jumpingToLatest = false
                         away = true
                         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { reader.scrollTo(turn, anchor: .top) }
                     })
@@ -37,90 +48,251 @@ struct ConversationReader<Content: View>: View {
                 }
                 .coordinateSpace(name: viewport)
                 .defaultScrollAnchor(away ? nil : .bottom)
-                .readingGestures(movement)
                 .onChange(of: submittedPrompt) { _, request in
                     guard request != nil else { return }
-                    away = false
-                    reader.scrollTo(ConversationAnchor.latest, anchor: .bottom)
+                    jumpToLatest(reader, animated: false)
                 }
                 .onPreferenceChange(TranscriptGeometry.self) { frame in
                     guard let frame else { return }
-                    let position = frame.position(after: movement.last, away: away, scrolling: movement.scrolling)
-                    movement.last = frame
-                    if away != position.away { away = position.away }
-                    if position.followEnd { reader.scrollTo(ConversationAnchor.latest, anchor: .bottom) }
+                    apply(frame, reader: reader)
                 }
                 .clipped()
                 .overlay(alignment: .bottom) {
-                    ZStack {
-                        if away {
-                            readingControls(reader)
-                                .frame(maxWidth: .infinity)
-                                .background {
-                                    LinearGradient(stops: [
-                                        .init(color: PhoneTheme.canvas.opacity(0), location: 0),
-                                        .init(color: PhoneTheme.canvas, location: 0.68),
-                                        .init(color: PhoneTheme.canvas, location: 1),
-                                    ], startPoint: .top, endPoint: .bottom)
-                                    .padding(.top, -12)
-                                    .allowsHitTesting(false).accessibilityHidden(true)
-                                }
-                                .transition(.asymmetric(insertion: .opacity, removal: .identity))
-                        }
-                    }
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: away)
+                    ReadingControlsOverlay(away: away, offersTurnIndex: offersTurnIndex, reduceMotion: reduceMotion,
+                        openIndex: {
+                            PhoneKeyboard.dismiss()
+                            choosingTurn = true
+                        },
+                        toLatest: { jumpToLatest(reader, animated: true) })
                 }
             }
-            .sheet(isPresented: $choosingTurn) {
+            .sheet(isPresented: $choosingTurn, onDismiss: {
+                guard let turn = pendingTurn else { return }
+                pendingTurn = nil
+                reader.scrollTo(turn, anchor: .top)
+            }) {
                 QuestionIndex(session: session, contentEpoch: contentEpoch) { turn in
-                    choosingTurn = false
+                    movement.jumpingToLatest = false
                     away = true
+                    pendingTurn = turn
+                    choosingTurn = false
                     reader.scrollTo(turn, anchor: .top)
                 }
                 .presentationDetents([.medium, .large])
             }
         }
     }
-    private func readingControls(_ reader: ScrollViewProxy) -> some View {
-        HStack(spacing: 0) {
-            if offersTurnIndex {
-                Button { choosingTurn = true } label: {
-                    Label("定位提问", systemImage: "list.bullet")
-                        .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
-                }
-                Rectangle().fill(PhoneTheme.line).frame(width: 1, height: 14).accessibilityHidden(true)
+
+    private func jumpToLatest(_ reader: ScrollViewProxy, animated: Bool) {
+        let token = movement.beginJumpToLatest()
+        away = false
+        if animated && !reduceMotion {
+            withAnimation(.easeOut(duration: 0.2)) {
+                reader.scrollTo(ConversationAnchor.latest, anchor: .bottom)
             }
-            Button {
-                away = false
-                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
-                    reader.scrollTo(ConversationAnchor.latest, anchor: .bottom)
-                }
-            } label: {
-                Label("回到最新", systemImage: "arrow.down")
-                    .padding(.horizontal, 12).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+        } else {
+            reader.scrollTo(ConversationAnchor.latest, anchor: .bottom)
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(animated && !reduceMotion ? 320 : 120))
+            guard movement.jumpToken == token, movement.jumpingToLatest else { return }
+            movement.jumpingToLatest = false
+            if !away, let last = movement.last, !last.isAtEnd {
+                reader.scrollTo(ConversationAnchor.latest, anchor: .bottom)
             }
         }
-        .font(.subheadline.weight(.medium)).foregroundStyle(PhoneTheme.ink2).buttonStyle(.plain)
-        .background {
-            Capsule().fill(PhoneTheme.raised).overlay { Capsule().strokeBorder(PhoneTheme.line) }
-                .padding(.vertical, 6).shadow(color: .black.opacity(0.08), radius: 3, y: 1)
-                .allowsHitTesting(false)
+    }
+
+    private func apply(_ frame: PhoneTranscriptFrame, reader: ScrollViewProxy) {
+        if movement.jumpingToLatest {
+            movement.last = frame
+            if frame.isAtEnd { movement.jumpingToLatest = false }
+            return
         }
+        let position = frame.position(after: movement.last, away: away, scrolling: movement.scrolling)
+        movement.last = frame
+        if away != position.away { away = position.away }
+        if position.followEnd { reader.scrollTo(ConversationAnchor.latest, anchor: .bottom) }
+    }
+}
+
+@available(iOS 18, *)
+private struct ModernConversationReader<Content: View>: View {
+    let session: String
+    let contentEpoch: UUID
+    let offersTurnIndex: Bool
+    let submittedPrompt: String?
+    @ViewBuilder let content: () -> Content
+    @State private var scrollPosition = ScrollPosition(edge: .bottom)
+    @State private var away = false
+    @State private var movement = ReadingMovement()
+    @State private var choosingTurn = false
+    @State private var pendingTurn: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ScrollViewReader { reader in
+            ScrollView {
+                VStack(spacing: 0) {
+                    content()
+                    Color.clear.frame(height: 1).id(ConversationAnchor.latest).accessibilityHidden(true)
+                }
+                .environment(\.revealTurn, RevealTurn(session: session) { turn in
+                    movement.jumpingToLatest = false
+                    away = true
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { reader.scrollTo(turn, anchor: .top) }
+                })
+            }
+            .scrollPosition($scrollPosition)
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(away ? nil : .bottom, for: .sizeChanges)
+            .onScrollPhaseChange { _, phase in
+                movement.scrolling = phase == .interacting || phase == .decelerating
+                if phase == .interacting {
+                    movement.jumpingToLatest = false
+                } else if phase == .idle, movement.jumpingToLatest {
+                    movement.jumpingToLatest = false
+                    if !away, let last = movement.last, !last.isAtEnd {
+                        scrollPosition.scrollTo(edge: .bottom)
+                    }
+                }
+            }
+            .onScrollGeometryChange(for: PhoneTranscriptFrame.self) { geometry in
+                PhoneTranscriptFrame(
+                    contentHeight: geometry.contentSize.height,
+                    viewportHeight: geometry.containerSize.height,
+                    offset: geometry.contentOffset.y + geometry.contentInsets.top)
+            } action: { _, frame in
+                if movement.jumpingToLatest {
+                    movement.last = frame
+                    if frame.isAtEnd { movement.jumpingToLatest = false }
+                    return
+                }
+                let position = frame.position(after: movement.last, away: away, scrolling: movement.scrolling)
+                movement.last = frame
+                if away != position.away { away = position.away }
+                if position.followEnd { scrollPosition.scrollTo(edge: .bottom) }
+            }
+            .onChange(of: submittedPrompt) { _, request in
+                guard request != nil else { return }
+                jumpToLatest(animated: false)
+            }
+            .clipped()
+            .overlay(alignment: .bottom) {
+                ReadingControlsOverlay(away: away, offersTurnIndex: offersTurnIndex, reduceMotion: reduceMotion,
+                    openIndex: {
+                        PhoneKeyboard.dismiss()
+                        choosingTurn = true
+                    },
+                    toLatest: { jumpToLatest(animated: true) })
+            }
+            .sheet(isPresented: $choosingTurn, onDismiss: {
+                guard let turn = pendingTurn else { return }
+                pendingTurn = nil
+                reader.scrollTo(turn, anchor: .top)
+            }) {
+                QuestionIndex(session: session, contentEpoch: contentEpoch) { turn in
+                    movement.jumpingToLatest = false
+                    away = true
+                    pendingTurn = turn
+                    choosingTurn = false
+                    reader.scrollTo(turn, anchor: .top)
+                }
+                .presentationDetents([.medium, .large])
+            }
+        }
+    }
+
+    private func jumpToLatest(animated: Bool) {
+        let token = movement.beginJumpToLatest()
+        away = false
+        if animated && !reduceMotion {
+            withAnimation(.easeOut(duration: 0.2)) {
+                scrollPosition.scrollTo(edge: .bottom)
+            }
+        } else {
+            scrollPosition.scrollTo(edge: .bottom)
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(animated && !reduceMotion ? 320 : 120))
+            guard movement.jumpToken == token, movement.jumpingToLatest else { return }
+            movement.jumpingToLatest = false
+            if !away, let last = movement.last, !last.isAtEnd {
+                scrollPosition.scrollTo(edge: .bottom)
+            }
+        }
+    }
+}
+
+private struct ReadingControlsOverlay: View {
+    let away: Bool
+    let offersTurnIndex: Bool
+    let reduceMotion: Bool
+    let openIndex: () -> Void
+    let toLatest: () -> Void
+
+    var body: some View {
+        ZStack {
+            if away {
+                HStack(spacing: 0) {
+                    if offersTurnIndex {
+                        Button(action: openIndex) {
+                            Label("定位提问", systemImage: "list.bullet")
+                                .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                        Rectangle().fill(PhoneTheme.line).frame(width: 1, height: 14).accessibilityHidden(true)
+                    }
+                    Button(action: toLatest) {
+                        Label("回到最新", systemImage: "arrow.down")
+                            .padding(.horizontal, 12).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    }
+                }
+                .font(.subheadline.weight(.medium)).foregroundStyle(PhoneTheme.ink2).buttonStyle(ReadingPillButtonStyle())
+                .background {
+                    Capsule().fill(PhoneTheme.raised).overlay { Capsule().strokeBorder(PhoneTheme.line) }
+                        .padding(.vertical, 6).shadow(color: .black.opacity(0.08), radius: 3, y: 1)
+                        .allowsHitTesting(false)
+                }
+                .background(KeyboardDismissExclusion())
+                .frame(maxWidth: .infinity)
+                .background {
+                    LinearGradient(stops: [
+                        .init(color: PhoneTheme.canvas.opacity(0), location: 0),
+                        .init(color: PhoneTheme.canvas, location: 0.68),
+                        .init(color: PhoneTheme.canvas, location: 1),
+                    ], startPoint: .top, endPoint: .bottom)
+                    .padding(.top, -12)
+                    .allowsHitTesting(false).accessibilityHidden(true)
+                }
+                .transition(.asymmetric(insertion: .opacity, removal: .identity))
+            }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: away)
+    }
+}
+
+private struct ReadingPillButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.opacity(configuration.isPressed ? 0.55 : 1)
+    }
+}
+
+private extension PhoneTranscriptFrame {
+    var isAtEnd: Bool {
+        !position(after: nil, away: false, scrolling: false).followEnd
     }
 }
 
 private final class ReadingMovement {
     var last: PhoneTranscriptFrame?
     var scrolling: Bool? = if #available(iOS 18, *) { false } else { nil }
-}
+    var jumpingToLatest = false
+    var jumpToken = 0
 
-private extension View {
-    @ViewBuilder func readingGestures(_ movement: ReadingMovement) -> some View {
-        if #available(iOS 18, *) {
-            onScrollPhaseChange { _, phase in
-                movement.scrolling = phase == .interacting || phase == .decelerating
-            }
-        } else { self }
+    func beginJumpToLatest() -> Int {
+        jumpToken += 1
+        jumpingToLatest = true
+        return jumpToken
     }
 }
 

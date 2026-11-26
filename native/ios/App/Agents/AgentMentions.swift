@@ -137,7 +137,7 @@ struct AgentMentionField<Content: View>: View {
                 let canSend = body.utf16.count <= PhoneAgentMentions.textLimit && !hasMaterial && model.transportReady && !model.busy && model.pending.isEmpty && !sending && !editor.composing
                     && !body.isEmpty
                 ConversationInputBar(focused: $addressedFocus) {
-                    Image(systemName: "at").foregroundStyle(PhoneTheme.muted).padding(.leading, 12).accessibilityHidden(true)
+                    Image(systemName: "at").foregroundStyle(PhoneTheme.muted).frame(width: 36, height: 44).accessibilityHidden(true)
                 } editor: {
                     let hint = "请" + PhoneConversation.visible(target.name) + "协作…"
                     LocalTextEditor(text: $message, placeholder: hint, focused: $addressedFocus, composing: $editor.composing,

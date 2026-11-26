@@ -4,6 +4,7 @@ import SwiftUI
 /** 会话: a list that collapses into a push on the phone and stays beside the conversation on an iPad. */
 struct InboxView: View {
     @EnvironmentObject private var model: PhoneModel
+    @Environment(\.horizontalSizeClass) private var width
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(PhoneFaceID.key) private var faceID = false
     @State private var query = ""
@@ -64,6 +65,7 @@ struct InboxView: View {
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { VStack(spacing: 6) { PendingWritesBar(); ControlPendingBar() } }
+            .syncTabBar(hidden: width != .compact && model.reviewTarget != nil)
         } detail: {
             // The review is the detail column's own stack, so 提交 is pushed on top of it; a destination of the list
             // replaces the detail column and cannot push again.
