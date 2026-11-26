@@ -227,7 +227,7 @@
   position: relative;
   max-height: 480px;
   overflow: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior-x: contain;
   border-radius: var(--r-8);
   background: var(--sunken);
   box-shadow: inset 0 0 0 1px var(--line);

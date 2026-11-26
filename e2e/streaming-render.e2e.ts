@@ -945,6 +945,39 @@ describe('streaming render', () => {
     expect(inView).toBe(true)
   })
 
+  it.each(['preview', 'expanded'])('scrolls the conversation past either edge of a tool output (%s)', async mode => {
+    await open()
+    const output = Array.from({ length: 80 }, (_, line) => `match ${line}`).join('\n')
+    await show(
+      detail([
+        ...prose(1, 20),
+        { id: 'search', role: 'user', text: '搜索文件' },
+        { id: 'result', role: 'tool', state: 'completed', toolName: 'rg', text: output, tool: { kind: 'search', output } },
+        ...prose(1, 20, 'later-'),
+      ]),
+    )
+    await page.evaluate(() => window.revealMessage('search'))
+    const row = page.locator('[data-message-id="result"]')
+    await row.locator('.tool-card-header').click()
+    if (mode === 'expanded') await row.getByRole('button', { name: /展开全部/u }).click()
+    const box = row.locator('.tool-output-scroll')
+    const chatTop = () => page.locator('.transcript').evaluate(element => element.scrollTop)
+    await box.hover()
+    const before = await chatTop()
+    await page.mouse.wheel(0, -60)
+    await expect.poll(chatTop).toBeLessThan(before)
+
+    await box.hover()
+    const reading = await chatTop()
+    const extent = await box.evaluate(element => element.scrollHeight - element.clientHeight)
+    expect(extent).toBeGreaterThan(60)
+    await page.mouse.wheel(0, extent)
+    await expect.poll(() => box.evaluate(element => element.scrollTop)).toBeCloseTo(extent, 0)
+    expect(await chatTop()).toBe(reading)
+    await page.mouse.wheel(0, 60)
+    await expect.poll(chatTop).toBeGreaterThan(reading)
+  })
+
   it('keeps a match in a tool output current when a block colours', async () => {
     await open()
     await show(
@@ -1031,6 +1064,41 @@ describe('streaming render', () => {
     )
     expect(paintGaps).toHaveLength(6)
     expect(Math.max(...paintGaps.map(Math.abs))).toBeLessThanOrEqual(2)
+  })
+
+  it('keeps following the conversation while scrolling within live tool output', async () => {
+    await open()
+    const output = 'still running\n'.repeat(80)
+    await show(
+      detail(
+        [
+          ...prose(8, 5),
+          { id: 'user-live', role: 'user', text: '运行命令' },
+          {
+            id: 'tool-live',
+            role: 'tool',
+            state: 'running',
+            text: '',
+            toolName: 'execute',
+            tool: { kind: 'execute', input: '{"command":"run"}', output },
+          },
+        ],
+        { running: true },
+      ),
+    )
+    await page.locator('[data-message-id="tool-live"] .tool-card-header').click()
+    const box = page.locator('.tool-output-scroll.is-live')
+    const latest = page.getByRole('button', { name: /回到最新/u })
+    await box.hover()
+    await page.mouse.wheel(0, -100)
+    await expect.poll(() => box.evaluate(element => element.scrollTop)).toBeLessThan(0)
+    expect(await latest.isVisible()).toBe(false)
+
+    await box.evaluate(element => {
+      element.scrollTop = -element.scrollHeight
+    })
+    await page.mouse.wheel(0, -100)
+    await latest.waitFor()
   })
 
   it('holds the reader’s place above a stream, and jumps back to the latest', async () => {

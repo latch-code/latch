@@ -238,16 +238,15 @@ export class ReadingPositionController {
 }
 
 function nestedScrollerConsumes(target: EventTarget | null, container: HTMLElement, direction: number): boolean {
-  let element = target instanceof Element ? target : null
-  while (element && element !== container) {
-    if (
-      element instanceof HTMLElement
-      && /(auto|scroll)/.test(getComputedStyle(element).overflowY)
-      && element.scrollHeight > element.clientHeight + 1
-      && (direction < 0 ? element.scrollTop > 0 : element.scrollTop + element.clientHeight < element.scrollHeight - 1)
-    )
-      return true
-    element = element.parentElement
+  for (let element = target instanceof Element ? target : null; element && element !== container; element = element.parentElement) {
+    if (!(element instanceof HTMLElement)) continue
+    const style = getComputedStyle(element)
+    if (!/(auto|scroll)/.test(style.overflowY)) continue
+    const extent = element.scrollHeight - element.clientHeight
+    if (extent <= 1) continue
+    // Live output uses column-reverse: scrollTop is zero at the bottom and negative above it.
+    const top = style.flexDirection === 'column-reverse' ? extent + element.scrollTop : element.scrollTop
+    if (direction < 0 ? top > 1 : top < extent - 1) return true
   }
   return false
 }

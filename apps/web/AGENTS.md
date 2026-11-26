@@ -18,7 +18,7 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 不变量：
 
 - `src/core/` 仅导入本目录、`react` 与 `@latch/protocol`；禁用布局组件（lint）。
-- 正文滚动仅 `useReadingPosition` 写，消息和工具行用 `data-message-id`。刻度列独立滚动，定位（含待办回合）走 `reveal`。见 `test/reading-position.test.ts`。缓存见 STREAMING。
+- 正文滚动仅 `useReadingPosition` 写，消息和工具行用 `data-message-id`。工具输出到边缘后滚动正文。刻度列独立滚动，定位（含待办回合）走 `reveal`。缓存见 STREAMING。
 - 文件预览只经授权句柄，项目预览不伪造会话；文件树懒加载。产物和改动默认收起。不透明文档框与可信插件分开，见 `src/preview/AGENTS.md`。
 - 面板随会话清理，可信代码无隔离，`compose` 只追加草稿。创建直达创造模式，草稿独立于目录，重试保留模式。
 - 市场随插件启停，iOS 隐藏，留侧栏原页，列表独滚。已安装按应用修订。查源暂存限本机完整管理；审阅绑来源与修订，未知写绑 Host、设备。
