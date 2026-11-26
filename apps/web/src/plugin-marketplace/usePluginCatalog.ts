@@ -143,14 +143,16 @@ export function usePluginCatalog({
   editable: boolean
   connected: boolean
   storageKey: string
-  onStage: (pluginId: string) => void
+  onStage: (pluginId: string, revision: string) => void
 }) {
   const [previewData, setPreviewData] = useState<{
     scope: string
     pluginId: string
     catalog: PluginCatalogCheckResult | undefined
+    localRevision: string | undefined
     value: PluginCatalogPreview
   } | null>(null)
+  const [previewBusy, setPreviewBusy] = useState(false)
   const [previewError, setPreviewError] = useState('')
   const [read, setRead] = useState(0)
   const [stagePending, setStagePending] = useMarketReceipt(storageKey, editable, validStage)
@@ -171,9 +173,15 @@ export function usePluginCatalog({
   }, [])
 
   useEffect(() => {
-    setPreviewData(null)
     setPreviewError('')
-    if (!selectedId || !active || !editable || !connected) return
+    if (!selectedId || !active || !editable || !connected) {
+      setPreviewData(null)
+      setPreviewBusy(false)
+      return
+    }
+    // Keep the open plugin's last verified preview on screen while a catalog check or stage refreshes it in place.
+    setPreviewData(previous => (previous?.scope === storageKey && previous.pluginId === selectedId ? previous : null))
+    setPreviewBusy(true)
     const abort = new AbortController()
     void api<PluginCatalogPreview>(ROUTE + '/preview', {
       method: 'POST',
@@ -182,6 +190,7 @@ export function usePluginCatalog({
     }).then(
       value => {
         if (abort.signal.aborted) return
+        setPreviewBusy(false)
         if (
           !isPluginPackageReview(value?.review)
           || value.review.source.kind !== 'catalog'
@@ -189,13 +198,18 @@ export function usePluginCatalog({
           || value.bundle?.manifest?.id !== selectedId
           || value.bundle.manifest.version !== value.review.version
         ) {
+          setPreviewData(null)
           setPreviewError(COPY.reviewUnavailable)
           return
         }
-        setPreviewData({ scope: storageKey, pluginId: selectedId, catalog: checkedCatalog, value })
+        setPreviewData({ scope: storageKey, pluginId: selectedId, catalog: checkedCatalog, localRevision, value })
       },
       cause => {
-        if (!abort.signal.aborted) setPreviewError(inlineError(cause))
+        if (!abort.signal.aborted) {
+          setPreviewBusy(false)
+          setPreviewData(null)
+          setPreviewError(inlineError(cause))
+        }
       },
     )
     return () => abort.abort()
@@ -218,7 +232,7 @@ export function usePluginCatalog({
       if (mounted.current) {
         setStagePending(null)
         retryPreview()
-        onStageRef.current(saved.id)
+        onStageRef.current(saved.id, saved.revision)
       }
     } catch (cause) {
       const uncertain = signal.aborted || receiptUnsettled(cause, stagePending?.requestId === input.requestId)
@@ -235,16 +249,16 @@ export function usePluginCatalog({
   }
 
   const preview =
-    active
-    && editable
-    && connected
-    && previewData?.scope === storageKey
-    && previewData.pluginId === selectedId
+    active && editable && connected && previewData?.scope === storageKey && previewData.pluginId === selectedId ? previewData.value : null
+  const previewReady =
+    preview !== null
+    && previewData !== null
+    && !previewBusy
     && previewData.catalog === checkedCatalog
-      ? previewData.value
-      : null
+    && previewData.localRevision === localRevision
   return {
     preview,
+    previewReady,
     previewError,
     retryPreview,
     stagePending,
@@ -254,7 +268,7 @@ export function usePluginCatalog({
       if (stagePending) void stage(stagePending)
     },
     stageSelected: () => {
-      if (!selectedId || !preview || stagePending || (preview.installed && preview.updateAvailable !== true)) return
+      if (!selectedId || !preview || !previewReady || stagePending || (preview.installed && preview.updateAvailable !== true)) return
       const installed = preview.installed
       void stage({
         requestId: newRequestId(),

@@ -373,6 +373,12 @@
   }
 }
 
+/* A security surface goes at once: nothing of it lingers to fade out. */
+:is(.ui-dialog, .ui-sheet)[data-secure]:not([open]),
+:is(.ui-dialog, .ui-sheet)[data-secure]:not([open])::backdrop {
+  transition: none;
+}
+
 /* A dialog drawn as a phone sheet: its body on the sheet's insets and its buttons sharing the bottom row, 44px tall. */
 .ui-sheet .ui-sheet-body.ui-dialog-body {
   padding: var(--sp-4) var(--sp-16) var(--sp-16);

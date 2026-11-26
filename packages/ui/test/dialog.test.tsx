@@ -147,6 +147,7 @@ describe('dialog', () => {
     expect(getComputedStyle(element.querySelector('.ui-dialog-body')!).paddingTop).toBe('20px')
     await userEvent.keyboard('{Escape}')
     await expect.element(screen.getByRole('dialog', { name: '允许一次高风险操作' })).not.toBeInTheDocument()
+    expect(getComputedStyle(element).transitionDuration).toBe('0s')
   })
 })
 

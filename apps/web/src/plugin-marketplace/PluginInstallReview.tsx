@@ -37,7 +37,7 @@ const COPY = defineCopy(
 )
 
 type Request = { path: string; options: ApiOptions }
-type Read = { id: string; detail?: PluginPackageDetail; error?: string }
+type Read = { id: string; round: number; detail?: PluginPackageDetail; error?: string }
 
 /**
  * The saved draft of one package, in the marketplace's dialog: where its code runs, every file with its source, and the
@@ -49,13 +49,18 @@ export function usePluginInstallReview({
   id,
   active,
   revisionHint,
+  nameHint,
+  canPrefetchReview = true,
   pageBuilds,
   onApplied,
 }: {
   id: string | undefined
   active: boolean
-  /** The revision the package list last reported: a different one reads the draft again. */
+  /** The revision the package list or stage last reported: a different one reads the draft again. */
   revisionHint: string | undefined
+  nameHint?: string | undefined
+  /** Whether the apply review can start alongside the draft read before the manifest arrives. */
+  canPrefetchReview?: boolean | undefined
   /** The Host builds pages (format 2): such drafts are applied after their build in plugin settings. */
   pageBuilds: boolean
   onApplied: (applied: { name: string; version: string }) => void
@@ -68,20 +73,28 @@ export function usePluginInstallReview({
   const [failure, setFailure] = useState<{ id: string; message: string } | null>(null)
   const [busy, setBusy] = useState(false)
 
+  const currentDetail = read && read.id === id && read.round === readAgain ? read.detail : undefined
+  const alreadyRead =
+    active && id !== undefined && currentDetail !== undefined && revisionHint !== undefined && currentDetail.revision === revisionHint
+
   useEffect(() => {
-    setRead(null)
-    if (!active || id === undefined) return undefined
+    if (!active || id === undefined) {
+      setRead(null)
+      return undefined
+    }
+    if (alreadyRead) return undefined
+    setRead(previous => (previous?.id === id && previous.round === readAgain && previous.detail ? previous : null))
     const abort = new AbortController()
     void api<{ package: PluginPackageDetail }>('plugin-packages/' + encodeURIComponent(id), { signal: abort.signal }).then(
       value => {
-        if (!abort.signal.aborted) setRead({ id, detail: value.package })
+        if (!abort.signal.aborted) setRead({ id, round: readAgain, detail: value.package })
       },
       cause => {
-        if (!abort.signal.aborted) setRead({ id, error: inlineError(cause) })
+        if (!abort.signal.aborted) setRead({ id, round: readAgain, error: inlineError(cause) })
       },
     )
     return () => abort.abort()
-  }, [active, id, revisionHint, readAgain])
+  }, [active, alreadyRead, id, revisionHint, readAgain])
 
   const pending = sent && sent.id === id ? sent.request : null
   const error = failure && failure.id === id ? failure.message : ''
@@ -89,8 +102,13 @@ export function usePluginInstallReview({
   const readError = read && read.id === id ? read.error : undefined
   const pageBuild = pageBuilds && needsPageBuild(detail?.bundle.manifest)
   const applied = detail !== undefined && detail.revision === detail.appliedRevision
-  const target: PluginMutationTarget | null =
-    detail && !pageBuild && !applied ? { id: detail.id, name: detail.name, operation: 'apply', revision: detail.revision } : null
+  const target: PluginMutationTarget | null = detail
+    ? !pageBuild && !applied
+      ? { id: detail.id, name: detail.name, operation: 'apply', revision: detail.revision }
+      : null
+    : id !== undefined && revisionHint !== undefined && !readError && canPrefetchReview
+      ? { id, name: nameHint ?? id, operation: 'apply', revision: revisionHint }
+      : null
   const mutation = usePluginMutationReview(active ? target : null)
 
   const send = async (packageId: string, request: Request, shown: { name: string; version: string }) => {
@@ -151,7 +169,12 @@ export function usePluginInstallReview({
           ) : pageBuild ? (
             isPluginPackageReview(detail.review, detail.revision) && <PluginRiskFacts review={detail.review} />
           ) : (
-            <PluginMutationReviewBody review={mutation.review} error={mutation.error} onRetry={mutation.retry} />
+            <PluginMutationReviewBody
+              review={mutation.review}
+              fallback={isPluginPackageReview(detail.review, detail.revision) ? detail.review : undefined}
+              error={mutation.error}
+              onRetry={mutation.retry}
+            />
           )}
         </>
       )}
@@ -163,6 +186,7 @@ export function usePluginInstallReview({
 
   return {
     body,
+    loaded: detail !== undefined || readError !== undefined,
     name: detail?.name,
     version: detail?.version,
     /** The draft's pages build in plugin settings, where their preview runs. */

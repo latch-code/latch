@@ -7,7 +7,21 @@ import type {
   PluginCatalogUpdateStatus,
   PluginPackageSummary,
 } from '@latch/protocol'
-import { Button, CheckGlyph, Collapse, Dialog, EmptyState, FoldHeader, Icon, InlineNotice, PlusGlyph, SearchField, Tabs } from '@latch/ui'
+import {
+  Button,
+  CheckGlyph,
+  Collapse,
+  Dialog,
+  EmptyState,
+  FoldHeader,
+  Icon,
+  InlineNotice,
+  MOTION,
+  PlusGlyph,
+  SearchField,
+  Tabs,
+  usePresence,
+} from '@latch/ui'
 import { ArrowRight, LibraryBig, ListChecks, Package } from 'lucide-react'
 import type { CatalogEntry } from '../../../../examples/marketplace/bundles.ts'
 import { plugins as catalog } from '../../../../examples/latch.catalog.json'
@@ -20,7 +34,7 @@ import { VisibleText } from '../components/VisibleText.tsx'
 import { Loading } from '../settings/common.tsx'
 import { PluginFileViewer } from '../settings/CreatorPluginReview.tsx'
 import { PluginRiskFacts } from '../settings/PluginMutationReview.tsx'
-import { canEditPluginPackages } from '../settings/pluginAssets.ts'
+import { canEditPluginPackages, needsPageBuild } from '../settings/pluginAssets.ts'
 import { SHELL_COPY } from '../shell/copy.ts'
 import { BundledPluginPreview } from './BundledPluginPreview.tsx'
 import { InstalledPluginList } from './InstalledPluginList.tsx'
@@ -380,7 +394,12 @@ export function PluginMarketplace({
   const showFeatured = showBundled && !showAdd && !showInstalled
   const [selected, setSelected] = useState<CatalogEntry | null>(null)
   // The saved draft the dialog reviews, then what was applied.
-  const [review, setReview] = useState<{ id: string; done?: { name: string; version: string } } | null>(null)
+  const [review, setReview] = useState<{ id: string; revision?: string; done?: { name: string; version: string } } | null>(null)
+  const [closingView, setClosingView] = useState<
+    | { kind: 'overview'; entry: CatalogEntry; preview: PluginCatalogPreview | null }
+    | { kind: 'done'; done: { name: string; version: string } }
+    | null
+  >(null)
   const [query, setQuery] = useState('')
   const [facet, setFacet] = useState<Facet>('all')
   const storageKey = JSON.stringify([snapshot.host?.hostId, snapshot.device.id])
@@ -451,10 +470,10 @@ export function PluginMarketplace({
     editable: canEdit,
     connected,
     storageKey: `latch:catalog-market:${storageKey}`,
-    onStage: id => {
+    onStage: (id, revision) => {
       reloadRecords()
       // Only the dialog that asked moves on to the draft; a retry from the list stays on the list.
-      if (dialogFor.current === id) setReview({ id })
+      if (dialogFor.current === id) setReview({ id, revision })
     },
   })
   const addView = usePluginAddMarketplace({
@@ -474,10 +493,20 @@ export function PluginMarketplace({
     },
   })
   const appPages = snapshot.catalog?.features?.appPages === 1
+  const reviewRecord = records?.find(item => item.id === review?.id)
+  const reviewRevisionHint = review?.revision ?? reviewRecord?.revision
+  const canPrefetchReview =
+    reviewRevisionHint !== reviewRecord?.appliedRevision
+    && (!appPages
+      || (selected?.id === review?.id && bundledView.preview
+        ? !needsPageBuild(bundledView.preview.bundle.manifest)
+        : reviewRecord !== undefined && !reviewRecord.capabilities.some(item => item.startsWith('app:'))))
   const installReview = usePluginInstallReview({
     id: review?.id,
     active: open && canEdit && connected && review !== null && review.done === undefined,
-    revisionHint: records?.find(item => item.id === review?.id)?.revision,
+    revisionHint: reviewRevisionHint,
+    nameHint: reviewRecord?.name,
+    canPrefetchReview,
     pageBuilds: appPages,
     onApplied: done => {
       reloadRecords()
@@ -533,7 +562,26 @@ export function PluginMarketplace({
     const contributionNames = pluginFacets(item).flatMap(value => [FACET_NAMES[value], FILTER_NAMES[value]])
     return [item.id, ...Object.values(item[lang]), ...contributionNames].join(' ').toLowerCase().includes(search)
   })
-  const catalogPreview = bundledView.preview
+  const preparingReview = selected !== null && review !== null && review.done === undefined && !installReview.loaded
+  const step = review ? (review.done ? 'done' : preparingReview ? 'overview' : 'review') : selected && selected[lang] ? 'overview' : null
+  const { leaving: dialogLeaving } = usePresence(open && (step === 'overview' || step === 'done'), MOTION.sheetExit)
+  if (step === 'overview' && selected) {
+    if (closingView?.kind !== 'overview' || closingView.entry !== selected || closingView.preview !== bundledView.preview) {
+      setClosingView({ kind: 'overview', entry: selected, preview: bundledView.preview })
+    }
+  } else if (step === 'done' && review?.done) {
+    if (closingView?.kind !== 'done' || closingView.done !== review.done) {
+      setClosingView({ kind: 'done', done: review.done })
+    }
+  } else if (step === 'review' && closingView !== null) {
+    setClosingView(null)
+  }
+  const shownStep = step ?? (dialogLeaving && closingView ? closingView.kind : null)
+  const shownSelected = selected ?? (shownStep === 'overview' && closingView?.kind === 'overview' ? closingView.entry : null)
+  const shownDone = review?.done ?? (shownStep === 'done' && closingView?.kind === 'done' ? closingView.done : undefined)
+  const shownLocal = records?.find(item => item.id === shownSelected?.id)
+  const catalogPreview =
+    selected !== null ? bundledView.preview : shownStep === 'overview' && closingView?.kind === 'overview' ? closingView.preview : null
   // After a stage, apply or removal, the package list has fresher installation status than the catalog check.
   const reread = records !== null && installationList?.catalog === checkedCatalog
   const releases = catalog.map(entry => {
@@ -552,21 +600,21 @@ export function PluginMarketplace({
       ),
     }
   })
-  const selectedRelease = releases.find(entry => entry.id === selected?.id)
-  const selectedInstallId = catalogPreview?.installed?.id ?? local?.id
-  const status = catalogStatus(local, catalogPreview?.updateStatus ?? selectedRelease?.status)
+  const selectedRelease = releases.find(entry => entry.id === shownSelected?.id)
+  const selectedInstallId = catalogPreview?.installed?.id ?? shownLocal?.id
+  const status = catalogStatus(shownLocal, catalogPreview?.updateStatus ?? selectedRelease?.status)
   const checking = connected && official.check?.status === 'checking'
-  const canStage =
-    catalogPreview && !checking && status !== 'different-source' && (!catalogPreview.installed || catalogPreview.updateAvailable === true)
+  const canStage = catalogPreview && status !== 'different-source' && (!catalogPreview.installed || catalogPreview.updateAvailable === true)
   // This catalog version is already saved as a draft: the dialog reviews that draft instead of saving another.
   const savedDraft =
-    !canStage && status === 'current' && local?.catalog !== undefined && local.revision !== local.appliedRevision ? local : undefined
+    !canStage && status === 'current' && shownLocal?.catalog !== undefined && shownLocal.revision !== shownLocal.appliedRevision
+      ? shownLocal
+      : undefined
   const targetManifest = catalogPreview?.bundle.manifest
-  const listing = selected?.[lang]
+  const listing = shownSelected?.[lang]
   const canCreate = showFeatured && canEdit && onCreatePlugin !== undefined
   const createBlocked = connected ? creatorBlockedReason : COPY.createOffline
-  const step = review ? (review.done ? 'done' : 'review') : selected && listing ? 'overview' : null
-  const dialogLocked = bundledView.stageBusy || installReview.locked
+  const dialogLocked = bundledView.stageBusy || preparingReview || installReview.locked
   const checkedRecords = releases.filter(entry => entry.record?.catalog)
   const updateCount = releases.filter(release => release.status === 'available').length
   let checkStatus = ''
@@ -609,12 +657,12 @@ export function PluginMarketplace({
     setReview(null)
     onManage(id)
   }
-  const reviewName = installReview.name ?? records?.find(item => item.id === review?.id)?.name
+  const reviewName = installReview.name ?? reviewRecord?.name
   const dialogTitle =
-    listing && (step === 'overview' || review?.id === selected?.id) ? (
+    listing && (shownStep === 'overview' || review?.id === shownSelected?.id) ? (
       listing.name
-    ) : review?.done ? (
-      <VisibleText text={review.done.name} />
+    ) : shownDone ? (
+      <VisibleText text={shownDone.name} />
     ) : reviewName ? (
       <VisibleText text={reviewName} />
     ) : (
@@ -626,7 +674,7 @@ export function PluginMarketplace({
     </Button>
   )
   const dialogFooter =
-    step === 'overview' ? (
+    shownStep === 'overview' ? (
       <>
         {canEdit && selectedInstallId && (
           <Button size="md" variant="ghost" disabled={!connected || dialogLocked} onClick={() => manage(selectedInstallId)}>
@@ -638,19 +686,24 @@ export function PluginMarketplace({
           <Button
             size="md"
             variant="primary"
-            loading={bundledView.stageBusy}
-            disabled={!connected || bundledView.stagePending !== null}
+            loading={bundledView.stageBusy || preparingReview}
+            disabled={!connected || checking || !bundledView.previewReady || bundledView.stagePending !== null || preparingReview}
             onClick={bundledView.stageSelected}>
             {catalogPreview.installed ? COPY.reviewUpdate : COPY.review}
           </Button>
         )}
         {canEdit && savedDraft && (
-          <Button size="md" variant="primary" disabled={!connected} onClick={() => setReview({ id: savedDraft.id })}>
+          <Button
+            size="md"
+            variant="primary"
+            loading={preparingReview}
+            disabled={!connected || dialogLocked}
+            onClick={() => setReview({ id: savedDraft.id, revision: savedDraft.revision })}>
             {COPY.reviewDraft}
           </Button>
         )}
       </>
-    ) : step === 'review' && review ? (
+    ) : shownStep === 'review' && review ? (
       <>
         {selected && (
           <Button size="md" variant="ghost" disabled={dialogLocked} onClick={() => setReview(null)}>
@@ -675,11 +728,11 @@ export function PluginMarketplace({
           )
         )}
       </>
-    ) : (
+    ) : shownStep === 'done' ? (
       <Button size="md" variant="primary" onClick={closeDialog}>
         {COPY.done}
       </Button>
-    )
+    ) : undefined
   const dialog = (
     <Dialog
       open={open && step !== null}
@@ -689,17 +742,17 @@ export function PluginMarketplace({
       dismissible={!dialogLocked}
       title={dialogTitle}
       onClose={closeDialog}
-      {...(step === 'overview' && canEdit && canStage ? { note: COPY.stageHint } : {})}
+      {...(shownStep === 'overview' && canEdit && canStage ? { note: COPY.stageHint } : {})}
       footer={dialogFooter}>
-      {step === 'overview' && selected ? (
+      {shownStep === 'overview' && shownSelected ? (
         <CatalogOverview
-          key={selected.id}
-          entry={selected}
-          record={local}
+          key={shownSelected.id}
+          entry={shownSelected}
+          record={shownLocal}
           status={status}
           preview={catalogPreview}
           version={targetManifest?.version ?? selectedRelease?.version}
-          manifestName={targetManifest?.name ?? LATCH_CATALOG_MANIFESTS[selected.id]?.name}
+          manifestName={targetManifest?.name ?? LATCH_CATALOG_MANIFESTS[shownSelected.id]?.name}
           installedView={showInstalled}
           checkControls={showInstalled ? null : checkControls}>
           {bundledView.previewError && (
@@ -724,15 +777,15 @@ export function PluginMarketplace({
             )}
           {canEdit && stageNotice}
         </CatalogOverview>
-      ) : step === 'review' ? (
+      ) : shownStep === 'review' ? (
         <div className="plugin-market-dialog-body">
           {!connected && <InlineNotice>{COPY.offline}</InlineNotice>}
           {installReview.body}
         </div>
-      ) : review?.done ? (
+      ) : shownDone ? (
         <div className="plugin-market-dialog-done" role="status">
           <Icon icon={CheckGlyph} size={20} />
-          <span>{COPY.installedVersion(review.done.version)}</span>
+          <span>{COPY.installedVersion(shownDone.version)}</span>
         </div>
       ) : null}
     </Dialog>
