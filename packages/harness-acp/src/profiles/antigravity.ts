@@ -54,6 +54,9 @@ export const antigravityProfile: HarnessProfile = {
   projectConfigPaths: CUSTOMIZATIONS,
   // 1.5.8 answers session/resume with its default model and thinking level (recorded 2026-11-15).
   resumeResetsOptions: true,
+  // agy sums step usage since the turn's start and clears it when session/prompt ends; TotalTokens = input + cachedRead + cachedWrite + output (1.5.8 fixture, 1.5.17 binary).
+  usageScope: 'turn',
+  inputExcludesCache: true,
   // All a turn its backend refused says (agy 1.5.8, observed 2026-11-15): no error and no reason reach ACP.
   terminatedReplies: ['⚠ Agent execution terminated due to error.'],
   minimumVersion: {

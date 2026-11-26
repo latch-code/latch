@@ -288,7 +288,7 @@ interface Turn {
   compactions: Map<string, Compaction>
   retries: Map<string, Json>
   finish?: string
-  usage?: { turn: Tokens; last: Tokens }
+  usage?: { turn: Tokens; last?: Tokens }
   stepError?: Json
   executionError?: Json
   resolve(result: unknown): void
@@ -1375,10 +1375,17 @@ export class OpencodeWire implements AgentWire {
     const type = str(error?.type)
     if (terminal !== 'interrupted' && type === 'provider.auth')
       return turn.reject(new RpcError(RPC.authRequired, 'provider authentication required'))
-    if (terminal !== 'interrupted' && error && type !== 'aborted' && type !== 'provider.content-filter')
+    if (terminal !== 'interrupted' && error && type !== 'aborted' && type !== 'provider.content-filter') {
+      await this.sendUsage(turn).catch(() => {})
+      const usage = turn.usage?.turn && totalTokens(turn.usage.turn) > 0 ? promptUsage(turn.usage.turn) : undefined
       return turn.reject(
-        new RpcError(RPC.internal, clip(this.redact(redactKnownSecrets(str(error.message) || 'OpenCode prompt failed')), 4000)),
+        new RpcError(
+          RPC.internal,
+          clip(this.redact(redactKnownSecrets(str(error.message) || 'OpenCode prompt failed')), 4000),
+          usage ? { usage } : undefined,
+        ),
       )
+    }
     await this.sendUsage(turn).catch(() => {})
     const stopReason =
       terminal === 'interrupted' || type === 'aborted'
@@ -1395,7 +1402,7 @@ export class OpencodeWire implements AgentWire {
 
   /** The context the last model call used, its window, and the session's cost, as the ACP route reports them. */
   private async sendUsage(turn: Turn): Promise<void> {
-    const used = turn.usage ? totalTokens(turn.usage.last) : 0
+    const used = turn.usage?.last ? totalTokens(turn.usage.last) : 0
     const attached = this.sessions.get(turn.sessionId)
     if (!used || !attached) return
     const catalog = await this.catalog(attached.cwd)
@@ -1508,6 +1515,11 @@ export class OpencodeWire implements AgentWire {
     }
     if (!turn.started) return
     if (owner.child) {
+      if (type === 'session.step.ended' || type === 'session.step.failed') {
+        const tokens = readTokens(data.tokens)
+        if (tokens) turn.usage = { turn: addTokens(turn.usage?.turn, tokens), ...(turn.usage?.last ? { last: turn.usage.last } : {}) }
+        return
+      }
       if (!type.startsWith('session.execution.')) this.sessionEvent(turn, type, event, data, owner.child)
       return
     }

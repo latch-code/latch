@@ -1401,12 +1401,17 @@ export class ClaudeWire implements AgentWire {
       const said =
         errors.join('\n') || (typeof message.result === 'string' ? message.result : '') || `Claude Code stopped: ${String(message.subtype)}`
       // As the adapter: the error says what kind of failure it was; a refusal for the limit carries the limit Claude reported.
-      const data = turn.errorKind
-        ? {
-            errorKind: turn.errorKind,
-            ...(turn.errorKind === 'rate_limit' && session?.rateLimit !== undefined ? { rateLimit: session.rateLimit } : {}),
-          }
-        : undefined
+      const counted =
+        usage
+        && (usage.inputTokens > 0 || usage.outputTokens > 0 || (usage.cachedReadTokens ?? 0) > 0 || (usage.cachedWriteTokens ?? 0) > 0)
+      const data =
+        turn.errorKind || counted
+          ? {
+              ...(turn.errorKind ? { errorKind: turn.errorKind } : {}),
+              ...(turn.errorKind === 'rate_limit' && session?.rateLimit !== undefined ? { rateLimit: session.rateLimit } : {}),
+              ...(counted ? { usage } : {}),
+            }
+          : undefined
       return turn.reject(new RpcError(RPC.internal, clip(redactKnownSecrets(this.spec.redact(said)), 4000), data))
     }
     const stop = message.stop_reason

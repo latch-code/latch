@@ -272,12 +272,15 @@ export function projectsOf(entries: readonly UsageEntry[]): Array<{ projectId?: 
   return [...projects.values()].toSorted((a, b) => b.tokens - a.tokens || b.turns + b.requests - (a.turns + a.requests))
 }
 
-/** A model's name as two Harnesses may spell it: without a vendor prefix, case or a date suffix. */
+/** A model's name as two Harnesses may spell it: without a vendor prefix, case, spacing, version punctuation or a date suffix. */
 const modelKey = (model: string): string =>
   model
+    .trim()
     .toLowerCase()
     .replace(/^.*\//u, '')
-    .replace(/[-@](?:\d{8}|\d{4}-\d{2}-\d{2})$/u, '')
+    .replace(/[\s_]+/gu, '-')
+    .replace(/(\d)\.(\d)/gu, '$1-$2')
+    .replace(/[-@](?:\d{8}|\d{4}-\d{2}-\d{2}|latest)$/u, '')
 
 /** Turns outside the gateway (own login, plugin providers) by model and Harness, models in the order of their turns; turns that named no model are left out. */
 export function compareOf(entries: readonly UsageEntry[]): UsageCompare[] {

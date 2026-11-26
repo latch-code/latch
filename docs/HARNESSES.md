@@ -614,10 +614,9 @@ Cursor 预设的定义在这台 Mac 上带了 `CURSOR_API_KEY`，且 Host 找得
 | --- | --- | --- | --- |
 | Codex 直连 | `thread/tokenUsage/updated` 的 `total`，每次模型调用后经 `_latch_tokens` 推送，带只写了文字与推理（没有调用工具）的那些模型调用的输出 tokens 与这些条目自己的 `startedAtMs`–`completedAtMs` 之和（`stream`） | 会话 | `cachedInputTokens` 已含在输入里 |
 | pi | 每轮后 `get_session_stats` 的 `tokens` | 会话 | 输入不含 `cacheRead`/`cacheWrite`，加回 |
-| Claude Agent、OpenCode | `PromptResponse.usage` | 一轮 | 输入不含缓存，加回 |
+| Claude Agent、OpenCode、Antigravity | `PromptResponse.usage`（OpenCode 直连含子 Agent 步） | 一轮 | 输入不含缓存，加回 |
 | Grok Build | `PromptResponse._meta.usage`（`turnUsage`） | 一轮 | 已含 |
 | Qwen Code | 每次模型调用（含子 Agent 的）后一条空文字的 `agent_message_chunk` 的 `_meta.usage`（`callUsage`，0.26.8），只在已发出的一轮里收，相加；载入历史时重放的不收 | 一轮 | 已含；有一次没报缓存，这一轮就不记缓存 |
-| Antigravity | `PromptResponse.usage` | 未核实，按会话 | 报 0 |
 | Cursor 经 SDK | 运行结束时 `RunResult.usage`（没有时 `run.usage`）；花费是 `agent.getUsage()` 的 `cost.chargedCents`，经 `usage_update` | 一轮 | 未核实，按原样（`cacheReadTokens`、`cacheWriteTokens` 另列） |
 | DeepSeek Harness | 适配器不报告 tokens（`usage_update` 只有上下文）；自己登录的轮次由 Host 读它这一个会话的日志（见下） | 一轮，只进轮次记录 | 日志里输入不含缓存，加回 |
 | goose | `PromptResponse.usage` 是这个会话最后一次模型调用的上下文（1.57.0 `session.usage`），既不是这一轮也不是累计，不记（`usageScope: 'none'`）；Host 读它的 `usage_ledger`（见「CLI 自己的存储」） | 一轮，只进轮次记录 | 已含（goose 的 `Usage` 输入含缓存） |
