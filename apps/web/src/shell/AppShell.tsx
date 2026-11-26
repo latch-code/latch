@@ -199,7 +199,16 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
   const hasConnectionStrip = !phone && route.entry === 'sessions'
   useLayoutEffect(() => {
     if (!pendingStartId || settings || document.activeElement !== document.body) return
-    main.current?.querySelector<HTMLElement>(phone ? '.topbar-back' : '.transcript')?.focus({ preventScroll: true })
+    if (phone) {
+      main.current?.querySelector<HTMLElement>('.topbar-back')?.focus({ preventScroll: true })
+      return
+    }
+    const workspace = main.current
+    if (!workspace) return
+    // The workspace is a region, not a control: it takes focus when the start input unmounts without drawing a ring.
+    if (!workspace.hasAttribute('tabindex')) workspace.tabIndex = -1
+    workspace.dataset.layoutFocus = ''
+    workspace.focus({ preventScroll: true })
   }, [main, pendingStartId, phone, settings])
   useLayoutEffect(() => {
     if (shell.mentionReturnLabel && document.activeElement === document.body)

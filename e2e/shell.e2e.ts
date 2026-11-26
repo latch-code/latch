@@ -438,6 +438,58 @@ describe('the shell', () => {
       await page.context().close()
     })
 
+    it('keeps focus on the workspace without a transcript focus ring when starting from Home with Enter', async () => {
+      const page = await open(1440, 900, '首页回车聚焦')
+      let release: () => void = () => {}
+      const held = new Promise<void>(done => {
+        release = done
+      })
+      await page.route(
+        url => url.pathname.endsWith('/tasks'),
+        async route => {
+          if (route.request().method() === 'POST') await held
+          await route.continue()
+        },
+      )
+      const prompt = '第一次回车发送的消息'
+      const input = page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true })
+      await input.click()
+      await input.fill(prompt)
+      await page.keyboard.press('Enter')
+      const pending = page.locator('main.workspace[data-pending-start]:not([inert])')
+      await pending.locator('.transcript .sending-message').getByText(prompt, { exact: true }).waitFor()
+      const state = await pending.evaluate(workspace => {
+        const transcript = workspace.querySelector<HTMLElement>('.transcript')!
+        const active = document.activeElement as HTMLElement | null
+        return {
+          focusedWorkspace: active === workspace,
+          workspaceOutline: active ? getComputedStyle(active).outlineStyle : null,
+          transcriptFocused: active === transcript,
+          transcriptFocusVisible: transcript.matches(':focus-visible'),
+          transcriptOutline: getComputedStyle(transcript).outlineStyle,
+        }
+      })
+      expect(state).toEqual({
+        focusedWorkspace: true,
+        workspaceOutline: 'none',
+        transcriptFocused: false,
+        transcriptFocusVisible: false,
+        transcriptOutline: 'none',
+      })
+      const created = page.waitForResponse(response => response.url().endsWith('/tasks') && response.request().method() === 'POST')
+      release()
+      await created
+      await page.locator('main.workspace:not([inert]) .user-bubble').getByText(prompt, { exact: true }).waitFor()
+      await page.locator('.sending-message').waitFor({ state: 'detached' })
+      expect(
+        await page.locator('main.workspace:not([inert]) .transcript').evaluate(transcript => ({
+          focusVisible: transcript.matches(':focus-visible'),
+          outline: getComputedStyle(transcript).outlineStyle,
+        })),
+      ).toEqual({ focusVisible: false, outline: 'none' })
+      await page.context().close()
+    })
+
     it('opens the accepted conversation when the person returned to the same pending Home input', async () => {
       const page = await open(1440, 900, '壳层回到待发送首页')
       let release: () => void = () => {}
