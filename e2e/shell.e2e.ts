@@ -114,6 +114,11 @@ describe('the shell', () => {
     }
     // Back in 对话 the input stands exactly where it stood.
     expect(await composer.boundingBox()).toEqual(before)
+    // 对话 | 看板 lives on the left inside the sidebar's title zone, compactly sized, while the right keeps pane toggles only.
+    const viewSwitchBox = await box(page, '.titlebar-lead .shell-view-switch')
+    expect(viewSwitchBox.left + viewSwitchBox.width).toBeLessThanOrEqual(264)
+    expect(viewSwitchBox.width).toBeLessThan(120)
+    expect(await page.locator('.titlebar-views .shell-view-switch').count()).toBe(0)
     await page.context().setOffline(true)
     await expect.poll(() => page.locator('.app-shell').getAttribute('data-connection')).toMatch(/^(reconnecting|offline)$/u)
     await expect.poll(() => connection.locator('.ui-status-strip-fact').first().textContent()).toMatch(/(正在重连|离线)$/u)
@@ -123,6 +128,71 @@ describe('the shell', () => {
     await page.context().setOffline(false)
     await connection.getByText('回环 HTTP', { exact: true }).waitFor()
     await noHorizontalOverflow(page)
+    await page.context().close()
+  })
+
+  it('keeps 对话 | 看板 in the left title zone, adapts between text and icons by available width, and stays mounted through view switches', async () => {
+    const page = await open(1440, 900, '左栏视图切换')
+    const sw = page.locator('.titlebar-lead .shell-view-switch')
+    await sw.waitFor()
+    const node = await sw.elementHandle()
+    // Without traffic lights, the 264px sidebar header shows compact words rather than icons.
+    const textIconVisible = () =>
+      sw
+        .locator('.ui-segmented-option > svg')
+        .first()
+        .evaluate(el => getComputedStyle(el).display !== 'none')
+    expect(await textIconVisible()).toBe(false)
+    expect((await box(page, '.titlebar-lead .shell-view-switch')).width).toBeLessThan(110)
+
+    // Focus and the same DOM element survive 对话 ⇄ 看板.
+    const boardRadio = sw.getByRole('radio', { name: /^看板/u })
+    await boardRadio.click()
+    await expect.poll(() => page.locator('.app-shell').getAttribute('data-view')).toBe('board')
+    expect(await node?.evaluate(el => el.isConnected)).toBe(true)
+    expect(await boardRadio.evaluate(el => el === document.activeElement)).toBe(true)
+    await switchView(page, 'chat')
+    expect(await node?.evaluate(el => el.isConnected)).toBe(true)
+
+    // Simulate macOS traffic lights inset (76px -> 88px lead inset) to exercise adaptive icon & narrow-wordmark tiers.
+    await page.evaluate(() => {
+      const bar = document.querySelector<HTMLElement>('.titlebar')!
+      bar.dataset.lights = ''
+      bar.style.setProperty('--lights-end', '76px')
+    })
+    await expect.poll(textIconVisible).toBe(true)
+    const iconBox = await box(page, '.titlebar-lead .shell-view-switch')
+    const leadBox = await box(page, '.titlebar-lead')
+    expect(iconBox.width).toBe(60)
+    expect(iconBox.left + iconBox.width).toBeLessThanOrEqual(leadBox.left + leadBox.width)
+    expect(await page.locator('.titlebar-wordmark-text').isVisible()).toBe(true)
+
+    // Drag sidebar to minimum width (220px): wordmark text hides so the 60px icon switch still fits cleanly.
+    const handle = (await page.getByRole('separator', { name: '调整侧栏宽度', exact: true }).boundingBox())!
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + 200)
+    await page.mouse.down()
+    await page.mouse.move(220, handle.y + 200, { steps: 4 })
+    await page.mouse.up()
+    await settleShell(page)
+    await expect.poll(() => page.locator('.titlebar-wordmark-text').isVisible()).toBe(false)
+    const minSwitch = await box(page, '.titlebar-lead .shell-view-switch')
+    const minLead = await box(page, '.titlebar-lead')
+    expect(minLead.width).toBe(220)
+    expect(minSwitch.width).toBe(60)
+    expect(minSwitch.left + minSwitch.width).toBeLessThanOrEqual(minLead.left + minLead.width)
+
+    // Drag sidebar wider (320px): wordmark text and text segments both return.
+    const minHandle = (await page.getByRole('separator', { name: '调整侧栏宽度', exact: true }).boundingBox())!
+    await page.mouse.move(minHandle.x + minHandle.width / 2, minHandle.y + 200)
+    await page.mouse.down()
+    await page.mouse.move(320, minHandle.y + 200, { steps: 4 })
+    await page.mouse.up()
+    await settleShell(page)
+    await expect.poll(() => page.locator('.titlebar-wordmark-text').isVisible()).toBe(true)
+    await expect.poll(textIconVisible).toBe(false)
+    const wideSwitch = await box(page, '.titlebar-lead .shell-view-switch')
+    const wideLead = await box(page, '.titlebar-lead')
+    expect(wideSwitch.left + wideSwitch.width).toBeLessThanOrEqual(wideLead.left + wideLead.width)
     await page.context().close()
   })
 

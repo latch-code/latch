@@ -6,7 +6,7 @@ import { settleShell } from './layout.ts'
 export const VIEW_NAMES = { chat: '对话', board: '看板' } as const
 export type WorkView = keyof typeof VIEW_NAMES
 
-/** The view switch in sight: the shell's one control at the end of the top row, or a phone list's. */
+/** The view switch in sight: the shell's control at the start of the top row, the tablet rail's, or a phone list's. */
 export function viewSwitch(page: Page): Locator {
   return page.getByRole('radiogroup', { name: '视图', exact: true }).locator('visible=true').first()
 }

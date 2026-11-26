@@ -10,11 +10,11 @@ const VIEW_GLYPHS = { chat: MessagesSquare, board: SquareKanban } as const
 const COPY = defineCopy({ views: '视图' }, { views: 'View' })
 
 /**
- * 对话 | 看板: two word segments at the end of the window's top row (and in a phone's heading). The shell draws it once on
- * wide windows, over the end each title row keeps free for it, so the control and the focus on it stay through a switch.
- * In 对话 the 看板 segment carries how many cards wait on the person, amber, while there are any. `icons`: the shell's
- * switch also carries each view's glyph, which it shows in place of the words while an open right panel shares the row
- * (workbench.css); the words stay its name and tooltip.
+ * 对话 | 看板: compact view switch at the start of the window's top row (vertical icons in a tablet's rail, full width
+ * in a phone's heading). Wide windows keep one instance inside `.titlebar-lead` across 对话 ⇄ 看板, so the control and
+ * the focus on it stay through a switch. In 对话 the 看板 segment carries how many cards wait on the person, amber,
+ * while there are any. `icons`: the shell's switch also carries each view's glyph, shown in place of the words whenever
+ * the left slot is too narrow for the text form (workbench.css); the words stay its name and tooltip.
  */
 export function ViewSwitch({
   value,

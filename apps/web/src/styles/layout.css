@@ -63,7 +63,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
   --surface: var(--sidebar);
   display: flex;
   align-items: center;
-  gap: var(--sp-4);
+  gap: var(--sp-8);
   flex-shrink: 0;
   width: var(--sidebar-width);
   height: 100%;
@@ -103,28 +103,17 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
   margin-left: 0;
 }
 /*
- * Shut, the lead moves into the main area's title row and holds only ◧ and what the sidebar would otherwise offer, clear
- * of the traffic lights, which float over its corner.
+ * Shut, the lead moves into the main area's title row and holds the view switch plus what the sidebar would otherwise
+ * offer, clear of the traffic lights, which float over its corner.
  */
 .titlebar[data-shut] .titlebar-lead {
   --surface: var(--canvas);
-  /* Explicit, so it glides with the track: the left padding, ◧, the gap and ✎, then 等你处理 while something waits. */
-  width: calc(var(--lead-inset) + 2 * var(--lead-button-width) + var(--sp-4) + var(--sp-8));
-  /* Touch targets are larger, and the row's title must not start under them. */
+  gap: var(--sp-4);
+  width: auto;
   min-width: max-content;
   align-self: flex-start;
   height: 52px;
   padding-right: var(--sp-8);
-}
-.titlebar[data-shut][data-waiting] .titlebar-lead {
-  width: calc(var(--lead-inset) + 3 * var(--lead-button-width) + 2 * var(--sp-4) + var(--sp-8));
-}
-/* The space buttons' own 2px gap keeps the closed min-width equal to the animated width, so opening never jumps back. */
-.titlebar[data-shut][data-spaces] .titlebar-lead {
-  width: calc(var(--lead-inset) + 4 * var(--lead-button-width) + 2 * var(--sp-4) + var(--sp-2) + var(--sp-8));
-}
-.titlebar[data-shut][data-spaces][data-waiting] .titlebar-lead {
-  width: calc(var(--lead-inset) + 5 * var(--lead-button-width) + 3 * var(--sp-4) + var(--sp-2) + var(--sp-8));
 }
 @media (pointer: coarse) {
   .titlebar {
