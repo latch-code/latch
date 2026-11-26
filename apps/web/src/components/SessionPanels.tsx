@@ -426,10 +426,7 @@ export function SessionPanels({
         ) : plugin && summary ? (
           <PluginPanel key={plugin.id} panel={plugin} summary={summary} />
         ) : showing('overview') ? (
-          <>
-            {launcherNote}
-            {overview}
-          </>
+          overview
         ) : empty ? (
           <PanelEmpty choices={choices ?? []} onChoose={choose} {...(emptyTakesFocus ? { takesFocus: emptyTakesFocus } : {})}>
             {launcherNote}

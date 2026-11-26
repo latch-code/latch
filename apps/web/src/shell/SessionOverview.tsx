@@ -1,26 +1,25 @@
 import { useMemo, type ReactNode } from 'react'
-import { readsProjectFiles, type TaskSummary } from '@latch/protocol'
+import { readsProjectFiles, type FileChange, type Message, type TaskSummary } from '@latch/protocol'
 import {
   Button,
   Count,
   DiffGlyph,
   Icon,
-  StatusWord,
-  TerminalGlyph,
   BranchGlyph,
   PullRequestGlyph,
   LockGlyph,
   WarningGlyph,
   Tooltip,
   type IconComponent,
-  type StatusTone,
 } from '@latch/ui'
 import { overviewAgents } from './overviewAgents.ts'
 import { OverviewAgentSection } from './OverviewAgentSection.tsx'
+import { OverviewPendingSection, OverviewPlanSection, OverviewProjectSection, OverviewSessionSection } from './SessionOverviewMeta.tsx'
 import { switchWorkView } from '../preferences.ts'
 import { BranchName } from '../components/MiddleEllipsis.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { toolLabel, turnsOf } from '../conversation.ts'
+import { turnsOf } from '../conversation.ts'
+import { projectOf } from '../sessions.ts'
 import { deliveryChecks, useWorkbenchDelivery } from './useWorkbenchEvidence.ts'
 import type { ShellState } from './useShellLayout.tsx'
 import { currentLocale, defineCopy, plural } from '../core/i18n.ts'
@@ -28,12 +27,6 @@ import { describeFailure } from '../core/securityCopy.ts'
 
 const COPY = defineCopy(
   {
-    completed: '已完成',
-    failed: '失败',
-    stopped: '已停止',
-    running: '运行中',
-    attention: '等你处理',
-    queued: '已排队',
     last: (time: string) => `上次 ${time}`,
     conflictsAction: '查看冲突',
     gitStatus: '查看 Git 状态',
@@ -41,8 +34,8 @@ const COPY = defineCopy(
     push: '推送提交…',
     pullRequest: '查看 PR',
     openPR: '开 PR…',
-    noChanges: '本轮未记录文件改动',
     changes: '这次改动',
+    sessionChanges: '本会话改动',
     all: '全部',
     changesDenied: '这台设备不能读取项目改动',
     loading: '正在读取…',
@@ -52,9 +45,6 @@ const COPY = defineCopy(
     changesFailed: '读不到本轮改动',
     checking: '正在核对…',
     partial: '只列出部分',
-    checks: '检查',
-    unknown: '结果未知',
-    notReported: '未报告结果',
     delivery: '交付',
     deliveryDenied: '这台设备不能交付',
     retry: '重试',
@@ -70,12 +60,6 @@ const COPY = defineCopy(
     notLoaded: '还没读取',
   },
   {
-    completed: 'Completed',
-    failed: 'Failed',
-    stopped: 'Stopped',
-    running: 'Running',
-    attention: 'Needs you',
-    queued: 'Queued',
     last: (time: string) => `Last: ${time}`,
     conflictsAction: 'View conflicts',
     gitStatus: 'View Git status',
@@ -83,8 +67,8 @@ const COPY = defineCopy(
     push: 'Push commits…',
     pullRequest: 'View PR',
     openPR: 'Open PR…',
-    noChanges: 'No file changes recorded this turn',
     changes: 'Changes',
+    sessionChanges: 'Session changes',
     all: 'All',
     changesDenied: 'This device can’t read project changes',
     loading: 'Loading…',
@@ -94,9 +78,6 @@ const COPY = defineCopy(
     changesFailed: 'Can’t read changes from this turn',
     checking: 'Checking…',
     partial: 'Partial list',
-    checks: 'Checks',
-    unknown: 'Outcome unknown',
-    notReported: 'No result reported',
     delivery: 'Delivery',
     deliveryDenied: 'This device can’t deliver changes',
     retry: 'Retry',
@@ -113,29 +94,23 @@ const COPY = defineCopy(
   },
 )
 
-/** A command finishing is evidence about that command, never an invented test or CI count. */
-const commandWords = {
-  get completed() {
-    return COPY.completed
-  },
-  get failed() {
-    return COPY.failed
-  },
-  get cancelled() {
-    return COPY.stopped
-  },
-  get running() {
-    return COPY.running
-  },
-  get 'awaiting-approval'() {
-    return COPY.attention
-  },
-  get queued() {
-    return COPY.queued
-  },
-} as const
-
 const clock = (at: string) => new Date(at).toLocaleTimeString(currentLocale(), { hour: '2-digit', minute: '2-digit' })
+
+/** Earlier turns' recorded file outputs, newest touch first, used when the latest turn was a pure reply or question. */
+function sessionOutputs(messages: readonly Message[]): FileChange[] {
+  const byKey = new Map<string, { first: FileChange['change']; latest: FileChange }>()
+  for (const message of messages) {
+    for (const file of message.outputs ?? []) {
+      const key = `${file.root}:${file.path}`
+      const previous = byKey.get(key)
+      byKey.delete(key)
+      byKey.set(key, { first: previous ? previous.first : file.change, latest: file })
+    }
+  }
+  return [...byKey.values()]
+    .toReversed()
+    .map(({ first, latest }) => (first === 'created' && latest.change === 'modified' ? { ...latest, change: 'created' as const } : latest))
+}
 
 /**
  * One row of the summary, the same for every section: a 14px glyph, what it is about, then its state (an icon and a
@@ -180,11 +155,13 @@ function Section({ title, count, action, children }: { title: string; count?: nu
   )
 }
 
-/** The session's participants, the latest turn's changes and commands, and the repository's delivery state. */
+/** The session's participants, pending decisions, live plan, file changes, delivery state, and project/session facts. */
 export function SessionOverview({ shell, summary }: { shell: ShellState; summary: TaskSummary }) {
   const connected = shell.connection === 'connected'
   const canReadChanges = shell.canViewChanges && readsProjectFiles(shell.snapshot.device.dataScope)
   const detail = shell.current?.summary.id === summary.id ? shell.current : null
+  const panelActive =
+    shell.route.entry === 'sessions' && !shell.route.start && !shell.board && (shell.pageMode ? shell.infoPage : shell.columnOpen)
   const roster = useMemo(
     () => overviewAgents(summary.id, shell.snapshot.teams, detail?.messages ?? [], detail?.approvals ?? []),
     [summary.id, shell.snapshot.teams, detail?.messages, detail?.approvals],
@@ -208,21 +185,28 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
       },
     },
   }
+  const approvals = useMemo(
+    () => (detail ? detail.approvals : shell.snapshot.approvals.filter(approval => approval.sessionId === summary.id)),
+    [detail, shell.snapshot.approvals, summary.id],
+  )
+  const proposals = useMemo(
+    () => (shell.snapshot.workProposals ?? []).filter(proposal => proposal.from.sessionId === summary.id),
+    [shell.snapshot.workProposals, summary.id],
+  )
   const turn = detail ? turnsOf(detail.messages).at(-1) : undefined
   const messages = turn?.replies ?? []
-  const tools = messages.filter(message => message.role === 'tool')
-  const commands = tools.filter(message => message.tool?.kind === 'execute')
   const changes = detail?.fileChanges?.files ?? messages.flatMap(message => message.outputs ?? [])
-  const distinct = [...new Map(changes.map(file => [`${file.root}:${file.path}`, file])).values()]
+  const turnDistinct = [...new Map(changes.map(file => [`${file.root}:${file.path}`, file])).values()]
   const unavailable = detail?.fileChanges?.unavailable || messages.some(message => message.outputsUnavailable)
   const pending = detail?.fileChanges?.state === 'settling' || messages.some(message => message.outputsPending)
   const truncated = detail?.fileChanges?.truncated || messages.some(message => message.outputsTruncated)
-  const evidence = useWorkbenchDelivery(
-    shell.snapshot,
-    shell.connection,
-    shell.route.entry === 'sessions' && !shell.route.start && !shell.board && (shell.pageMode ? shell.infoPage : shell.columnOpen),
-    [summary.id],
+  const earlierDistinct = useMemo(
+    () => (detail && turnDistinct.length === 0 && !unavailable && !pending && !truncated ? sessionOutputs(detail.messages) : []),
+    [detail, pending, truncated, turnDistinct.length, unavailable],
   )
+  const usingSessionScope = turnDistinct.length === 0 && earlierDistinct.length > 0
+  const distinct = usingSessionScope ? earlierDistinct : turnDistinct
+  const evidence = useWorkbenchDelivery(shell.snapshot, shell.connection, panelActive, [summary.id])
   const entry = evidence.entries.get(summary.id)
   const state = entry?.state
   const pr = entry?.pr?.pr
@@ -247,23 +231,46 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
     </Button>
   )
   const showChanges = !canReadChanges || !detail || unavailable || pending || truncated || distinct.length > 0
-  const showChecks = commands.length > 0
   // A folder without Git has nothing to deliver, and what this device may not read is already said once above.
   const showDelivery =
     readsProjectFiles(shell.snapshot.device.dataScope) && (!shell.canDeliver || !!failure || entry?.notApplicable !== 'not-repository')
-  if (!roster.members.length && !roster.children.length && !showChanges && !showChecks && !showDelivery)
-    return (
-      <div className="session-overview">
-        <p className="session-overview-empty">{COPY.noChanges}</p>
-      </div>
-    )
+  const project = shell.catalog ? projectOf(summary, shell.catalog.workspaces) : undefined
+  const canReadBranches =
+    connected
+    && shell.catalog?.features?.projectFolderBranches === true
+    && shell.access.scopes.has('view')
+    && readsProjectFiles(shell.snapshot.device.dataScope)
+  const activeRun = connected && (summary.status === 'running' || summary.status === 'waiting-approval')
+
   return (
     <div className="session-overview">
       <OverviewAgentSection team rows={roster.members} {...agentSection} />
       <OverviewAgentSection rows={roster.children} {...agentSection} />
+      <OverviewPendingSection
+        approvals={approvals}
+        questions={detail?.questions ?? []}
+        proposals={proposals}
+        onApproval={id => {
+          shell.selectApproval(id)
+          showConversation()
+        }}
+        onQuestion={id => {
+          showConversation()
+          requestAnimationFrame(() =>
+            document.querySelector<HTMLElement>(`.workspace-view [data-question-id="${CSS.escape(id)}"] button:not(:disabled)`)?.focus({
+              preventScroll: true,
+            }),
+          )
+        }}
+        onProposal={messageId => {
+          if (messageId) shell.revealContextRow(summary.id, 'turn', messageId)
+          showConversation()
+        }}
+      />
+      {detail?.plan && detail.plan.length > 0 && <OverviewPlanSection plan={detail.plan} active={activeRun} />}
       {showChanges && (
         <Section
-          title={COPY.changes}
+          title={usingSessionScope ? COPY.sessionChanges : COPY.changes}
           {...(canReadChanges && detail && !unavailable && !pending ? { count: distinct.length } : {})}
           {...(distinct.length > 0
             ? {
@@ -271,7 +278,11 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
                   <Button
                     size="xs"
                     variant="ghost"
-                    onClick={() => shell.openChangesTab(turn?.user?.turnId ? { turnId: turn.user.turnId } : undefined)}>
+                    onClick={() =>
+                      shell.openChangesTab(
+                        usingSessionScope ? { scope: 'session' } : turn?.user?.turnId ? { turnId: turn.user.turnId } : undefined,
+                      )
+                    }>
                     {COPY.all}
                   </Button>
                 ),
@@ -298,7 +309,7 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
                     onClick={() =>
                       shell.openChangesTab({
                         file: { root: file.root, path: file.path },
-                        ...(turn?.user?.turnId ? { turnId: turn.user.turnId } : {}),
+                        ...(usingSessionScope ? { scope: 'session' as const } : turn?.user?.turnId ? { turnId: turn.user.turnId } : {}),
                       })
                     }>
                     <VisibleText text={file.path} />
@@ -315,43 +326,6 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
               {truncated && <Row icon={DiffGlyph}>{COPY.partial}</Row>}
             </>
           )}
-        </Section>
-      )}
-      {showChecks && (
-        <Section title={COPY.checks}>
-          {commands.map(message => {
-            // The row's own words, as the transcript says them; the tool's ID only behind hover. A finished command is
-            // not a passed test: its word stays neutral, without a check.
-            const label = toolLabel(message)
-            const words = label.mono || !label.verb ? label.object : `${label.verb} ${label.object}`
-            const tone: StatusTone = message.interrupted
-              ? 'warn'
-              : message.state === 'failed'
-                ? 'failed'
-                : message.state === 'running'
-                  ? 'running'
-                  : message.state === 'awaiting-approval'
-                    ? 'waiting'
-                    : 'neutral'
-            return (
-              <Row
-                key={message.id}
-                icon={TerminalGlyph}
-                state={
-                  // A lost connection stops the spinner where it is: the run was last seen running, not seen now.
-                  <StatusWord tone={tone} data-stale={tone === 'running' && !connected ? '' : undefined}>
-                    {message.interrupted ? COPY.unknown : message.state ? commandWords[message.state] : COPY.notReported}
-                  </StatusWord>
-                }
-                {...(tone === 'running' && seen ? { time: seen } : {})}>
-                <Tooltip content={message.toolName && message.toolName !== words ? message.toolName : undefined}>
-                  <code tabIndex={message.toolName && message.toolName !== words ? 0 : undefined}>
-                    <VisibleText text={words} />
-                  </code>
-                </Tooltip>
-              </Row>
-            )
-          })}
         </Section>
       )}
       {showDelivery && (
@@ -422,6 +396,21 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
           )}
         </Section>
       )}
+      <OverviewProjectSection
+        summary={summary}
+        project={project}
+        shell={shell}
+        active={panelActive}
+        canReadBranches={canReadBranches}
+        deliveryShown={showDelivery}
+      />
+      <OverviewSessionSection
+        summary={summary}
+        detail={detail}
+        harness={shell.topHarness}
+        shell={shell}
+        canOpenContext={shell.panelAvailable('context')}
+      />
     </div>
   )
 }
