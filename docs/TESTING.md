@@ -224,6 +224,8 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 
 `LATCH_GATEWAY_EVIDENCE_DIR` 与 `LATCH_AGY_EVIDENCE_DIR` 收每一轮去掉正文的结果。
 
+`apps/host/test/agent-consultation-replies.test.ts` 用受控时钟核对目标状态唤醒、静默回读次数、撤权和到期。`e2e/helper-chat.e2e.ts` 从发起聊天核对无回复时的待审批入口，并检查返回协作卡后的键盘焦点。
+
 个人 Agent 协作用 `apps/host/test/agent-consultations.test.ts` 核对内置文字回合没有工具、普通 ACP 按目标授权使用自己的模型，以及撤销后旧轮次不能发出委托。`agent-consultations-dsh.test.ts` 用假 DSH 核对旧授权与逐轮工具限制，`e2e/helper-chat.e2e.ts` 从设置页保存授权并检查协作回执。
 
 #### 单回合浏览器验收
@@ -544,6 +546,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 - 只在 macOS 上运行；没有 `LATCH_ELECTRON_E2E=1` 或在其他系统上时整组跳过。
 - 同一开关还控制 `desktop-*.e2e.ts`、`multi-host.e2e.ts`、`app-build.e2e.ts`，以及 `release-check.e2e.ts`、`file-tree-actions.e2e.ts` 与 `html-preview.e2e.ts` 的 Electron 部分。`e2e-desktop` 工作流只运行 `desktop.e2e.ts`；`pnpm check -- --plan` 另列与改动的桌面端文件同名的 `desktop-*.e2e.ts`（带这个开关），其他区域按文件名另跑。
 - `native-relay-edge.e2e.ts` 的 Electron 用例从设置导入文件，经 Host 的测试确认与本地 Linux/TLS 中继登记。丢失保存成功的回执后用同一请求重试，再核对手机配对读到的签名连接簿及 Host 的签发状态。截图不包含配对信息。另一用例让真实 Host 经本地 TLS 的 Workers 适配器导入 Workers 中继文件（两个地址），测试两次只留一条测试路由，签进手机连接簿，拒绝另一把中继密钥并移除。运营者的验收命令在 `apps/relay-edge/test/accept.test.ts` 对同一适配器运行。
+- `work-delegation.e2e.ts` 用两个临时 Host 和配对的 HTTPS 连接，从真实 Electron 待办点选助手。目标接单后丢弃响应，刷新原待办须能找到同一回合，执行一次，原文与结果分属各自的电脑。覆盖三种宽度和浅深色。
 - Host 在测试进程内用 `startTestHost` 启动，测试用 `writeHostState` 写出记录测试进程 PID 的 `host.json`，再启动 `apps/desktop/src/main.cjs --latch-host-state=<host.json> --latch-user-data=<临时目录> --use-mock-keychain`。
 - 例外是 `desktop-rebuild.e2e.ts`：它用 `ensureDesktopHost` 从 `dist/start.js` 启动真实 Host（临时数据目录，`policy.json` 停用本机确认，离线连接码连接），在 Host 运行时执行 `pnpm build:web` 重写 `dist/web`，再检查启动器先重启它、窗口连上且没有「转发请求失败」。
 - 临时的 `--latch-user-data` 让凭据文件不碰用户的桌面端数据，`--use-mock-keychain` 让 safeStorage 不使用登录钥匙串。Electron 的环境来自 `desktopShellEnvironment`，不带 Host 设置、模型密钥与调试开关。

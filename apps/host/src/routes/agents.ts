@@ -6,6 +6,7 @@ import type {
   AgentHome,
   AgentImportPreview,
   AgentImportResult,
+  AgentMention,
   ChangedFile,
   CustomAgentDetail,
   CustomAgentList,
@@ -105,6 +106,25 @@ const avatarUpload = z.strictObject({
 })
 /** Opening an Agent's chat: its process may start before the person writes. */
 const WARM = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/warm$/u
+const MENTION_RECEIPT = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/mentions\/by-request\/([A-Za-z0-9_-]{8,128})$/u
+/** A paired computer follows the turn by identity. Its answer, failures and approval details stay on this Host. */
+function mentionReference(mention: AgentMention) {
+  const { id, requestId, sourceAgentId, targetAgentId, initiator, text, status, canRetry, targetSessionId, targetMessageId, reply } =
+    mention
+  return {
+    id,
+    requestId,
+    sourceAgentId,
+    targetAgentId,
+    initiator,
+    text,
+    status,
+    canRetry,
+    targetSessionId,
+    targetMessageId,
+    reply: reply && { messageId: reply.messageId },
+  }
+}
 const MENTIONS = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/mentions$/u
 const EXPORT = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36})\/export(\/preview)?$/u
 const IMPORT = /^\/link\/api\/custom-agents\/import(\/preview)?$/u
@@ -140,10 +160,17 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
     context.log(`启动时没有清除不再使用的 Agent 头像：${String(error)}`),
   )
   return {
-    features: () => ({ customAgents: true, agentWorkComputer: true, agentMentions: true }) satisfies HostFeatures,
+    features: () => ({ customAgents: true, agentWorkComputer: true, agentMentions: true, agentMentionLookup: true }) satisfies HostFeatures,
     async route({ req, res, caller, path, method }) {
       if (path !== '/link/api/custom-agents' && !path.startsWith('/link/api/custom-agents/')) return false
       const actor = deps.access(caller, method !== 'GET')
+      const receipt = method === 'GET' && MENTION_RECEIPT.exec(path)
+      if (receipt) {
+        context.requireDevice(caller)
+        res.setHeader('cache-control', 'no-store')
+        json(res, mentionReference(await deps.mentions().byRequest(caller, receipt[1]!, receipt[2]!)))
+        return true
+      }
       const mentions = MENTIONS.exec(path)
       if (mentions) {
         context.requireDevice(caller)
@@ -151,7 +178,18 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
         if (method === 'GET') json(res, { mentions: await deps.mentions().list(caller, mentions[1]!) })
         else if (method === 'POST') {
           const body = await jsonBody(req, CONFIG_BODY_LIMIT)
-          json(res, await deps.mentions().send(caller, mentions[1]!, body, undefined, res))
+          const reference = new URL(req.url ?? '/', 'http://latch.invalid').searchParams.get('receipt') === 'reference'
+          const reader = reference ? deps.access(caller, false) : undefined
+          try {
+            const mention = await deps.mentions().send(caller, mentions[1]!, body, undefined, res)
+            reader?.authorize()
+            json(res, reference ? mentionReference(mention) : mention)
+          } catch (cause) {
+            if (!reference) throw cause
+            const status = cause instanceof AppError ? cause.status : cause instanceof z.ZodError ? 400 : 500
+            const expired = cause instanceof AppError && cause.code === 'agent-mention-expired'
+            throw new AppError(status, expired ? 'agent-mention-expired' : 'agent-mention-unavailable', '工作电脑未返回可用回执。')
+          }
         } else throw new AppError(404, 'not-found', '接口不存在。')
         return true
       }

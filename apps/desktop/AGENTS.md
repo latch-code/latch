@@ -14,7 +14,7 @@ electron-main：CommonJS，不导 TS；仅依赖 `@latch/protocol`。
 - 每个 webContents 加载前禁用非代理 WebRTC UDP；应用 session 用实际监听的回环黑洞代理并关隐式回环绕过。HTML 脚本开关只由有此二限的壳声明。
 - 页面限 `latch://app/` 或所属 `latch://h-<hostId>/`（独立分区、凭据与证书）。主窗口切页保留各自状态，隐藏本机浏览器标签并拒 Agent 输入。会话仍可单开。本机真实点击直开网页、邮件与本地网络设置，远程和脚本外链先确认，其他协议拒绝。`latch://app/about` 禁脚本、取前台配色。
 - preload 仅暴露 `latchShell`。IPC 限顶层；远端只到电脑列表、窗口操作与当前页是否选中、spaces、设置菜单、全屏及关于配色（ARCHITECTURE）。电脑写入、打开与切换需前台页一秒内真实手势。生命周期只收布尔。`/pairings` 仅 macOS 主进程申请，链接不进页面或日志。
-- 工作电脑需本机顶层真实点击、身份与权限复核；原生菜单只返回助手 ID。
+- 工作电脑限本机顶层真实手势，复核身份权限；原生菜单仅给助手 ID。跨机待办原生确认目标与原文。
 - 通知只读 Host 状态，取消/中断不冒充完成；首个后台结束时开通知；偏好串行存，标题默认隐藏。
 - 主进程只按 `desktop-launch.json` 启动 `dist/start.js`。包内重启核对并记录实际 Node，打包关闭三个 Node 入口。`--disable-sigusr1` 在前，环境白名单。主进程报告睡眠与停止（页面 403）。包内 CLI 路径只给本机顶层页（ARCHITECTURE）。
 - 设备密钥与凭据只在主进程，safeStorage 加密存 0600 文件，无安全存储不存。

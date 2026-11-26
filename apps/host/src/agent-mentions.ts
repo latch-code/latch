@@ -38,6 +38,8 @@ const record = z.strictObject({
 type MentionRecord = z.infer<typeof record>
 const MAX_RECORDS = 2048
 const MAX_TEXT_BYTES = 8 * 1024 * 1024
+// Reserve a retirement receipt for every live row: deletion must be able to erase its content even at capacity.
+const MAX_RECENT_REQUESTS = 32_768
 const RECEIPT_MS = 7 * 24 * 60 * 60 * 1000
 const state = z.strictObject({
   records: z.array(record).max(MAX_RECORDS),
@@ -113,17 +115,40 @@ export class AgentMentions {
     return views.filter(item => existing.has(item.id) && live.has(item.targetAgentId))
   }
 
-  async get(caller: DeviceCaller, sourceAgentId: string, id: string): Promise<AgentMention> {
-    this.deps.access(caller, false)
+  get(caller: DeviceCaller, sourceAgentId: string, id: string): Promise<AgentMention> {
+    return this.findReceipt(caller, sourceAgentId, row => row.id === id)
+  }
+
+  byRequest(caller: DeviceCaller, sourceAgentId: string, requestId: string): Promise<AgentMention> {
+    return this.findReceipt(
+      caller,
+      sourceAgentId,
+      row => row.deviceId === caller.device.id && row.initiator === 'person' && row.requestId === requestId,
+      true,
+    )
+  }
+
+  private async findReceipt(
+    caller: DeviceCaller,
+    sourceAgentId: string,
+    matches: (row: MentionRecord) => boolean,
+    requireRun = false,
+  ): Promise<AgentMention> {
+    const authorize = () => {
+      this.deps.access(caller, false)
+      if (requireRun) this.deps.access(caller, true)
+    }
+    authorize()
     this.deps.owner(sourceAgentId, false)
     await this.journal.recover()
-    const item = this.journal.read().records.find(row => row.id === id && row.sourceAgentId === sourceAgentId)
+    authorize()
+    const item = this.journal.read().records.find(row => row.sourceAgentId === sourceAgentId && matches(row))
     if (!item) throw missing()
     const value = await this.present(caller, item, new Map())
-    this.deps.access(caller, false)
+    authorize()
     this.deps.owner(sourceAgentId, false)
     this.deps.owner(item.targetAgentId, false)
-    if (!this.journal.read().records.some(row => row.id === id)) throw missing()
+    if (!this.journal.read().records.some(row => row.id === item.id)) throw missing()
     return value
   }
 
@@ -277,6 +302,7 @@ export class AgentMentions {
     if (!turn || !detail) return view
     delete view.canRetry
     view.targetSessionId = session
+    view.targetMessageId = turn.turn.userMessageId
     const last = turn.replies.at(-1)
     if (last) {
       const excerpt = cut(redactKnownSecrets(last.text), 16_000)
@@ -303,13 +329,28 @@ export class AgentMentions {
       else if (end?.state === 'failed' || end?.state === 'cancelled') view.status = end.state
       // A completed intermediate assistant message can precede a cancelled tool; its text alone cannot prove success.
     }
+    if (view.status === 'waiting-approval' && turn.current && turn.turn.runId) {
+      const approval = detail.approvals.find(
+        item =>
+          item.sessionId === session
+          && item.toolCallId
+          && turn.rows.some(row => row.role === 'tool' && row.id === `tool:${item.toolCallId}`),
+      )
+      if (approval) view.approval = { id: approval.id, runId: turn.turn.runId }
+    }
     return view
   }
 
   /** Reclaim only a refused submission or a turn the Host can prove has ended. An unanswered delivery stays retryable. */
   private async makeRoom(draft: State, next: MentionRecord) {
     const now = Date.now()
-    for (const [key, until] of Object.entries(draft.retired)) if (until <= now) delete draft.retired[key]
+    let recent = draft.records.length
+    for (const [key, until] of Object.entries(draft.retired)) {
+      if (until <= now) delete draft.retired[key]
+      else recent++
+    }
+    if (recent >= MAX_RECENT_REQUESTS)
+      throw new AppError(429, 'agent-mention-receipts-full', '近期提及过多，请等七天内的旧回执到期后再发。')
     let bytes = Buffer.byteLength(JSON.stringify(draft.records)) + Buffer.byteLength(JSON.stringify(next))
     if (draft.records.length < MAX_RECORDS && bytes < MAX_TEXT_BYTES) return
     const remove = new Set<string>()
@@ -332,18 +373,30 @@ export class AgentMentions {
       draft.retired[sha256Hex(item.requestId)] = now + RECEIPT_MS
       if (draft.records.length - remove.size < MAX_RECORDS && bytes < MAX_TEXT_BYTES) break
     }
-    if (Object.keys(draft.retired).length > 32_768)
-      throw new AppError(429, 'agent-mention-receipts-full', '近期提及过多，请等七天内的旧回执到期后再发。')
     if (draft.records.length - remove.size >= MAX_RECORDS || bytes >= MAX_TEXT_BYTES)
       throw new AppError(409, 'agent-mention-capacity', '尚未结束的提及占满了记录，请先处理目标聊天中的进行项或确认结果未知的发送。')
     draft.records = draft.records.filter(row => !remove.has(row.id))
   }
 
-  forget(kind: 'agent' | 'session', id: string): Promise<void> {
+  /** An unconfirmed first turn may have reached a chat before its session ID was recorded. Read its first input before deletion. */
+  async firstMentionIn(owner: string | undefined, sessionId: string): Promise<string | undefined> {
+    if (!owner) return undefined
+    await this.journal.recover()
+    const firsts = this.journal
+      .read()
+      .records.filter(row => !row.refusal && !row.destination && !row.targetSessionId && row.targetAgentId === owner)
+    if (!firsts.length) return undefined
+    const detail = await this.deps.detail(sessionId)
+    if (detail.summary.id !== sessionId || detail.summary.automationId || detail.summary.forkOf) return undefined
+    const requestId = detail.messages.find(row => row.role === 'user')?.requestId
+    return firsts.find(row => row.dispatchId === requestId)?.id
+  }
+
+  forget(kind: 'agent' | 'session', id: string, firstMentionId?: string): Promise<void> {
     return this.removeWhere(row =>
       kind === 'agent'
         ? row.sourceAgentId === id || row.targetAgentId === id
-        : row.sourceSessionId === id || row.targetSessionId === id || row.destination === id,
+        : row.sourceSessionId === id || row.targetSessionId === id || row.destination === id || row.id === firstMentionId,
     )
   }
 
@@ -351,7 +404,12 @@ export class AgentMentions {
     const key = randomUUID()
     await this.journal.recover()
     await this.journal.change(key, key, draft => {
-      const kept = draft.records.filter(row => !matches(row))
+      const until = Date.now() + RECEIPT_MS
+      const kept = draft.records.filter(row => {
+        if (!matches(row)) return true
+        draft.retired[sha256Hex(row.requestId)] = until
+        return false
+      })
       if (kept.length === draft.records.length) return { value: true, changed: false }
       draft.records = kept
       return { value: true }

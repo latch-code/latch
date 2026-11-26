@@ -220,6 +220,7 @@ it('shows a desktop Agent-initiated consultation in place and returns to the sam
     expect(mention).toMatchObject({ sourceAgentId: source.id, targetAgentId: target.id, initiator: 'agent', reply: { text: reviewAnswer } })
     const card = page.locator(`[data-agent-mention-id="${mention!.id}"]`)
     await card.getByText(reviewQuestion, { exact: true }).waitFor()
+    await card.getByText('仅回复文字', { exact: true }).waitFor()
     await card.getByRole('button', { name: '展开回复' }).click()
     await card.getByText('两台设备同时编辑，保留双方的内容并提示冲突。', { exact: false }).waitFor()
     await shoot(page, 'pc-mention-result-light')
@@ -246,6 +247,68 @@ it('shows a desktop Agent-initiated consultation in place and returns to the sam
     await choosePeer(target.id)
     await page.locator(`[data-message-id="${mention!.reply!.messageId}"]`).waitFor()
     expect(await back.count()).toBe(0)
+  } finally {
+    await browser.close()
+    await host.close()
+  }
+})
+
+it('opens the delegated approval from its receipt before a reply exists, and returns to the same exchange', async () => {
+  const host = await startTestHost({ plugins: [fixture] })
+  const browser = await chromium.launch(browserLaunchOptions())
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', reducedMotion: 'reduce' })
+  try {
+    page.setDefaultTimeout(15000)
+    const owner = await host.enroll({ listener: 'unix' })
+    const source = await createPeer(owner, '编辑', '整理资料')
+    const target = await createPeer(owner, '架构师', '检查改动')
+    await owner.json('custom-agents/' + source.id, {
+      method: 'PATCH',
+      body: {
+        requestId: randomUUID(),
+        baseRevision: source.revision,
+        canConsultAgents: true,
+        canConsultLocalAgents: true,
+      },
+    })
+    await owner.json('custom-agents/' + target.id, {
+      method: 'PATCH',
+      body: {
+        requestId: randomUUID(),
+        baseRevision: target.revision,
+        useOwnPermissionsForConsultations: true,
+      },
+    })
+    await fullScopeBrowser(page, host, owner, '审批协作验收')
+    await place(page, '我的 Agent').click()
+    await page.locator(`button[data-agent-id="${source.id}"]`).filter({ visible: true }).first().click()
+    const field = page.getByRole('textbox', { name: '给编辑发消息', exact: true })
+    await field.fill(consultRequest)
+    await field.press('Meta+Enter')
+    const card = page.locator('.agent-mention-record').filter({ hasText: reviewQuestion })
+    const open = card.getByRole('button', { name: '查看待审批操作', exact: true })
+    await open.waitFor()
+    await card.getByText('按自身权限接单', { exact: true }).waitFor()
+    const [receipt] = (await owner.json<{ mentions: AgentMention[] }>(`custom-agents/${source.id}/mentions`)).mentions
+    expect(receipt).toMatchObject({ status: 'waiting-approval', approval: { id: expect.any(String) } })
+    expect(receipt?.reply).toBeUndefined()
+    await mkdir(OUT, { recursive: true })
+    for (const [width, height, theme] of [
+      [1440, 900, 'light'],
+      [834, 1112, 'light'],
+      [390, 844, 'dark'],
+    ] as const) {
+      await page.setViewportSize({ width, height })
+      await page.emulateMedia({ colorScheme: theme })
+      await open.scrollIntoViewIfNeeded()
+      await noHorizontalOverflow(page)
+      await shoot(page, `consultation-pending-${width}-${theme}`)
+    }
+    await open.click()
+    await page.locator(`[data-approval-id="${receipt!.approval!.id}"]`).filter({ visible: true }).first().waitFor()
+    await page.getByRole('button', { name: '返回编辑', exact: true }).click()
+    await expect.poll(() => open.evaluate(el => el === document.activeElement)).toBe(true)
+    expect((await owner.json<AppSnapshot>('snapshot')).approvals.map(item => item.id)).toContain(receipt!.approval!.id)
   } finally {
     await browser.close()
     await host.close()
@@ -783,6 +846,15 @@ const fixture: HarnessPlugin = {
   version: '1',
   description: '',
   activate(context) {
+    context.registerTool({
+      name: 'review_delivery',
+      description: '检查交付夹具',
+      parameters: { type: 'object', properties: {} },
+      requiresApproval: true,
+      async execute() {
+        return { text: '已检查' }
+      },
+    })
     context.registerSkill({ id: 'digest', name: '摘要清单', description: '把资料整理成一页摘要', content: 'Draft a one-page summary.' })
     context.registerProvider({
       id: 'helper-fixture',
@@ -808,11 +880,17 @@ const fixture: HarnessPlugin = {
           return
         }
         if (last?.role === 'tool' && last.toolCallId === 'peer-review') {
-          yield { type: 'text', text: '评审意见已收到。我会把重连、幂等和冲突处理加入验收清单。' }
+          const pending = last.content.includes('waiting-approval')
+          yield { type: 'text', text: pending ? '架构师正在等你批准检查。' : '评审意见已收到。我会把重连、幂等和冲突处理加入验收清单。' }
           yield { type: 'finish', reason: 'stop' }
           return
         }
         if (last?.role === 'user' && last.content.endsWith(reviewQuestion)) {
+          if (tools?.some(item => item.name === 'review_delivery')) {
+            yield { type: 'tool-call', call: { id: 'check-delivery', name: 'review_delivery', arguments: {} } }
+            yield { type: 'finish', reason: 'tool-calls' }
+            return
+          }
           yield { type: 'text', text: reviewAnswer }
           yield { type: 'finish', reason: 'stop' }
           return

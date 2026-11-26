@@ -78,6 +78,7 @@
   overflow-wrap: anywhere;
 }
 .item-thread-post-state {
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   gap: var(--sp-6);
@@ -230,4 +231,16 @@
   min-width: 0;
   white-space: normal;
   overflow-wrap: anywhere;
+}
+
+.item-thread-post-state[data-remote-receipt] > .ui-button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.item-thread-remote-scope {
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
 }

@@ -199,6 +199,21 @@ export interface WorkPostReplyAnswer {
   nextOffset?: number
 }
 
+/** The source Host's receipt of an explicit delivery to a paired work computer. Results stay on that computer. */
+export interface WorkPostRemote {
+  /** The source shortcut and the exact destination the person chose. */
+  customAgentId: string
+  hostId: string
+  agentId: string
+  /** The destination enrollment that can look up or retry this request. */
+  deviceId?: string
+  revision: number
+  status: 'prepared' | 'offline' | 'unknown' | 'running' | 'waiting-approval' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+  mentionId?: string
+  sessionId?: string
+  messageId?: string
+}
+
 /** One post of a 待办's thread: only a person writes one. A reply is shown under it, never copied into the thread. */
 export interface WorkPost {
   /** `pst_` and 22 base64url characters. */
@@ -207,6 +222,7 @@ export interface WorkPost {
   /** 1–4,000 characters, as the person wrote them. */
   text: string
   target?: WorkPostTarget
+  remote?: WorkPostRemote
   delivery?: WorkPostDelivery
   turn?: WorkPostTurn
   reply?: WorkPostReply

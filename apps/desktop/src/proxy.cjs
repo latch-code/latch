@@ -607,6 +607,7 @@ function classifyRoute(method, pathname) {
   const lower = decoded.toLowerCase()
   if (lower === '/link/api/credentials' || lower.startsWith('/link/api/credentials/')) return { kind: 'credentials' }
   if (method === 'POST' && pathname === '/link/api/attachments') return { kind: 'attachment-upload' }
+  if (/^\/link\/api\/work\/items\/[^/]+\/posts\/(?:[^/]+\/)?remote(?:\/|$)/u.test(lower)) return { kind: 'work-receipt' }
   if (isFolderAddRoute(method, lower)) return { kind: 'folders' }
   // The browser provider is main itself (browser-agent.cjs): the page can neither register as one nor answer its calls.
   if (lower === '/link/api/browser-provider' || lower.startsWith('/link/api/browser-provider/')) return { kind: 'browser-provider' }
@@ -1250,6 +1251,13 @@ function createShellProxy(options) {
       if (route.kind === 'host-state') {
         await discardRequestBody(request)
         return errorResponse(403, 'shell-managed', '电脑的运行状态由 Latch 桌面端报告')
+      }
+      if (route.kind === 'work-receipt') {
+        if (origin !== 'shell') {
+          await discardRequestBody(request)
+          return errorResponse(403, 'shell-managed', '跨电脑委托由 Latch 桌面端处理')
+        }
+        return await forward(request, target, { kind: 'forward' })
       }
       if (route.kind === 'host-update') {
         if (origin !== 'shell') {

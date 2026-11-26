@@ -36,6 +36,8 @@ export const MENTION_COPY = defineCopy(
     collapse: '收起回复',
     from: (source: string, target: string) => `${source}联系了${target}`,
     open: '打开对方聊天',
+    approval: '查看待审批操作',
+    modes: { 'text-only': '仅回复文字', 'own-permissions': '按自身权限接单' },
     full: '查看完整回复',
     retry: '重试同一请求',
     abandon: '放弃等待',
@@ -72,6 +74,8 @@ export const MENTION_COPY = defineCopy(
     collapse: 'Collapse reply',
     from: (source: string, target: string) => `${source} asked ${target}`,
     open: 'Open recipient chat',
+    approval: 'Review pending approval',
+    modes: { 'text-only': 'Text-only reply', 'own-permissions': 'Uses own permissions' },
     full: 'View full reply',
     retry: 'Retry the same request',
     abandon: 'Stop waiting',
@@ -183,6 +187,16 @@ export function useAgentMentions(snapshot: AppSnapshot, candidate: string | unde
   const rows = source && read?.scope === scope && read.source === source ? read.rows : []
   const readError = source && read?.scope === scope && read.source === source ? read.error : undefined
   const active = rows.some(unsettled)
+  // SSE only wakes a receipt read. A later turn on the same recipient must never settle this exchange.
+  const pendingTargets = new Set(rows.filter(unsettled).map(row => row.targetSessionId))
+  const targetStates = pendingTargets.size
+    ? JSON.stringify(
+        snapshot.tasks
+          .filter(task => pendingTargets.has(task.id))
+          .sort((a, b) => a.id.localeCompare(b.id))
+          .map(task => [task.id, task.runId, task.status, task.runOutcome]),
+      )
+    : ''
   const atWork =
     source && snapshot.tasks.some(task => topicOwner(task) === source && (task.status === 'running' || task.status === 'waiting-approval'))
   useEffect(() => {
@@ -235,7 +249,7 @@ export function useAgentMentions(snapshot: AppSnapshot, candidate: string | unde
       clearTimeout(timer)
       controller.abort()
     }
-  }, [scope, source, online, active, atWork, revision, device])
+  }, [scope, source, online, active, atWork, targetStates, revision, device])
 
   const agents = snapshot.customAgents ?? []
   const targets =
@@ -449,7 +463,13 @@ export function AgentMentionHistory({
         const source = agents?.find(agent => agent.id === item.sourceAgentId)
         const route =
           item.initiator === 'agent' ? MENTION_COPY.from(ownerName(agents, item.sourceAgentId), name) : MENTION_COPY.byPerson(name)
-        const targetAvailable = !!item.targetSessionId && snapshot.tasks.some(task => task.id === item.targetSessionId)
+        const session = snapshot.tasks.find(task => task.id === item.targetSessionId)
+        const targetAvailable = !!session && topicOwner(session) === item.targetAgentId
+        const approval =
+          item.approval
+          && session?.runId === item.approval.runId
+          && snapshot.approvals.some(row => row.id === item.approval!.id && row.sessionId === item.targetSessionId)
+        const mode = item.initiator === 'agent' && item.consultationMode ? MENTION_COPY.modes[item.consultationMode] : undefined
         const canRetry =
           item.canRetry
           && item.status === 'unknown'
@@ -506,8 +526,9 @@ export function AgentMentionHistory({
                 <VisibleText text={item.failure} />
               </p>
             )}
-            {(targetAvailable || canRetry) && (
+            {(targetAvailable || canRetry || mode) && (
               <footer className="agent-mention-actions">
+                {mode && <span className="agent-mention-mode">{mode}</span>}
                 {canRetry && (
                   <Button size="xs" disabled={!mentions.online} onClick={() => void mentions.retry(item)}>
                     {MENTION_COPY.retry}
@@ -515,7 +536,7 @@ export function AgentMentionHistory({
                 )}
                 {targetAvailable && (
                   <Button size="xs" variant="ghost" data-open-agent-mention="" onClick={() => open(item)}>
-                    {item.reply?.more ? MENTION_COPY.full : MENTION_COPY.open}
+                    {approval ? MENTION_COPY.approval : item.reply?.more ? MENTION_COPY.full : MENTION_COPY.open}
                     <Icon icon={ChevronRightGlyph} size={12} />
                   </Button>
                 )}

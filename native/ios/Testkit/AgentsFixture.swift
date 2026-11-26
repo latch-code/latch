@@ -5,6 +5,12 @@ import LatchNativeCore
 func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     let value = try NativeJSON.decode(JSONSerialization.data(withJSONObject: input))
     let snapshot = value["snapshot"], catalog = snapshot["catalog"]
+    if case let .array(receipts) = value["consultations"], let owner = value["owner"].string {
+        return ["receipts": receipts.compactMap { raw -> [String: String]? in
+            guard let row = PhoneAgentConsultation(raw, owner: owner) else { return nil }
+            return ["action": row.chatAction(in: snapshot, entry: PhoneAgents.entry(snapshot, id: row.target)), "mode": row.mode?.rawValue].compactMapValues { $0 }
+        }]
+    }
     if let owner = value["mentionOwner"].string, let target = value["target"].string {
         let write = try PhoneAgentMentions.request(owner: owner, target: target, text: "  检查这份草稿  ")
         let input = try NativeJSON.decode(write.body)

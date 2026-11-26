@@ -10,7 +10,15 @@ import {
   UpdateWindow,
   updateWindowInputSchema,
 } from './update-window.ts'
-import { CONSULT_AGENT, CONSULT_TOOLS, ConsultationTurns, LIST_AGENTS, consultDenied, consultInput } from './agent-consultations.ts'
+import {
+  CONSULT_AGENT,
+  CONSULT_TOOLS,
+  ConsultationReplies,
+  ConsultationTurns,
+  LIST_AGENTS,
+  consultDenied,
+  consultInput,
+} from './agent-consultations.ts'
 import { CustomAgents, harnessFixed, rememberRequest, type AgentActor, type FirstChatStart } from './custom-agents.ts'
 import { DataExports } from './data-export.ts'
 import { AgentFolders, HomeHelper, archiveLabel } from './agent-folders.ts'
@@ -2313,6 +2321,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     )
     await registry.enable('standard-harness')
     const consultationTurns = new ConsultationTurns()
+    const consultationReplies = new ConsultationReplies()
     const customAgents = await CustomAgents.open({
       dataDir,
       audit,
@@ -3288,8 +3297,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function removeSessionRecords(id: string, options: { original?: boolean } = {}): Promise<void> {
       memoryRefusals.delete(id)
       await keepWorktreePrivacy(id)
+      const first = await agentMentions.firstMentionIn(sessionOwner(id), id)
       await harnessHub.remove(id, options)
-      await agentMentions.forget('session', id)
+      await agentMentions.forget('session', id, first)
       await conversationRefs.forget(id)
       await promptQueues.forgetSession(id)
       await questions.forgetSession(id)
@@ -3941,13 +3951,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           await rememberFromPerson({ deviceId: caller.device.id, actor: actorOf(caller) }, sessionId, text, requestId)
         },
         async agentChat(caller, customAgentId) {
+          customAgents.assertWorksHere(customAgentId)
           if (customAgentId !== GENERAL_AGENT_ID && !customAgents.list().some(agent => agent.id === customAgentId)) return undefined
           await migrateAgentChats(caller)
+          customAgents.assertWorksHere(customAgentId)
           const chat = customAgents.chats()[customAgentId]
           if (!chat) throw new AppError(503, 'agent-chat-history-unknown', '旧会话尚未核对完成，请稍后再试。')
           return chat.state === 'ready' ? { state: 'ready', sessionId: chat.sessionId } : { state: chat.state }
         },
         questions: id => questions.view(id),
+        requireDesktop,
+        workComputer: id => customAgents.list().find(agent => agent.id === id)?.workComputer,
         agentAccess: caller => {
           agentAccess(caller, true)
         },
@@ -6908,7 +6922,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         target: { kind: 'agent', customAgentId: agentId },
         text: question,
       }
-      let mention = await consultationTurns.prompt(undefined, () =>
+      const sent = await consultationTurns.prompt(undefined, () =>
         agentMentions.send(caller, owner, body, {
           sessionId,
           name: owner === GENERAL_AGENT_ID ? '通用' : customAgents.get(owner).name,
@@ -6916,12 +6930,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           authorize: check,
         }),
       )
-      const deadline = Date.now() + 45_000
-      while ((mention.status === 'running' || mention.status === 'sending') && Date.now() < deadline) {
-        await delay(750, undefined, { signal })
-        check()
-        mention = await agentMentions.get(caller, owner, mention.id)
-      }
+      const mention = await consultationReplies.wait(sent, {
+        signal,
+        authorize: check,
+        read: () => agentMentions.get(caller, owner, sent.id),
+      })
       check()
       if (mention.status === 'completed' && mention.reply) {
         await harnessHub.markOutsideContent(sessionId, 'agent-mention')
@@ -9688,6 +9701,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             fallback = true
             continue
           }
+          consultationReplies.observed(detail.summary)
           const signature = JSON.stringify([listSignature(detail.summary), detail.approvals])
           const summaryChanged = summaries.get(sessionId) !== signature
           summaries.set(sessionId, signature)

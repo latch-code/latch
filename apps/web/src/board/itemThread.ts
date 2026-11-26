@@ -1,6 +1,8 @@
 import {
   GENERAL_AGENT_ID,
+  type AgentWorkComputer,
   type AppSnapshot,
+  type ComputerSummary,
   type TaskSummary,
   type WorkItemSummary,
   type WorkPost,
@@ -41,14 +43,18 @@ export const THREAD_COPY = defineCopy(
 export type ThreadTarget =
   | { kind: 'session'; id: string; label: string; harnessId?: string }
   | { kind: 'agent'; id: string; label: string; ready: boolean }
+  | { kind: 'remote'; id: string; label: string; workComputer: AgentWorkComputer; computer: ComputerSummary }
+
+export type ThreadRecipient = WorkPostTarget | { customAgentId: string; workComputer: AgentWorkComputer }
 
 /**
  * Who a post may name, as this device was given them: the 待办's sessions it lists (Code sessions), then 通用 and 我的
- * Agent when it may read them. An Agent takes a post only in a chat it already has.
+ * Agent when it may read them. Local Agents use an existing chat. Bound Agents require a paired work computer.
  */
 export function threadTargets(
   snapshot: Pick<AppSnapshot, 'tasks' | 'customAgents' | 'agentChats'>,
   item: Pick<WorkItemSummary, 'sessionIds'>,
+  computers?: readonly ComputerSummary[],
 ): ThreadTarget[] {
   const sessions = item.sessionIds.flatMap(id => {
     const task = snapshot.tasks.find(entry => entry.id === id)
@@ -68,7 +74,11 @@ export function threadTargets(
   return [
     ...sessions,
     { kind: 'agent', id: GENERAL_AGENT_ID, label: AGENT_SPACE_COPY.general, ready: ready(GENERAL_AGENT_ID) },
-    ...snapshot.customAgents.map(agent => ({ kind: 'agent' as const, id: agent.id, label: agent.name, ready: ready(agent.id) })),
+    ...snapshot.customAgents.flatMap<ThreadTarget>(agent => {
+      if (!agent.workComputer) return [{ kind: 'agent', id: agent.id, label: agent.name, ready: ready(agent.id) }]
+      const computer = computers?.find(row => !row.local && row.hostId === agent.workComputer?.hostId)
+      return computer ? [{ kind: 'remote', id: agent.id, label: agent.name, workComputer: agent.workComputer, computer }] : []
+    }),
   ]
 }
 
@@ -86,7 +96,11 @@ export function mentionAt(text: string, caret: number): { start: number; query: 
 /** Targets whose name holds the query, ignoring case; sessions first, as listed. */
 export function matchTargets(targets: readonly ThreadTarget[], query: string): ThreadTarget[] {
   const needle = query.toLocaleLowerCase()
-  return targets.filter(target => target.label.toLocaleLowerCase().includes(needle))
+  return targets.filter(
+    target =>
+      target.label.toLocaleLowerCase().includes(needle)
+      || (target.kind === 'remote' && target.computer.name.toLocaleLowerCase().includes(needle)),
+  )
 }
 
 /** The text with the `@word` at `start` taken out: the target is the chip, not part of what is sent. */
@@ -108,15 +122,30 @@ export function postPreview(text: string): string | undefined {
   return preview.length < text.length ? `${preview.trimEnd()}…` : undefined
 }
 
-export const targetKey = (target: WorkPostTarget): string => ('sessionId' in target ? `s:${target.sessionId}` : `a:${target.customAgentId}`)
-
-export function postTarget(target: ThreadTarget): WorkPostTarget {
+export function postTarget(target: ThreadTarget): ThreadRecipient {
+  if (target.kind === 'remote') return { customAgentId: target.id, workComputer: target.workComputer }
   return target.kind === 'session' ? { sessionId: target.id } : { customAgentId: target.id }
 }
 
+export function sameWorkComputer(bound: AgentWorkComputer | undefined, destination: AgentWorkComputer): boolean {
+  return bound?.hostId === destination.hostId && bound.agentId === destination.agentId
+}
+
+/** A changed shortcut cannot redirect a selected draft or a retry. */
+export function currentTarget(target: ThreadRecipient, targets: readonly ThreadTarget[]): ThreadTarget | undefined {
+  if ('workComputer' in target)
+    return targets.find(
+      entry => entry.kind === 'remote' && entry.id === target.customAgentId && sameWorkComputer(entry.workComputer, target.workComputer),
+    )
+  if ('sessionId' in target) return targets.find(entry => entry.kind === 'session' && entry.id === target.sessionId)
+  return targets.find(entry => entry.kind === 'agent' && entry.id === target.customAgentId)
+}
+
 /** The name a post's target goes by here; a session this device is not given is 不在列表中. */
-export function targetLabel(target: WorkPostTarget, targets: readonly ThreadTarget[]): string {
-  const found = targets.find(entry => targetKey(postTarget(entry)) === targetKey(target))
+export function targetLabel(target: ThreadRecipient, targets: readonly ThreadTarget[]): string {
+  const found = currentTarget(target, targets)
+  if (found?.kind === 'remote') return `${found.label} · ${found.computer.name}`
+  if ('workComputer' in target) return `${target.workComputer.agentId} · ${target.workComputer.hostId}`
   if (found) return found.label
   return 'customAgentId' in target ? (target.customAgentId === GENERAL_AGENT_ID ? AGENT_SPACE_COPY.general : 'Agent') : THREAD_COPY.unlisted
 }

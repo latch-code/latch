@@ -355,6 +355,10 @@ import UIKit
                 }
             }
             model.tab = .agents; model.agentPath = [review]; chat(model, owner: review, session: nil)
+            if name == "agent-consultation" {
+                chat(model, owner: daily, session: "ses_daily_talk")
+                model.snapshot = patched(model.snapshot) { $0["tasks"] = .array(($0["tasks"]?.array ?? []) + [json(dailyConversation)["summary"]]) }
+            }
         case "agent-work-computer":
             let hostId = String(repeating: "b", count: 52)
             model.hosts = [host(String(repeating: "a", count: 52), "aaaaaaaaaaaaaaaaaaaaaa", "工作室"),
@@ -485,7 +489,7 @@ import UIKit
             if scene == "agent-consultation", path == PhoneAgentMentions.path(review) {
                 return .ready(json("""
                     {"mentions":[{"id":"example","requestId":"example-0000000001","sourceAgentId":"\(review)","targetAgentId":"\(daily)",
-                      "initiator":"person","text":"把这次审阅的待办整理成三条。","status":"completed",
+                      "initiator":"agent","consultationMode":"text-only","targetSessionId":"ses_daily_talk","text":"把这次审阅的待办整理成三条。","status":"completed",
                       "reply":{"messageId":"reply-1","text":"先补齐空列表测试，再核对重复提交，最后在手机上确认回复的显示。"}}]}
                     """))
             }

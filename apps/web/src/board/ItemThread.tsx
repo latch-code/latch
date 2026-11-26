@@ -8,10 +8,9 @@ import {
   type WorkPostAnswer,
   type WorkPostReply,
   type WorkPostReplyAnswer,
-  type WorkPostTarget,
   type WorkThreadAnswer,
 } from '@latch/protocol'
-import { Button, CloseGlyph, Icon, IconButton, SendGlyph, StatusWord, Suggest, Tooltip } from '@latch/ui'
+import { Button, CloseGlyph, Icon, IconButton, LaptopGlyph, SendGlyph, StatusWord, Suggest, Tooltip } from '@latch/ui'
 import { AtSign } from 'lucide-react'
 import { AgentAvatar } from '../agents/AgentAvatar.tsx'
 import { MarkTile } from '../components/BrandTile.tsx'
@@ -19,11 +18,16 @@ import { VisibleText } from '../components/VisibleText.tsx'
 import { MessageContent } from '../MessageContent.tsx'
 import { api, ApiError, errorMessage, newRequestId } from '../core/api.ts'
 import { unconfirmedReason } from '../core/sendingMessage.ts'
+import { computerState, useComputers } from '../core/computers.ts'
+import { describeFailure } from '../core/securityCopy.ts'
+import { shellComputers } from '../core/shell.ts'
+import { RemoteWorkPostStatus, useRemoteWorkRefresh } from './RemoteWorkPost.tsx'
 import { hostNow } from '../core/hostClock.ts'
 import { defineCopy, formatNumber, useLocale } from '../core/i18n.ts'
 import { dateTime, relativeTime } from '../format.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import {
+  currentTarget,
   deliveryWords,
   matchTargets,
   mentionAt,
@@ -32,6 +36,7 @@ import {
   postSourceVersion,
   postTarget,
   replySources,
+  sameWorkComputer,
   targetLabel,
   THREAD_COPY,
   threadTargets,
@@ -39,6 +44,7 @@ import {
   withoutMissingPostSources,
   withoutPostSource,
   type PostDecision,
+  type ThreadRecipient,
   type ThreadTarget,
 } from './itemThread.ts'
 
@@ -54,6 +60,9 @@ const COPY = defineCopy(
     abandon: '放弃',
     send: '发送',
     recipient: '发给',
+    remoteScope: '只向工作电脑发送这条发言。',
+    makePrivate: '发送后，此待办将永久设为私有。',
+    bindingChanged: '工作电脑或 Agent 绑定已变更，请重新选择收件人。',
     session: '会话',
     noChat: '还没有聊天',
     noMatch: '没有匹配的会话或 Agent',
@@ -77,6 +86,9 @@ const COPY = defineCopy(
     abandon: 'Abandon',
     send: 'Send',
     recipient: 'Send to',
+    remoteScope: 'Only this post will be sent to the work computer.',
+    makePrivate: 'Sending makes this work item permanently private.',
+    bindingChanged: 'The work computer or assistant binding has changed. Select the recipient again.',
     session: 'Session',
     noChat: 'No chat yet',
     noMatch: 'No matching sessions or Agents',
@@ -96,7 +108,7 @@ const COPY = defineCopy(
 interface Pending {
   requestId: string
   text: string
-  target?: WorkPostTarget
+  target?: ThreadRecipient
   state: 'sending' | 'unknown'
   reason?: string
 }
@@ -108,10 +120,18 @@ export function useItemThread(item: WorkItemSummary | undefined, snapshot: AppSn
   const [state, setState] = useState<{ scope: string; answer: WorkThreadAnswer; versions: Map<string, string> } | null>(null)
   const [failure, setFailure] = useState<{ scope: string; message: string } | null>(null)
   const request = useRef<AbortController | null>(null)
+  const authorizedScope = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    authorizedScope.current = scope
+    return () => {
+      authorizedScope.current = null
+      request.current?.abort()
+    }
+  }, [scope])
   const snapshotRef = useRef(snapshot)
   snapshotRef.current = snapshot
   const read = useCallback(async () => {
-    if (!itemId) return
+    if (!itemId || authorizedScope.current !== scope) return
     request.current?.abort()
     const controller = new AbortController()
     request.current = controller
@@ -209,9 +229,21 @@ export function ItemThread({
   const { snapshot } = shell
   const canWrite = shell.access.scopes.has('run')
   const locale = useLocale()
-  const targets = useMemo(() => threadTargets(snapshot, item), [snapshot, item, locale])
+  const desktop = shellComputers()
+  const bridge =
+    shell.access.local
+    && canWrite
+    && shell.access.scopes.has('view')
+    && snapshot.device.dataScope === 'all'
+    && shell.catalog?.features?.remoteWorkPosts
+    && desktop?.delegateWorkPost
+      ? desktop
+      : null
+  const computers = useComputers(!!bridge)?.computers
+  const targets = useMemo(() => threadTargets(snapshot, item, computers), [snapshot, item, computers, locale])
+  useRemoteWorkRefresh(posts, item.id, computers, shell.connection === 'connected' ? bridge : null, read)
   const [draft, setDraft] = useState('')
-  const [target, setTarget] = useState<WorkPostTarget | null>(null)
+  const [target, setTarget] = useState<ThreadRecipient | null>(null)
   const [pending, setPending] = useState<Pending | null>(null)
   const [refused, setRefused] = useState<string | null>(null)
   const [caret, setCaret] = useState(0)
@@ -223,6 +255,11 @@ export function ItemThread({
   const observed = useRef(new Set<string>())
   const id = useId()
 
+  const remoteTarget = target && 'workComputer' in target ? target : null
+  const selected = target ? currentTarget(target, targets) : undefined
+  const missingBinding = !!target && 'customAgentId' in target && !selected
+  const computerStatus =
+    selected?.kind === 'remote' && selected.computer.state !== 'online' ? computerState(selected.computer).text : undefined
   const mention = mentionAt(draft, caret)
   const matches = mention ? matchTargets(targets, mention.query) : []
   const suggesting = mention !== undefined && dismissed !== draft && targets.length > 0
@@ -267,6 +304,40 @@ export function ItemThread({
     sending.current = request.requestId
     setPending({ ...request, state: 'sending' })
     setRefused(null)
+    if (request.target && 'workComputer' in request.target) {
+      const target = request.target
+      if (!bridge?.delegateWorkPost || !currentTarget(target, targets)) {
+        setPending(request.state === 'unknown' ? request : null)
+        setRefused(COPY.bindingChanged)
+        return
+      }
+      let next: Pending | null = { ...request, state: 'unknown' }
+      try {
+        const result = await bridge.delegateWorkPost(item.id, {
+          requestId: request.requestId,
+          text: request.text,
+          customAgentId: target.customAgentId,
+          hostId: target.workComputer.hostId,
+          agentId: target.workComputer.agentId,
+        })
+        if (!result.ok) {
+          if (result.error === 'cancelled') next = request.state === 'unknown' ? request : null
+          else if (['agent-mention-secret', 'agent-mention-reference', 'post-invalid'].includes(result.error)) {
+            // The source rejected this text before reserving a post.
+            next = null
+            setRefused(describeFailure(0, result.error))
+          } else {
+            next.reason = describeFailure(0, result.error)
+          }
+        }
+      } catch {
+        next = { ...request, state: 'unknown', reason: COPY.noAnswer }
+      }
+      await read()
+      // A source receipt may already have unlocked a newer draft while native confirmation or delivery was in flight.
+      setPending(previous => (previous?.requestId === request.requestId ? next : previous))
+      return
+    }
     try {
       await api<WorkPostAnswer>(postsPath(item.id), {
         method: 'POST',
@@ -291,7 +362,7 @@ export function ItemThread({
 
   const submit = () => {
     const text = draft.trim()
-    if (!canWrite || !text || pending) return
+    if (!canWrite || !text || pending || over || missingBinding) return
     void send({ requestId: newRequestId(), text, ...(target ? { target } : {}), state: 'sending' })
   }
 
@@ -327,7 +398,7 @@ export function ItemThread({
       if (event.key === 'Enter' || event.key === 'Tab') {
         event.preventDefault()
         const choice = matches[chosenIndex]
-        if (choice && (choice.kind === 'session' || choice.ready)) choose(choice)
+        if (choice && (choice.kind !== 'agent' || choice.ready)) choose(choice)
         return
       }
     }
@@ -346,7 +417,8 @@ export function ItemThread({
   const now = new Date(hostNow())
   const label = (post: WorkPost) => (post.target ? targetLabel(post.target, targets) : '')
   const unknown = pending?.state === 'unknown'
-  const over = Array.from(draft.trim()).length > WORK_THREAD_LIMITS.postChars
+  const pendingReason = unknown && pending.target && 'workComputer' in pending.target ? pending.reason : undefined
+  const over = draft.trim().length > WORK_THREAD_LIMITS.postChars
 
   return (
     <section className="item-thread" aria-label={COPY.discussion}>
@@ -358,6 +430,35 @@ export function ItemThread({
       {(count > 0 || pending) && (
         <ol className="item-thread-posts">
           {posts?.map(post => {
+            if (post.remote) {
+              const receipt = post.remote
+              const recipient = { customAgentId: receipt.customAgentId, workComputer: { hostId: receipt.hostId, agentId: receipt.agentId } }
+              const computer = computers?.find(row => !row.local && row.hostId === receipt.hostId)
+              const computerName = computer?.name ?? receipt.hostId
+              const agent = snapshot.customAgents?.find(
+                row => row.id === receipt.customAgentId && sameWorkComputer(row.workComputer, receipt),
+              )
+              const name = `${agent?.name ?? receipt.agentId} · ${computerName}`
+              return (
+                <li key={post.id} className="item-thread-post" data-post-id={post.id} data-remote-status={receipt.status}>
+                  <ThreadPostContent
+                    text={post.text}
+                    target={<TargetChip target={recipient} name={name} shell={shell} />}
+                    at={post.at}
+                    now={now}
+                  />
+                  <RemoteWorkPostStatus
+                    remote={receipt}
+                    itemId={item.id}
+                    postId={post.id}
+                    bridge={post.requestId && computer ? bridge : null}
+                    bound={!!agent}
+                    computer={computer}
+                    read={read}
+                  />
+                </li>
+              )
+            }
             const name = label(post)
             const reply = post.reply
             const task = post.turn && snapshot.tasks.find(task => task.id === post.turn?.sessionId)
@@ -473,15 +574,22 @@ export function ItemThread({
             onSelect={event => setCaret(event.currentTarget.selectionStart)}
             onKeyDown={keydown}
           />
+          {(remoteTarget || missingBinding) && (
+            <div className="item-thread-remote-scope">
+              {missingBinding
+                ? COPY.bindingChanged
+                : [computerStatus, COPY.remoteScope, !item.private && COPY.makePrivate].filter(Boolean).join(' ')}
+            </div>
+          )}
           <div className="item-thread-input-foot">
-            {refused && (
-              <StatusWord className="item-thread-refused" tone="failed">
-                {refused}
+            {(refused || pendingReason) && (
+              <StatusWord className="item-thread-refused" tone={refused ? 'failed' : 'warn'}>
+                {refused || pendingReason}
               </StatusWord>
             )}
             {unknown ? (
               <>
-                <Button size="sm" onClick={() => void send(pending)}>
+                <Button size="sm" disabled={missingBinding} onClick={() => void send(pending)}>
                   {COPY.retry}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setPending(null)}>
@@ -494,7 +602,7 @@ export function ItemThread({
                 variant="primary"
                 icon={SendGlyph}
                 loading={pending?.state === 'sending'}
-                disabled={!draft.trim() || pending !== null || over}
+                disabled={!draft.trim() || pending !== null || over || missingBinding}
                 onClick={submit}>
                 {COPY.send}
               </Button>
@@ -519,7 +627,14 @@ export function ItemThread({
                   id: optionId(index),
                   media: <TargetMedia target={postTarget(choice)} shell={shell} />,
                   label: <VisibleText text={choice.label} />,
-                  description: choice.kind === 'session' ? COPY.session : 'Agent',
+                  description:
+                    choice.kind === 'remote' ? (
+                      <VisibleText text={`${choice.computer.name} · ${computerState(choice.computer).text}`} />
+                    ) : choice.kind === 'session' ? (
+                      COPY.session
+                    ) : (
+                      'Agent'
+                    ),
                   ...(choice.kind === 'agent' && !choice.ready ? { disabled: true, hint: COPY.noChat } : {}),
                 })),
               },
@@ -571,7 +686,8 @@ function ThreadPostContent({ text, target, at, now }: { text: string; target?: R
   )
 }
 
-function TargetMedia({ target, shell }: { target: WorkPostTarget; shell: ShellState }) {
+function TargetMedia({ target, shell }: { target: ThreadRecipient; shell: ShellState }) {
+  if ('workComputer' in target) return <Icon icon={LaptopGlyph} size={16} />
   if ('customAgentId' in target) {
     const agent = shell.snapshot.customAgents?.find(entry => entry.id === target.customAgentId)
     return <AgentAvatar avatar={agent ? agent.avatar : 'general'} size={16} still />
@@ -582,7 +698,7 @@ function TargetMedia({ target, shell }: { target: WorkPostTarget; shell: ShellSt
 }
 
 /** @ and the name a post goes to: a session's Harness mark or the Agent's face. */
-function TargetChip({ target, name, shell }: { target: WorkPostTarget; name: string; shell: ShellState }) {
+function TargetChip({ target, name, shell }: { target: ThreadRecipient; name: string; shell: ShellState }) {
   return (
     <span className="item-thread-target">
       <TargetMedia target={target} shell={shell} />

@@ -173,8 +173,8 @@ export function connectionTransport(
 }
 
 /** The computers list of the desktop app, kept current by main's pushes; undefined outside it or until it arrives. */
-export function useComputers(): ComputersView | undefined {
-  const api = shellComputers()
+export function useComputers(enabled = true): ComputersView | undefined {
+  const api = enabled ? shellComputers() : null
   const [view, setView] = useState<ComputersView | undefined>()
   useEffect(() => {
     if (!api) return undefined
@@ -193,7 +193,7 @@ export function useComputers(): ComputersView | undefined {
       stop()
     }
   }, [api])
-  return view
+  return api ? view : undefined
 }
 
 /** What waits on one other computer, for 等你处理: live while it answers, otherwise what waited before it went. */

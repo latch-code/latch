@@ -33,8 +33,9 @@ struct AgentConsultations: View {
     @ObservedObject var consultation: AgentMentionSession
 
     var body: some View {
+        let entries = PhoneAgents.entries(model.snapshot, windowOpen: model.hasContentWindow)
         ForEach(consultation.rows) { row in
-            let entry = PhoneAgents.entry(model.snapshot, id: row.target)
+            let entry = entries.first { $0.id == row.target }
             VStack(alignment: .leading, spacing: 9) {
                 HStack(spacing: 8) {
                     AgentFace(avatar: entry?.avatar ?? .general, size: 26)
@@ -42,15 +43,19 @@ struct AgentConsultations: View {
                     Spacer()
                     Text(row.words).font(.caption).foregroundStyle(row.status == "failed" ? PhoneTheme.red : PhoneTheme.muted)
                 }
-                Text((row.autonomous ? "Agent 发起 · " : "你发起 · ") + PhoneConversation.visible(row.text)).font(.subheadline).foregroundStyle(PhoneTheme.ink2)
+                Text([row.autonomous ? "Agent 发起" : "你发起", row.mode?.words, PhoneConversation.visible(row.text)].compactMap { $0 }.joined(separator: " · ")).font(.subheadline).foregroundStyle(PhoneTheme.ink2)
                 if let reply = row.reply, !reply.isEmpty {
                     Divider()
                     Text(PhoneConversation.visible(reply)).font(.body).foregroundStyle(PhoneTheme.ink)
                 }
-                if row.more, row.targetSession != nil, PhoneAgentChat.session(model.snapshot, owner: row.target) == row.targetSession {
-                    Button("在对方聊天查看完整回复") { model.agentPath = [row.target] }.font(.caption)
-                }
                 if let failure = row.failure { Text(PhoneConversation.visible(failure)).font(.caption).foregroundStyle(PhoneTheme.red) }
+                if let label = row.chatAction(in: model.snapshot, entry: entry) {
+                    Button(label) {
+                        guard model.agentAccess == .ready, model.agentPath.first == row.source,
+                              row.chatAction(in: model.snapshot, entry: PhoneAgents.entry(model.snapshot, id: row.target)) == label else { return }
+                        model.agentPath = [row.target]
+                    }.font(.subheadline)
+                }
             }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
                 .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 14))
         }

@@ -6,6 +6,7 @@ import {
   refusedBeforeAccepting,
   WORK_THREAD_LIMITS,
   type AgentQuestion,
+  type AgentWorkComputer,
   type DataScope,
   type HostFeatures,
   type TaskDetail,
@@ -15,8 +16,10 @@ import {
   type WorkPostReplyAnswer,
   type WorkThreadAnswer,
 } from '@latch/protocol'
-import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
+import { canonicalJson, redactKnownSecrets, sha256Hex } from '@latch/core/node-kit'
 import { setPostAttention, type WorkItemPostAttention } from '../board.ts'
+import { mentionsConversationReference } from '../conversation-references.ts'
+import { remoteWorkReport, remoteWorkTarget, updateRemoteWorkPost, type RemoteWorkTarget } from '../remote-work-posts.ts'
 import { json, jsonBody, KIB } from '../http-util.ts'
 import { itemIsPrivate, type WorkItemRecord, type WorkItemStore } from '../work-items.ts'
 import {
@@ -63,6 +66,8 @@ export interface WorkThreadRouteDeps {
   questions: (sessionId: string) => readonly AgentQuestion[]
   /** 我的 Agent hold private memory: the full data scope and `run`, as any write to one. */
   agentAccess: (caller: DeviceCaller) => void
+  requireDesktop: (caller: DeviceCaller) => void
+  workComputer: (customAgentId: string) => AgentWorkComputer | undefined
   /** Clients read the 待办 (and so its thread) again; a private one tells devices with the full data scope only. */
   changed: (item: WorkItemRecord) => void
 }
@@ -76,6 +81,7 @@ export interface WorkThreadRoutes extends RouteModule {
 }
 
 const POSTS = /^\/link\/api\/work\/items\/(itm_[A-Za-z0-9_-]{22})\/posts(?:\/(pst_[A-Za-z0-9_-]{22})(\/reply)?)?$/u
+const REMOTE_POSTS = /^\/link\/api\/work\/items\/(itm_[A-Za-z0-9_-]{22})\/posts(?:\/(pst_[A-Za-z0-9_-]{22}))?\/remote$/u
 const POSTS_PAGE = 32
 const REPLY_PAGE = 16_000
 const POST_BODY_LIMIT = 32 * KIB
@@ -90,6 +96,8 @@ const postSchema = z.strictObject({
     ])
     .optional(),
 })
+
+const remotePrepare = remoteWorkTarget.extend({ requestId: postSchema.shape.requestId, text: postSchema.shape.text })
 
 const notFound = () => new AppError(404, 'item-not-found', '找不到这条待办。')
 const replyNotFound = () => new AppError(404, 'post-reply-not-found', '找不到这条回复。')
@@ -232,7 +240,9 @@ export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRo
   }
 
   function present(caller: DeviceCaller, post: WorkPostRecord, detail?: TaskDetail): WorkPost {
-    const { deviceId, requestId, payloadHash: _hash, delivery, target, ...rest } = post
+    const { deviceId, requestId, payloadHash: _hash, delivery, target, remote, ...rest } = post
+    const visibleRemote = remote && { ...remote }
+    if (visibleRemote) delete visibleRemote.deviceId
     const source = delivery && detail?.summary.id === delivery.sessionId && sourceVisible(caller, detail) ? detail : undefined
     const reading = delivery && source ? workPostTurn(source, delivery.requestId) : undefined
     const held = reading !== undefined
@@ -248,6 +258,7 @@ export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRo
           : undefined
     return {
       ...structuredClone(rest),
+      ...(visibleRemote ? { remote: visibleRemote } : {}),
       ...(target && source ? { target: structuredClone(target) } : {}),
       ...(deviceId === caller.device.id ? { requestId } : {}),
       ...(delivery && state
@@ -339,6 +350,7 @@ export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRo
     // Every post quoted, though the delivery may later drop the oldest to fit: a superset of whose words go.
     const authors = new Set<string>()
     for (const entry of before.slice(last + 1)) {
+      if (entry.remote) continue
       const to = entry.target
       if (to && 'customAgentId' in to && !targetPrivate) continue
       const other = entry.delivery && entry.delivery.sessionId !== sessionId ? entry.delivery : undefined
@@ -461,17 +473,41 @@ export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRo
     return work
   }
 
-  async function post(req: IncomingMessage, caller: DeviceCaller, id: string): Promise<{ post: WorkPost; status: number }> {
+  function requireRemote(caller: DeviceCaller, target?: RemoteWorkTarget): void {
+    deps.requireDesktop(caller)
+    context.recheck(caller, 'view')
+    deps.agentAccess(caller)
+    if (target) {
+      const bound = deps.workComputer(target.customAgentId)
+      if (bound?.hostId !== target.hostId || bound.agentId !== target.agentId)
+        throw new AppError(409, 'post-target-gone', '这个 Agent 的工作电脑已变化，请重新选择。')
+    }
+  }
+
+  function checkRemoteText(text: string): void {
+    if (mentionsConversationReference(text)) throw new AppError(400, 'agent-mention-reference', '跨电脑只发送文字，请先移除会话引用。')
+    if (redactKnownSecrets(text) !== text) throw new AppError(422, 'agent-mention-secret', '这条消息含有凭据，请移除后再发送。')
+  }
+
+  async function post(req: IncomingMessage, caller: DeviceCaller, id: string, remote = false): Promise<{ post: WorkPost; status: number }> {
     context.requireScope(caller, 'run')
     context.limits.classC.take(caller.device.id)
-    const body = postSchema.parse(await jsonBody(req, POST_BODY_LIMIT))
-    let item = visible(caller, id)
+    const raw = await jsonBody(req, POST_BODY_LIMIT)
+    const input = remote ? remotePrepare.parse(raw) : postSchema.parse(raw)
+    const remoteTarget =
+      'hostId' in input ? { customAgentId: input.customAgentId, hostId: input.hostId, agentId: input.agentId } : undefined
+    const body: z.infer<typeof postSchema> = input
+    const item = visible(caller, id)
     const text = checkedPostText(body.text)
     if (containsSecret(text)) throw new AppError(400, 'post-secret', '发言看起来含有密钥，没有发出。')
-    const payloadHash = sha256Hex(canonicalJson({ text, target: body.target ?? null }))
+    if (remoteTarget) {
+      requireRemote(caller, remoteTarget)
+      checkRemoteText(text)
+    }
+    const payloadHash = sha256Hex(canonicalJson(remoteTarget ? { text, remoteTarget } : { text, target: body.target ?? null }))
     const key = `${id}:${caller.device.id}:${body.requestId}`
     for (let held = posting.get(key); held; held = posting.get(key)) await held.catch(() => {})
-    const made = make(caller, id, body, text, payloadHash, item)
+    const made = make(caller, id, body, text, payloadHash, item, remoteTarget)
     posting.set(key, made)
     try {
       return await made
@@ -487,7 +523,9 @@ export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRo
     text: string,
     payloadHash: string,
     seen: WorkItemRecord,
+    remoteTarget?: RemoteWorkTarget,
   ): Promise<{ post: WorkPost; status: number }> {
+    if (remoteTarget) requireRemote(caller, remoteTarget)
     let item = seen
     const prior = threads.find(id, caller.device.id, body.requestId)
     if (prior) {
@@ -509,7 +547,7 @@ export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRo
     const postId = postIdOf(caller.device.id, id, body.requestId)
     // An Agent's chat is private: the 待办 is private before anything names it, and stays so. Narrowing comes before the
     // audit line, so a refusal here leaves no line claiming a post.
-    if (agent && !item.private) {
+    if ((agent || remoteTarget) && !item.private) {
       deps.agentAccess(caller)
       await items.markPrivate(id)
     }
@@ -519,12 +557,28 @@ export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRo
         action: 'work.item.posted',
         actor: context.actorOf(caller),
         target: id,
-        detail: { itemId: id, postId, target: !body.target ? 'none' : agent ? 'agent' : 'session', ...(sessionId ? { sessionId } : {}) },
+        detail: {
+          itemId: id,
+          postId,
+          ...(remoteTarget
+            ? {
+                target: 'remote-agent',
+                customAgentId: remoteTarget.customAgentId,
+                targetAgentId: remoteTarget.agentId,
+                hostId: remoteTarget.hostId,
+                textHash: sha256Hex(text),
+              }
+            : { target: !body.target ? 'none' : agent ? 'agent' : 'session', ...(sessionId ? { sessionId } : {}) }),
+        },
       })
     } catch {
       throw new AppError(503, 'audit-unavailable', '审计记录暂时无法保存，没有发出，请重试。')
     }
     const kept = await threads.transact(id, (posts, at) => {
+      if (remoteTarget) {
+        requireRemote(caller, remoteTarget)
+        visible(caller, id)
+      }
       const again = posts.find(entry => entry.deviceId === caller.device.id && entry.requestId === body.requestId)
       if (again) {
         if (again.payloadHash !== payloadHash) throw conflict()
@@ -540,6 +594,7 @@ export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRo
         payloadHash,
         text,
         ...(body.target ? { target: body.target } : {}),
+        ...(remoteTarget ? { remote: { ...remoteTarget, revision: 1, status: 'prepared' as const } } : {}),
         ...(sessionId
           ? { delivery: { requestId: deliveryRequestId(caller.device.id, id, body.requestId), sessionId, state: 'unknown' as const } }
           : {}),
@@ -564,10 +619,55 @@ export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRo
     return present(caller, post, detail)
   }
 
+  function authoredRemote(caller: DeviceCaller, id: string, postId: string, posts = threads.get(id)?.posts) {
+    requireRemote(caller)
+    visible(caller, id)
+    const post = posts?.find(entry => entry.id === postId)
+    if (!post?.remote || post.deviceId !== caller.device.id) throw new AppError(404, 'post-not-found', '找不到这条投递。')
+    return post
+  }
+
+  function remoteAnswer(caller: DeviceCaller, id: string, postId: string, dispatch: boolean) {
+    const post = authoredRemote(caller, id, postId)
+    if (dispatch) {
+      requireRemote(caller, post.remote!)
+      checkRemoteText(post.text)
+    }
+    return { post: { ...present(caller, post), remote: post.remote }, dispatchId: deliveryRequestId(caller.device.id, id, post.requestId) }
+  }
+
   return {
     attention,
-    features: () => ({ workItemTurns: true }) satisfies HostFeatures,
+    features: () => ({ workItemTurns: true, remoteWorkPosts: true }) satisfies HostFeatures,
     async route({ req, res, caller, path, method }) {
+      const remote = REMOTE_POSTS.exec(path)
+      if (remote) {
+        context.requireScope(caller, 'view')
+        requireRemote(caller)
+        const id = remote[1]!
+        const postId = remote[2]
+        if (method === 'POST' && !postId) {
+          const { post: prepared, status } = await post(req, caller, id, true)
+          json(res, remoteAnswer(caller, id, prepared.id, true), status)
+        } else if (method === 'GET' && postId) {
+          const { dispatch } = z.strictObject({ dispatch: z.literal('1').optional() }).parse(queryOf(req))
+          json(res, remoteAnswer(caller, id, postId, dispatch === '1'))
+        } else if (method === 'PATCH' && postId) {
+          const report = remoteWorkReport.parse(await jsonBody(req, 4 * KIB))
+          const updated = await threads.transact(id, posts => {
+            const post = authoredRemote(caller, id, postId, posts)
+            if (!post.remote!.deviceId && report.deviceId) requireRemote(caller, post.remote)
+            const next = updateRemoteWorkPost(post.remote!, report)
+            if (next === post.remote) return { changed: false, result: false }
+            post.remote = next
+            return { changed: true, result: true }
+          })
+          if (updated) deps.changed(visible(caller, id))
+          const { post } = remoteAnswer(caller, id, postId, false)
+          json(res, { post } satisfies WorkPostAnswer)
+        } else throw new AppError(404, 'not-found', '接口不存在。')
+        return true
+      }
       const match = POSTS.exec(path)
       if (!match) return false
       context.requireScope(caller, 'view')

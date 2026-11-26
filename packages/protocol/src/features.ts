@@ -99,12 +99,16 @@ export interface HostFeatures {
   handoffs?: true
   /** Explicit questions between this Host's personal Agents, with a reply scoped to the addressed turn. */
   agentMentions?: true
+  /** A device can read its own manual mention by request ID without resending it. */
+  agentMentionLookup?: true
   /** `/work/items`: 待办 with 0–16 sessions, started through the same path as `POST /tasks` (docs/ARCHITECTURE.md#待办). */
   workItems?: true
   /** A pending create can look up its original receipt without creating another item. */
   workItemCreateReceipt?: true
   /** Exact work-discussion turns and bounded reply reads. */
   workItemTurns?: true
+  /** Source receipts for desktop deliveries to a paired work computer. */
+  remoteWorkPosts?: true
   /** `GET /work/proposals/:id`, `…/accept`, `…/dismiss`, and `AppSnapshot.workProposals`: agents' proposals for the board. */
   workProposals?: true
   /** `POST /tasks/:id/team`, `GET /teams/:id`, `POST /teams/:id/stop`, `AppSnapshot.teams` and `TaskSummary.teamOf`. */

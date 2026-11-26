@@ -907,5 +907,6 @@ module.exports = {
   createSenderOf,
   createStartHandler,
   createWorkComputerHandler,
+  workAgents,
   whenLoaded,
 }

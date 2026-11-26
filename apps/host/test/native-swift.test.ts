@@ -2153,6 +2153,65 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       self: false,
     })
   })
+  it('opens only the current recipient chat and labels only the approval and permissions on the exchange', async () => {
+    const target = 'agt_22222222-2222-2222-2222-222222222222'
+    const remote = 'agt_33333333-3333-3333-3333-333333333333'
+    const base = {
+      id: 'mention',
+      requestId: 'request',
+      sourceAgentId: 'general',
+      targetAgentId: target,
+      targetSessionId: 'chat',
+      initiator: 'agent',
+      status: 'waiting-approval',
+      text: 'Review',
+    }
+    const approval = { id: 'approval', runId: 'run' }
+    const input = {
+      operation: 'phoneAgents',
+      owner: 'general',
+      snapshot: {
+        catalog: { features: { customAgents: true, singleAgentChat: true } },
+        device: { status: 'active', scopes: ['view'], dataScope: 'all' },
+        customAgents: [{ id: target }, { id: remote, workComputer: { hostId: 'b'.repeat(52), agentId: target } }],
+        agentChats: { [target]: { state: 'ready', sessionId: 'chat' }, [remote]: { state: 'ready', sessionId: 'remote' } },
+        tasks: [
+          { id: 'chat', agent: { customAgentId: target }, status: 'waiting-approval', runId: 'run' },
+          { id: 'remote', agent: { customAgentId: remote } },
+        ],
+        approvals: [{ id: 'approval', sessionId: 'chat' }],
+      },
+    }
+    expect(
+      await invoke({
+        ...input,
+        consultations: [
+          { ...base, approval, consultationMode: 'own-permissions' },
+          { ...base, approval: { ...approval, runId: 'old-run' } },
+          { ...base, approval: { ...approval, id: 'old-approval' } },
+          ...['completed', 'failed', 'interrupted'].map(status => ({
+            ...base,
+            status,
+            initiator: 'person',
+            consultationMode: 'own-permissions',
+          })),
+          { ...base, consultationMode: 'text-only', reply: { more: true } },
+          { ...base, targetSessionId: 'previous' },
+          { ...base, targetSessionId: undefined },
+          { ...base, targetAgentId: remote, targetSessionId: 'remote' },
+        ],
+      }),
+    ).toEqual({
+      receipts: [
+        { action: '在对方聊天查看审批', mode: 'own-permissions' },
+        ...Array.from({ length: 5 }, () => ({ action: '打开对方聊天' })),
+        { action: '在对方聊天查看完整回复', mode: 'text-only' },
+        {},
+        {},
+        {},
+      ],
+    })
+  })
   it('does not report locally cleared private Agent data as an unconfirmed Host write', async () => {
     expect(
       await invoke({

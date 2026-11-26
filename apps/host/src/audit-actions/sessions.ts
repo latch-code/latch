@@ -57,7 +57,14 @@ export const SESSION_ACTIONS = {
   'work.item.posted': z.strictObject({
     itemId: prefixed('itm'),
     postId: prefixed('pst'),
-    target: z.enum(['none', 'session', 'agent']),
+    target: z.enum(['none', 'session', 'agent', 'remote-agent']),
+    customAgentId: opaqueId.optional(),
+    targetAgentId: opaqueId.optional(),
+    hostId: z
+      .string()
+      .regex(/^[a-z2-7]{52}$/u)
+      .optional(),
+    textHash: hex64.optional(),
     sessionId: opaqueId.optional(),
   }),
   /**

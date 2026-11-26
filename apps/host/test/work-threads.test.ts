@@ -17,7 +17,7 @@ import type {
 } from '@latch/protocol'
 import { AppError, type HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
-import { deliveryText, replyTo, workPostTurn } from '../src/work-threads.ts'
+import { deliveryText, replyTo, workPostTurn, WorkThreadStore } from '../src/work-threads.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 const cleanups: Array<() => Promise<unknown> | unknown> = []
@@ -117,6 +117,91 @@ async function audit(t: TestHost, action: string): Promise<Array<Record<string, 
 }
 
 describe('a 待办’s thread', () => {
+  it('pins a cross-computer post to its author, target, enrollment and exact turn through retries and rebinding', SLOW, async () => {
+    const t = await startTestHost()
+    cleanups.push(() => t.close())
+    const author = await t.enroll({ listener: 'unix' })
+    const second = await t.enroll({ listener: 'unix' })
+    const browser = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'], dataScope: 'all' })
+    const narrow = await t.enroll({ listener: 'unix', scopes: ['view', 'run'], dataScope: 'work' })
+    const viewer = await t.enroll({ listener: 'unix', scopes: ['view'], dataScope: 'all' })
+    const target = { hostId: 'c'.repeat(52), agentId: `agt_${randomUUID()}` }
+    const agent = await author.json<CustomAgent>('custom-agents', {
+      method: 'POST',
+      body: { requestId: randomUUID(), name: '远端助手', harnessId: 'standard', workComputer: target },
+    })
+    const { item } = await author.json<WorkItemAnswer>('work/items', {
+      method: 'POST',
+      body: { requestId: randomUUID(), title: '核对结果' },
+    })
+    const posts = `work/items/${item.id}/posts`
+    const stale = await post(author, item.id, { text: '留在本机', target: { customAgentId: agent.id } })
+    expect(stale.status).toBe(409)
+    expect(await stale.json()).toMatchObject({ error: 'agent-work-computer' })
+    const prepare = posts + '/remote'
+    const body = { requestId: randomUUID(), customAgentId: agent.id, ...target, text: '只转交这段话' }
+    for (const reader of [browser, narrow, viewer]) expect((await reader.request(prepare, { method: 'POST', body })).status).toBe(403)
+    expect((await author.request(prepare, { method: 'POST', body: { ...body, hostId: 'd'.repeat(52) } })).status).toBe(409)
+    for (const text of [`[conversation-ref:${randomUUID()}]`, 'https://fixture.invalid/?token=fixture']) {
+      expect((await author.request(prepare, { method: 'POST', body: { ...body, text } })).ok).toBe(false)
+    }
+    const [first, replay] = await Promise.all(
+      [1, 2].map(() => author.json<WorkPostAnswer & { dispatchId: string }>(prepare, { method: 'POST', body })),
+    )
+    expect(first).toEqual(replay)
+    expect(first.post.remote).toMatchObject({ ...target, customAgentId: agent.id, status: 'prepared', revision: 1 })
+    const lines = await audit(t, 'work.item.posted')
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toMatchObject({ target: 'remote-agent', hostId: target.hostId, targetAgentId: target.agentId })
+    expect(JSON.stringify(lines)).not.toContain(body.text)
+    expect((await author.request(prepare, { method: 'POST', body: { ...body, text: '另一条' } })).status).toBe(409)
+    expect((await narrow.request(posts)).status).toBe(404)
+    const receipt = `${posts}/${first.post.id}/remote`
+    expect((await second.request(receipt)).status).toBe(404)
+    expect((await browser.request(receipt)).status).toBe(403)
+    const deviceId = 'dev_' + 'r'.repeat(22)
+    const claim = { baseRevision: 1, status: 'prepared', deviceId }
+    const patch = (body: Record<string, unknown>) => author.request(receipt, { method: 'PATCH', body })
+    expect((await second.request(receipt, { method: 'PATCH', body: claim })).status).toBe(404)
+    expect((await browser.request(receipt, { method: 'PATCH', body: claim })).status).toBe(403)
+    expect((await patch(claim)).status).toBe(200)
+    expect((await patch(claim)).status).toBe(200)
+    expect((await patch({ ...claim, baseRevision: 2, deviceId: 'dev_' + 's'.repeat(22) })).status).toBe(409)
+    const mentionId = randomUUID()
+    expect((await patch({ baseRevision: 2, status: 'unknown', mentionId })).status).toBe(200)
+    const turn = { status: 'running', mentionId, sessionId: randomUUID() }
+    expect((await patch({ baseRevision: 3, ...turn })).status).toBe(200)
+    const latest = async () => (await author.json<WorkPostAnswer>(receipt)).post.remote!
+    const running = await latest()
+    expect(running).toMatchObject({ ...turn, deviceId, revision: 4 })
+    expect((await patch({ baseRevision: 3, status: 'offline' })).status).toBe(200)
+    expect(await latest()).toEqual(running)
+    expect((await patch({ baseRevision: 3, status: 'completed', mentionId })).status).toBe(409)
+    expect((await patch({ baseRevision: 4, status: 'completed', mentionId: randomUUID() })).status).toBe(409)
+    expect((await patch({ baseRevision: 4, status: 'completed', messageId: 'message-1', reply: 'private result' })).status).toBe(400)
+    expect((await patch({ baseRevision: 4, status: 'completed', messageId: 'message-1' })).status).toBe(200)
+    expect((await patch({ baseRevision: 5, status: 'running' })).status).toBe(409)
+    const { deviceId: pinnedDevice, ...visibleRemote } = await latest()
+    expect(pinnedDevice).toBe(deviceId)
+    for (const reader of [author, second, viewer, browser]) {
+      const view = (await reader.json<WorkThreadAnswer>(posts)).posts
+      expect(view).toHaveLength(1)
+      expect(view[0]?.remote).toEqual(visibleRemote)
+      expect(view[0]?.requestId).toBe(reader === author ? body.requestId : undefined)
+    }
+    await author.json(`custom-agents/${agent.id}`, {
+      method: 'PATCH',
+      body: { baseRevision: agent.revision, requestId: randomUUID(), workComputer: null },
+    })
+    expect((await author.request(receipt + '?dispatch=1')).status).toBe(409)
+    expect((await author.request(prepare, { method: 'POST', body })).status).toBe(409)
+    expect(await latest()).toMatchObject({ status: 'completed', messageId: 'message-1' })
+    const persisted = await readFile(join(t.dataDir, 'work', 'threads', item.id + '.json'), 'utf8')
+    expect(persisted).not.toContain('private result')
+    const reopened = await WorkThreadStore.open(t.dataDir)
+    expect(reopened.find(item.id, author.id, body.requestId)?.remote).toEqual(await latest())
+  })
+
   it('withdraws the source of a discussion read or retry when its session is deleted during a detail read', SLOW, async () => {
     const { t, owner } = await fixture()
     const { item: made, sessionId } = await item(owner, 'echo 开始')

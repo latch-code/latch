@@ -50,6 +50,7 @@ const {
   createWindowOpener,
   whenLoaded,
 } = require('./computers.cjs')
+const { createWorkDelegationHandler } = require('./work-delegations.cjs')
 const { createFolderActions, isTrustedSender } = require('./folders.cjs')
 const {
   createNotifications,
@@ -1189,7 +1190,7 @@ const CODE_FILE_LIMIT = 4096
  * schemes reach only that computer's Host. The main window changes its visible view when switching computers.
  * Explicit opens keep using a separate window. Main alone reads the link from the clipboard or a code file.
  */
-async function startComputers({ localHostId, localState, localSnapshot, onSnapshot, onChange, onForget }) {
+async function startComputers({ localHostId, localState, localSnapshot, localRequest, onSnapshot, onChange, onForget }) {
   const userData = app.getPath('userData')
   /** Each partition is hardened and given its handlers once, however many opens race for it. */
   const prepared = new Map()
@@ -1324,23 +1325,26 @@ async function startComputers({ localHostId, localState, localSnapshot, onSnapsh
    * Opens (or brings forward) a computer's window and, with `taskId`, that session in it. The session ID goes only to
    * that computer's own page, which opens it as its notification click would.
    */
-  async function openComputer(hostId, taskId) {
+  async function openComputer(hostId, taskId, messageId = undefined) {
     const session = typeof taskId === 'string' && SESSION_ID.test(taskId) ? taskId : undefined
     if (hostId === localHostId) {
       if (session) openLocalSession(session)
       else revealLocalWorkbench()
       return { ok: true }
     }
-    if (!computers.proxyFor(hostId)) return notFound
+    const selectedProxy = computers.proxyFor(hostId)
+    if (!selectedProxy) return notFound
     let window
     try {
       window = await openRemote(hostId)
     } catch {
       return notFound
     }
-    if (session && window && !window.isDestroyed()) {
+    if (!window || window.isDestroyed() || computers.proxyFor(hostId) !== selectedProxy) return notFound
+    if (session) {
       const send = () => {
-        if (!window.isDestroyed()) window.webContents.send(COMPUTER_CHANNELS.session, session)
+        if (!window.isDestroyed() && computers.proxyFor(hostId) === selectedProxy)
+          window.webContents.send(COMPUTER_CHANNELS.session, session, messageId)
       }
       whenLoaded(window.webContents, send)
     }
@@ -1513,6 +1517,52 @@ async function startComputers({ localHostId, localState, localSnapshot, onSnapsh
       }),
   })
   ipcMain.handle('latch:computers:work-agent', workComputer)
+  ipcMain.handle(
+    'latch:computers:work-post',
+    createWorkDelegationHandler({
+      senderOf: event => (!event.sender.isDestroyed() && isDisplayedPage(event.sender) ? senderCheck(event) : undefined),
+      gestureOf,
+      localRequest,
+      proxyFor: hostId => computers.proxyFor(hostId),
+      openSession: openComputer,
+      async confirm({ hostId, agentId, agentName, text }) {
+        const parent = mainWindow
+        if (!parent || parent.isDestroyed() || !parent.isFocused() || !dialogGate.enter()) return false
+        try {
+          const english = currentLocale() === 'en'
+          const name = computers.nameOf(hostId) ?? ''
+          // Show invisible formatting marks literally; they must not reorder or hide the destination or the message.
+          const visible = value =>
+            value.replace(/[\p{Cf}\p{Cc}]/gu, c =>
+              ['\n', '\t'].includes(c) ? c : '⟨U+' + c.codePointAt(0).toString(16).toUpperCase() + '⟩',
+            )
+          const choice = await dialog.showMessageBox(parent, {
+            type: 'question',
+            buttons: english ? ['Cancel', 'Send'] : ['取消', '发送'],
+            defaultId: 0,
+            cancelId: 0,
+            noLink: true,
+            message: english
+              ? 'Send this post to the work computer? The target Agent will use its own permissions to handle it.'
+              : '发给工作电脑？目标 Agent 会按自己的权限处理这条发言。',
+            detail: [
+              english
+                ? 'The source work item keeps this post if the work computer is offline or the request times out. Check the status there and click Retry to send again.'
+                : '如果工作电脑离线或发送超时，发言会保存在来源待办。可在那里刷新状态，需要再次发送时请点「重试」。',
+              '',
+              visible(name) + ' · ' + hostId,
+              visible(agentName ?? 'Agent') + ' · ' + agentId,
+              '',
+              visible(text),
+            ].join('\n'),
+          })
+          return choice.response === 1
+        } finally {
+          dialogGate.leave()
+        }
+      },
+    }),
+  )
   ipcMain.handle(COMPUTER_CHANNELS.add, async (event, source) => {
     if (senderOf(event) !== 'full') return refused
     if (!gestureOf(event)) return noGesture
@@ -1819,6 +1869,7 @@ async function start() {
   })
   reach = await startComputers({
     localHostId: state.hostId,
+    localRequest: (method, path, body) => proxy.shellRequest(method, path, body),
     localSnapshot: async () => (await hostRequest(proxy, 'GET', '/link/api/snapshot')).json,
     localState: () => (['running', 'unresponsive'].includes(supervisor.view().status) ? 'online' : 'offline'),
     onSnapshot: (hostId, name, snapshot) => void notifications.observeRemote(hostId, name, snapshot),

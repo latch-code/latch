@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { Approval, CustomAgentSummary, TaskSummary, WorkPost } from '@latch/protocol'
+import type { Approval, ComputerSummary, CustomAgentSummary, TaskSummary, WorkPost, WorkPostRemote } from '@latch/protocol'
 import {
+  currentTarget,
   deliveryWords,
   matchTargets,
   mentionAt,
@@ -14,6 +15,8 @@ import {
   withoutMention,
   withoutMissingPostSources,
 } from '../src/board/itemThread.ts'
+
+import { remoteActions } from '../src/board/RemoteWorkPost.tsx'
 
 const task = (id: string, extra: Partial<TaskSummary> = {}): TaskSummary => ({
   harnessId: 'fake',
@@ -135,6 +138,33 @@ describe('the thread’s @', () => {
     expect(targetLabel({ sessionId: 's1' }, full)).toBe('写文档')
   })
 
+  it('offers a bound shortcut only on its paired desktop and keeps the selected host and Agent when the shortcut changes', () => {
+    const computer: ComputerSummary = { hostId: 'linux', name: 'Build machine', local: false, state: 'offline' }
+    const shortcut = { ...agent('shortcut', '编译助手'), workComputer: { hostId: computer.hostId, agentId: 'worker' } }
+    const snapshot = { tasks: [], customAgents: [shortcut], agentChats: { shortcut: { state: 'ready' as const, sessionId: 'old-local' } } }
+    const item = { sessionIds: [] }
+    for (const hidden of [undefined, [], [{ ...computer, local: true }], [{ ...computer, hostId: 'other' }]])
+      expect(threadTargets(snapshot, item, hidden).some(row => row.id === shortcut.id)).toBe(false)
+    const targets = threadTargets(snapshot, item, [computer])
+    const [choice] = matchTargets(targets, 'build')
+    expect(choice).toMatchObject({ kind: 'remote', id: shortcut.id, computer })
+    const selected = postTarget(choice!)
+    expect(selected).toEqual({ customAgentId: shortcut.id, workComputer: { hostId: 'linux', agentId: 'worker' } })
+    expect(targetLabel(selected, targets)).toBe('编译助手 · Build machine')
+    expect(currentTarget({ customAgentId: shortcut.id }, targets)).toBeUndefined()
+
+    for (const changed of [
+      { hostId: 'other', agentId: 'worker' },
+      { hostId: 'linux', agentId: 'replacement' },
+    ]) {
+      const next = threadTargets({ ...snapshot, customAgents: [{ ...shortcut, workComputer: changed }] }, item, [
+        { ...computer, hostId: changed.hostId },
+      ])
+      expect(currentTarget(selected, next)).toBeUndefined()
+      expect(targetLabel(selected, next)).toBe('worker · linux')
+    }
+  })
+
   it('reads the @word at the caret only at a word’s start, and takes it out of what is sent', () => {
     expect(mentionAt('@写', 2)).toEqual({ start: 0, query: '写' })
     expect(mentionAt('请 @助理 看看', 5)).toEqual({ start: 2, query: '助理' })
@@ -163,4 +193,24 @@ describe('the thread’s @', () => {
     expect(replySources(posts, { tasks: [task('s1', { runId: 'next-run' })] })).not.toBe(before)
     expect(replySources(null, { tasks: [] })).toBe('')
   })
+})
+
+it('keeps a lost delivery retryable by its original identity and only opens a turn the work computer has acknowledged', () => {
+  const receipt: WorkPostRemote = { customAgentId: 'shortcut', agentId: 'worker', hostId: 'linux', status: 'offline', revision: 1 }
+  expect(remoteActions(receipt)).toEqual({ refresh: true, retry: true, open: false, poll: false })
+  expect(remoteActions({ ...receipt, status: 'unknown', mentionId: 'accepted' })).toEqual({
+    refresh: true,
+    retry: true,
+    open: false,
+    poll: true,
+  })
+  for (const status of ['running', 'waiting-approval'] as const)
+    expect(remoteActions({ ...receipt, status, mentionId: 'accepted', sessionId: 'target' })).toEqual({
+      refresh: true,
+      retry: false,
+      open: true,
+      poll: true,
+    })
+  for (const status of ['cancelled', 'interrupted', 'completed', 'failed'] as const)
+    expect(remoteActions({ ...receipt, status, sessionId: 'target' })).toEqual({ refresh: false, retry: false, open: true, poll: false })
 })

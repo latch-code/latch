@@ -2293,6 +2293,11 @@ button.helper-card:focus-visible {
 .agent-mention-reply-body > .ui-button {
   margin-block-start: var(--sp-6);
 }
+.agent-mention-mode {
+  margin-inline-end: auto;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
 .agent-mention-actions {
   justify-content: flex-end;
   padding: var(--sp-4) var(--sp-12) var(--sp-8);
