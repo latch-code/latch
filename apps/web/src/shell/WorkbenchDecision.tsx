@@ -14,7 +14,7 @@ import {
   WaitingGlyph,
 } from '@latch/ui'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
-import { QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
+import { meaningfulQuestionPrompt, QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
 import { escapeHiddenCharacters, hasHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { AgentAvatar } from '../agents/AgentAvatar.tsx'
 import { HarnessTile } from '../components/BrandTile.tsx'
@@ -251,7 +251,13 @@ export function WorkbenchDecision({
       : draft
         ? COPY.allowFile(previousState(draft) === 'none' ? COPY.write : COPY.update, basename(draft.path))
         : (action ?? (question ? question.questions[0]?.label || question.prompt : undefined) ?? sessionTitle)
-    const detailText = read.error ?? (approvalUnknown ? undefined : approval ? approval.reason : question?.prompt || failure?.text)
+    const detailText =
+      read.error
+      ?? (approvalUnknown
+        ? undefined
+        : approval
+          ? approval.reason
+          : (question && meaningfulQuestionPrompt(question, title)) || failure?.text)
     const link =
       approvalUnknown || resultUnknown
         ? COPY.checkOutcome
