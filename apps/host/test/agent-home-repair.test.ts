@@ -198,6 +198,58 @@ describe.skipIf(process.platform !== 'darwin')("General's managed home on macOS"
     expect(buildGeneralHomeHelper).toHaveBeenCalledTimes(1)
   })
 
+  test('continues the same General chat when the whole legacy data workspace is gone', async () => {
+    const root = await tempRoot()
+    const legacyDataDir = 'legacy-data'
+    const workspace = join(root, legacyDataDir, 'workspace')
+    // Seed the old session at its actual path before placing the Host records in the legacy layout.
+    const legacy = await generalChat(root, workspace, 'seed-data')
+    const { sessionId } = legacy
+    await stop(legacy.host)
+    await rm(workspace, { recursive: true })
+    await rename(legacy.options.dataDir, join(root, legacyDataDir))
+
+    const options = { generalHomeMigration: true, generalHomeBase: join(root, '.latch'), homeHelper }
+    const migrated = await boot(root, 'new-workspace', legacyDataDir, options)
+    const request = as(migrated.host, legacy.owner.credential)
+    const home = join(root, '.latch', 'agent-homes', 'general')
+    expect(await (await request('custom-agents/general/home')).json()).toMatchObject({ available: true, state: 'ready', path: home })
+    expect((await auditActions(migrated.options.dataDir)).filter(row => row.action === 'agent.home.assigned').at(-1)).toMatchObject({
+      target: 'general',
+      detail: { recreated: true },
+    })
+    expect(await readdir(home)).toEqual([])
+    expect((await lstat(home)).mode & 0o777).toBe(0o700)
+    await expect(lstat(workspace)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(((await (await request('snapshot')).json()) as AppSnapshot).agentChats?.general).toEqual({ state: 'ready', sessionId })
+    expect(
+      await answer(await request(`tasks/${sessionId}/prompt`, 'POST', { prompt: 'after migration', requestId: randomUUID() })),
+    ).toEqual([200, { accepted: true }])
+    await settled(request, sessionId)
+    await stop(migrated.host)
+
+    const restarted = await boot(root, 'other-workspace', legacyDataDir, options)
+    const again = as(restarted.host, legacy.owner.credential)
+    expect(await answer(await again(`tasks/${sessionId}/prompt`, 'POST', { prompt: 'after restart', requestId: randomUUID() }))).toEqual([
+      200,
+      { accepted: true },
+    ])
+    await settled(again, sessionId)
+    const detail = (await (await again(`tasks/${sessionId}`)).json()) as TaskDetail
+    expect(detail.summary.cwd).toBe(home)
+    expect(detail.messages.filter(message => message.role === 'user').map(message => message.text)).toEqual([
+      'Hello',
+      'after migration',
+      'after restart',
+    ])
+    expect(detail.messages.filter(message => message.role === 'assistant').map(message => message.text)).toEqual([
+      'Answer',
+      'Answer',
+      'Answer',
+    ])
+    await expect(lstat(workspace)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   test('creates a managed home with the first message and allows only its scoped file access', async () => {
     const root = await tempRoot()
     const { host, options } = await boot(root, 'workspace', dataDir, { generalHomeMigration: true, homeHelper })

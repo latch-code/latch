@@ -1,6 +1,6 @@
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { sha256Hex } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
@@ -13,11 +13,11 @@ afterEach(async () => {
 })
 
 /** A start directory under a fresh temp root, and the helper over it with the given suffixes in turn. */
-async function folders(input: { suffixes?: string[]; at?: number; create?: boolean } = {}) {
+async function folders(input: { suffixes?: string[]; at?: number; create?: boolean; relative?: string } = {}) {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'latch-own-')))
   cleanups.push(() => rm(base, { recursive: true, force: true }))
-  const root = join(base, 'workspace')
-  await mkdir(root, { mode: 0o700 })
+  const root = join(base, input.relative ?? 'workspace')
+  await mkdir(root, { mode: 0o700, recursive: true })
   const suffixes = [...(input.suffixes ?? [])]
   let clock = input.at ?? new Date(2026, 9, 25, 23, 59).getTime()
   let now = 1_000_000
@@ -45,7 +45,8 @@ async function folders(input: { suffixes?: string[]; at?: number; create?: boole
 }
 
 async function generalMigration() {
-  const { base, root } = await folders()
+  const relative = join('Latch', 'workspace')
+  const { base, root } = await folders({ relative })
   const dataDir = join(base, 'data')
   const managedRoot = join(base, '.latch')
   const target = join(managedRoot, 'agent-homes', 'general')
@@ -64,7 +65,7 @@ async function generalMigration() {
   )
   const options = {
     previous,
-    previousRoots: [root],
+    previousDefaults: [{ base, relative }],
     paths: (name: string) => (name === 'helpers/general' ? [from] : []),
     beforeMove,
     moveSessions,
@@ -126,7 +127,7 @@ describe('managed General home', () => {
     await managed.migrateGeneral({
       ...options,
       previous: new SessionFolders(previousOptions),
-      previousRoots: [...options.previousRoots, otherRoot],
+      previousDefaults: [...options.previousDefaults, { base, relative: basename(otherRoot) }],
     })
     expect(await readFile(join(target, 'notes.md'), 'utf8')).toBe('active home')
     expect(await readFile(join(otherHome.path, 'notes.md'), 'utf8')).toBe('other home')
@@ -153,28 +154,75 @@ describe('managed General home', () => {
     ])
   })
 
-  it.each(['home', 'parent'] as const)('recreates a verified missing legacy %s and resumes its saved session rewrite', async missing => {
-    const { previous, previousOptions, managed, managedOptions, from, target, options } = await generalMigration()
+  it.each(['home', 'helpers', 'workspace', 'Latch'] as const)(
+    'recreates a verified missing legacy %s and resumes its saved session rewrite',
+    async missing => {
+      const { previous, previousOptions, managed, managedOptions, from, target, options } = await generalMigration()
+      await previous.helperHome('general', async () => {})
+      const paths = { home: from, helpers: dirname(from), workspace: previousOptions.root, Latch: dirname(previousOptions.root) }
+      await rm(paths[missing], { recursive: true })
+      await expect(managed.needsGeneralMigration(previous)).resolves.toBe(true)
+      options.moveSessions.mockRejectedValueOnce(new Error('interrupted'))
+      await expect(managed.migrateGeneral(options)).rejects.toThrow('interrupted')
+      const allocated = await stat(target, { bigint: true })
+      expect(allocated.mode & 0o777n).toBe(0o700n)
+      expect(await readdir(target)).toEqual([])
+
+      const restarted = new SessionFolders(managedOptions)
+      await restarted.migrateGeneral({ ...options, previous: new SessionFolders(previousOptions) })
+      expect(await restarted.verify(target)).toBe(true)
+      expect((await stat(target, { bigint: true })).ino).toBe(allocated.ino)
+      expect(options.beforeMove).toHaveBeenCalledExactlyOnceWith(false)
+      expect(options.moveDirectory).not.toHaveBeenCalled()
+      expect(options.moveSessions.mock.calls).toEqual([
+        ['helpers/general', from, target],
+        ['helpers/general', from, target],
+      ])
+      await expect(stat(paths[missing])).rejects.toMatchObject({ code: 'ENOENT' })
+    },
+  )
+
+  it.each(['existing', 'dangling'] as const)('refuses a missing workspace below a symbolic link (%s target)', async kind => {
+    const { base, previous, previousOptions, managed, target, options } = await generalMigration()
     await previous.helperHome('general', async () => {})
-    await rm(missing === 'home' ? from : join(previousOptions.root, 'helpers'), { recursive: true })
-    await expect(managed.needsGeneralMigration(previous)).resolves.toBe(true)
+    const parent = dirname(previousOptions.root)
+    await rename(parent, join(base, 'retained'))
+    const other = join(base, 'other')
+    if (kind === 'existing') await mkdir(other, { mode: 0o700 })
+    await symlink(other, parent)
+    await expect(managed.migrateGeneral(options)).rejects.toMatchObject({ code: 'helper-home-unavailable' })
+    expect(options.beforeMove).not.toHaveBeenCalled()
+    expect(options.moveSessions).not.toHaveBeenCalled()
+    await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('keeps the original home when a missing default workspace returns during journal recovery', async () => {
+    const { base, previous, previousOptions, managed, managedOptions, from, target, options } = await generalMigration()
+    await previous.helperHome('general', async () => {})
+    await writeFile(join(from, 'notes.md'), 'original file')
+    const retained = join(base, 'retained')
+    await rename(previousOptions.root, retained)
     options.moveSessions.mockRejectedValueOnce(new Error('interrupted'))
     await expect(managed.migrateGeneral(options)).rejects.toThrow('interrupted')
-    const allocated = await stat(target, { bigint: true })
-    expect(allocated.mode & 0o777n).toBe(0o700n)
-    expect(await readdir(target)).toEqual([])
-
+    await rename(retained, previousOptions.root)
     const restarted = new SessionFolders(managedOptions)
-    await restarted.migrateGeneral({ ...options, previous: new SessionFolders(previousOptions) })
-    expect(await restarted.verify(target)).toBe(true)
-    expect((await stat(target, { bigint: true })).ino).toBe(allocated.ino)
-    expect(options.beforeMove).toHaveBeenCalledExactlyOnceWith(false)
+    await expect(restarted.migrateGeneral({ ...options, previous: new SessionFolders(previousOptions) })).rejects.toMatchObject({
+      code: 'helper-home-unavailable',
+    })
+    expect(await readFile(join(from, 'notes.md'), 'utf8')).toBe('original file')
+    expect(await readdir(target)).toEqual([])
     expect(options.moveDirectory).not.toHaveBeenCalled()
-    expect(options.moveSessions.mock.calls).toEqual([
-      ['helpers/general', from, target],
-      ['helpers/general', from, target],
-    ])
-    await expect(stat(from)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(options.moveSessions).toHaveBeenCalledOnce()
+  })
+
+  it('refuses a missing workspace outside the listed defaults even when the session recorded its path', async () => {
+    const { previous, previousOptions, managed, target, options } = await generalMigration()
+    await previous.helperHome('general', async () => {})
+    await rm(previousOptions.root, { recursive: true })
+    await expect(managed.migrateGeneral({ ...options, previousDefaults: [] })).rejects.toMatchObject({ code: 'helper-home-unavailable' })
+    expect(options.beforeMove).not.toHaveBeenCalled()
+    expect(options.moveSessions).not.toHaveBeenCalled()
+    await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('refuses a replacement at the previous home without touching either directory', async () => {

@@ -1987,11 +1987,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         await withGeneralHomeSessions(dataDir, sessions =>
           generalHomes.migrateGeneral({
             previous: ownFolders,
-            previousRoots: [
-              workspaceRoot,
-              join(realDataDir, 'workspace'),
-              join(home, 'Latch', 'workspace'),
-              join(home, 'Latch Files', 'workspace'),
+            previousDefaults: [
+              { base: realDataDir, relative: 'workspace' },
+              { base: home, relative: join('Latch', 'workspace') },
+              { base: home, relative: join('Latch Files', 'workspace') },
             ],
             paths(name) {
               const paths = sessions.paths(name)
@@ -2005,7 +2004,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 action: 'agent.home.assigned',
                 actor: { listener: 'host', via: 'startup' },
                 target: GENERAL_AGENT_ID,
-                detail: { homeHash: sha256Hex(canonicalJson('agent-homes/general')) },
+                detail: { homeHash: sha256Hex(canonicalJson('agent-homes/general')), ...(!needsNativeMove ? { recreated: true } : {}) },
               })
             },
             moveDirectory: async (source, target) =>
