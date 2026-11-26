@@ -183,6 +183,10 @@ export interface FileChange {
   path: string
   change: 'created' | 'modified' | 'deleted'
   size?: number
+  /** Matched by `.gitignore` in a Git repository and not tracked by Git. */
+  gitIgnored?: true
+  /** SHA-256 of a created file's content when recorded at run settlement. */
+  sha256?: string
 }
 
 export const FILE_KINDS: readonly FileKind[] = [

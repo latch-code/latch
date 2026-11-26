@@ -302,7 +302,12 @@
   max-height: none;
   overflow: auto hidden;
 }
-.diff-view[data-mode='full'] .diff-path-folder {
+.diff-view[data-mode='full'] .diff-path,
+.diff-view[data-mode='compact'] .diff-path {
+  gap: 0;
+}
+.diff-view[data-mode='full'] .diff-path-folder,
+.diff-view[data-mode='compact'] .diff-path-folder {
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
@@ -454,6 +459,10 @@
   font-family: var(--mono);
   font-size: var(--fs-code);
   line-height: var(--lh-code);
+}
+.diff-paper > .diff-compact {
+  border-radius: 0;
+  box-shadow: none;
 }
 .diff-compact .diff-text {
   overflow: hidden;

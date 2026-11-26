@@ -5,12 +5,23 @@ import { contextOf, fileContextKey, targetIn, type PreviewTarget } from './fileC
 import type { FileTreeView } from './treeFiles.ts'
 import { draftKey, editDraft, requestDrop } from './editDrafts.ts'
 
+/** In-memory focus for a specific recorded tool edit (`${messageId}:${diffIndex}`), never persisted to storage. */
+export interface FileDiffFocus {
+  entryId: string
+  messageId: string
+  diffIndex: number
+  nonce: number
+}
+
 export interface FileTab {
   id: string
   target: PreviewTarget
   file?: FileMetadata
   /** Produced by a turn and not looked at yet. Kept in memory: a reload forgets it. */
   fresh?: boolean
+  diffFocus?: FileDiffFocus
+  /** Opened from a recorded tool diff that cannot use Host file preview (outside session roots or preview disabled). */
+  recordedOnly?: boolean
 }
 type ContextTabs = { context: FileContext; tabs: FileTab[]; selected?: string; treeView?: FileTreeView }
 const MAX_TABS = 6
@@ -157,7 +168,7 @@ export function useFileTabs(deviceId: string, context: FileContext | null, autho
               const root = tab.file?.root ?? tab.target.rootId,
                 path = tab.file?.path ?? tab.target.reference
               // A file outside the session's folders is reopened only by the path a message named, never kept here.
-              if (!root || path.startsWith('/') || tab.file?.folder !== undefined) return []
+              if (tab.recordedOnly || !root || path.startsWith('/') || tab.file?.folder !== undefined) return []
               return [
                 {
                   root,
@@ -197,7 +208,7 @@ export function useFileTabs(deviceId: string, context: FileContext | null, autho
       setTreeView(treeView: FileTreeView) {
         if (context) update(context, state => ({ ...state, treeView }))
       },
-      open(target: PreviewTarget) {
+      open(target: PreviewTarget, options?: { diffFocus?: FileDiffFocus; recordedOnly?: boolean }) {
         const targetContext = contextOf(target)
         const matches = (tab: FileTab) =>
           (tab.target.reference === target.reference
@@ -214,7 +225,13 @@ export function useFileTabs(deviceId: string, context: FileContext | null, autho
           update(targetContext, state => {
             const existing = state.tabs.find(matches)
             const nextTarget = 'sessionId' in target ? { ...target, view: target.view ?? ('preview' as const) } : target
-            const tab = { id: existing?.id ?? crypto.randomUUID(), ...(existing?.file ? { file: existing.file } : {}), target: nextTarget }
+            const tab: FileTab = {
+              id: existing?.id ?? crypto.randomUUID(),
+              ...(existing?.file ? { file: existing.file } : {}),
+              target: nextTarget,
+              ...(options?.diffFocus ? { diffFocus: options.diffFocus } : {}),
+              ...(options?.recordedOnly ? { recordedOnly: true } : {}),
+            }
             const kept = state.tabs.filter(item => item.id !== tab.id && (existing || item.id !== room?.id))
             return { ...state, tabs: [...kept, tab].slice(-MAX_TABS), selected: tab.id }
           })
@@ -242,7 +259,11 @@ export function useFileTabs(deviceId: string, context: FileContext | null, autho
           update(context, state => ({
             ...state,
             selected: id,
-            tabs: state.tabs.map(tab => (tab.id === id && 'sessionId' in tab.target ? { ...tab, target: { ...tab.target, view } } : tab)),
+            tabs: state.tabs.map(tab => {
+              if (tab.id !== id || !('sessionId' in tab.target)) return tab
+              const { diffFocus: _focus, ...rest } = tab
+              return { ...rest, target: { ...tab.target, view } }
+            }),
           }))
       },
       /** Closes the tab; one with unsaved text asks first. `then` runs once it is closed. */

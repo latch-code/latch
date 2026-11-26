@@ -474,7 +474,7 @@ function MarkdownFile({
     }
   }, [ready, path, key, resolve, retry])
   const shown = value?.key === key && failed !== key ? value.media : undefined
-  if (shown && pictured.some(picture => samePicture(shown, picture))) return null
+  if (shown && pictured.some(picture => samePicture(shown, picture))) return <span className="media-omitted" hidden />
   if (path && shown) {
     const label = alt || (typeof children === 'string' ? children : '') || referenceName(path)
     const media = (
@@ -505,7 +505,13 @@ function MarkdownFile({
   // In a turn with a generated picture, a link to a picture waits unseen for the Host's answer instead of showing a chip
   // that may then go.
   const holding = wanted && pictured.length > 0 && (image || linked === 'image') && plainKey !== key && failed !== key
-  return wanted ? <span ref={anchor}>{holding ? null : plain}</span> : plain
+  return wanted ? (
+    <span ref={anchor} className={holding ? 'media-omitted' : undefined}>
+      {holding ? null : plain}
+    </span>
+  ) : (
+    plain
+  )
 }
 
 function MarkdownFileLink({
@@ -532,9 +538,109 @@ function MarkdownFileLink({
   return <FileChip path={reference} label={children} image={image} alt={alt} />
 }
 
+interface HastNode {
+  type: string
+  tagName?: string
+  properties?: Record<string, unknown>
+  children?: HastNode[]
+}
+
+const INLINE_MEDIA_WRAPPER = new Set(['strong', 'em', 'del', 's', 'mark', 'span', 'sub', 'sup'])
+const MEDIA_SEP_ONLY = /^[\s,，、;；·•/|。.]+$/u
+const MEDIA_SEP_LEAD = /^(?:[,，、;；·•/|。]+|\.(?=\s|$))\s*/u
+const MEDIA_SEP_TRAIL = /^([\s\S]*\S)([,，、;；·•/|]+\s*)$/u
+
+function isPotentialMediaNode(child: HastNode | undefined): boolean {
+  if (!child || child.type !== 'element') return false
+  if (child.tagName === 'img') {
+    const src = typeof child.properties?.src === 'string' ? child.properties.src : ''
+    return src !== '' && !/^https?:/iu.test(src)
+  }
+  if (child.tagName === 'a') {
+    const href = typeof child.properties?.href === 'string' ? child.properties.href : ''
+    if (!href) return false
+    const target = linkTarget(href, '')
+    return target.kind === 'path' && mediaTypeOf(target.path) !== undefined
+  }
+  return false
+}
+
+function hasPotentialMedia(nodes: HastNode[] | undefined): boolean {
+  if (!nodes) return false
+  return nodes.some(
+    child =>
+      isPotentialMediaNode(child)
+      || (child.type === 'element' && INLINE_MEDIA_WRAPPER.has(child.tagName ?? '') && hasPotentialMedia(child.children)),
+  )
+}
+
+/**
+ * Wraps punctuation separators sitting next to links that may turn into block media (`InlineMedia`), keeping them
+ * visible while chips stay inline and letting CSS hide them once block media would strand them on a line of their own.
+ */
+function mediaFlowChildren(node: HastNode | undefined, children: ReactNode): ReactNode {
+  if (!Array.isArray(children) || !hasPotentialMedia(node?.children)) return children
+  const out: ReactNode[] = []
+  children.forEach((child, index) => {
+    if (typeof child !== 'string') {
+      out.push(child)
+      return
+    }
+    const prevIsElement = index > 0 && typeof children[index - 1] !== 'string'
+    const nextIsElement = index < children.length - 1 && typeof children[index + 1] !== 'string'
+    if (/\S/u.test(child) && MEDIA_SEP_ONLY.test(child) && (prevIsElement || nextIsElement)) {
+      const side = prevIsElement && nextIsElement ? 'between' : prevIsElement ? 'after' : 'before'
+      out.push(
+        <span key={`media-sep-${index}`} className="media-sep" data-sep={side}>
+          {child}
+        </span>,
+      )
+      return
+    }
+    let rest = child
+    if (prevIsElement) {
+      const lead = MEDIA_SEP_LEAD.exec(rest)
+      if (lead && lead[0].length < rest.length) {
+        out.push(
+          <span key={`media-sep-lead-${index}`} className="media-sep" data-sep="after">
+            {lead[0]}
+          </span>,
+        )
+        rest = rest.slice(lead[0].length)
+      }
+    }
+    if (nextIsElement) {
+      const trail = MEDIA_SEP_TRAIL.exec(rest)
+      if (trail) {
+        out.push(trail[1])
+        out.push(
+          <span key={`media-sep-trail-${index}`} className="media-sep" data-sep="before">
+            {trail[2]}
+          </span>,
+        )
+        return
+      }
+    }
+    out.push(rest)
+  })
+  return out
+}
+
 // Component identities stay stable as tokens arrive, preserving code-block focus,
 // expanded state, and the reader's scroll position.
 const components: Components = {
+  p({ node, children, ...props }) {
+    return <p {...props}>{mediaFlowChildren(node as HastNode | undefined, children)}</p>
+  },
+  li({ node, children, ...props }) {
+    return <li {...props}>{mediaFlowChildren(node as HastNode | undefined, children)}</li>
+  },
+  td({ node, children, ...props }) {
+    return <td {...props}>{mediaFlowChildren(node as HastNode | undefined, children)}</td>
+  },
+  th({ node, children, ...props }) {
+    return <th {...props}>{mediaFlowChildren(node as HastNode | undefined, children)}</th>
+  },
   code({ node: _node, ...props }) {
     if (props.className?.includes('math-inline')) return <MathFormula tex={String(props.children)} />
     return <InlineCode {...props} />

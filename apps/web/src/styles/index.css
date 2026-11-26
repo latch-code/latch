@@ -18,6 +18,7 @@
 @import './tool-card.css' layer(app);
 @import './diff.css' layer(app);
 @import './changes.css' layer(app);
+@import './outputs.css' layer(app);
 @import './delivery.css' layer(app);
 @import './composer.css' layer(app);
 @import './reference-excerpts.css' layer(app);

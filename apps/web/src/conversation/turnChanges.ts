@@ -92,7 +92,7 @@ export function turnSummary(turn: Turn, list: ChangeList | undefined, outputs: r
   const files: SummaryFile[] = [
     ...edited,
     ...outputs
-      .filter(file => !known.has(file.path))
+      .filter(file => !file.gitIgnored && !known.has(file.path))
       .map(file => ({ root: file.root, path: file.path, ...(file.change === 'deleted' ? { deleted: true } : {}) })),
   ]
   const counted = files.every(file => file.add !== undefined)
@@ -114,9 +114,11 @@ export function changedOutputs(record: TurnChanges | undefined, outputs: readonl
 
 const DOCUMENT_KINDS: ReadonlySet<string> = new Set(['pptx', 'pdf', 'docx', 'xlsx', 'csv', 'html', 'image', 'svg', 'audio', 'video'])
 
-/** What the turn made for the person to open, as opposed to code it edited: new documents and media. */
+/** What the turn made for the person to open or clean up, as opposed to repository code it edited: documents, media and ignored outputs. */
 export const producedFiles = (outputs: readonly FileChange[]) =>
-  outputs.filter(file => file.change === 'created' && file.kind !== undefined && DOCUMENT_KINDS.has(file.kind))
+  outputs.filter(
+    file => file.change === 'created' && (file.gitIgnored === true || (file.kind !== undefined && DOCUMENT_KINDS.has(file.kind))),
+  )
 
 /** Who may press 撤销本轮 or 恢复 on this device, as the Host will check it. */
 export interface UndoRights {

@@ -152,6 +152,7 @@ export const AUDIT_LABELS: Readonly<Record<AuditAction, readonly [AuditKind, str
   'change.redo': ['projects', '重做改动'],
   'change.rewind': ['projects', '从这里编辑时退回文件'],
   'change.discard': ['projects', '丢弃改动'],
+  'change.outputs-clean': ['projects', '清理生成文件'],
   // 模型
   'provider.secret.set': ['models', '保存模型密钥'],
   'provider.secret.cleared': ['models', '清除模型密钥'],

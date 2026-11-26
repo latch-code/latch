@@ -108,6 +108,7 @@ export const AUDIT_FIELDS: AuditFieldTable = {
     scope: 'show',
     turnId: 'short',
   },
+  'change.outputs-clean': { sessionId: 'short', remove: 'show', skipped: 'show', planHash: 'short' },
   'change.redo': { sessionId: 'short', restore: 'show', remove: 'show', skipped: 'show', planHash: 'short', turnId: 'short' },
   'change.rewind': { sessionId: 'short', restore: 'show', remove: 'show', skipped: 'show', planHash: 'short', turnId: 'short' },
   'change.undo': { sessionId: 'short', restore: 'show', remove: 'show', skipped: 'show', planHash: 'short', turnId: 'short' },

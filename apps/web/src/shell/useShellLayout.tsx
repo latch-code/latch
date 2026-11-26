@@ -16,6 +16,7 @@ import type { PromptInput } from '../composer/PromptEditor.tsx'
 import { mentionMarker } from '../fileMentions.ts'
 import type { ChangeTotals, FileMention } from '@latch/protocol'
 import type { ChangesTarget as ChangesPanelTarget } from '../panel/changes/ChangesPanel.tsx'
+import type { OutputsPanelTarget } from '../panel/outputs/GeneratedFilesPanel.tsx'
 import { TREE_FROM_FILES } from '../panel/changes/model.ts'
 import { useFileTabs } from '../preview/useFileTabs.ts'
 import { quoteDraft, type FileQuote } from '../preview/quote.ts'
@@ -114,7 +115,8 @@ import { EASING, MOTION, motionAllowed, usePresence, type ResizePhase, EnterGlyp
 import { popWait } from './popWait.ts'
 import { settingsSections, type SettingsSection } from '../settings/SettingsPage.tsx'
 import { useSessionController, type SessionSelectionIntent } from './useSessionController.ts'
-import type { ChangesLink, ChangesTarget } from '../conversation/changesLink.ts'
+import type { ChangesLink, ChangesTarget, OutputsOpenTarget, ToolDiffTarget } from '../conversation/changesLink.ts'
+import { recordedFileHistory } from '../preview/fileHistory.ts'
 import { useFrozenAt } from '../conversation/useFrozenAt.ts'
 import { overlayDismissed } from '../escapeGrace.ts'
 import { toggleUsage } from '../usage/surface.ts'
@@ -575,6 +577,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const contextKey = fileContext ? fileContextKey(fileContext) : ''
   // A device without the data scope still gets the tab: it says why there is nothing to read, instead of a toggle that vanished.
   const canViewChanges = catalog?.features?.changes === true && access.scopes.has('view') && !!summary && summary.mode !== 'chat'
+  const canViewOutputs = canViewChanges && readsProjectFiles(snapshot.device.dataScope)
   // Like 改动, a device without the data scope keeps the tab: it says the list is locked, and a commit and a push still work.
   const canDeliver = catalog?.features?.gitDelivery === true && access.scopes.has('view') && !!summary && summary.mode !== 'chat'
   const hasTerminal =
@@ -631,23 +634,26 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
         ? !!summary && spaceOf(summary) === 'code'
         : key === 'changes'
           ? canViewChanges
-          : key === 'delivery'
-            ? canDeliver
-            : key === 'browser'
-              ? canBrowser
-              : key === 'device'
-                ? canDevice
-                : key === 'terminal'
-                  ? panelTerminal
-                  : key === 'files'
-                    ? canBrowseFiles
-                    : offeredPanels.some(panel => `plugin:${panel.id}` === key)
+          : key === 'outputs'
+            ? canViewOutputs
+            : key === 'delivery'
+              ? canDeliver
+              : key === 'browser'
+                ? canBrowser
+                : key === 'device'
+                  ? canDevice
+                  : key === 'terminal'
+                    ? panelTerminal
+                    : key === 'files'
+                      ? canBrowseFiles
+                      : offeredPanels.some(panel => `plugin:${panel.id}` === key)
   const panelChoiceList = panelChoices({
     browser: canBrowser,
     device: canDevice,
     terminal: panelTerminal,
     files: canBrowseFiles,
     changes: canViewChanges,
+    outputs: canViewOutputs,
     delivery: canDeliver,
     overview: panelAvailable('overview'),
     context: panelAvailable('context'),
@@ -669,6 +675,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const panelSelected = fileTabs.active ? undefined : panelShown.active
   const selectedShown = (key: PanelKey) => surfaceShown && panelSelected === key
   const changesOpen = selectedShown('changes')
+  const outputsOpen = selectedShown('outputs')
   const deliveryOpen = selectedShown('delivery')
   const browserOpen = selectedShown('browser')
   const filesOpen = selectedShown('files')
@@ -684,6 +691,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   /** Another terminal asked for from 「+」 while the terminals already stand in the panel. */
   const [terminalRequest, setTerminalRequest] = useState(0)
   const [changesTarget, setChangesTarget] = useState<ChangesPanelTarget>()
+  const [outputsTarget, setOutputsTarget] = useState<OutputsPanelTarget>()
   const [changesTotals, setChangesTotals] = useState<ChangeTotals>()
   /**
    * The profile of the Agent in view, opened from its face or name (or a link to one of its sections): on wide windows
@@ -713,6 +721,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setFileExpanded(false)
     setBrowserRequest(undefined)
     setChangesTarget(undefined)
+    setOutputsTarget(undefined)
     setChangesTotals(undefined)
   }, [contextKey, fileAuthority])
   const storedSidebar = preferences.sidebar.width ?? 264
@@ -723,12 +732,17 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const homeInspector = hasStart && !phone && canBrowseDraftFiles
   const homeInspectorOpen = homeInspector && draftFilesOpen
   const showingChanges = panelSelected === 'changes'
+  const showingFileDiff = fileTabs.active?.target.view === 'changes'
   const panelWidth =
     preferences.rightPanel.width
     ?? (homeInspector
       ? undefined
-      : showingChanges
-        ? changesPanelWidth(windowWidth, panelLeft, preferences.diffTree ?? (changesTotals?.files ?? 0) >= TREE_FROM_FILES)
+      : showingChanges || showingFileDiff
+        ? changesPanelWidth(
+            windowWidth,
+            panelLeft,
+            showingChanges ? (preferences.diffTree ?? (changesTotals?.files ?? 0) >= TREE_FROM_FILES) : false,
+          )
         : !fileTabs.active && (panelSelected === undefined || panelSelected === 'overview')
           ? 400
           : undefined)
@@ -765,6 +779,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       : profileColumn
         || filesVisible
         || changesOpen
+        || outputsOpen
         || deliveryOpen
         || browserOpen
         // A saved layout opens real surfaces on wide windows; a tablet overlay or an empty launcher needs an explicit action.
@@ -844,6 +859,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       setInfoPage(true)
       return
     }
+    setProfile(null)
     setRoute({ entry: 'sessions' })
     if (target.sessionId !== selectedId) choose(target.sessionId)
     const task = current?.summary.id === target.sessionId ? current.summary : snapshot.tasks.find(item => item.id === target.sessionId)
@@ -853,6 +869,35 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       : (roots.find(root => target.reference.startsWith(`${root.path}/`)) ?? roots[0])
     const reference = root && target.reference.startsWith(`${root.path}/`) ? target.reference.slice(root.path.length + 1) : target.reference
     fileTabs.open({ ...target, reference, ...(root ? { rootId: root.id } : {}) })
+    setInfoPage(true)
+  })
+  const toolDiffNonce = useRef(0)
+  const openToolDiff = useStableCallback((target: ToolDiffTarget) => {
+    if (!current) return
+    const match = recordedFileHistory(current, target.messageId, target.diffIndex)
+    if (!match) return
+    const canPreview = match.insideRoot && snapshot.catalog?.features?.filePreview === true
+    toolDiffNonce.current += 1
+    setProfile(null)
+    setRoute({ entry: 'sessions' })
+    if (placed.kind === 'sheet') setFindOpen(false)
+    fileTabs.open(
+      match.insideRoot
+        ? { sessionId: current.summary.id, reference: match.history.path, rootId: match.history.root, view: 'changes' }
+        : { sessionId: current.summary.id, reference: match.history.path, view: 'changes' },
+      {
+        diffFocus: {
+          entryId: `${target.messageId}:${target.diffIndex}`,
+          messageId: target.messageId,
+          diffIndex: target.diffIndex,
+          nonce: toolDiffNonce.current,
+        },
+        recordedOnly: !canPreview,
+      },
+    )
+    setSurfaceShown(true)
+    setFileExpanded(false)
+    setColumnOpen(true)
     setInfoPage(true)
   })
   const offerFile = useStableCallback((target: ContextFileOpenTarget) => {
@@ -1516,6 +1561,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     showSurface({ kind: 'changes' })
     if (target) setChangesTarget(previous => ({ ...target, nonce: (previous?.nonce ?? 0) + 1 }))
   }
+  const openOutputs = useStableCallback((target?: OutputsOpenTarget) => {
+    if (!canViewOutputs) return
+    showSurface({ kind: 'outputs' })
+    if (target) setOutputsTarget(previous => ({ ...target, nonce: (previous?.nonce ?? 0) + 1 }))
+  })
   const closeTerminal = () => {
     setTerminalIntent(undefined)
     setPreference('dockOpen', false)
@@ -2463,7 +2513,9 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setFileExpanded,
     filesOpen,
     canViewChanges,
+    canViewOutputs,
     changesOpen,
+    outputsOpen,
     canDeliver,
     deliveryOpen,
     canTerminal,
@@ -2515,6 +2567,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     toggleChanges,
     openChangesTab,
     changesTarget,
+    outputsTarget,
     changesTotals,
     setChangesTotals,
     canBrowseFiles,
@@ -2626,6 +2679,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     connectionProblem,
     frozenAt,
     changesLink,
+    openToolDiff,
+    openOutputs: canViewOutputs ? openOutputs : null,
     shellHost,
     hostProblem,
     computer,

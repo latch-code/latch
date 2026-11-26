@@ -1,9 +1,11 @@
-import { watch, type Stats } from 'node:fs'
-import { lstat, opendir, realpath } from 'node:fs/promises'
+import { watch, constants, type Stats } from 'node:fs'
+import { lstat, open, opendir, realpath } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { isFileMention, type FileChange } from '@latch/protocol'
 import type { FileTrackingHandle, FileTrackingInput, FileTrackingResult } from '@latch/sdk'
+import { hashHandle } from '../changes/objects.ts'
 import { isInsidePath } from '../paths.ts'
+import { openRootGitIgnore } from './git-ignore-scope.ts'
 import { isIgnoredPath, isSecretLookingPath } from './ignore.ts'
 import { fileFormat } from './metadata.ts'
 import { ProtectedPaths, resolveRecorded, type FileRoot, type ManagedHomeAccess } from './resolve.ts'
@@ -88,6 +90,7 @@ export function createFileTrackingService(options: TrackerOptions) {
           return unavailable()
         roots.push({ id: folder.id, path })
       }
+      const gitScopes = new Map(await Promise.all(roots.map(async root => [root.id, await openRootGitIgnore(root)] as const)))
       const startedAt = Date.now(),
         baseline = new Map<string, Stamp>(),
         pending = new Set<string>(),
@@ -229,13 +232,15 @@ export function createFileTrackingService(options: TrackerOptions) {
           return
         }
         const { kind } = fileFormat(resolved.file),
-          born = info.birthtimeMs > 0 && info.birthtimeMs >= startedAt
+          born = info.birthtimeMs > 0 && info.birthtimeMs >= startedAt,
+          gitIgnored = await gitScopes.get(id)?.isIgnored(resolved.file.relativePath)
         changes.set(key, {
           root: id,
           path: resolved.file.relativePath,
           change: !previous && born && platform === 'darwin' ? 'created' : 'modified',
           size: resolved.file.size,
           kind,
+          ...(gitIgnored ? { gitIgnored: true as const } : {}),
         })
       }
       const refresh = () => {
@@ -358,6 +363,28 @@ export function createFileTrackingService(options: TrackerOptions) {
               truncated = true
               failedScan = true
             })
+            if (!disposed) {
+              const hashLimit = 128 * 1024 * 1024
+              for (const entry of changes.values()) {
+                if (entry.change === 'deleted' || (entry.size !== undefined && entry.size > hashLimit)) continue
+                if (entry.change !== 'created' && !entry.gitIgnored) continue
+                const root = roots.find(item => item.id === entry.root)
+                if (!root) continue
+                const target = join(root.path, ...entry.path.split('/'))
+                const fd = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | constants.O_NONBLOCK).catch(
+                  () => undefined,
+                )
+                if (!fd) continue
+                try {
+                  const stat = await fd.stat({ bigint: true })
+                  if (stat.isFile() && Number(stat.size) <= hashLimit) entry.sha256 = await hashHandle(fd)
+                } catch {
+                  /* Best-effort settlement digest. */
+                } finally {
+                  await fd.close().catch(() => {})
+                }
+              }
+            }
             finished = true
             active.delete(handle)
             return structuredClone(result())

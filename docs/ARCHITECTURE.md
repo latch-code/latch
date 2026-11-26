@@ -278,7 +278,8 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 ### 改动与文件编辑
 
 - **快照与补丁。** 不跟随链接，跳过 Host 受保护的路径；名字像密钥的文件只记元数据，内容含密钥的只记哈希、从不给内容；二进制、过大、像密钥与没有留存的文件不进补丁。改动存储必须是本用户的普通目录（500 `changes-store-insecure`）。
-- **本轮与会话的范围。** 快照跳过依赖与构建目录，包括任意层级的 `.pnpm-store`、`.build`、`.derived-data` 与 `DerivedData`。展示旧记录和计算撤销范围也用这条规则。已留存的历史文件仍按原有保留策略回收。Git 的未提交改动与基线比较仍展示已跟踪文件。
+- **本轮与会话的范围。** 快照跳过依赖与构建目录，包括任意层级的 `.pnpm-store`、`.build`、`.derived-data` 与 `DerivedData`；在 Git 工作树中还遵守 `.gitignore`（已在 Git 索引跟踪的文件除外），非 Git 普通目录不受 `.gitignore` 影响。展示旧记录和计算撤销范围也用这条规则。已留存的历史文件仍按原有保留策略回收。Git 的未提交改动与基线比较仍展示已跟踪文件。
+- **生成文件列表与清理。** `GET /tasks/:id/outputs` 汇总会话各轮新建的文档、媒体与被 `.gitignore` 忽略的新增产物，核对当前磁盘状态与结算时留存的 SHA-256 哈希；`POST /tasks/:id/outputs/cleanup(/preview)` 仅允许删除本会话记录为新建、非密钥且内容哈希自生成后未再变化的普通文件（空出的新建子目录顺带移除，不越出文件夹根），先预览返回 `planHash`、确认时先写 `change.outputs-clean` 审计并支持按 `requestId` 幂等重放。
 - **撤销、恢复与丢弃。** 读要 `view` 与数据范围 `files`，写要 `run`、`files` 并过发送消息的检查，读取在返回之前再查一次。只写没再动过的文件（按内容哈希，否则 409 `change-files-changed`，一个文件也不写）；没有留存的不写也不删；像密钥的文件丢弃时不写不删；运行中 409 `change-running`。丢弃全部未提交的改动不可恢复，只在 `host.sock`，先预览再带 `confirm` 与预览的 `planHash` 执行；退回到某一条之前也只按预览的 `planHash` 执行。
 - **行级反馈。** 快照的 `reviewNotes` 只有每个会话的计数与修订号，文字只经列表路由；「修好了」一类状态只由人设定，Host 不推断。
 - **编辑文件。** `PUT /tasks/:id/files/:handle` 带 `baseHash`：在改动记录的锁里重读，哈希不同 409 `file-changed`，一个字节也不写；锁里、写审计 `file.edit` 之后与改名之前各按设备此刻的权限再核对，改名前再核对文件夹、文件身份与哈希。受保护的路径和已选项目中的 Latch 程序代码只给有 `approve:elevated` 的设备（`file-edit-elevated`），混用换行的文件不编辑；有一轮在运行时 409 `file-turn-running`；拒绝不重放；任何客户端都不提供覆盖。
