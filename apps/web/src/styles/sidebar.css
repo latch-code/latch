@@ -780,7 +780,10 @@
   height: 8px;
   margin-inline: var(--sp-8);
 }
-/* 检查更新's layer: what was found in a line, its build beside it, and at most one thing to do. */
+/* 检查更新's layer: what was found for Latch itself, plus any external Harnesses with updates or actions. */
+.update-check-stack {
+  display: grid;
+}
 .update-check-body {
   display: flex;
   align-items: center;
@@ -803,6 +806,105 @@
   font-family: var(--mono);
   font-size: var(--fs-meta);
   line-height: var(--lh-meta);
+}
+.update-check-harnesses {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-6) 0 var(--sp-4);
+  border-top: 1px solid var(--hairline);
+}
+.update-check-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+  padding: var(--sp-2) var(--sp-12);
+}
+.update-check-section-title {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.update-check-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: var(--sp-2) var(--sp-4);
+  margin-inline-end: calc(-1 * var(--sp-4));
+  border-radius: var(--r-4);
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  cursor: pointer;
+}
+.update-check-link:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+.update-check-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.update-check-list {
+  display: grid;
+  max-height: min(280px, 50vh);
+  overflow-y: auto;
+}
+.update-check-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  padding: var(--sp-6) var(--sp-12);
+  min-width: 0;
+}
+.update-check-item-main {
+  display: grid;
+  flex: 1;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+button.update-check-item-main {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: var(--sp-2) var(--sp-4);
+  margin: calc(-1 * var(--sp-2)) calc(-1 * var(--sp-4));
+  border-radius: var(--r-6);
+  font: inherit;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+button.update-check-item-main:hover {
+  background: var(--hover);
+}
+button.update-check-item-main:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.update-check-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-6);
+  min-width: 0;
+}
+.update-check-item-head .update-check-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.update-check-flag {
+  flex-shrink: 0;
+  color: var(--amber);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.update-check-item .update-check-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .project-group-caption {
   display: grid;
