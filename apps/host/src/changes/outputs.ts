@@ -109,7 +109,8 @@ async function collectCreations(
         continue
       }
       const gitIgnored = (await scopes.get(output.root)?.isIgnored(output.path)) ?? output.gitIgnored === true
-      if (output.change === 'created') {
+      const isCreated = output.change === 'created' || output.fresh === true
+      if (isCreated) {
         if (!gitIgnored && !(output.kind !== undefined && DOCUMENT_KINDS.has(output.kind))) continue
         const sha256 = output.sha256 ?? fallbackHashes.get(key)
         created.set(key, {

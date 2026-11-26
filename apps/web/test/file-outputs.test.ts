@@ -35,7 +35,7 @@ describe('produced files', () => {
     const outputs: FileChange[] = [
       { root: 'main', path: 'src/view.tsx', change: 'created', kind: 'code', size: 512 },
       { root: 'main', path: 'test-results/shot-1.png', change: 'created', kind: 'image', size: 4096, gitIgnored: true },
-      { root: 'main', path: 'test-results/report.json', change: 'created', kind: 'code', size: 256, gitIgnored: true },
+      { root: 'main', path: 'test-results/report.json', change: 'modified', fresh: true, kind: 'code', size: 256, gitIgnored: true },
     ]
     expect(producedFiles(outputs).map(item => item.path)).toEqual(['test-results/shot-1.png', 'test-results/report.json'])
     const summary = turnSummary({ key: 't1', replies: [] }, undefined, outputs)

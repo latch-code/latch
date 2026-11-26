@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FileTrackingInput, FileTrackingResult } from '@latch/sdk'
 import { createFileTrackingService } from '../src/files/output-tracker.ts'
+import { cleanupOutputs, listSessionOutputs, previewOutputsCleanup } from '../src/changes/outputs.ts'
 import { sessionReferences } from '../src/files/references.ts'
 import { FileReferenceStore } from '../src/files/reference-store.ts'
 const cleanup: Array<() => Promise<void>> = []
@@ -227,5 +228,58 @@ describe('bounded per-run workspace changes', () => {
     const live = { ...detail, fileChanges: { runId: 'run', files: [{ ...output, path: 'live.md' }], state: 'watching' as const } }
     expect(await store.references('task', live, roots, '')).toContain('main\nlive.md')
     expect(sessionReferences({ ...live, fileChanges: { ...live.fileChanges, runId: 'old' } }, roots, '')).not.toContain('main\nlive.md')
+  })
+  it('lists and cleans newly created outputs on Linux scan-only platforms while leaving pre-existing modified files untouched', async () => {
+    const f = await fixture({ platform: 'linux', settleMs: 0 })
+    await mkdir(join(f.root, 'docs'), { recursive: true })
+    await writeFile(join(f.root, 'docs', 'existing.html'), '<h1>Old</h1>')
+    const handle = await f.service.start(f.input)
+    await writeFile(join(f.root, 'docs', 'existing.html'), '<h1>Edited</h1>')
+    await writeFile(join(f.root, 'docs', 'created.html'), '<h1>New</h1>')
+    const settled = await handle.finish()
+
+    const messages = [{ id: 'm1', role: 'assistant' as const, text: 'done', outputs: settled.files }]
+    const listed = await listSessionOutputs({
+      sessionId: 'task',
+      folders: f.input.folders,
+      messages,
+      protectedPaths: [f.privateDir],
+      fallbackHashes: new Map(),
+    })
+    expect(listed.files.map(file => ({ path: file.path, removable: file.removable }))).toEqual([
+      { path: 'docs/created.html', removable: true },
+    ])
+
+    const wanted = [
+      { root: 'main', path: 'docs/created.html' },
+      { root: 'main', path: 'docs/existing.html' },
+    ]
+    const preview = await previewOutputsCleanup({
+      sessionId: 'task',
+      folders: f.input.folders,
+      messages,
+      wanted,
+      protectedPaths: [f.privateDir],
+      fallbackHashes: new Map(),
+    })
+    expect(preview.remove).toBe(1)
+    expect(preview.removes).toEqual([{ root: 'main', path: 'docs/created.html' }])
+    expect(preview.skipped).toBe(1)
+
+    const audited: unknown[] = []
+    const cleaned = await cleanupOutputs({
+      sessionId: 'task',
+      folders: f.input.folders,
+      messages,
+      wanted,
+      confirm: preview.planHash,
+      protectedPaths: [f.privateDir],
+      fallbackHashes: new Map(),
+      beforeWrite: async plan => {
+        audited.push(plan)
+      },
+    })
+    expect(cleaned).toMatchObject({ removed: 1, skipped: 1 })
+    expect(audited).toHaveLength(1)
   })
 })

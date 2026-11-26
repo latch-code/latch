@@ -32,6 +32,7 @@ const splitKey = (key: string): { root: string; path: string } => {
   return { root: key.slice(0, at), path: key.slice(at + 1) }
 }
 const ignored = (path: string): boolean => isIgnoredPath(path) || isSecretLookingPath(path)
+const DOCUMENT_KINDS: ReadonlySet<string> = new Set(['pptx', 'pdf', 'docx', 'xlsx', 'csv', 'html', 'image', 'svg', 'audio', 'video'])
 const watchFiles: WatchFiles = (root, changed, failed) => {
   const watcher = watch(root, { recursive: true, persistent: false, encoding: 'utf8' }, (_event, filename) => changed(filename))
   watcher.on('error', failed)
@@ -233,13 +234,16 @@ export function createFileTrackingService(options: TrackerOptions) {
         }
         const { kind } = fileFormat(resolved.file),
           born = info.birthtimeMs > 0 && info.birthtimeMs >= startedAt,
+          created = !previous && born && platform === 'darwin',
+          fresh = !created && !previous && baselineComplete,
           gitIgnored = await gitScopes.get(id)?.isIgnored(resolved.file.relativePath)
         changes.set(key, {
           root: id,
           path: resolved.file.relativePath,
-          change: !previous && born && platform === 'darwin' ? 'created' : 'modified',
+          change: created ? 'created' : 'modified',
           size: resolved.file.size,
           kind,
+          ...(fresh ? { fresh: true as const } : {}),
           ...(gitIgnored ? { gitIgnored: true as const } : {}),
         })
       }
@@ -367,7 +371,8 @@ export function createFileTrackingService(options: TrackerOptions) {
               const hashLimit = 128 * 1024 * 1024
               for (const entry of changes.values()) {
                 if (entry.change === 'deleted' || (entry.size !== undefined && entry.size > hashLimit)) continue
-                if (entry.change !== 'created' && !entry.gitIgnored) continue
+                const isNew = entry.change === 'created' || entry.fresh === true
+                if (!isNew && !entry.gitIgnored && !(entry.kind !== undefined && DOCUMENT_KINDS.has(entry.kind))) continue
                 const root = roots.find(item => item.id === entry.root)
                 if (!root) continue
                 const target = join(root.path, ...entry.path.split('/'))
