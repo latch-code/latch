@@ -134,7 +134,7 @@
   }
   .app-shell:not([data-inspector='sheet']) .inspector-column .session-panel-strip {
     height: var(--title-row);
-    padding-inline-end: calc(var(--window-controls) + var(--sp-12));
+    padding-inline-end: calc(var(--window-controls) + var(--sp-8));
   }
   .app-shell:not([data-inspector='sheet']) .inspector-column .session-panel-strip :is(button, [tabindex]),
   .app-shell:not([data-inspector='sheet']) .inspector-resize {

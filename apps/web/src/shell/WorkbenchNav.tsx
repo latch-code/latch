@@ -27,6 +27,7 @@ import { hostView } from '../core/permissions.ts'
 import { shortcutKeys } from '../workbenchShortcuts.ts'
 import { UsageEntry } from '../usage/UsageEntry.tsx'
 import { ShellUpdateCheck } from './UpdateCheck.tsx'
+import { ViewSwitch } from './ViewSwitch.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 import { defineCopy } from '../core/i18n.ts'
 import { SHELL_COPY } from './copy.ts'
@@ -57,10 +58,11 @@ const COPY = defineCopy(
 )
 
 /** On tablets the project tree is a drawer beside a persistent 60px navigation rail. */
-export function TabletRail({ shell }: { shell: ShellState }) {
+export function TabletRail({ shell, boardWaiting }: { shell: ShellState; boardWaiting: number }) {
   const spaces = shellSpaces(shell)
   const home = shellOverview(shell)
   const inAgents = spaces?.space === 'agents'
+  const showViewSwitch = !shell.board && shell.route.entry === 'sessions' && !shell.marketplace
   return (
     // Under a page the rail's column is the page's own list: nothing here is in the focus order then.
     <nav
@@ -70,6 +72,9 @@ export function TabletRail({ shell }: { shell: ShellState }) {
       <span className="workbench-rail-brand">
         <BrandMark size={24} />
       </span>
+      {showViewSwitch && (
+        <ViewSwitch className="shell-view-switch tablet-rail-view-switch" icons value={shell.preferences.workView} waiting={boardWaiting} />
+      )}
       {spaces && <SpaceButtons {...spaces} />}
       {home && <IconButton label={COPY.overview} icon={OverviewGlyph} pressed={home.active} onClick={home.open} />}
       {inAgents ? (

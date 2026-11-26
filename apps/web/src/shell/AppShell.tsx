@@ -283,12 +283,8 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 '--dock-height': shell.terminalOpen && !shell.marketplace ? `${shell.dockHeight}px` : '0px',
                 '--workbench-pane-count': Number(panes.left) + Number(panes.terminal) + Number(panes.right),
               }}>
-              {!phone && <TitleBar shell={shell} draftSummary={draftSummary} />}
-              {/* One switch for both views, at the end of the window's top row: it stays mounted through a change. */}
-              {!phone && !shell.marketplace && (
-                <ViewSwitch className="shell-view-switch" icons value={shell.preferences.workView} waiting={counts.attention} />
-              )}
-              {viewport === 'tablet' && <TabletRail shell={shell} />}
+              {!phone && <TitleBar shell={shell} draftSummary={draftSummary} boardWaiting={counts.attention} />}
+              {viewport === 'tablet' && <TabletRail shell={shell} boardWaiting={counts.attention} />}
               <Scrim
                 open={drawerMode && drawer.open}
                 label={SHELL_COPY.closeSessions}

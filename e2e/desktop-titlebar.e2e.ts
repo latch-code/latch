@@ -104,7 +104,11 @@ async function rowLine(page: Page): Promise<{ centreY: number; start: number; dr
     const shown = (selector: string) =>
       [...document.querySelectorAll<HTMLElement>(selector)].find(element => element.checkVisibility({ visibilityProperty: true }))
     const bar = shown('.titlebar')!
-    const things = [...bar.querySelectorAll<HTMLElement>('.titlebar-wordmark, .titlebar-lead .ui-icon-button, .space-buttons')]
+    const things = [
+      ...bar.querySelectorAll<HTMLElement>(
+        '.titlebar-wordmark, .titlebar-lead .shell-view-switch, .titlebar-lead .ui-icon-button, .space-buttons',
+      ),
+    ]
       .filter(element => element.checkVisibility({ visibilityProperty: true }))
       .map(element => element.getBoundingClientRect())
       .toSorted((a, b) => a.left - b.left)

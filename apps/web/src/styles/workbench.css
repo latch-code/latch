@@ -1,9 +1,14 @@
 .titlebar-views {
   display: flex;
   align-items: center;
+  gap: var(--sp-4);
   flex-shrink: 0;
   align-self: flex-start;
   height: var(--title-row);
+  padding-inline-end: var(--sp-12);
+}
+.titlebar-views:empty {
+  padding-inline-end: 0;
 }
 /*
  * The sidebar's foot while it is shut (设置, 额度与用量, 检查更新): before the window's controls, or, beside an open right
@@ -86,54 +91,62 @@
 }
 
 /*
- * 对话 | 看板, the view switch: two word segments at the end of the window's top row, in the same place in both views. The
- * shell draws one control over the end each title row keeps free for it (.view-switch-space), so it never remounts. Its
- * width is fixed, so the count on 看板 never moves what stands beside it.
+ * 对话 | 看板, the view switch: compact words in the left side of the window's top row whenever there is room, and
+ * glyphs when the sidebar header narrows (or in the tablet navigation rail). One instance stays inside `.titlebar-lead`
+ * across 对话 ⇄ 看板 so focus never leaves it.
  */
-.shell-view-switch {
-  grid-area: 1 / 1 / 2 / -1;
-  align-self: start;
-  justify-self: end;
-  z-index: 4;
-  width: 148px;
-  margin: 12px var(--sp-12) 0 0;
+.titlebar-view-slot {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
   -webkit-app-region: no-drag;
 }
-.view-switch-space {
-  position: relative;
-  flex: 0 0 auto;
-  width: calc(148px + var(--sp-12) + var(--sp-12));
+.titlebar[data-shut] .titlebar-view-slot {
+  margin-inline-end: var(--sp-4);
 }
-.workbench-pane-controls + .view-switch-space::before {
-  content: '';
-  position: absolute;
-  inset: calc(50% - 8px) auto auto calc(var(--sp-6) - 1px);
-  width: 1px;
-  height: 16px;
-  background: var(--line);
+.shell-view-switch {
+  width: auto;
+  -webkit-app-region: no-drag;
+}
+.shell-view-switch .ui-segmented-option {
+  gap: var(--sp-4);
+  padding-inline: var(--sp-8);
 }
 .view-switch .ui-count {
   margin-inline-start: calc(var(--sp-2) * -1);
+}
+.shell-view-switch .ui-count {
+  margin-inline-start: 0;
 }
 /* The shell's switch carries each view's glyph for its compact form only. */
 .shell-view-switch .ui-segmented-option > svg {
   display: none;
 }
+@media (min-width: 1024px) {
+  .app-shell[data-sidebar='open']:not([data-view='board']) > .titlebar .titlebar-lead {
+    container-type: inline-size;
+    container-name: titlebar-lead;
+  }
+  .app-shell[data-sidebar='open']:not([data-view='board']) > .titlebar .titlebar-view-slot {
+    flex: 1 1 0;
+    justify-content: flex-end;
+    container-type: inline-size;
+    container-name: view-switch-slot;
+  }
+}
 /*
- * Compact while the right panel's strip shares the window's top row (from 1280, work-surface.css): each view's glyph
- * instead of its word, the word staying its name and tooltip, so the strip keeps room for its tabs. The reserved end
- * narrows with it, and the strip reads that width (--window-controls). Same control, same keys; the full words come
- * back when the panel shuts.
+ * Compact icon form whenever the sidebar header's free slot cannot comfortably fit the text segments with a waiting
+ * count. The words stay its accessible name and tooltip, and the count rides on the glyph's corner.
  */
-@media (min-width: 1280px) {
-  .app-shell[data-inspector='open']:not([data-view='board']) > .shell-view-switch {
+@container view-switch-slot (max-width: 111.98px) {
+  .shell-view-switch {
     width: 60px;
   }
-  .app-shell[data-inspector='open']:not([data-view='board']) > .shell-view-switch .ui-segmented-option {
+  .shell-view-switch .ui-segmented-option {
     padding-inline: var(--sp-4);
   }
-  /* The count of cards waiting on the person rides on the glyph's corner, so the segment keeps its width. */
-  .app-shell[data-inspector='open']:not([data-view='board']) > .shell-view-switch .ui-count {
+  .shell-view-switch .ui-count {
     position: absolute;
     top: calc(var(--sp-2) * -1);
     right: 0;
@@ -141,10 +154,10 @@
     font-size: var(--fs-meta);
     line-height: var(--lh-meta);
   }
-  .app-shell[data-inspector='open']:not([data-view='board']) > .shell-view-switch .ui-segmented-option > svg {
+  .shell-view-switch .ui-segmented-option > svg {
     display: block;
   }
-  .app-shell[data-inspector='open']:not([data-view='board']) > .shell-view-switch .ui-segmented-label {
+  .shell-view-switch .ui-segmented-label {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -152,8 +165,85 @@
     clip-path: inset(50%);
     white-space: nowrap;
   }
-  .app-shell[data-inspector='open']:not([data-view='board']) .titlebar .view-switch-space {
-    width: calc(60px + var(--sp-8) + var(--sp-12));
+}
+@container view-switch-slot (max-width: 131.98px) {
+  .shell-view-switch:lang(en) {
+    width: 60px;
+  }
+  .shell-view-switch:lang(en) .ui-segmented-option {
+    padding-inline: var(--sp-4);
+  }
+  .shell-view-switch:lang(en) .ui-count {
+    position: absolute;
+    top: calc(var(--sp-2) * -1);
+    right: 0;
+    margin: 0;
+    font-size: var(--fs-meta);
+    line-height: var(--lh-meta);
+  }
+  .shell-view-switch:lang(en) .ui-segmented-option > svg {
+    display: block;
+  }
+  .shell-view-switch:lang(en) .ui-segmented-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+/* At the narrowest macOS sidebar widths (with traffic lights), hide the Latch text so the icon switch never clips. */
+@container titlebar-lead (max-width: 135.98px) {
+  .titlebar-wordmark-text {
+    display: none;
+  }
+}
+@container titlebar-lead (max-width: 167.98px) {
+  .titlebar-wordmark:has(~ .ui-icon-button) .titlebar-wordmark-text {
+    display: none;
+  }
+}
+/* Vertical icon switch in the tablet's 60px navigation rail. */
+.tablet-rail-view-switch {
+  grid-auto-flow: row;
+  grid-auto-columns: auto;
+  width: 36px;
+}
+.tablet-rail-view-switch .ui-segmented-option {
+  width: 32px;
+  height: 28px;
+  padding-inline: 0;
+}
+.tablet-rail-view-switch .ui-segmented-option > svg {
+  display: block;
+}
+.tablet-rail-view-switch .ui-segmented-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.tablet-rail-view-switch .ui-count {
+  position: absolute;
+  top: calc(var(--sp-2) * -1);
+  right: 0;
+  margin: 0;
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+@media (pointer: coarse) {
+  .tablet-rail-view-switch {
+    width: 44px;
+  }
+  .tablet-rail-view-switch .ui-segmented-option {
+    width: 40px;
+    height: 36px;
+  }
+  .tablet-rail-view-switch .ui-segmented-option::before {
+    inset: 0;
   }
 }
 /* 对话 ⇄ 看板 cross-fades the whole window; 对话 stays mounted under 看板. */
@@ -197,10 +287,11 @@
   /* Protected approval descendants set their own visibility; hide the whole retained surface without changing its layout. */
   opacity: 0;
 }
-/* Over 看板 the lead is no sidebar's head: it stands on the canvas, as wide as the mark. */
+/* Over 看板 the lead is no sidebar's head: it stands on the canvas, holding the brand and view switch. */
 .app-shell[data-view='board'] > .titlebar[data-board] .titlebar-lead {
   --surface: var(--canvas);
   width: auto;
+  gap: var(--sp-12);
   padding-right: var(--sp-12);
   background: var(--canvas);
   box-shadow: none;
@@ -219,6 +310,18 @@
   }
   .app-shell[data-view='board'] > .titlebar[data-board] .titlebar-lead {
     display: flex;
+  }
+  /* Over 我的 Agent / 应用, the rail keeps only its mark at 0..60px; the lead holds the view switch beside it. */
+  .app-shell:not([data-entry='sessions'], [data-entry='marketplace'], [data-view='board']) > .titlebar .titlebar-lead {
+    display: flex;
+    width: calc(var(--entry-nav-width) - 60px);
+    min-width: 0;
+    padding-left: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .app-shell:not([data-entry='sessions'], [data-entry='marketplace'], [data-view='board']) > .titlebar .titlebar-wordmark {
+    display: none;
   }
 }
 

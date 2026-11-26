@@ -42,8 +42,8 @@
 }
 .app-shell {
   --workbench-pane-space: calc(var(--workbench-pane-count) * 32px);
-  /* The title row's end (panel toggles and the view switch), as AppShell measures it; this until it has. */
-  --window-controls: calc(168px + var(--workbench-pane-space));
+  /* The title row's end (draft summary and panel toggles), as AppShell measures it; this until it has. */
+  --window-controls: calc(var(--workbench-pane-space) + var(--sp-12));
 }
 @media (pointer: coarse) {
   .app-shell {
@@ -60,18 +60,11 @@
   display: inline-flex;
   align-items: center;
   gap: var(--sp-8);
+  flex-shrink: 0;
   font-weight: 600;
 }
 .titlebar-lead {
   padding-right: var(--sp-12);
-}
-.titlebar-lead > .ui-icon-button {
-  order: 2;
-  margin-left: auto;
-}
-.titlebar[data-shut] .titlebar-lead > .ui-icon-button {
-  order: 0;
-  margin-left: 0;
 }
 .titlebar[data-shut] .titlebar-lead {
   background: var(--canvas);
@@ -515,11 +508,15 @@
  */
 .session-overview {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--sp-20);
   padding: var(--sp-16) var(--sp-16) var(--sp-24);
   color: var(--ink-2);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
+}
+.session-overview-section {
+  min-width: 0;
 }
 .session-overview-section > header {
   display: flex;
@@ -565,10 +562,6 @@
   white-space: nowrap;
   color: var(--ink);
 }
-.session-overview-text code {
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-}
 .session-overview-base {
   color: var(--muted);
 }
@@ -588,23 +581,16 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-:is(.session-overview-word, .session-overview-time),
-.session-overview-row > .ui-status-word {
-  flex: none;
-  white-space: nowrap;
-}
 .session-overview-word,
 .session-overview-time {
+  flex: none;
+  white-space: nowrap;
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
 }
-/* Last seen running, before the connection was lost: the spinner rests. */
-.session-overview-row > .ui-status-word[data-stale] .ui-spinner {
-  animation-play-state: paused;
-}
-/* Nothing changed, nothing ran and nothing to deliver: the whole panel is this one quiet word. */
+/* Nothing changed and nothing to deliver: the whole panel is this one quiet word. */
 .session-overview-empty {
   margin: 0;
   color: var(--muted);
@@ -1229,7 +1215,7 @@ button.overview-agent-line:hover,
   }
   /* The window's controls stand over the head's end, unless the right panel holds that end of the title row. */
   .app-shell:not([data-inspector='open']) .workspace .topbar {
-    padding-right: calc(168px + var(--workbench-pane-space));
+    padding-right: max(var(--gutter), calc(var(--window-controls) + var(--sp-12)));
   }
   .app-shell .titlebar {
     pointer-events: none;
@@ -1294,7 +1280,7 @@ button.overview-agent-line:hover,
   }
   .workbench-rail-brand {
     display: flex;
-    margin: var(--sp-4) 0 var(--sp-16);
+    margin: var(--sp-4) 0 var(--sp-8);
   }
   .workbench-tablet-rail .space-buttons {
     flex-direction: column;
@@ -1319,7 +1305,7 @@ button.overview-agent-line:hover,
     visibility: hidden;
   }
   .app-shell:not([data-inspector='open']) .workspace .topbar {
-    padding-right: calc(182px + var(--workbench-pane-space));
+    padding-right: max(var(--gutter), calc(var(--window-controls) + var(--sp-12)));
   }
   .workbench-home .work-overview-lanes {
     display: none;
