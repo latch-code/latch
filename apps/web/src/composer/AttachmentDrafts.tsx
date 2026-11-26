@@ -47,6 +47,7 @@ const COPY = defineCopy(
     possibleSecret: '这个附件可能包含密钥',
     confirmDetail: '确认后，附件内容会随消息发送给当前模型服务或 Harness。请先检查内容。',
     confirm: '确认添加',
+    close: '关闭',
   },
   {
     folderSettings: 'Add folders in Settings › Projects.',
@@ -73,6 +74,7 @@ const COPY = defineCopy(
     confirmDetail:
       'After you confirm, the attachment goes to the current model service or Harness with your message. Review its contents first.',
     confirm: 'Confirm attachment',
+    close: 'Close',
   },
 )
 
@@ -208,13 +210,37 @@ function DraftPreview({
         .text()
         .then(setText)
   }, [item.file, type])
+  if (type === 'video') {
+    return (
+      <Modal label={item.file.name} variant="dialog" onClose={onClose} className="picture-viewer attachment-preview-video">
+        {/* Frameless over the dimmed window, matching PictureViewer; clicking beside the video closes it. */}
+        <div
+          className="picture-viewer-frame"
+          onClick={event => event.stopPropagation()}
+          onKeyDown={event => {
+            if (event.key === 'Escape') event.stopPropagation()
+          }}>
+          <div
+            className="picture-viewer-stage attachment-preview-video-stage"
+            tabIndex={-1}
+            data-autofocus=""
+            onClick={event => {
+              if (event.target === event.currentTarget) onClose()
+            }}>
+            {url && <video className="attachment-preview-video-player" src={url} controls playsInline autoPlay />}
+          </div>
+          <div className="picture-viewer-actions">
+            <IconButton label={COPY.close} icon={CloseGlyph} size="md" data-layer-close="" onClick={onClose} />
+          </div>
+        </div>
+      </Modal>
+    )
+  }
   return (
     <Modal label={item.file.name} variant="dialog" onClose={onClose} className="attachment-preview">
       <ModalHeader title={item.file.name} onClose={onClose} />
       <div className="ui-modal-body">
-        {url && type === 'video' ? (
-          <video src={url} controls playsInline autoPlay />
-        ) : url && type === 'audio' ? (
+        {url && type === 'audio' ? (
           <audio src={url} controls autoPlay />
         ) : url ? (
           <img src={url} alt={item.file.name} />

@@ -205,3 +205,92 @@ private struct RootTabs: View {
         return Image(uiImage: image.withRenderingMode(.alwaysOriginal))
     }
 }
+
+extension View {
+    /**
+     * Drives the enclosing tab bar from UIKit's appearance transition on iOS 18+, so returning to a root list brings the
+     * floating tab bar back with the pop animation instead of waiting for SwiftUI's toolbar preference pass after it ends.
+     */
+    @ViewBuilder func syncTabBar(hidden: Bool) -> some View {
+        if #available(iOS 18, *) {
+            background(TabBarVisibilityBridge(hidden: hidden).frame(width: 0, height: 0).allowsHitTesting(false))
+        } else {
+            toolbar(hidden ? .hidden : .automatic, for: .tabBar)
+        }
+    }
+}
+
+@available(iOS 18, *)
+private struct TabBarVisibilityBridge: UIViewControllerRepresentable {
+    let hidden: Bool
+    func makeUIViewController(context: Context) -> Controller { Controller(hidden: hidden) }
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.wantedHidden = hidden
+        if controller.visible { controller.apply(animated: false) }
+    }
+
+    final class Controller: UIViewController {
+        var wantedHidden: Bool
+        private(set) var visible = false
+
+        init(hidden: Bool) { self.wantedHidden = hidden; super.init(nibName: nil, bundle: nil) }
+        required init?(coder: NSCoder) { fatalError("unused") }
+
+        override func loadView() {
+            let empty = UIView()
+            empty.isUserInteractionEnabled = false
+            empty.backgroundColor = .clear
+            view = empty
+        }
+
+        override func viewWillAppear(_ animated: Bool) {
+            super.viewWillAppear(animated)
+            visible = true
+            let prior = tabBarController?.isTabBarHidden
+            apply(animated: animated)
+            if let prior, prior != wantedHidden, let coordinator = transitionCoordinator, coordinator.isInteractive {
+                coordinator.notifyWhenInteractionChanges { [weak self] context in
+                    guard let self, context.isCancelled else { return }
+                    self.visible = false
+                    self.tabBarController?.setTabBarHidden(prior, animated: true)
+                }
+            }
+        }
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            visible = true
+            apply(animated: false)
+        }
+
+        override func viewWillDisappear(_ animated: Bool) {
+            super.viewWillDisappear(animated)
+            visible = false
+            guard wantedHidden, let bar = tabBarController else { return }
+            let presentingModal = bar.presentedViewController != nil
+                || navigationController?.presentedViewController != nil
+                || parent?.presentedViewController != nil
+            guard !presentingModal else { return }
+            if let to = transitionCoordinator?.viewController(forKey: .to) {
+                guard to.presentingViewController == nil, !Self.containsHiddenBridge(in: to) else { return }
+            }
+            bar.setTabBarHidden(false, animated: animated)
+            if let coordinator = transitionCoordinator, coordinator.isInteractive {
+                coordinator.notifyWhenInteractionChanges { [weak self] context in
+                    guard let self, context.isCancelled else { return }
+                    self.tabBarController?.setTabBarHidden(self.wantedHidden, animated: true)
+                }
+            }
+        }
+
+        func apply(animated: Bool) {
+            guard let bar = tabBarController, bar.isTabBarHidden != wantedHidden else { return }
+            bar.setTabBarHidden(wantedHidden, animated: animated)
+        }
+
+        private static func containsHiddenBridge(in controller: UIViewController) -> Bool {
+            if let bridge = controller as? Controller, bridge.wantedHidden { return true }
+            return controller.children.contains { containsHiddenBridge(in: $0) }
+        }
+    }
+}

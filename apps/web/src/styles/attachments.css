@@ -624,13 +624,34 @@ button.attachment-tile-face:disabled {
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
-.attachment-preview img,
-.attachment-preview video {
+.attachment-preview img {
   display: block;
   max-width: 100%;
   max-height: 60vh;
   margin-inline: auto;
   object-fit: contain;
+}
+.attachment-preview-video-stage {
+  touch-action: auto;
+}
+.attachment-preview-video-player {
+  display: block;
+  margin: auto;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: var(--r-12);
+  box-shadow: var(--sh-dialog);
+  outline: none;
+  animation: ui-sheet-in var(--m-sheet) var(--e-sheet);
+}
+.attachment-preview-video-player:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (max-width: 767.98px) {
+  .attachment-preview-video-player {
+    border-radius: 0;
+  }
 }
 .attachment-preview audio {
   display: block;

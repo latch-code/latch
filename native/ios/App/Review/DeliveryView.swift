@@ -62,7 +62,7 @@ struct DeliveryView: View {
         .background(PhoneTheme.canvas)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(committed)
-        .toolbar(.hidden, for: .tabBar)
+        .syncTabBar(hidden: true)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 0) {

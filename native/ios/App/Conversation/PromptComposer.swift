@@ -194,7 +194,7 @@ struct PromptComposer: View {
                     hasMaterial: hasRoundMaterials || !PhoneInputReferences(rawDraft.wrappedValue, collapseQuotes: true).quotes.isEmpty,
                     mentions: mentions, maximumHeight: slashSpace) { field }
             } else { field }
-            if !person && gate == nil && model.sessionId != nil && (focused || !controls.isEmpty) { chips }
+            if showsChips { chips }
         }
         .padding(.bottom, 8).padding(.top, 4)
         .onAppear { insert() }
@@ -238,7 +238,7 @@ struct PromptComposer: View {
             if running && gate != "Mac 不在线" && model.detail["approvals"].array.isEmpty { stopButton(quiet: false) }
         }
         .padding(.leading, 16).padding(.trailing, 8).frame(minHeight: 52)
-        .background(PhoneTheme.raised, in: Capsule()).overlay(Capsule().stroke(PhoneTheme.lineStrong))
+        .background(PhoneTheme.raised, in: Capsule()).overlay(Capsule().strokeBorder(PhoneTheme.lineStrong))
         .padding(.horizontal, 12)
     }
     static let closedWindow = "查看内容后可以回复"
@@ -262,12 +262,15 @@ struct PromptComposer: View {
         ConversationInputBar(focused: $focused) {
             if rejecting == nil { inputMenu.disabled(!model.transportReady) }
         } editor: {
-            editor.padding(.leading, rejecting == nil ? 0 : 10)
+            editor.padding(.leading, rejecting == nil ? 0 : 12)
         } action: {
             action
         }
         .background(GeometryReader { proxy in
-            Color.clear.onChange(of: proxy.frame(in: .global).minY, initial: true) { _, value in slashSpace = max(0, value - proxy.safeAreaInsets.top - 12) }
+            Color.clear.onChange(of: proxy.frame(in: .global).minY, initial: true) { _, value in
+                let next = max(0, (value - proxy.safeAreaInsets.top - 12).rounded())
+                if abs(next - slashSpace) >= 2 { slashSpace = next }
+            }
         })
     }
     private var imagePasteHandler: (@MainActor ([NSItemProvider]) async -> Void)? {
@@ -478,6 +481,11 @@ struct PromptComposer: View {
         }
         text = ""; slash.clear()
     }
+    private var showsChips: Bool {
+        guard !person && gate == nil && model.sessionId != nil else { return false }
+        let hasModelChip = !PhoneStart.models(model.snapshot["catalog"]).isEmpty && PhoneStart.usesServices(harness)
+        return !controls.isEmpty || (focused && hasModelChip)
+    }
     /** One scrolling row above the keyboard. The built-in engine takes a model for each message; the Host offers no other choice before a send. */
     private var chips: some View {
         let summary = model.currentSummary, models = PhoneStart.models(model.snapshot["catalog"])
@@ -501,11 +509,12 @@ struct PromptComposer: View {
     }
     private func chip<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content().font(.system(size: 13)).foregroundStyle(PhoneTheme.ink2).lineLimit(1).padding(.horizontal, 12).frame(height: 32)
-            .background(PhoneTheme.raised, in: Capsule()).overlay(Capsule().stroke(PhoneTheme.line))
+            .background(PhoneTheme.raised, in: Capsule()).overlay(Capsule().strokeBorder(PhoneTheme.line))
     }
 }
 
 struct ConversationInputBar<Menu: View, Editor: View, Action: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Binding var focused: Bool
     @ViewBuilder let menu: () -> Menu
     @ViewBuilder let editor: () -> Editor
@@ -523,14 +532,14 @@ struct ConversationInputBar<Menu: View, Editor: View, Action: View>: View {
                 }
             action()
         }
-        .padding(.horizontal, 6).padding(.vertical, 4)
+        .padding(4)
         .fixedSize(horizontal: false, vertical: true)
         .background {
-            RoundedRectangle(cornerRadius: 24)
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .fill(PhoneTheme.raised)
-                .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
+                .shadow(color: colorScheme == .dark ? .clear : .black.opacity(0.06), radius: 8, y: 2)
         }
-        .overlay { RoundedRectangle(cornerRadius: 24).strokeBorder(PhoneTheme.lineStrong).allowsHitTesting(false) }
+        .overlay { RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(PhoneTheme.lineStrong).allowsHitTesting(false) }
         .padding(.horizontal, 12)
     }
 }

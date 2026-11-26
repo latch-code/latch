@@ -134,7 +134,7 @@ struct AgentChat: View {
             }
         }
         // A pushed conversation on a phone needs the room, a new topic as much as a topic.
-        .toolbar(width == .compact && model.agentAccess == .ready ? .hidden : .automatic, for: .tabBar)
+        .syncTabBar(hidden: width == .compact && model.agentAccess == .ready)
         .sheet(isPresented: $profile) {
             AgentProfileSheet(id: id, openTopic: { topic in profile = false; reach(topic) }).presentationCornerRadius(28)
         }
@@ -387,7 +387,12 @@ private struct NewTopicView: View {
                 .frame(width: 44, height: 44).contentShape(Rectangle())
             }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel("发送")
         }
-        .background(GeometryReader { proxy in Color.clear.onChange(of: proxy.frame(in: .global).minY, initial: true) { _, value in slashSpace = max(0, value - proxy.safeAreaInsets.top - 12) } })
+        .background(GeometryReader { proxy in
+            Color.clear.onChange(of: proxy.frame(in: .global).minY, initial: true) { _, value in
+                let next = max(0, (value - proxy.safeAreaInsets.top - 12).rounded())
+                if abs(next - slashSpace) >= 2 { slashSpace = next }
+            }
+        })
         .disabled(!mine.isEmpty)
     }
     private func check(_ name: String, on: Bool) -> some View {
