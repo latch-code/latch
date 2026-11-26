@@ -1029,7 +1029,7 @@ profile 可以读某个 Agent 在 ACP 之外发来的请求（`extensions`）。
 - **行与状态。** 每个提问有自己的一行 `ask_user`（`tool:<轮次>:ask-<UUID>`），从不借用 Agent 同 ID 的调用行。等待时会话为 `waiting-approval`。回答按选项位置（`optionIds`）而不是文字映射回 Agent 的取值。
 - **回执。** 回答写进这一行的结果并落盘后，才由 `questionSettled` 给回答的设备回执；落盘失败时回执是结果尚未确认。没人回答的提问记为已结束，Host 停止时这一行带 `interrupted`。
 - **选项说明。** `oneOf`/`anyOf` 取值的 `description` 成为选项的说明。
-- **自己写的话的栏位。** 选项字段 `<键>` 旁边有一个文字字段 `<键>_custom` 时（Claude 适配器问 AskUserQuestion 的样子：每题后面一个「Other」框），它不另成一题：提问卡的「其他…」写进这个字段，选项留在原字段。
+- **自己写的话的栏位。** 选项字段 `<键>` 旁边有一个非必填文字字段 `<键>_custom` 或 `<键>_other` 时（Claude 适配器的 `question_0_custom`、Antigravity 的 `q0_other`：每题后面一个「Other」框），它不另成一题：提问卡的「其他…」写进这个字段，选项留在原字段。
 - **Codex 的 `item/tool/requestUserInput`。** 线把它换成同样的表单提问：每题一个字段，标题是 `header：question`，选项与说明照原样；回答按题目 ID 回 `{ answers: { <id>: { answers: [选中的选项或写的话] } } }`，没人回答回空的 `answers`。标为 `isSecret` 的题不经 Latch 收：回答会留在会话记录里，所以直接回空的 `answers`，会话里写一行原因。这一点在核对请求形状之前判断，读不懂的请求里有密码类的题时，它的文字也不写进会话。
 - **pi 扩展的 `select`、`input`、`editor`** 见「pi 的 RPC 模式」。
 

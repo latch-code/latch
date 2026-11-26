@@ -101,7 +101,49 @@ it('keeps a text field of its own when no choice field owns it', () => {
   const ask = elicitationAsk({
     mode: 'form',
     message: 'm',
-    requestedSchema: { properties: { note_custom: { type: 'string', title: 'Note' } } },
+    requestedSchema: { properties: { note_custom: { type: 'string', title: 'Note' }, remark_other: { type: 'string', title: 'Remark' } } },
   })!
-  expect(ask.questions.map(question => question.label)).toEqual(['Note'])
+  expect(ask.questions.map(question => question.label)).toEqual(['Note', 'Remark'])
+})
+
+it("folds Antigravity's `q<n>_other` companion field into the choice question so a single question settles in one click", () => {
+  const ask = elicitationAsk({
+    mode: 'form',
+    message: 'The agent has a question.',
+    requestedSchema: {
+      type: 'object',
+      properties: {
+        q0: {
+          type: 'string',
+          title: '文档类附件你希望采用哪种交互？',
+          enum: ['(Recommended) 全屏压暗舞台', '右侧文件预览面板', '标准宽幅 Dialog'],
+        },
+        q0_other: {
+          type: 'string',
+          title: 'Other',
+        },
+      },
+    },
+  })!
+  expect(ask.questions).toHaveLength(1)
+  expect(ask.questions[0]).toEqual({
+    id: 'q0',
+    label: '文档类附件你希望采用哪种交互？',
+    multiple: false,
+    options: [
+      { id: 'o0', label: '(Recommended) 全屏压暗舞台' },
+      { id: 'o1', label: '右侧文件预览面板' },
+      { id: 'o2', label: '标准宽幅 Dialog' },
+    ],
+  })
+  expect(ask.reply(result([{ questionId: 'q0', label: '文档类附件你希望采用哪种交互？', optionIds: ['o0'], choices: [] }]))).toEqual({
+    action: 'accept',
+    content: { q0: '(Recommended) 全屏压暗舞台' },
+  })
+  expect(
+    ask.reply(result([{ questionId: 'q0', label: '文档类附件你希望采用哪种交互？', optionIds: [], choices: [], other: '底部抽屉' }])),
+  ).toEqual({
+    action: 'accept',
+    content: { q0_other: '底部抽屉' },
+  })
 })
