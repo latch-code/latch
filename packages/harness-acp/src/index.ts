@@ -409,7 +409,8 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
         agentContext: 'first-turn',
         pluginCreation: true,
         ...skillsOf(record.presetId),
-        extensionSupport: { reports, ...(plugins ? { plugins } : {}) },
+        // The Cursor SDK runner has no command catalogue. cursor-agent's ACP route can advertise one.
+        extensionSupport: { reports: wire === 'cursor' ? [] : reports, ...(plugins ? { plugins } : {}) },
         ...folderDeclaration(selectProfile(record).profile),
         ...permissionDeclaration(selectProfile(record).profile),
         ...(historyImport(selectProfile(record).profile, limits) ? { historyImport: true as const } : {}),

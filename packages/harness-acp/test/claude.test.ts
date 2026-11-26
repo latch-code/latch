@@ -241,6 +241,38 @@ describe('Claude through the Agent SDK', () => {
     expect(() => harness(undefined, { ...SPEC, args: ['--debug'] })).toThrow()
   })
 
+  it('reports Claude commands on open, keeps their hints and replaces the list when the SDK changes it', async () => {
+    const h = harness()
+    const { sessionId } = (await h.wire.request('session/new', { cwd: '/work', mcpServers: [] })) as { sessionId: string }
+    const q = h.queries[0]!
+    const reports = () => updates(h, 'available_commands_update').map(update => update.availableCommands)
+    const review = { name: 'review', description: 'Review a change', input: { hint: '<ref>' } }
+    expect(reports()).toEqual([[review]])
+    const system = { type: 'system', session_id: sessionId }
+    q.out.push({ ...system, subtype: 'init', slash_commands: ['review', 'summary', 'exit'], terminal_slash_commands: ['exit'] })
+    q.out.push({ ...system, subtype: 'init', slash_commands: ['review', 'summary', 'exit'], terminal_slash_commands: ['exit'] })
+    const changed = { ...system, subtype: 'commands_changed' }
+    q.out.push({ ...changed, session_id: SESSION, commands: [] })
+    q.out.push({ ...changed, parent_tool_use_id: 'child-tool', commands: [] })
+    q.out.push({ ...changed, commands: [{ name: 'mcp:tools:fix', argumentHint: '<file>' }, { name: 'exit' }] })
+    q.out.push({ ...changed, commands: [] })
+    await tick()
+    expect(reports()).toEqual([[review], [review, { name: 'summary' }], [{ name: 'mcp:tools:fix', input: { hint: '<file>' } }], []])
+    expect(q.prompts).toEqual([])
+  })
+
+  it('keeps an empty command update that arrives before the initial command snapshot', async () => {
+    const init = FakeQuery.prototype.initializationResult
+    vi.spyOn(FakeQuery.prototype, 'initializationResult').mockImplementationOnce(async function (this: FakeQuery) {
+      this.out.push({ type: 'system', subtype: 'commands_changed', session_id: SESSION, commands: [] })
+      await tick()
+      return init.call(this)
+    })
+    const h = harness()
+    await h.wire.request('session/resume', { sessionId: SESSION, cwd: '/work', mcpServers: [] })
+    expect(updates(h, 'available_commands_update').map(update => update.availableCommands)).toEqual([[]])
+  })
+
   it('sends the input, streams text and thinking, reports tool calls and ends the turn with its usage', async () => {
     const h = harness()
     const { sessionId } = (await h.wire.request('session/new', { cwd: '/work', mcpServers: [] })) as { sessionId: string }
@@ -1121,7 +1153,7 @@ describe('Claude’s own store, read only where the Host lets the wire', () => {
     const loaded = (await h.wire.request('session/load', { sessionId: S1, cwd: fixture!.project, mcpServers: [] })) as { sessionId: string }
     expect(loaded.sessionId).toBe(S1)
     const replay = h.sent.filter(item => item.sessionId === S1 && item.update).map(item => item.update!.sessionUpdate)
-    expect(replay).toEqual(['user_message_chunk', 'agent_message_chunk'])
+    expect(replay).toEqual(['user_message_chunk', 'agent_message_chunk', 'available_commands_update'])
     // The original session goes on, as `/resume` would.
     expect(h.queries[0]!.options.resume).toBe(S1)
     await h.wire.request('session/close', { sessionId: S1 })

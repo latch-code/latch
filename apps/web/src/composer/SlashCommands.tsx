@@ -1,9 +1,11 @@
 import { useEffect, useId, useMemo, useState, type ReactNode, type RefObject } from 'react'
-import type { PromptTemplate, SessionCommand } from '@latch/protocol'
+import type { HarnessInfo, PromptTemplate, SessionCommand } from '@latch/protocol'
 import { escapeSecurityText } from '@latch/protocol'
-import { Button, CodeGlyph, FileGlyph, Icon, Kbd, Suggest } from '@latch/ui'
+import { CodeGlyph, FileGlyph, Icon, Kbd, Suggest } from '@latch/ui'
 import { BookOpen } from 'lucide-react'
 import { BrandMark } from '../components/ui.tsx'
+import { HarnessTile } from '../components/BrandTile.tsx'
+import { harnessName } from '../core/harnessName.ts'
 import { matchSlash, slashToken } from './slash-match.ts'
 import { slashOptions, type SlashAction, type SlashContext, type SlashOption } from './slash-options.ts'
 import { SlashHistory } from '../core/slashHistory.ts'
@@ -19,13 +21,15 @@ const COPY = defineCopy(
     templates: '提示模板',
     skills: '技能',
     previous: '（上次会话）',
-    afterStart: '开始会话后列出',
+    afterStart: '发送第一条消息后，可查看 Harness 返回的命令',
     noPrevious: '上次会话没有列出命令',
-    noneReported: (value1: string) => `${value1} 还没报告命令`,
+    unreported: '当前连接尚未提供命令列表',
+    reportedEmpty: '当前会话没有可用的 Harness 命令',
+    groupedElsewhere: '没有可单独列出的 Harness 命令',
+    unsupported: '当前接入方式不提供 Harness 命令',
     unavailable: '这个动作在当前页面不可用',
     sendAsTyped: (value1: string, value2: string) => `没有「/${value1}」· Enter 原样发给 ${value2}`,
     commands: '命令与提示模板',
-    createTemplate: '新建提示模板',
     someSkills: '仅列出部分技能',
     complete: ' 补全',
   },
@@ -37,19 +41,43 @@ const COPY = defineCopy(
     templates: 'Prompt templates',
     skills: 'Skills',
     previous: ' (previous session)',
-    afterStart: 'Commands appear after the session starts',
+    afterStart: 'Commands the Harness reports will appear after your first message',
     noPrevious: 'No commands were reported in the previous session',
-    noneReported: (value1: string) => `${value1} has not reported any commands`,
+    unreported: 'This connection has not supplied a command list',
+    reportedEmpty: 'No Harness commands are available in this session',
+    groupedElsewhere: 'No separate Harness commands to list',
+    unsupported: 'This connection does not provide Harness commands',
     unavailable: 'This action is unavailable here',
     sendAsTyped: (value1: string, value2: string) => `No “/${value1}” · Enter sends it as typed to ${value2}`,
     commands: 'Commands and prompt templates',
-    createTemplate: 'New prompt template',
     someSkills: 'Only some skills are listed',
     complete: ' Complete',
   },
 )
 
 export { slashMatches, slashOptions, type SlashAction, type SlashOption } from './slash-options.ts'
+
+export type CommandListSource = 'before-session' | 'previous-session' | 'session' | 'unsupported'
+
+export function harnessCommandSource(
+  harness: HarnessInfo | undefined,
+  session: Exclude<CommandListSource, 'unsupported'>,
+  commands?: readonly SessionCommand[],
+) {
+  if (!harness) return undefined
+  const unsupported =
+    harness.capabilities.permission.enforcement === 'latch' || harness.extensionSupport?.reports.includes('commands') === false
+  const source: CommandListSource = commands === undefined && unsupported ? 'unsupported' : session
+  return { source, name: harnessName(harness), media: <HarnessTile harness={harness} size={16} /> }
+}
+
+export function emptyCommandList(source: CommandListSource, commands: readonly SessionCommand[] | undefined): string {
+  if (commands?.length) return COPY.groupedElsewhere
+  if (source === 'previous-session') return COPY.noPrevious
+  if (source === 'unsupported') return COPY.unsupported
+  if (source === 'before-session') return COPY.afterStart
+  return commands ? COPY.reportedEmpty : COPY.unreported
+}
 
 /**
  * Whether Enter must leave the command in the input for its argument. A hint the Harness marks optional (`筛选（可选）`,
@@ -64,7 +92,7 @@ export function needsInput(hint: string | undefined): boolean {
 export function useSlashCommands({
   draft,
   caret,
-  commands = [],
+  commands,
   skills = [],
   skillsTruncated = false,
   templates = [],
@@ -77,8 +105,7 @@ export function useSlashCommands({
   running = false,
   firstTurn = false,
   session = false,
-  previousSession = false,
-  awaitingSession = false,
+  source = 'session',
   historyScope,
 }: {
   draft: string
@@ -92,8 +119,7 @@ export function useSlashCommands({
   onCommand?(text: string): void
   harnessName?: string
   harnessMedia?: ReactNode
-  previousSession?: boolean
-  awaitingSession?: boolean
+  source?: CommandListSource
   historyScope?: { deviceId: string; harnessId?: string }
 } & SlashContext) {
   const id = useId()
@@ -114,7 +140,8 @@ export function useSlashCommands({
     () => (historyScope ? new SlashHistory(location.origin, historyScope.deviceId) : undefined),
     [historyScope?.deviceId],
   )
-  const available = slashOptions(word, commands, templates, actions, { running, firstTurn, session, skills })
+  const previousSession = source === 'previous-session'
+  const available = slashOptions(word, commands ?? [], templates, actions, { running, firstTurn, session, skills })
   const recent =
     token && !token.query
       ? (history
@@ -190,13 +217,12 @@ export function useSlashCommands({
     harnessName,
     harnessMedia,
     previousSession,
-    awaitingSession,
+    noCommands: emptyCommandList(source, commands),
     skillsTruncated,
     enterLabel:
       options[active]?.kind === 'command' && !needsInput(options[active]?.inputHint) && !running && !previousSession
         ? COPY.run
         : COPY.choose,
-    reportedCommands: commands.length,
     setActive: (index: number) => {
       const option = options[index]
       if (option && !option.unavailable) setSelection({ word, optionId: option.id })
@@ -220,11 +246,9 @@ function highlighted(text: string, query: string): ReactNode {
 export function SlashCommands({
   menu,
   anchorRef,
-  onCreateTemplate,
 }: {
   menu: ReturnType<typeof useSlashCommands>
   anchorRef: RefObject<HTMLElement | null>
-  onCreateTemplate?: () => void
 }) {
   const labels = {
     recent: COPY.recent,
@@ -233,7 +257,6 @@ export function SlashCommands({
     skill: COPY.skills + (menu.previousSession ? COPY.previous : ''),
     command: menu.harnessName + (menu.previousSession ? COPY.previous : ''),
   }
-  const noCommands = menu.awaitingSession ? COPY.afterStart : menu.previousSession ? COPY.noPrevious : COPY.noneReported(menu.harnessName)
   const media = {
     recent: undefined,
     action: <BrandMark size={16} />,
@@ -250,7 +273,7 @@ export function SlashCommands({
     ? latchActionOf('/' + menu.query)
       ? COPY.unavailable
       : COPY.sendAsTyped(escapeSecurityText(menu.query), menu.harnessName)
-    : noCommands
+    : menu.noCommands
   return (
     <Suggest
       frosted
@@ -269,20 +292,7 @@ export function SlashCommands({
         ...groups.map(kind => ({
           id: kind,
           ...(kind !== 'search' ? { label: labels[kind], media: media[kind] } : {}),
-          ...(kind === 'command' && !menu.reportedCommands
-            ? {
-                empty: (
-                  <>
-                    <span>{noCommands}</span>
-                    {onCreateTemplate && (
-                      <Button size="xs" variant="ghost" onClick={onCreateTemplate}>
-                        {COPY.createTemplate}
-                      </Button>
-                    )}
-                  </>
-                ),
-              }
-            : {}),
+          ...(kind === 'command' ? { empty: menu.noCommands } : {}),
           items: menu.options.flatMap((option, index) =>
             kind !== 'search' && (option.recent ? 'recent' : option.kind) !== kind
               ? []

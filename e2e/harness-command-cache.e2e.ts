@@ -48,6 +48,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
           FAKE_ACP_STATE: join(root, 'agent-state.json'),
           FAKE_ACP_CAPS: 'load',
           FAKE_ACP_CONFIG: 'options',
+          FAKE_ACP_SETUP_COMMANDS: '1',
           FAKE_ACP_COMMANDS_FILE: commandsFile,
         },
       },
@@ -67,9 +68,9 @@ it('offers previous-session commands in a normal new draft after recovery withou
     currentPage = await context.newPage()
     await enrollBrowser(currentPage, host)
     const first = currentPage.getByRole('textbox', { name: '新会话消息', exact: true })
-    await first.fill('plan')
+    await first.fill('hello')
     await first.press('Meta+Enter')
-    await currentPage.locator('.transcript').getByText('planned', { exact: true }).waitFor()
+    await currentPage.locator('.transcript').getByText('echo: hello', { exact: true }).waitFor()
     const tasks = (await owner.json<AppSnapshot>('snapshot')).tasks
     expect(tasks).toHaveLength(1)
     const id = tasks[0]!.id
@@ -150,7 +151,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
             }
             await selectProject('另一个项目', other.id)
             await input.fill('/')
-            await list.getByText('开始会话后列出', { exact: true }).waitFor()
+            await list.getByText('发送第一条消息后，可查看 Harness 返回的命令', { exact: true }).waitFor()
             expect(await list.getByText('/public-plan', { exact: true }).count()).toBe(0)
             let enter!: () => void
             let release!: () => void
@@ -196,7 +197,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
               await input.fill('')
               await input.fill('/')
               await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))))
-              await list.getByText('开始会话后列出', { exact: true }).waitFor()
+              await list.getByText('发送第一条消息后，可查看 Harness 返回的命令', { exact: true }).waitFor()
               expect(await list.getByText('/public-plan', { exact: true }).count()).toBe(0)
               await page.screenshot({ path: `${output}/project-switch-late-1440-light.png`, animations: 'disabled' })
             } finally {
@@ -215,7 +216,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
               .getByRole('menuitemradio', { name: standard.capabilities.display.label, exact: true })
               .click()
             await input.fill('/')
-            await list.getByText(`${standard.capabilities.display.label} 还没报告命令`, { exact: true }).waitFor()
+            await list.getByText('当前接入方式不提供 Harness 命令', { exact: true }).waitFor()
             expect(await list.getByText('/public-plan', { exact: true }).count()).toBe(0)
             expect(await starts()).toBe(before)
             expect(submissions).toBe(0)
@@ -321,7 +322,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
       await list.getByText('/public-plan', { exact: true }).waitFor()
       let changedAt = performance.now()
       await writeFile(commandsFile, JSON.stringify([{ name: 'updated-plan', description: '更新后的计划' }]))
-      await owner.json(`tasks/${id}/prompt`, { method: 'POST', body: { prompt: 'plan', requestId: randomUUID() } })
+      await owner.json(`tasks/${id}/prompt`, { method: 'POST', body: { prompt: 'hello', requestId: randomUUID() } })
       await list.getByText('/updated-plan', { exact: true }).waitFor({ timeout: 5_000 })
       liveEvidence.push({ event: 'report', elapsedMs: performance.now() - changedAt, reads, starts: await starts() })
       expect(await list.getByText('/public-plan', { exact: true }).count()).toBe(0)
@@ -381,7 +382,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
         method: 'PUT',
         body: { defaults: { harnessId: 'cached-agent', workspaceId: project.id, mode: 'agent', pinned: true } },
       })
-      await list.getByText('开始会话后列出', { exact: true }).waitFor({ timeout: 5_000 })
+      await list.getByText('发送第一条消息后，可查看 Harness 返回的命令', { exact: true }).waitFor({ timeout: 5_000 })
       liveEvidence.push({ event: 'private-after-snapshot', elapsedMs: performance.now() - changedAt, reads, starts: await starts() })
       expect(await list.getByText('/updated-plan', { exact: true }).count()).toBe(0)
       expect(await promptValue(input)).toBe('/')
@@ -389,7 +390,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
       await currentPage.screenshot({ path: `${output}/source-private-1440-light.png`, animations: 'disabled' })
       const fresh = await owner.json<{ sessionId: string }>('tasks', {
         method: 'POST',
-        body: { harnessId: 'cached-agent', workspaceId: project.id, prompt: 'plan', requestId: randomUUID() },
+        body: { harnessId: 'cached-agent', workspaceId: project.id, prompt: 'hello', requestId: randomUUID() },
       })
       await list.getByText('/updated-plan', { exact: true }).waitFor({ timeout: 5_000 })
       await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${fresh.sessionId}`)).summary.status).toBe('idle')
@@ -402,7 +403,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
       // This advances browser timers only: HTTP still reaches the real temporary Host and rechecks source privacy.
       changedAt = performance.now()
       await currentPage.clock.fastForward(30_000)
-      await list.getByText('开始会话后列出', { exact: true }).waitFor({ timeout: 5_000 })
+      await list.getByText('发送第一条消息后，可查看 Harness 返回的命令', { exact: true }).waitFor({ timeout: 5_000 })
       liveEvidence.push({
         event: 'private-after-30s-browser-timers',
         elapsedMs: performance.now() - changedAt,
@@ -412,7 +413,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
       expect(await starts()).toBe(afterCreate)
       const removable = await owner.json<{ sessionId: string }>('tasks', {
         method: 'POST',
-        body: { harnessId: 'cached-agent', workspaceId: project.id, prompt: 'plan', requestId: randomUUID() },
+        body: { harnessId: 'cached-agent', workspaceId: project.id, prompt: 'hello', requestId: randomUUID() },
       })
       await list.getByText('/updated-plan', { exact: true }).waitFor({ timeout: 5_000 })
       await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${removable.sessionId}`)).summary.status).toBe('idle')
@@ -420,7 +421,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
       changedAt = performance.now()
       await owner.json(`tasks/${removable.sessionId}`, { method: 'DELETE' })
       await expect.poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks.length).toBe(2)
-      await list.getByText('开始会话后列出', { exact: true }).waitFor({ timeout: 5_000 })
+      await list.getByText('发送第一条消息后，可查看 Harness 返回的命令', { exact: true }).waitFor({ timeout: 5_000 })
       liveEvidence.push({ event: 'delete', elapsedMs: performance.now() - changedAt, reads, starts: await starts() })
       expect(await list.getByText('/updated-plan', { exact: true }).count()).toBe(0)
       expect(await promptValue(input)).toBe('/')

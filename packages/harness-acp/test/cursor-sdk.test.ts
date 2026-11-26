@@ -307,10 +307,14 @@ describe('choosing the Cursor route', () => {
     enabled: true,
   })
 
-  it('takes the SDK only with a key and a runner, and keeps cursor-agent acp otherwise', () => {
+  it('takes the SDK only with a key and a runner, and keeps cursor-agent acp otherwise', async () => {
     expect(selectProfile(definition({ CURSOR_API_KEY: KEY })).profile?.wire).toBe('cursor')
     expect(selectProfile(definition({ CURSOR_API_KEY: ' ' })).profile?.wire).toBeUndefined()
     expect(selectProfile(definition({})).profile?.permission.expectedMode).toBe('agent')
+    const sdk = await activate(createAcpAgentPlugin(definition({ CURSOR_API_KEY: KEY })), cleanups)
+    const acp = await activate(createAcpAgentPlugin(definition({})), cleanups)
+    expect(sdk.extensionSupport?.reports).toEqual([])
+    expect(acp.extensionSupport?.reports).toContain('commands')
   })
 
   it('passes the runner no Host variable', async () => {

@@ -429,6 +429,14 @@ process.stdin.on('end', () => {
 const send = message => process.stdout.write(`${JSON.stringify(message)}\n`)
 const updateMessage = (sessionId, value) => ({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: value } })
 const update = (sessionId, value) => send(updateMessage(sessionId, value))
+const commandReport = () => ({
+  sessionUpdate: 'available_commands_update',
+  availableCommands: env.FAKE_ACP_COMMANDS_FILE
+    ? JSON.parse(readFileSync(env.FAKE_ACP_COMMANDS_FILE, 'utf8'))
+    : env.FAKE_ACP_COMMANDS
+      ? JSON.parse(env.FAKE_ACP_COMMANDS)
+      : [{ name: 'init', description: 'init' }],
+})
 /** Messages a result carries under this key go out in the same write as the response, right after it. */
 const TRAILING = Symbol('trailing')
 let nextId = 0 // Deliberately overlaps the client's own request IDs.
@@ -480,6 +488,20 @@ function receive(message) {
     .then(
       result => {
         const trailing = result?.[TRAILING] ?? []
+        if (env.FAKE_ACP_SETUP_COMMANDS && ['session/new', 'session/load', 'session/resume'].includes(message.method)) {
+          const sessionId = result.sessionId ?? message.params.sessionId
+          const report = commandReport()
+          if (env.FAKE_ACP_SETUP_COMMANDS === 'interleaved') {
+            if (message.method !== 'session/new')
+              for (let i = 0; i < 5; i++) update(`other-session-${i}`, { ...report, availableCommands: [{ name: 'unrelated' }] })
+            update(sessionId, { ...report, availableCommands: [{ name: 'before-response' }] })
+            trailing.push(
+              updateMessage(sessionId, report),
+              updateMessage(sessionId, { ...report, availableCommands: [{ name: 'invalid name' }] }),
+              updateMessage('another-session', { ...report, availableCommands: [{ name: 'wrong-session' }] }),
+            )
+          } else update(sessionId, report)
+        }
         process.stdout.write([{ jsonrpc: '2.0', id: message.id, result }, ...trailing].map(item => `${JSON.stringify(item)}\n`).join(''))
         // As the adapters do: the first push comes after the answer to initialize.
         if (message.method === 'initialize') setTimeout(pushAuthStatus, Number(env.FAKE_ACP_AUTH_STATUS_DELAY ?? 0))
@@ -2307,14 +2329,7 @@ const scenarios = {
       size: 100,
       ...(env.FAKE_ACP_COST ? { cost: { amount: Number(env.FAKE_ACP_COST) * planned, currency: 'USD' } } : {}),
     })
-    update(sessionId, {
-      sessionUpdate: 'available_commands_update',
-      availableCommands: env.FAKE_ACP_COMMANDS_FILE
-        ? JSON.parse(readFileSync(env.FAKE_ACP_COMMANDS_FILE, 'utf8'))
-        : env.FAKE_ACP_COMMANDS
-          ? JSON.parse(env.FAKE_ACP_COMMANDS)
-          : [{ name: 'init', description: 'init' }],
-    })
+    update(sessionId, commandReport())
     update(sessionId, { sessionUpdate: 'some_future_kind', anything: true })
     say('planned')
     return {

@@ -67,6 +67,19 @@ func phoneSlashFixture(_ input: Data) throws -> [String: Any] {
           all.sections == [.command, .action]
     else { throw NativeFailure.invalidRecord }
     let native: [NativeJSON] = [.object(["name": .string("compact"), "idleOnly": .bool(true)]), .object(["name": .string("status")])]
+    var unsupported = PhoneSlashContext(bodyOpen: true, canRun: true, harness: .object(["extensionSupport": .object(["reports": .array([])])]))
+    unsupported.session = true
+    let draftContext = PhoneSlashContext(bodyOpen: true, canRun: true)
+    guard PhoneSlash.menu("/", commands: nil, templates: [], context: draftContext)?.commandNotice == "发送第一条消息后，可查看 Harness 返回的命令",
+          PhoneSlash.menu("/", commands: nil, templates: [], context: context)?.commandNotice == "当前连接尚未提供命令列表",
+          PhoneSlash.menu("/", commands: [], templates: [], context: context)?.commandNotice == "当前会话没有可用的 Harness 命令",
+          PhoneSlash.menu("/", commands: nil, templates: [], context: unsupported)?.commandNotice == "当前接入方式不提供 Harness 命令",
+          PhoneSlash.menu("/", commands: native, templates: [], context: unsupported)?.options.first?.label == "/compact",
+          PhoneSlash.menu("/", commands: native, templates: [], context: unsupported)?.commandNotice == nil,
+          PhoneSlash.menu("/", commands: [], templates: [], context: context)?.options.contains(where: { $0.label == "/compact" }) == false,
+          PhoneSlash.menu("/compact", commands: [], templates: [], context: context)?.options.first?.unavailable == "这个 Harness 尚不支持",
+          PhoneSlash.menu("/compact", commands: nil, templates: [], context: context)?.options.contains(where: { $0.label == "/compact" }) == false
+    else { throw NativeFailure.invalidRecord }
     context.running = true
     let running = PhoneSlash.menu("/", commands: native, templates: [], context: context)!
     guard running.options[0].label == "/status", running.options[1].label == "/compact",

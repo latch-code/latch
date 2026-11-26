@@ -11,6 +11,7 @@
 - 只用临时目录、端口 0 与回环地址，不读取用户数据与密钥。
 - 录制器只由这台电脑的所有者经 `pnpm harness:record` 对真实 Agent 运行：只放行假模型服务端口的沙箱、临时家目录、白名单环境，沙箱没挡住外连或本机其他端口就不启动 Agent；测试只用假 ACP Agent 运行它（`packages/harness-acp/test/record.test.ts`）。
 - `fixtures/replay/` 中的文件在第一行写明 `source`：`hand-written` 不得写成 `recorded`。
+- 假 ACP 的 `FAKE_ACP_SETUP_COMMANDS=1` 在会话建立时上报命令；`interleaved` 另模拟同次写入的回复和通知。
 - 改向量前读根 `AGENTS.md`「共享安全编码」。
 
 改动后运行 `pnpm test` 与 `pnpm test:e2e`。用法见 [docs/TESTING.md](../../docs/TESTING.md#测试辅助)。

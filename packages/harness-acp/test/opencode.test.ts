@@ -329,6 +329,10 @@ describe('OpenCode server wire', () => {
   it('streams a reply, its thinking and a tool, and answers with the turn’s usage once the run ends', async () => {
     const { fake, wire, created, updates, cwd } = await started()
     const sessionID = created.sessionId
+    expect(updates[0]?.update.availableCommands).toEqual([
+      { name: 'review', description: 'review changes' },
+      { name: 'compact', description: 'Compact the session' },
+    ])
     const answer = wire.request('session/prompt', {
       sessionId: sessionID,
       prompt: [
@@ -377,10 +381,7 @@ describe('OpenCode server wire', () => {
     })
     const kinds = updates.map(item => item.update.sessionUpdate)
     expect(kinds[0]).toBe('available_commands_update')
-    expect(updates[0]!.update.availableCommands).toEqual([
-      { name: 'review', description: 'review changes' },
-      { name: 'compact', description: 'Compact the session' },
-    ])
+    expect(kinds.filter(kind => kind === 'available_commands_update')).toHaveLength(1)
     expect(updates.find(item => item.update.sessionUpdate === 'agent_thought_chunk')?.update).toMatchObject({
       messageId: 'msg_a:reasoning:0',
       content: { type: 'text', text: 'thinking' },
@@ -626,6 +627,8 @@ describe('OpenCode server wire', () => {
     }))
     await wire.request('session/load', { sessionId: created.sessionId, cwd, mcpServers: [] }, 5_000)
     expect(updates.map(item => [item.update.sessionUpdate, item.update.messageId ?? item.update.toolCallId])).toEqual([
+      ['available_commands_update', undefined],
+      ['available_commands_update', undefined],
       ['user_message_chunk', 'msg_1'],
       ['agent_thought_chunk', 'msg_2:reasoning:0'],
       ['agent_message_chunk', 'msg_2'],

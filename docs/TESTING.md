@@ -486,6 +486,7 @@ testkit 另导出：`FAKE_ACP_AGENT`、`FAKE_CODEX_APP_SERVER`、`FAKE_PI_AGENT`
 - **设备。** 每台设备是独立的 BrowserContext，用 `enrollBrowser` 经真实连接页登记。手机经 HTTPS 与邀请的登记只在 `enrollment.e2e.ts`。需要本机桌面端或另一台设备时，用 `testHost.enroll({ listener: 'unix' })` 等 API 设备直接驱动 Host。
 - **走正常入口。** 用例经页面的真实控件到达状态：按 Host ID 打开会话用 `helpers/layout.ts` 的 `openSession`，不用 CSS 隐藏、直接调用内部函数或手填 DTO 代替。
 - **输入框。** 消息输入框是 CodeMirror，`getByRole('textbox')` 是它的 `.cm-content`：`fill`、`press` 照用，但块显示名字，元素的文字不是草稿，`inputValue` 也不可用；草稿与光标只经 `e2e/helpers/prompt.ts` 的 `promptValue`、`promptSelection`、`setPromptSelection` 读写。
+- **Harness 命令。** `slash.e2e.ts` 让假 ACP 在会话建立时上报，检查普通首轮后的菜单、补全与原文发送。`harness-command-cache.e2e.ts` 检查重启后新草稿读到同项目的命令，以及切换项目后撤下旧结果。
 - **故障注入。** 拦截与替换只放在 Host 已授权的响应之后；拆除拦截前先释放并等待处理结算。
 - **剪贴板。** 复制用例只在所测顶层页面记录内存写入并阻断选区复制，不读写系统剪贴板；系统剪贴板的传输要实机验证。
 - **宽度与主题。** UI 用例覆盖手机、平板与桌面宽度和浅深色，并断言没有横向溢出、控件可达（`helpers/layout.ts` 的 `reachable`、`layersInWindow`）。
