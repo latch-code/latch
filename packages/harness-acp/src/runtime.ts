@@ -472,6 +472,8 @@ interface Run {
   /** The session's tokens before this turn, and this turn's as the Harness reported them (`TurnStats.usage`). */
   tokens?: {
     base?: TokenUsage
+    sessionBase?: TokenUsage
+    startedAtZero?: boolean
     total?: TokenUsage
     turn?: TokenUsage
     stream?: { outputTokens: number; ms: number }
@@ -1340,7 +1342,13 @@ export class AgentRuntime implements Bridge {
     task.acp.contextCleared = true
     task.acp.contextEpoch = (task.acp.contextEpoch ?? 0) + 1
     for (const event of task.contextEvents ?? []) if (event.status === 'in_progress') event.status = 'unknown'
-    // The old session's context window and cost say nothing about the new one.
+    // The old session's context window, cumulative session counters and cost say nothing about the new one; `summary.usage` stays as the task's total.
+    if (task.summary.usage) task.acp.priorContextsUsage = structuredClone(task.summary.usage)
+    delete task.acp.sessionUsage
+    delete task.acp.sessionOriginUsage
+    delete task.acp.sessionUnmeasuredOrigin
+    delete task.acp.sessionCost
+    delete task.acp.turnSessionTotals
     delete task.usageReport
     const live = this.lives.get(task.summary.id)
     if (live?.mcp) {
@@ -2591,6 +2599,7 @@ export class AgentRuntime implements Bridge {
           ...(this.selection.profile ? { profilePresetId: this.selection.profile.presetId } : {}),
           ...(scope.passed ? { folders: [...scope.passed.paths], folderVia: scope.passed.via } : {}),
           imported: { agentSessionId: input.agentSessionId, cwd: real },
+          sessionUnmeasuredOrigin: true,
         },
       }
       this.tools.set(input.sessionId, { seq: 0, calls: new Map() })
@@ -3242,6 +3251,9 @@ export class AgentRuntime implements Bridge {
             await binding.promise.catch(() => {})
           const current = this.task(sessionId)
           this.clearContext(current)
+          // Codex's app-server wire binds one thread per process; stop the prior thread's process before attaching a fresh one.
+          const oldLive = this.lives.get(sessionId)
+          if (oldLive && this.selection.profile?.wire === 'codex') await oldLive.wire.stop('stop', this.limits.stopGraceMs).catch(() => {})
           const agent = options.agentContext?.agent
           if (agent && agent.customAgentId === current.summary.agent?.customAgentId && options.agentContext?.brief)
             current.acp.brief = options.agentContext.brief
@@ -5701,6 +5713,56 @@ export class AgentRuntime implements Bridge {
     return run
   }
 
+  private effectiveSessionUsage(task: AcpTask): TokenUsage | undefined {
+    if (task.acp.sessionUsage) return task.acp.sessionUsage
+    // Sessions saved before `sessionUsage` existed kept a single fresh context's cumulative count in `summary.usage`.
+    if (
+      task.summary.usage
+      && !task.acp.contextCleared
+      && !task.acp.earlierSessionIds?.length
+      && !task.acp.imported
+      && !task.acp.fork?.native
+    )
+      return task.summary.usage
+    return undefined
+  }
+
+  private hasUnmeasuredOrigin(task: AcpTask): boolean {
+    if (task.acp.sessionUnmeasuredOrigin) return true
+    if (
+      !task.acp.contextCleared
+      && !task.acp.earlierSessionIds?.length
+      && (task.acp.imported !== undefined || task.acp.fork?.native === true)
+      && task.acp.sessionUsage === undefined
+      && task.acp.sessionOriginUsage === undefined
+    )
+      return true
+    return false
+  }
+
+  /** Baselines from the bound agent session right before `session/prompt` goes out (after `clearContext` and `ownFork`). */
+  private prepareTurnUsage(task: AcpTask, run: Run): void {
+    const index = run.userMessageId === undefined ? -1 : task.messages.findIndex(item => item.id === run.userMessageId)
+    const freshAt =
+      index < 0 ? -1 : task.messages.slice(0, index + 1).findLastIndex(item => item.role === 'user' && item.freshContext === true)
+    const contextStartedFresh =
+      freshAt >= 0
+      || (!task.acp.imported
+        && (!task.acp.fork?.native || (task.acp.sessionOriginUsage === undefined && !task.acp.sessionUnmeasuredOrigin)))
+    const firstInContext =
+      index >= 0 && !task.messages.slice(Math.max(0, freshAt), index).some(item => item.role === 'user' && !item.steered && !item.imported)
+    const sessionBase = this.effectiveSessionUsage(task)
+    const startedAtZero = contextStartedFresh && firstInContext && sessionBase === undefined && !this.hasUnmeasuredOrigin(task)
+    run.tokens = {
+      ...(task.summary.usage ? { base: structuredClone(task.summary.usage) } : {}),
+      ...(sessionBase ? { sessionBase: structuredClone(sessionBase) } : {}),
+      ...(startedAtZero ? { startedAtZero: true } : {}),
+    }
+    const cost = task.usageReport?.cost ?? task.acp.sessionCost
+    if (cost) run.costBase = { ...cost }
+    else delete run.costBase
+  }
+
   /**
    * Tokens the Harness reported, for the whole session or for this turn (`scope`): the session's total and this turn's
    * part, each derived from the other with the count from before the turn. Never estimated: what was not reported stays
@@ -5714,11 +5776,23 @@ export class AgentRuntime implements Bridge {
     stream?: { outputTokens: number; ms: number },
   ): void {
     const usage = tokenUsage(reported)
-    const base = run?.tokens?.base
     if (scope === 'session') {
-      task.summary.usage = usage
-      if (run) run.tokens = { ...run.tokens, total: usage, turn: subtractTokens(usage, base), scope }
+      const unmeasuredOrigin = this.hasUnmeasuredOrigin(task)
+      task.acp.sessionUsage = usage
+      if (unmeasuredOrigin) {
+        task.acp.sessionOriginUsage = usage
+        delete task.acp.sessionUnmeasuredOrigin
+      } else {
+        const contextUsage = subtractTokens(usage, task.acp.sessionOriginUsage)
+        task.summary.usage = addTokens(task.acp.priorContextsUsage, contextUsage)
+      }
+      if (run) {
+        const hasBase = run.tokens?.sessionBase !== undefined || run.tokens?.startedAtZero === true
+        const turn = hasBase ? subtractTokens(usage, run.tokens?.sessionBase) : undefined
+        run.tokens = { ...run.tokens, total: usage, ...(turn ? { turn } : {}), scope }
+      }
     } else {
+      const base = run ? run.tokens?.base : task.summary.usage
       task.summary.usage = addTokens(base, usage)
       if (run) run.tokens = { ...run.tokens, turn: usage, scope }
     }
@@ -5734,9 +5808,13 @@ export class AgentRuntime implements Bridge {
 
   /** An identified previous turn may refine the baseline independently of the session's newer cumulative sample. */
   private rebaseCodexTokens(task: AcpTask, run: Run, previous: TokenUsage): boolean {
-    const { base, total } = run.tokens ?? {}
-    if ((base && !precedesTokens(base, previous)) || (total && !precedesTokens(previous, total))) return false
-    run.tokens = { ...run.tokens, base: previous, ...(total ? { turn: subtractTokens(total, previous) } : {}) }
+    const { sessionBase, total } = run.tokens ?? {}
+    if ((sessionBase && !precedesTokens(sessionBase, previous)) || (total && !precedesTokens(previous, total))) return false
+    run.tokens = { ...run.tokens, sessionBase: previous, ...(total ? { turn: subtractTokens(total, previous) } : {}) }
+    const index = run.userMessageId === undefined ? -1 : task.messages.findIndex(item => item.id === run.userMessageId)
+    const earlier = index > 0 ? task.messages.slice(0, index).findLast(item => item.role === 'user' && !item.steered) : undefined
+    if (earlier && task.acp.turnSessionTotals?.[earlier.id])
+      task.acp.turnSessionTotals[earlier.id] = { ...task.acp.turnSessionTotals[earlier.id], usage: structuredClone(previous) }
     this.showTurnTokens(task, run)
     return true
   }
@@ -5744,24 +5822,26 @@ export class AgentRuntime implements Bridge {
   /**
    * A settled turn on the Harness's own login, for the Host's usage record: the same turn usage the prompt now carries.
    * A session total with nothing reported before this turn includes what the session used before Latch ran it (a
-   * session brought in, or a Harness that began reporting late): unless this is the session's first turn, its tokens and
-   * cost are left out rather than counted as this turn's.
+   * session brought in, a native fork without a measured baseline, or a Harness that began reporting late): unless the
+   * agent session started empty on this turn, its tokens and cost are left out rather than counted as this turn's.
    */
   private reportTurn(task: AcpTask, run: Run, prompt: Message): void {
     if (!this.options.turnEnded || !prompt.turn?.endedAt) return
     const index = task.messages.indexOf(prompt)
-    const first = index >= 0 && !task.messages.slice(0, index).some(message => message.role === 'user')
     const turn = index >= 0 ? task.messages.slice(index + 1) : []
-    const usage = run.tokens?.turn && (run.tokens.scope !== 'session' || run.tokens.base || first) ? run.tokens.turn : undefined
+    const startedAtZero = Boolean(run.tokens?.startedAtZero)
+    const usage =
+      run.tokens?.turn && (run.tokens.scope !== 'session' || run.tokens.sessionBase !== undefined || startedAtZero)
+        ? run.tokens.turn
+        : undefined
     const now = task.usageReport?.cost
     const base = run.costBase
     const cost =
-      now && (base ? base.currency === now.currency : first) && now.amount - (base?.amount ?? 0) >= 0
+      now && (base ? base.currency === now.currency : startedAtZero) && now.amount - (base?.amount ?? 0) >= 0
         ? { amount: now.amount - (base?.amount ?? 0), currency: now.currency }
         : undefined
     const model =
-      turn.findLast(message => message.role === 'assistant' && message.model)?.model
-      ?? task.config?.find(option => option.category === 'model')?.currentValue
+      turn.findLast(message => message.role === 'assistant' && message.model)?.model ?? modelName(task.config) ?? task.summary.model
     const record: HarnessTurnRecord = {
       sessionId: task.summary.id,
       startedAt: isoTime(run.clock.startedAt),
@@ -5885,6 +5965,7 @@ export class AgentRuntime implements Bridge {
         this.verifyConsultation(run.taskId, binding)
       }
       run.authorizeConsultation?.()
+      this.prepareTurnUsage(task, run)
       run.sent = true
       if (binding.live.gateway) {
         run.gatewayMark = binding.live.gateway.requests()
@@ -5940,13 +6021,9 @@ export class AgentRuntime implements Bridge {
     this.mark()
   }
 
-  private outcome(run: Run, result: unknown, notes: string[]): TaskStatus {
-    this.askQuota(run.live, true)
-    const parsed = promptResult.safeParse(result)
+  private recordReportedTokens(run: Run, fromWire: TurnTokens | undefined): void {
     const task = this.state.tasks[run.taskId]
-    const said = parsed.success
-      ? (parsed.data.usage ?? this.selection.profile?.turnUsage?.(result) ?? (run.calls === 'unknown' ? undefined : run.calls))
-      : undefined
+    const said = fromWire ?? (run.calls === 'unknown' ? undefined : run.calls)
     const reported =
       said && this.selection.profile?.inputExcludesCache
         ? { ...said, inputTokens: said.inputTokens + (said.cachedReadTokens ?? 0) + (said.cachedWriteTokens ?? 0) }
@@ -5956,6 +6033,12 @@ export class AgentRuntime implements Bridge {
     // Direct Codex already sent its total as a live update. Its prompt answer can precede a newer session-wide total.
     const countedLive = this.selection.profile?.wire === 'codex' && !task?.acp.route
     if (reported && task && scope !== 'none' && !countedLive) this.noteTokens(task, run, reported, scope)
+  }
+
+  private outcome(run: Run, result: unknown, notes: string[]): TaskStatus {
+    this.askQuota(run.live, true)
+    const parsed = promptResult.safeParse(result)
+    this.recordReportedTokens(run, parsed.success ? (parsed.data.usage ?? this.selection.profile?.turnUsage?.(result)) : undefined)
     const stopReason = parsed.success ? parsed.data.stopReason : undefined
     // The Host's own stop is no cancel by anyone: the turn was interrupted, whatever the agent answered.
     if (run.cancelRequested && this.closed && run.sent) {
@@ -6013,6 +6096,12 @@ export class AgentRuntime implements Bridge {
   }
 
   private failure(run: Run, error: unknown, notes: string[]): TaskStatus {
+    if (run.sent) {
+      const rawUsage = error instanceof RpcError && isObject(error.data) ? (error.data as { usage?: unknown }).usage : undefined
+      const dataUsage =
+        rawUsage !== undefined ? (promptResult.safeParse({ stopReason: 'end_turn', usage: rawUsage }).data?.usage ?? undefined) : undefined
+      this.recordReportedTokens(run, dataUsage)
+    }
     const hideOutput = run.sensitiveOutput || run.attachments?.length
     if (error instanceof ConnectionClosed) {
       run.end = this.endOf(error.info)
@@ -6220,6 +6309,16 @@ export class AgentRuntime implements Bridge {
           ...('requests' in routed ? { routed } : {}),
           ...(run.tokens?.turn ? { usage: run.tokens.turn } : {}),
           ...(run.tokens?.stream ? { stream: run.tokens.stream } : {}),
+        }
+        const sessionUsage = this.effectiveSessionUsage(task)
+        if (sessionUsage || task.usageReport?.cost) {
+          const totals = (task.acp.turnSessionTotals ??= {})
+          totals[prompt.id] = {
+            ...(sessionUsage ? { usage: structuredClone(sessionUsage) } : {}),
+            ...(task.usageReport?.cost ? { cost: { ...task.usageReport.cost } } : {}),
+          }
+          const ids = Object.keys(totals)
+          if (ids.length > 256) for (const old of ids.slice(0, ids.length - 256)) delete totals[old]
         }
         if (!task.acp.route && run.sent) this.reportTurn(task, run, prompt)
       }
@@ -7174,6 +7273,16 @@ export class AgentRuntime implements Bridge {
           forked.acp.fork.native = true
           const first = forked.messages.find(message => message.role === 'user')
           if (first) first.nativeFork = true
+          if (point.through) {
+            const preFork = this.forkSessionBaseline(fork, point.through)
+            if (preFork.usage) {
+              forked.acp.sessionOriginUsage = structuredClone(preFork.usage)
+              forked.acp.sessionUsage = structuredClone(preFork.usage)
+            } else {
+              forked.acp.sessionUnmeasuredOrigin = true
+            }
+            if (preFork.cost) forked.acp.sessionCost = { ...preFork.cost }
+          }
         }
         return result
       } catch (error) {
@@ -7221,6 +7330,34 @@ export class AgentRuntime implements Bridge {
     // The message that opened the last turn kept: a wire that marked its turns with Latch's messages forks after it.
     const through = source.messages.slice(0, end + 1).findLast(message => message.role === 'user' && !message.steered)?.id
     return { source: source.acp.acpSessionId, before: next?.createdAt ?? this.now(), ...(through ? { through } : {}) }
+  }
+
+  /** The source session's cumulative session-scoped tokens and cost at `through`, when Latch observed them. */
+  private forkSessionBaseline(
+    fork: NonNullable<AcpRecord['fork']>,
+    through: string,
+  ): { usage?: TokenUsage; cost?: { amount: number; currency: string } } {
+    const source = this.state.tasks[fork.taskId]
+    if (!source) return {}
+    const recorded = source.acp.turnSessionTotals?.[through]
+    if (recorded?.usage || recorded?.cost) return recorded
+    const end = source.messages.findIndex(message => message.id === fork.upToMessageId)
+    if (end < 0) return {}
+    const later = source.messages.slice(end + 1)
+    if (!later.some(message => message.role === 'user' && !message.steered)) {
+      const usage = this.effectiveSessionUsage(source)
+      const cost = source.usageReport?.cost ?? source.acp.sessionCost
+      return { ...(usage ? { usage } : {}), ...(cost ? { cost } : {}) }
+    }
+    if (this.hasUnmeasuredOrigin(source)) return {}
+    const freshAt = source.messages.slice(0, end + 1).findLastIndex(message => message.role === 'user' && message.freshContext === true)
+    const users = source.messages
+      .slice(Math.max(0, freshAt), end + 1)
+      .filter(message => message.role === 'user' && !message.steered && !message.imported)
+    if (!users.length || users.some(message => !message.turn?.usage)) return {}
+    let sum = source.acp.sessionOriginUsage ? structuredClone(source.acp.sessionOriginUsage) : undefined
+    for (const user of users) sum = addTokens(sum, user.turn!.usage!)
+    return sum ? { usage: sum } : {}
   }
 
   /**
@@ -8074,7 +8211,7 @@ export class AgentRuntime implements Bridge {
       const current = this.runs.get(taskId)
       const active = current?.sent && current.live === live ? current : undefined
       const owner = turnId && active?.userMessageId === turnId ? active : undefined
-      const total = task.summary.usage
+      const total = this.effectiveSessionUsage(task)
       const rebased = beforeTurnId && active?.userMessageId === beforeTurnId && this.rebaseCodexTokens(task, active, tokenUsage(reported))
       const olderTotal =
         !owner && scope === 'session' && total && (reported.inputTokens < total.inputTokens || reported.outputTokens < total.outputTokens)

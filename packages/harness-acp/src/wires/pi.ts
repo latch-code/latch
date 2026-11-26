@@ -897,8 +897,18 @@ export class PiWire implements AgentWire {
     }
     if (turn.cancelled || aborted || turn.stopReason === 'aborted')
       return turn.resolve({ stopReason: 'cancelled', ...(usage ? { usage } : {}) })
-    if (turn.stopReason === 'error')
-      return turn.reject(new RpcError(RPC.internal, clip(redactKnownSecrets(turn.errorMessage || 'pi stopped with an error'), 4000)))
+    if (turn.stopReason === 'error') {
+      const counted =
+        usage
+        && (usage.inputTokens > 0 || usage.outputTokens > 0 || (usage.cachedReadTokens ?? 0) > 0 || (usage.cachedWriteTokens ?? 0) > 0)
+      return turn.reject(
+        new RpcError(
+          RPC.internal,
+          clip(redactKnownSecrets(turn.errorMessage || 'pi stopped with an error'), 4000),
+          counted ? { usage } : undefined,
+        ),
+      )
+    }
     turn.resolve({ stopReason: turn.stopReason === 'length' ? 'max_tokens' : 'end_turn', ...(usage ? { usage } : {}) })
   }
 

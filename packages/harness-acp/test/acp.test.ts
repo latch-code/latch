@@ -3020,9 +3020,26 @@ describe('ACP turn mapping', () => {
     expect(turns[0]).not.toHaveProperty('usage')
     // The session shows what it was told; the record keeps only what is surely this turn's: its time and steps.
     expect(detail.summary.usage).toEqual({ inputTokens: 10, outputTokens: 20 })
+    expect(detail.messages.filter(message => message.role === 'user')[1]?.turn?.usage).toBeUndefined()
     expect(turns[1]).not.toHaveProperty('usage')
     expect(turns[1]).not.toHaveProperty('cost')
     expect(turns[1]).toMatchObject({ sessionId, steps: 0 })
+  })
+
+  it('accumulates session-scoped tokens and fresh cost across clearContext, and names the model consistently without a reply', async () => {
+    const turns: HarnessTurnRecord[] = []
+    const fixture = await setup({ FAKE_ACP_CONFIG: 'options', FAKE_ACP_COST: '0.25' }, {}, {}, { turnEnded: turn => void turns.push(turn) })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.prompt(sessionId, 'plan', rid(), { freshContext: true })
+    const detail = await settled(bridge, sessionId)
+    expect(detail.summary.usage).toEqual({ inputTokens: 20, outputTokens: 40 })
+    // The fake agent multiplies FAKE_ACP_COST by its process-wide turn count (0.25 on turn 1, 0.5 on turn 2); clearing context resets costBase so turn 2 takes the new session's full 0.5.
+    expect(turns.map(turn => [turn.usage, turn.cost, turn.model])).toEqual([
+      [{ inputTokens: 10, outputTokens: 20 }, { amount: 0.25, currency: 'USD' }, 'Small'],
+      [{ inputTokens: 10, outputTokens: 20 }, { amount: 0.5, currency: 'USD' }, 'Small'],
+    ])
   })
 
   it('adds up the turns of a Harness that counts each turn, with its cached input put back in the input', async () => {
