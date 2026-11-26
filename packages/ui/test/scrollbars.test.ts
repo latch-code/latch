@@ -11,10 +11,19 @@ const movePointer = (target: EventTarget, x: number, y: number) =>
 
 function makeScroller(height = 80, width = 200): HTMLDivElement {
   const list = document.createElement('div')
-  list.style.cssText = `width: ${width}px; height: ${height}px; overflow-y: auto`
+  // Headless Chromium hides scrollbars by default. Reserve their actual CSS width for the hit tests.
+  list.style.cssText = `width: ${width}px; height: ${height}px; overflow-y: auto; scrollbar-gutter: stable`
   list.append(Object.assign(document.createElement('div'), { style: 'height: 400px' }))
   document.body.append(list)
   return list
+}
+
+async function holdOnTrack(list: HTMLElement) {
+  await userEvent.hover(list, { position: { x: list.offsetWidth - 4, y: 30 } })
+  list.scrollTop = 40
+  await expect.poll(() => list.classList.contains('ui-scrolling')).toBe(true)
+  await new Promise(done => setTimeout(done, 900))
+  expect(alphaOf(list)).toBe(1)
 }
 
 describe('revealScrollbarsWhileScrolling', () => {
@@ -56,8 +65,11 @@ describe('revealScrollbarsWhileScrolling', () => {
     stop = revealScrollbarsWhileScrolling()
     const list = makeScroller(120, 240)
     const rect = list.getBoundingClientRect()
-    // Pointer over the reading/list content, away from the right-edge scrollbar strip.
-    movePointer(list, rect.left + 40, rect.top + 40)
+    expect(list.offsetWidth - list.clientWidth).toBe(10)
+    const x = rect.left + list.clientWidth - 1
+    const y = rect.top + 40
+    expect(document.elementFromPoint(x, y)).toBe(list.firstElementChild)
+    movePointer(list, x, y)
 
     list.scrollTop = 80
     await expect.poll(() => list.classList.contains('ui-scrolling')).toBe(true)
@@ -119,6 +131,62 @@ describe('revealScrollbarsWhileScrolling', () => {
     await expect.poll(() => parent.classList.contains('ui-scrolling')).toBe(true)
     await expect.poll(() => alphaOf(parent)).toBe(1)
     expect(alphaOf(child)).toBe(0)
+  })
+
+  it('releases a held inner scrollbar when the outer list scrolls it away from a stationary pointer', async () => {
+    stop = revealScrollbarsWhileScrolling()
+    const outer = makeScroller(160, 240)
+    const inner = makeScroller(60, 160)
+    outer.prepend(inner)
+    await holdOnTrack(inner)
+
+    outer.scrollTop = 100
+    expect(inner.getBoundingClientRect().bottom).toBeLessThan(outer.getBoundingClientRect().top)
+    await expect.poll(() => alphaOf(inner), { timeout: 2000 }).toBe(0)
+  })
+
+  it('fades out when the list shifts from its track to its content under a stationary pointer', async () => {
+    stop = revealScrollbarsWhileScrolling()
+    const list = makeScroller()
+    await holdOnTrack(list)
+    const { right, top } = list.getBoundingClientRect()
+    list.style.marginLeft = '30px'
+    expect(document.elementFromPoint(right - 4, top + 30)).toBe(list.firstElementChild)
+    await expect.poll(() => alphaOf(list), { timeout: 2000 }).toBe(0)
+  })
+
+  it.each(['scrolling', 'held'])('clears the reveal when a %s element is detached and later reused', async state => {
+    stop = revealScrollbarsWhileScrolling()
+    const list = makeScroller()
+    if (state === 'held') await holdOnTrack(list)
+    else {
+      list.scrollTop = 40
+      await expect.poll(() => list.classList.contains('ui-scrolling')).toBe(true)
+    }
+    list.remove()
+    await expect.poll(() => list.classList.contains('ui-scrolling'), { timeout: 2000 }).toBe(false)
+    document.body.append(list)
+    expect(alphaOf(list)).toBe(0)
+  })
+
+  it('returns scrollbar rendering to the platform when forced colors are active', async () => {
+    stop = revealScrollbarsWhileScrolling()
+    const list = makeScroller()
+    list.scrollTop = 40
+    await expect.poll(() => list.classList.contains('ui-scrolling')).toBe(true)
+
+    await emulateMedia({ 'forced-colors': 'active' }, async () => {
+      await expect.poll(() => list.classList.contains('ui-scrolling')).toBe(false)
+      expect(scrollbarAnimations(list)).toHaveLength(0)
+      list.dispatchEvent(new Event('scroll'))
+      expect(list.classList.contains('ui-scrolling')).toBe(false)
+      expect(scrollbarAnimations(list)).toHaveLength(0)
+    })
+
+    // The browser delivers the restored media query's change event before the next animation frame.
+    await new Promise(requestAnimationFrame)
+    list.scrollTop = 80
+    await expect.poll(() => list.classList.contains('ui-scrolling')).toBe(true)
   })
 
   it('hides without animating under reduced motion or still capture', async () => {

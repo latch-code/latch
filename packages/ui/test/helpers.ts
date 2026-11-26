@@ -47,7 +47,11 @@ const CONTEXT_MEDIA = {
   'prefers-contrast': 'no-preference',
 }
 
-type MediaFeatures = { 'prefers-color-scheme'?: 'light' | 'dark'; 'prefers-reduced-motion'?: 'reduce' | 'no-preference' }
+type MediaFeatures = {
+  'prefers-color-scheme'?: 'light' | 'dark'
+  'prefers-reduced-motion'?: 'reduce' | 'no-preference'
+  'forced-colors'?: 'none' | 'active'
+}
 
 async function setMedia(features: Record<string, string>): Promise<void> {
   await protocol().send('Emulation.setEmulatedMedia', {
