@@ -166,7 +166,7 @@ profile 的 `minimumVersion` 是它的命令支持的最低版本，用 `<命令
 - 来源随安装方式：Homebrew 的 `Cellar/<formula>/` 或 `Caskroom/<cask>/` 下、且是 profile 列出的名称，问 `https://formulae.brew.sh/api/<formula|cask>/<名称>.json`（formula 取 `versions.stable`，cask 取 `version` 逗号前的部分）；Homebrew 的构建比 npm 晚几小时，不拿 npm 比。未列出的 Homebrew 安装不问。其他布局在 profile 写了 npm 包时问 `https://registry.npmjs.org/-/package/<包>/dist-tags`，否则不问（goose 自己的安装器没有来源）。见 [ARCHITECTURE](ARCHITECTURE.md#各功能的安全规则)。结果只在内存，每个包、formula 或 cask 6 小时；失败或形状不对不提示，10 分钟内不再问。只在管理设备读取 Agent 设置（`GET /link/api/agents`；工作台首次加载有已启用外部 Harness 时用 `?recheck=0` 复用已读版本，点开「检查更新」或「重新检测」时重读命令版本）时问，不定时；已启用定义的 `update` 与 `outdated` 只投影给有 `admin` 的设备的 `catalog.harnesses`。只有启动脚本传入 `startServer({ harnessUpdates })` 时开启，测试 Host 不发请求。
 - Claude 的通道（只用于 npm 来源）：读 Claude 配置目录（`CLAUDE_CONFIG_DIR`，否则 `~/.claude`）里 `settings.json` 的 `autoUpdatesChannel` 这一个键（不跟随链接，最多 1 MiB）；`stable` 取 `stable` 标签，缺失或其他值取 `latest`；那个标签不存在就不提示。不读登录与凭据。
 - 比较：当前版本严格低于该标签才提示；比较不了、相同或本机预发布版更高都不提示。已有 `outdated` 时不另提示，那一行已带命令。
-- 命令按真实路径和安装布局选择，无需运行包管理器或版本管理器来识别安装方式。
+- 命令按找到的路径、`realpath` 与安装布局选择，不运行 `npm prefix`、`brew --prefix` 或版本管理器：
   - 在 Homebrew 的 `Cellar/<formula>/` 或 `Caskroom/<cask>/` 下：`brew upgrade <名称>`（先于 npm 判断，Homebrew 从 npm 包构建的 formula 也带 `lib/node_modules`）；
   - 含 `/lib/node_modules/<包>/`：`npm i -g <包>@latest`；
   - Claude 自己的安装器布局（含 `/.local/share/claude/` 或 `/claude/versions/`）：`claude update`；

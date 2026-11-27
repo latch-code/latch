@@ -2028,7 +2028,19 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await confirmProgram.click()
       await testHost.presence.waitForRequest()
       await expect.poll(pending).toBe('true')
-      await detection.locator('.inline-confirm[data-confirmation-phase="waiting"]').waitFor({ state: 'attached' })
+      const waitingLine = detection.locator('.inline-confirm[data-confirmation-phase="waiting"]')
+      const waitingInView = () =>
+        waitingLine.evaluate(
+          element =>
+            new Promise<number>(done => {
+              const observer = new IntersectionObserver(([entry]) => {
+                observer.disconnect()
+                done(entry!.intersectionRatio)
+              })
+              observer.observe(element)
+            }),
+        )
+      await waitingLine.waitFor({ state: 'attached' })
       await captureThemes(page, 'harness-confirm-waiting-desktop')
       testHost.presence.denyNext()
       await detection.getByText('没有执行：确认没有通过。', { exact: true }).waitFor()
@@ -2043,6 +2055,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const request = await testHost.presence.waitForRequest()
       await expect.poll(pending).toBe('true')
       expect(request.preview.lines).toContainEqual({ label: '命令', value: join(moved, command) })
+      // On a phone the details open below the fold; the page reveals them after the fold animation.
+      await expect.poll(waitingInView).toBeGreaterThan(0.99)
       await captureThemes(page, 'harness-confirm-waiting-phone')
       testHost.presence.approveNext()
       await expect.poll(bound).toBe(join(moved, command))

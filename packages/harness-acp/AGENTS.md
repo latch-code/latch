@@ -8,7 +8,7 @@
 
 - 子进程环境只来自 `agentEnvironment`：白名单加代理、CA 文件和 profile 的 `inheritEnv`，移除 `NODE_OPTIONS`、`LATCH_*`、`npm_*`、`DYLD_*`、`LD_*`（不区分大小写，`test/acp.test.ts`）；opencode 线另加口令。`inheritEnv` 不点名秘密（`test/login.test.ts`）。
 - 绑定账号的启动、登录、探测、模型、额度与历史共用目录，失效即拒绝。目录计入指纹；Qwen ≥0.27.4 使用账号 HOME。
-- 登录 shell 只读点名变量。`loginPrograms` 启用登录与版本命令，状态输出用 `read`。按安装布局提示升级。
+- 登录 shell 只读点名变量。`loginPrograms` 启用登录与版本命令，状态输出留在 `read`。按安装布局提示升级。
 - 启动须匹配会话的 `launchHash`，覆盖命令、参数、环境定义、预设、profile 版本及项目配置、`inheritEnv` 名称和 `programEnv` 路径。
 - 只有 profile 声明了 `folders` 的预设收到项目的其他文件夹（Codex 经 ACP `additionalDirectories`，只在 Agent 声明支持时；Qwen Code 经 `--include-directories`）；它们计入 `launchHash`，没有其他文件夹时指纹不变（`test/acp.test.ts`）。
 - 权限行为只写在 `src/profiles/`，改行为须提高 `launchHash` 中的 `version`。Agent 自行放宽权限即停该轮。
