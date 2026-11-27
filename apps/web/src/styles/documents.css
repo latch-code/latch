@@ -870,11 +870,17 @@
 }
 /* Punctuation separators stranded beside block media (or omitted duplicate media) hide instead of taking a line of their own. */
 :is(.inline-media, .message-media, .media-omitted) + .media-sep:not([data-sep='before']),
-:is(strong, em, del, s, mark, span, sub, sup):has(> :is(.inline-media, .message-media, .media-omitted))
+:is(strong, em, del, s, mark, span, sub, sup):has(
+    > :is(.inline-media, .message-media, .media-omitted):last-child,
+    > :is(strong, em, del, s, mark, span, sub, sup):last-child > :is(.inline-media, .message-media, .media-omitted):last-child
+  )
   + .media-sep:not([data-sep='before']),
 .media-sep:not([data-sep='after']):has(+ :is(.inline-media, .message-media, .media-omitted)),
 .media-sep:not([data-sep='after']):has(
-    + :is(strong, em, del, s, mark, span, sub, sup) > :is(.inline-media, .message-media, .media-omitted)
+    + :is(strong, em, del, s, mark, span, sub, sup) > :is(.inline-media, .message-media, .media-omitted):first-child,
+    + :is(strong, em, del, s, mark, span, sub, sup)
+      > :is(strong, em, del, s, mark, span, sub, sup):first-child
+      > :is(.inline-media, .message-media, .media-omitted):first-child
   ) {
   display: none;
 }

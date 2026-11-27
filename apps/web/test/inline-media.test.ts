@@ -126,6 +126,31 @@ describe('inline media in a reply', () => {
     expect(mixed).toContain('然后是文字<span class="media-sep" data-sep="before">、</span>')
     expect(mixed).toContain('<span class="media-sep" data-sep="after">，</span>请查看。')
 
+    const colonAndDashAfterMedia = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text: [
+          '- 更新 [hero-dark.png](.github/readme/hero-dark.png)、[hero-mobile-dark.png](.github/readme/hero-mobile-dark.png)：展示最新左上角切换器。',
+          '- **主视觉**：[hero-dark.png](.github/readme/hero-dark.png) — 暗色桌面端，体积 -20%。',
+          '- `README.md`：[hero-dark.png](.github/readme/hero-dark.png)。',
+          '- **更新 [hero-dark.png](.github/readme/hero-dark.png)、[hero-mobile-dark.png](.github/readme/hero-mobile-dark.png)**：展示说明。',
+        ].join('\n'),
+      }),
+    )
+    expect(colonAndDashAfterMedia).toContain('<span class="media-sep" data-sep="after">：</span>展示最新左上角切换器。')
+    expect(colonAndDashAfterMedia).toContain('<strong>主视觉</strong>：<button')
+    expect(colonAndDashAfterMedia).toContain('<code>README.md</code><span class="media-sep" data-sep="after">：</span>')
+    expect(colonAndDashAfterMedia).toContain('<span class="media-sep" data-sep="after"> — </span>暗色桌面端，体积 -20%。')
+    expect(colonAndDashAfterMedia).toContain('<strong>更新 <button')
+    expect(colonAndDashAfterMedia).toContain('</strong><span class="media-sep" data-sep="after">：</span>展示说明。')
+
+    const wrapperTextEdges = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text: '已修改逻辑、**更新 [a.png](out/a.png) 说明**：继续核对。',
+      }),
+    )
+    expect(wrapperTextEdges).toContain('已修改逻辑、<strong>')
+    expect(wrapperTextEdges).toContain('</strong>：继续核对。')
+
     const plainFiles = renderToStaticMarkup(
       createElement(MessageContent, {
         text: '- 改动：[a.ts](src/a.ts)、[b.ts](src/b.ts)。',
