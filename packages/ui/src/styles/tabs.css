@@ -75,9 +75,8 @@
 }
 
 /*
- * A side panel's strip. The tab's face is a 24 button (at most 160 wide, the words ellipsized) that stands on the hover
- * fill when selected. On a closable tab the × sits exactly over the 12px glyph, which fades out for it on hover; a
- * touch screen shows × on the selected tab, since it cannot hover. The stat is 11/14 in the diff's green and red.
+ * A side panel's strip. The 24px tab face stands on the hover fill when selected. Its name can give up room so the ×
+ * stays in its own slot at the end. The stat is 11/14 in the diff's green and red.
  */
 .ui-panel-tabs {
   display: flex;
@@ -96,8 +95,11 @@
 .ui-panel-tab {
   position: relative;
   display: inline-flex;
-  flex-shrink: 0;
+  min-width: 0;
   max-width: 160px;
+}
+.ui-panel-tabs[data-measuring-tabs] .ui-panel-tab {
+  flex-shrink: 0;
 }
 /* A tab in the overflow menu keeps its width (it is measured) but stands out of the row. */
 .ui-panel-tab[data-overflow] {
@@ -142,6 +144,7 @@
   align-items: center;
   gap: var(--sp-6);
   height: 24px;
+  min-width: 0;
   max-width: 100%;
   padding: 0 var(--sp-8);
   border: 0;
@@ -226,7 +229,7 @@
   opacity: 1;
   pointer-events: auto;
 }
-@media (hover: hover) and (pointer: fine) {
+@media (any-hover: hover) {
   .ui-panel-tab[data-closable]:hover .ui-panel-tab-close {
     opacity: 1;
     pointer-events: auto;

@@ -202,7 +202,10 @@ export function PanelTabs<T extends string>({
     const gap = parseFloat(style.columnGap) || 0
     const ending = (end.current ? end.current.offsetWidth + gap : 0) + (adder.current ? adder.current.offsetWidth + gap : 0)
     const available = element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - ending
+    // Choose what goes into +N at the tabs' natural widths. In the row, the selected tab can give up label space.
+    element.dataset.measuringTabs = ''
     const widths = boxes.current.slice(0, tabs.length).map(box => box?.offsetWidth ?? 0)
+    delete element.dataset.measuringTabs
     const next = fitTabs({ widths, selected, available, gap: TAB_GAP, more: MORE_WIDTH })
     setShown(previous => {
       const all = next.length === tabs.length

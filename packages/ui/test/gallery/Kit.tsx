@@ -170,7 +170,7 @@ function Panels() {
             actions={<IconButton label="关闭面板" icon={TrashGlyph} size="xs" />}
           />
         </Cell>
-        <Cell caption="悬停：图标变为 ×" force="hover" at=".ui-panel-tab[data-closable]">
+        <Cell caption="悬停时在名字末尾显示 ×" force="hover" at=".ui-panel-tab[data-closable]">
           <PanelTabs label="面板 2" value="deck" tabs={TABS.slice(2)} onValueChange={() => {}} />
         </Cell>
         <Cell caption="放不下：其余的收进 +N，当前标签留在行里">

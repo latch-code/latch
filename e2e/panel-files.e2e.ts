@@ -13,6 +13,7 @@ import { closeActiveFile, openPanelTab, openSession, settleShell } from './helpe
 import { promptValue } from './helpers/prompt.ts'
 
 const OUTPUT = 'test-results/panel-files'
+const LONG_FILE = 'review-delivery-notes-for-the-project-and-structured-diagnostics-archive-with-results.md'
 const { word, workbook, presentation, pdf } = documentFixtures(files =>
   Array.from(zipSync(Object.fromEntries(Object.entries(files).map(([key, value]) => [key, strToU8(value)])))),
 )
@@ -53,6 +54,7 @@ describe('the right panel', () => {
     await writeFile(join(root, 'data/notes.txt'), 'first\nsecond\n')
     await writeFile(join(root, 'packages/web/src/start.ts'), 'export const ready = true\n')
     await writeFile(join(root, 'guide.md'), '# Guide\n\nRead this first.\n')
+    await writeFile(join(root, LONG_FILE), '# Delivery diagnostics\n')
     await writeFile(join(root, 'page.html'), '<h1>Static page</h1>')
     await writeFile(join(root, 'deck.pptx'), Buffer.from(presentation(6)))
     await writeFile(join(root, 'letter.docx'), Buffer.from(word()))
@@ -78,8 +80,8 @@ describe('the right panel', () => {
     await host?.close()
   })
 
-  const open = async (width: number, theme: 'light' | 'dark'): Promise<Page> => {
-    const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, locale: 'zh-CN' })
+  const open = async (width: number, theme: 'light' | 'dark', hasTouch = false): Promise<Page> => {
+    const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, locale: 'zh-CN', hasTouch })
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
     const name = `Panel ${width} ${theme} ${randomUUID()}`
@@ -108,6 +110,77 @@ describe('the right panel', () => {
     await openPanel(page)
     await openPanelTab(page, '文件')
   }
+
+  it.each([
+    { width: 1440, theme: 'light', hasTouch: false },
+    { width: 900, theme: 'dark', hasTouch: false },
+    { width: 390, theme: 'light', hasTouch: true },
+    { width: 230, theme: 'dark', hasTouch: false },
+  ] as const)('closes a truncated file tab at $width $theme', async ({ width, theme, hasTouch }) => {
+    const page = await open(Math.max(width, 390), theme, hasTouch)
+    try {
+      const tabs = await openPanel(page)
+      await tabs.getByRole('tab', { name: '概要', exact: true }).waitFor()
+      if (width === 1440) {
+        await page.getByRole('separator', { name: '调整侧边面板宽度', exact: true }).press('Home')
+        await settleShell(page)
+      }
+      await openPanelTab(page, '文件')
+      await row(page, 'guide.md').click()
+      await tabs.getByRole('tab', { name: 'guide.md', exact: true, selected: true }).waitFor()
+      await openPanelTab(page, '文件')
+      await row(page, LONG_FILE).click()
+      if (width === 230) {
+        await page.setViewportSize({ width, height: 900 })
+        await settleShell(page)
+      }
+      const file = tabs.getByRole('tab', { name: LONG_FILE, exact: true, includeHidden: true })
+      const close = tabs.getByRole('button', { name: `关闭 ${LONG_FILE}`, exact: true })
+      await file.waitFor()
+      const label = file.locator('.ui-panel-tab-label')
+      expect(
+        await label.evaluate(element => element.scrollWidth > element.clientWidth && getComputedStyle(element).textOverflow === 'ellipsis'),
+      ).toBe(true)
+
+      if (!hasTouch) {
+        await page.getByRole('button', { name: /^其余 \d+ 个标签$/u }).waitFor()
+        await page.getByRole('region', { name: '文件预览', exact: true }).getByRole('button', { name: '文件操作', exact: true }).focus()
+        await page.mouse.move(0, 0)
+        await expect.poll(() => close.evaluate(element => getComputedStyle(element).opacity)).toBe('0')
+        const tail = (await label.boundingBox())!
+        // Move straight to the displayed end of the name, where the ellipsis sits.
+        await page.mouse.move(tail.x + tail.width - 9, tail.y + tail.height / 2)
+      } else {
+        expect(await page.evaluate(() => matchMedia('(hover: none) and (pointer: coarse)').matches)).toBe(true)
+      }
+      await expect.poll(() => close.evaluate(element => getComputedStyle(element).opacity)).toBe('1')
+      await shot(page, 'long-file-tab-close', width, theme)
+      const nameBox = (await label.boundingBox())!
+      const closeBox = (await close.boundingBox())!
+      const stripBox = (await tabs.boundingBox())!
+      expect(closeBox.x).toBeGreaterThanOrEqual(nameBox.x + nameBox.width)
+      expect(closeBox.x + closeBox.width).toBeLessThanOrEqual(stripBox.x + stripBox.width)
+      expect(
+        await close.evaluate(element => {
+          const { x, y, width, height } = element.getBoundingClientRect()
+          return element.contains(element.ownerDocument.elementFromPoint(x + width / 2, y + height / 2))
+        }),
+      ).toBe(true)
+      if (hasTouch) await close.tap()
+      else await close.click()
+      await file.waitFor({ state: 'detached' })
+      await tabs.getByRole('tab', { name: 'guide.md', exact: true, selected: true }).waitFor()
+
+      if (width === 1440) {
+        await openPanelTab(page, '文件')
+        await row(page, LONG_FILE).click()
+        await closeActiveFile(page)
+        await file.waitFor({ state: 'detached' })
+      }
+    } finally {
+      await page.context().close()
+    }
+  })
 
   it('keeps the open slide and notes while changing display language', async () => {
     const page = await open(1440, 'light')
@@ -172,7 +245,7 @@ describe('the right panel', () => {
           await page.keyboard.press('Enter')
           const menu = page.getByRole('menu', { name: '打开面板', exact: true })
           // A browser page has neither the desktop's browser nor this Mac's terminal: they are left out, not greyed.
-          expect(await menu.getByRole('menuitem').allTextContents()).toEqual(['文件F', '改动D', '交付P', '概要O', '上下文C'])
+          expect(await menu.getByRole('menuitem').allTextContents()).toEqual(['文件F', '改动D', '生成文件G', '交付P', '概要O', '上下文C'])
           await settleShell(page)
           await shot(page, 'add-menu', width, theme)
           await page.keyboard.press('f')
