@@ -27,13 +27,21 @@ import { PLUGIN_REACH_COPY } from '../core/securityCopy.ts'
 import { languageForPath } from '../preview/highlight-protocol.ts'
 import { IconTile, NoteLine, SettingsGroup, SettingsRow } from './common.tsx'
 import { PluginSourceField } from './PluginSourceField.tsx'
-import { pluginEnabledBody, PluginMutationDialog, reviewedPluginMutation, type PluginMutationTarget } from './PluginMutationReview.tsx'
+import {
+  pluginEnabledBody,
+  PluginMutationDialog,
+  PluginWriteFeedback,
+  reviewedPluginChange,
+  reviewedPluginMutation,
+  type PluginMutationTarget,
+} from './PluginMutationReview.tsx'
 import {
   addPluginSource,
   downloadPluginBundle,
   editPluginSource,
   manifestReach,
   needsPageBuild,
+  pendingPluginChange,
   readPluginBundle,
   typedManifest,
   type PluginReach,
@@ -43,8 +51,6 @@ import { defineCopy } from '../core/i18n.ts'
 const COPY = defineCopy(
   {
     needsAttention: '需要处理',
-    draft: '草稿',
-    unapplied: '有未应用修改',
     on: '已开启',
     off: '未开启',
     idChangeAdvanced: '插件标识不能在高级编辑中更改。',
@@ -91,8 +97,6 @@ const COPY = defineCopy(
   },
   {
     needsAttention: 'Needs attention',
-    draft: 'Draft',
-    unapplied: 'Unapplied changes',
     on: 'On',
     off: 'Off',
     idChangeAdvanced: 'The plugin ID can’t be changed in the manifest.',
@@ -145,6 +149,7 @@ interface PendingChange {
   afterSave?: { operation: 'review' } | { operation: 'build'; requestId: string }
   previewId?: string
   reviewId?: string
+  completedReview?: PluginMutationTarget
 }
 interface Editor {
   bundle: PluginPackageBundle
@@ -152,15 +157,7 @@ interface Editor {
 }
 const route = (id: string) => 'plugin-packages/' + encodeURIComponent(id)
 export const packageState = (record: PluginPackageSummary) =>
-  record.unavailableReason
-    ? COPY.needsAttention
-    : record.state === 'draft'
-      ? COPY.draft
-      : record.state === 'update-available'
-        ? COPY.unapplied
-        : record.enabled
-          ? COPY.on
-          : COPY.off
+  record.unavailableReason ? COPY.needsAttention : (pendingPluginChange(record)?.status ?? (record.enabled ? COPY.on : COPY.off))
 
 const REACH_ICONS = { page: DevicesGlyph, host: Cpu, text: FileGlyph } as const
 
@@ -314,6 +311,7 @@ export function usePluginAssets({
       }
       if (alive.current) {
         setPending(null)
+        if (current.reviewId) setReviewTarget(current.completedReview ?? null)
         if (result.removed) {
           setEditor(null)
           setDeleting(false)
@@ -382,6 +380,7 @@ export function usePluginAssets({
   const locked = busy || readingFile || pending !== null || reviewTarget !== null
   const review = (record: PluginPackageSummary, operation: PluginMutationTarget['operation'], revision: string) => {
     if (!canEdit || locked) return
+    setError('')
     setReviewTarget({ id: record.id, name: record.name, operation, revision })
   }
   const setEnabled = (record: PluginPackageSummary, enabled: boolean) => {
@@ -641,11 +640,17 @@ export function usePluginAssets({
       {canEdit && reviewTarget && (
         <PluginMutationDialog
           target={reviewTarget}
+          busy={busy}
+          failure={error}
+          retryRequest={pending?.reviewId === reviewTarget.id ? () => void perform(pending) : undefined}
           onClose={() => setReviewTarget(null)}
           onConfirm={result => {
             const request = reviewedPluginMutation(reviewTarget, result)
-            setReviewTarget(null)
-            void perform({ ...request, reviewId: reviewTarget.id })
+            const completedReview =
+              reviewTarget.operation === 'apply'
+                ? { ...reviewTarget, done: { name: reviewTarget.name, version: result.version, kind: reviewedPluginChange(result).kind } }
+                : undefined
+            void perform({ ...request, reviewId: reviewTarget.id, ...(completedReview && { completedReview }) })
           }}
         />
       )}
@@ -691,9 +696,9 @@ export function usePluginAssets({
     setEnabled,
     /** A change from the page, with no editor open to show its confirmation or an unknown result. */
     pageStatus:
-      editor === null && (busy || pending) ? (
+      canEdit && editor === null && reviewTarget === null ? (
         <>
-          <InlineConfirm active={busy} rank={1} />
+          <PluginWriteFeedback busy={busy} uncertain={false} />
           {pending && !busy && (
             <InlineNotice tone="warn">
               {COPY.unknown}
@@ -709,6 +714,7 @@ export function usePluginAssets({
       ) : null,
     /** A package's whole content, for what its page says about it. */
     read: async (record: PluginPackageSummary) => (await api<{ package: PluginPackageDetail }>(route(record.id))).package,
+    applyingId: busy ? pending?.completedReview?.id : undefined,
     applyDraft: (record: PluginPackageSummary) => review(record, 'apply', record.revision),
     updateCreatorDraft: (id: string, sessionId: string) =>
       perform({

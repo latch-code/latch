@@ -4,20 +4,20 @@ import { Button, EmptyState } from '@latch/ui'
 import type { CatalogEntry } from '../../../../examples/marketplace/bundles.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { defineCopy } from '../core/i18n.ts'
+import { pendingPluginChange } from '../settings/pluginAssets.ts'
 
 const COPY = defineCopy(
   {
     installed: '已安装的插件',
     empty: '还没有已安装的插件',
     installedVersion: (version: string) => `已安装 v${version}`,
-    draftVersion: (version: string) => `草稿 v${version}`,
     availableVersion: (version: string) => `可更新到 v${version}`,
     current: '已是最新',
     ahead: '已安装较新版本',
     changed: '版本号相同，来源内容有改动',
     modified: '有本地改动',
     check: '检查更新',
-    reviewDraft: '审阅草稿',
+    reviewRelease: (version: string) => `审阅 v${version} 更新`,
     reviewUpdate: '审阅更新',
     manage: '管理',
   },
@@ -25,14 +25,13 @@ const COPY = defineCopy(
     installed: 'Installed plugins',
     empty: 'No installed plugins yet',
     installedVersion: (version: string) => `Installed v${version}`,
-    draftVersion: (version: string) => `Draft v${version}`,
     availableVersion: (version: string) => `Update to v${version} available`,
     current: 'Up to date',
     ahead: 'Newer version installed',
     changed: 'Source contents changed within this version',
     modified: 'Local changes',
     check: 'Check for updates',
-    reviewDraft: 'Review draft',
+    reviewRelease: (version: string) => `Review v${version} update`,
     reviewUpdate: 'Review update',
     manage: 'Manage',
   },
@@ -96,11 +95,11 @@ export function InstalledPluginList({
     <ul className="plugin-installed-list" role="list" aria-label={COPY.installed}>
       {installed.map(record => {
         const release = record.catalog ? releases.find(item => item.entry.id === record.id) : undefined
-        const hasDraft = record.revision !== record.appliedRevision
-        const applied = record.appliedVersion ?? (hasDraft ? undefined : record.version)
+        const change = pendingPluginChange(record)
+        const applied = record.appliedVersion ?? (change ? undefined : record.version)
         const name = release?.entry[lang].name ?? record.name
         const description = release?.entry[lang].summary ?? record.description
-        const status = updateText(release, connected && officialStatus === 'checked', hasDraft)
+        const status = updateText(release, connected && officialStatus === 'checked', !!change)
         const checking = officialStatus === 'checking' && connected
         const failed = checkId === record.id && officialStatus === 'failed' && connected
         return (
@@ -111,6 +110,7 @@ export function InstalledPluginList({
               </h3>
               <Button
                 className="plugin-installed-manage"
+                data-review-return={record.id}
                 size="sm"
                 variant="ghost"
                 disabled={!connected || locked}
@@ -118,16 +118,16 @@ export function InstalledPluginList({
                 {COPY.manage}
               </Button>
             </header>
-            {(applied || hasDraft) && (
+            {(applied || change) && (
               <div className="plugin-installed-version">
                 {applied && (
                   <span>
                     <VisibleText text={COPY.installedVersion(applied)} />
                   </span>
                 )}
-                {hasDraft && (
+                {change && (
                   <span>
-                    <VisibleText text={COPY.draftVersion(record.version)} />
+                    <VisibleText text={`${change.status} v${record.version}`} />
                   </span>
                 )}
               </div>
@@ -150,9 +150,9 @@ export function InstalledPluginList({
                     {status}
                   </span>
                 )}
-                {hasDraft && (
-                  <Button disabled={!connected || locked} aria-haspopup="dialog" onClick={() => onReviewDraft(record.id)}>
-                    {COPY.reviewDraft}
+                {change && (
+                  <Button variant="primary" disabled={!connected || locked} aria-haspopup="dialog" onClick={() => onReviewDraft(record.id)}>
+                    {change.review}
                   </Button>
                 )}
                 {release ? (
@@ -168,11 +168,11 @@ export function InstalledPluginList({
                     </Button>
                     {release.status === 'available' && (
                       <Button
-                        variant="primary"
+                        variant={change ? 'outline' : 'primary'}
                         disabled={!connected || checking || locked}
                         aria-haspopup="dialog"
                         onClick={() => onReviewUpdate(release.entry)}>
-                        {COPY.reviewUpdate}
+                        {change ? <VisibleText text={COPY.reviewRelease(release.version)} /> : COPY.reviewUpdate}
                       </Button>
                     )}
                   </>

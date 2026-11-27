@@ -50,11 +50,11 @@ const COPY = defineCopy(
     settings: '设置',
     version: '版本',
     source: '来源',
-    draftSource: '草稿来源',
     bundled: '随 Latch 提供',
     launchPlugin: '随工作台启动加载',
-    draftVersion: '草稿版本',
-    appliedVersion: '已应用版本',
+    draftVersion: '待确认版本',
+    appliedVersion: '已安装版本',
+    enablePlugin: '启用插件',
     catalogUpdate: '精选目录有可下载的新版',
     reviewVersion: '前往插件市场',
     provides: '提供',
@@ -95,11 +95,11 @@ const COPY = defineCopy(
     settings: 'Settings',
     version: 'Version',
     source: 'Source',
-    draftSource: 'Draft source',
     bundled: 'Shipped with Latch',
     launchPlugin: 'Loaded at workbench startup',
-    draftVersion: 'Draft version',
-    appliedVersion: 'Applied version',
+    draftVersion: 'Version to review',
+    appliedVersion: 'Installed version',
+    enablePlugin: 'Enable plugin',
     catalogUpdate: 'A newer catalog version is available',
     reviewVersion: 'Open Plugin Marketplace',
     provides: 'Provides',
@@ -354,7 +354,13 @@ function PluginDetail({
       {status}
       {creatorDraft}
       <SettingsGroup title={COPY.settings}>
-        <SettingsRow title={item.state} description={control && pluginInUseReason(plugin)} trailing={control} />
+        {(control || !record) && (
+          <SettingsRow
+            title={control ? COPY.enablePlugin : item.state}
+            description={control && pluginInUseReason(plugin)}
+            trailing={control}
+          />
+        )}
         {appliedVersion && hasDraft && (
           <SettingsRow
             title={COPY.appliedVersion}
@@ -376,11 +382,7 @@ function PluginDetail({
           />
         )}
         {source ? (
-          <SettingsRow
-            className="marketplace-fact"
-            title={hasDraft ? COPY.draftSource : COPY.source}
-            description={<PluginSourceText source={source} />}
-          />
+          <SettingsRow className="marketplace-fact" title={COPY.source} description={<PluginSourceText source={source} />} />
         ) : (
           plugin
           && !record
@@ -446,9 +448,7 @@ function PluginDetail({
         ))}
       </SettingsGroup>
       {diagnostics && <DiagnosticsDialog page={diagnostics} onClose={() => setDiagnostics(null)} />}
-      {(!creatorDraft || record?.source?.kind !== 'plugin' || onRetryReach) && (
-        <PluginReachGroup reach={reach} {...(onRetryReach ? { onRetryRead: onRetryReach } : {})} />
-      )}
+      <PluginReachGroup reach={reach} {...(onRetryReach ? { onRetryRead: onRetryReach } : {})} />
     </>
   )
 }
@@ -622,37 +622,39 @@ export function PluginsSettings({
         canEdit
         && selectedRecord && (
           <>
-            {(selectedRecord.npm || selectedRecord.catalog || selectedRecord.external || selectedRecord.source?.kind === 'plugin')
-              && read?.detail && (
-                <CreatorPluginReview
-                  key={selectedRecord.id}
-                  record={selectedRecord}
-                  bundle={read.detail.bundle}
-                  locked={assets.locked}
-                  error={assets.reviewErrorId === selectedRecord.id ? assets.error : ''}
-                  {...(!(appPages && needsPageBuild(read.detail.bundle.manifest))
-                    ? { onApply: () => assets.applyDraft(selectedRecord) }
-                    : {})}
-                  {...(selectedRecord.source?.kind === 'plugin'
-                    ? {
-                        onUpdate: () => {
-                          void assets.updateCreatorDraft(selectedRecord.id, selectedRecord.source!.sessionId).then(updated => {
-                            if (updated) setChosen(`package:${updated.id}`)
-                          })
-                        },
-                        ...(onOpenSession && snapshot.tasks.some(task => task.id === selectedRecord.source?.sessionId)
-                          ? { onOpenSession: () => onOpenSession(selectedRecord.source!.sessionId) }
-                          : {}),
-                      }
-                    : {})}
-                />
-              )}
+            {(!selectedRecord.source || selectedRecord.source.kind === 'plugin') && read?.detail && (
+              <CreatorPluginReview
+                key={selectedRecord.id}
+                record={selectedRecord}
+                bundle={read.detail.bundle}
+                locked={assets.locked}
+                error={assets.reviewErrorId === selectedRecord.id ? assets.error : ''}
+                {...(!(appPages && needsPageBuild(read.detail.bundle.manifest))
+                  ? { onApply: () => assets.applyDraft(selectedRecord) }
+                  : {})}
+                {...(selectedRecord.source?.kind === 'plugin'
+                  ? {
+                      onUpdate: () => {
+                        void assets.updateCreatorDraft(selectedRecord.id, selectedRecord.source!.sessionId).then(updated => {
+                          if (updated) setChosen(`package:${updated.id}`)
+                        })
+                      },
+                      ...(onOpenSession && snapshot.tasks.some(task => task.id === selectedRecord.source?.sessionId)
+                        ? { onOpenSession: () => onOpenSession(selectedRecord.source!.sessionId) }
+                        : {}),
+                    }
+                  : {})}
+              />
+            )}
             {appPages
               && (needsPageBuild(read?.detail?.bundle.manifest) || (selectedRecord.source && selectedRecord.source.kind !== 'plugin')) && (
                 <AppDraftCard
                   key={selectedRecord.id}
                   record={selectedRecord}
                   snapshot={snapshot}
+                  applying={assets.applyingId === selectedRecord.id}
+                  reviewLocked={assets.locked}
+                  onReview={() => assets.applyDraft(selectedRecord)}
                   onChanged={() => {
                     assets.reload()
                     onChanged()

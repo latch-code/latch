@@ -53,7 +53,12 @@ import { useBackLayer } from '../hooks/backStack.ts'
 import { NavTop, NewSessionRow, ShellNewAgent, ShellNavFoot, shellSpaces } from '../shell/SpaceNav.tsx'
 import { SidebarComputer } from '../shell/WorkbenchNav.tsx'
 import { settingsSections } from '../settings/SettingsPage.tsx'
-import { PluginMutationDialog, reviewedPluginMutation, type PluginMutationTarget } from '../settings/PluginMutationReview.tsx'
+import {
+  PluginMutationDialog,
+  PluginWriteFeedback,
+  reviewedPluginMutation,
+  type PluginMutationTarget,
+} from '../settings/PluginMutationReview.tsx'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { AppTarget } from '../shell/routes.ts'
 import { AppFrame, hostInfo, reportDiagnostic, type FrameOutcome } from './AppFrame.tsx'
@@ -455,6 +460,7 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
     try {
       await withConfirmation(confirmation => api(next.path, { ...next.options, ...(confirmation ? { confirmation } : {}) }))
       setPending(null)
+      setReviewTarget(null)
       await shell.refresh()
       reload()
     } catch (cause) {
@@ -474,6 +480,7 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
   }
   const rollback = () => {
     if (!previous || manageLocked || !manager) return
+    setError('')
     setReviewTarget({ operation: 'rollback', id: page.pluginId, name: page.pluginName, revision: previous.revision })
   }
   const sections: ActionMenuSection[] = [
@@ -664,6 +671,7 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
           {error}
         </InlineNotice>
       )}
+      {manager && !reviewTarget && <PluginWriteFeedback busy={busy} uncertain={false} />}
       {manager && pending && !busy && (
         <InlineNotice
           tone="warn"
@@ -692,10 +700,12 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
       {manager && online && reviewTarget && (
         <PluginMutationDialog
           target={reviewTarget}
+          busy={busy}
+          failure={error}
+          retryRequest={pending ? () => void change(pending) : undefined}
           onClose={() => setReviewTarget(null)}
           onConfirm={review => {
             const request = reviewedPluginMutation(reviewTarget, review)
-            setReviewTarget(null)
             void change(request)
           }}
         />

@@ -321,7 +321,7 @@ it('separates locally installed plugins sharing a bundled ID from confirmed bund
       [...element.querySelectorAll('.plugin-market-card')].find(item => item.querySelector('h3')?.textContent === title)!
     const collision = ['v1.0.0', '这台 Mac 上的同标识插件 · v2.0.0']
     expect(versions(card('交接清单'))).toEqual(collision)
-    expect(versions(card('发布清单面板'))).toEqual(['v1.0.0', '已安装 v2.0.0', '草稿 v3.0.0'])
+    expect(versions(card('发布清单面板'))).toEqual(['v1.0.0', '已安装 v2.0.0', '本地修改待确认 v3.0.0'])
     const explicitConflict = card('上下文')
     expect(versions(explicitConflict)).toEqual(collision)
     await act(async () => explicitConflict.querySelector('button')?.click())

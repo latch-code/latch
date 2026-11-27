@@ -32,13 +32,12 @@ const COPY = defineCopy(
     preview: '预览版本',
     listedVersion: (version: string) => `v${version}`,
     identity: '插件标识',
-    savedVersion: '已保存草稿版本',
+    savedVersion: '这台 Mac 上保存的版本',
     back: '返回查找',
     backInstalled: '返回已安装',
     backToList: '返回插件列表',
-    install: '保存为草稿',
-    stageUpdate: '保存更新草稿',
-    stageHint: '审阅并应用草稿后才会使用新版本。',
+    install: '审阅并安装',
+    stageUpdate: '审阅更新',
     manage: '查看已有插件',
     retry: '重试',
     loading: '正在读取插件…',
@@ -48,7 +47,7 @@ const COPY = defineCopy(
     update: {
       current: '已经保存这个版本。',
       older: '已保存的版本比这个版本更新。',
-      'local-changes': '已有草稿包含本地改动。请先查看已有插件。',
+      'local-changes': '此插件有本地修改。请先查看已有插件。',
       'different-source': '这台 Mac 上已有插件使用此标识。',
       'same-version-changed': '这个版本的内容有改动。请先查看已有插件。',
     },
@@ -58,13 +57,12 @@ const COPY = defineCopy(
     preview: 'Preview release',
     listedVersion: (version: string) => `v${version}`,
     identity: 'Plugin ID',
-    savedVersion: 'Saved draft version',
+    savedVersion: 'Version saved on this Mac',
     back: 'Back to search',
     backInstalled: 'Back to installed plugins',
     backToList: 'Back to plugin list',
-    install: 'Save as draft',
-    stageUpdate: 'Save update draft',
-    stageHint: 'Review and apply the draft to start using the new version.',
+    install: 'Review and install',
+    stageUpdate: 'Review update',
     manage: 'View local plugin',
     retry: 'Retry',
     loading: 'Reading plugins…',
@@ -110,7 +108,7 @@ export function usePluginExternalMarketplace({
   connected: boolean
   editable: boolean
   storageKey: string
-  onStage: () => void
+  onStage: (record: PluginPackageDetail) => void
 }) {
   const writeSignal = useMarketWriteScope(storageKey, editable && connected)
   const [pending, setPending] = useMarketReceipt(storageKey, editable, validStage)
@@ -121,7 +119,6 @@ export function usePluginExternalMarketplace({
   const [found, setFound] = useState<PluginExternalFind | null>(null)
   const [preview, setPreview] = useState<PluginExternalPreview | null>(null)
   const [lastLookup, setLastLookup] = useState<Lookup | null>(null)
-  const [stagedId, setStagedId] = useState<string | null>(null)
   const request = useRef<AbortController | null>(null)
   const retry = useRef<(() => void) | null>(null)
   const mounted = useRef(false)
@@ -145,7 +142,6 @@ export function usePluginExternalMarketplace({
     request.current = abort
     setReadSignal(abort.signal)
     setError('')
-    setStagedId(null)
     retry.current = () => void read(operation)
     try {
       await operation(abort.signal)
@@ -205,7 +201,6 @@ export function usePluginExternalMarketplace({
     request.current?.abort()
     setReadSignal(null)
     setFound(null)
-    setStagedId(null)
     back()
   }
 
@@ -226,8 +221,7 @@ export function usePluginExternalMarketplace({
       if (mounted.current) {
         setPending(null)
         setPreview(null)
-        setStagedId(saved.id)
-        onStage()
+        onStage(saved)
       }
     } catch (cause) {
       const uncertain = signal.aborted || receiptUnsettled(cause, pending?.requestId === input.requestId)
@@ -263,7 +257,6 @@ export function usePluginExternalMarketplace({
     found,
     preview,
     lastLookup,
-    stagedId,
     lookup,
     select,
     back,
@@ -366,11 +359,10 @@ export function PluginExternalMarketplace({
             }
           />
           {status && status !== 'available' && <InlineNotice>{COPY.update[status]}</InlineNotice>}
-          {canStage && <p className="plugin-market-note">{COPY.stageHint}</p>}
           <div className="plugin-asset-actions">
             {canStage && (
               <Button variant="primary" disabled={disabled || !!pending} loading={busy} onClick={external.save}>
-                {installed ? COPY.stageUpdate : COPY.install}
+                {preview.review.baseAppliedRevision ? COPY.stageUpdate : COPY.install}
               </Button>
             )}
             {installed && (
@@ -419,6 +411,7 @@ export function PluginExternalMarketplace({
                   trailing={
                     <Button
                       id={listId + '-' + index}
+                      data-review-return={entry.id}
                       disabled={disabled || loading || busy || !!pending}
                       onClick={event => {
                         selected.current = event.currentTarget.id

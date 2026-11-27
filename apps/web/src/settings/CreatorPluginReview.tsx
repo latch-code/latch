@@ -1,45 +1,45 @@
 import { useState } from 'react'
 import { escapeSecurityText, type PluginPackageBundle, type PluginPackageSummary } from '@latch/protocol'
 import { Button, InlineNotice, ValuePicker } from '@latch/ui'
+import { VisibleText } from '../components/VisibleText.tsx'
 import { handDraft } from '../core/draftHandoff.ts'
 import { HighlightedCode } from '../preview/HighlightedCode.tsx'
 import { languageForPath } from '../preview/highlight-protocol.ts'
 import { defineCopy } from '../core/i18n.ts'
 import { SettingsGroup } from './common.tsx'
-import { PluginReachGroup } from './PluginAssetsSettings.tsx'
-import { packageReach } from './pluginAssets.ts'
+import { pendingPluginChange } from './pluginAssets.ts'
 
 const COPY = defineCopy(
   {
-    title: '创作草稿',
-    npmTitle: 'npm 插件内容',
-    catalogTitle: '精选插件内容',
-    externalTitle: { github: 'GitHub 插件内容', 'local-folder': '文件夹中的插件内容', 'local-bundle': '导出包中的插件内容' },
+    title: '插件内容',
+    files: '文件与源码',
+    installHint: (version: string) => `v${version} 已准备好。确认安装后即可使用。`,
+    updateHint: (version: string, enable: boolean) => (enable ? `确认后将更新到 v${version} 并启用插件。` : `确认后将更新到 v${version}。`),
+    editHint: (enable: boolean) => (enable ? '确认后将启用修改后的插件。' : '修改已保存，确认后生效。'),
+    installed: (version: string) => `当前已安装 v${version}。`,
     file: '审阅文件',
-    apply: '应用此草稿',
     update: '从创作会话更新',
     return: '返回创作会话',
     repair: '交回 Agent 修改',
     skillReady: '技能已启用。可在「我的 Agent」里为支持 Latch 技能的 Agent 选用。',
-    applied: '此版本已应用。',
+    applied: '此版本已安装。',
     repairPrompt: (message: string) => `Latch 应用 latch-plugin/ 草稿时遇到问题。请根据以下诊断修改草稿：\n\n${message}`,
   },
   {
-    title: 'Creator draft',
-    npmTitle: 'npm plugin contents',
-    catalogTitle: 'Catalog plugin contents',
-    externalTitle: {
-      github: 'GitHub plugin contents',
-      'local-folder': 'Plugin folder contents',
-      'local-bundle': 'Exported bundle contents',
-    },
+    title: 'Plugin contents',
+    files: 'Files and source',
+    installHint: (version: string) => `v${version} is ready to install. Confirm the installation to use it.`,
+    updateHint: (version: string, enable: boolean) =>
+      enable ? `Confirm to update to v${version} and turn the plugin on.` : `Confirm to update to v${version}.`,
+    editHint: (enable: boolean) =>
+      enable ? 'Confirm to turn on the plugin with your changes.' : 'Your changes are saved. Confirm to put them into effect.',
+    installed: (version: string) => `v${version} is currently installed. `,
     file: 'Review file',
-    apply: 'Apply this draft',
     update: 'Update from creator chat',
     return: 'Return to creator chat',
     repair: 'Hand back to Agent',
     skillReady: 'Skill enabled. In My Agents, select it for an Agent that supports Latch skills.',
-    applied: 'This version is applied.',
+    applied: 'This version is installed.',
     repairPrompt: (message: string) =>
       `Latch had a problem applying the latch-plugin/ draft. Please fix it using this diagnostic:\n\n${message}`,
   },
@@ -76,7 +76,24 @@ export function PluginFileViewer({ bundle }: { bundle: PluginPackageBundle }) {
   )
 }
 
-/** Source is displayed as text. Only the Host can activate this exact revision after the person chooses Apply. */
+export function PluginFileDisclosure({ bundle }: { bundle: PluginPackageBundle }) {
+  const [viewed, setViewed] = useState(false)
+  return (
+    <details
+      className="plugin-asset-details"
+      onToggle={event => {
+        if (event.currentTarget.open) setViewed(true)
+      }}>
+      <summary>{COPY.files}</summary>
+      {viewed && (
+        <div className="settings-form">
+          <PluginFileViewer bundle={bundle} />
+        </div>
+      )}
+    </details>
+  )
+}
+
 export function CreatorPluginReview({
   bundle,
   record,
@@ -97,18 +114,22 @@ export function CreatorPluginReview({
   const { manifest } = bundle
   const source = record.source
   const canReturn = source && onOpenSession
-  const title = record.npm
-    ? COPY.npmTitle
-    : record.catalog
-      ? COPY.catalogTitle
-      : record.external
-        ? COPY.externalTitle[record.external.source.kind]
-        : COPY.title
+  const change = pendingPluginChange(record)
   return (
-    <SettingsGroup title={title} bare>
+    <SettingsGroup title={change && onApply ? change.status : COPY.title} bare>
       <div className="creator-plugin-review">
-        <PluginReachGroup reach={packageReach(manifest, record)} />
-        <PluginFileViewer bundle={bundle} />
+        {change && onApply && (
+          <p className="settings-caption">
+            <VisibleText
+              text={
+                change.kind === 'install'
+                  ? COPY.installHint(record.version)
+                  : (record.appliedVersion ? COPY.installed(record.appliedVersion) : '')
+                    + (change.kind === 'edit' ? COPY.editHint(!record.enabled) : COPY.updateHint(record.version, !record.enabled))
+              }
+            />
+          </p>
+        )}
         {error && (
           <InlineNotice
             tone="error"
@@ -130,6 +151,11 @@ export function CreatorPluginReview({
           <p className="settings-caption">{record.enabled && manifest.skills?.length ? COPY.skillReady : COPY.applied}</p>
         )}
         <div className="plugin-asset-actions">
+          {change && onApply && (
+            <Button variant="primary" aria-haspopup="dialog" disabled={locked} onClick={onApply}>
+              {change.review}
+            </Button>
+          )}
           {canReturn && (
             <Button variant="ghost" onClick={onOpenSession}>
               {COPY.return}
@@ -140,12 +166,8 @@ export function CreatorPluginReview({
               {COPY.update}
             </Button>
           )}
-          {record.state !== 'applied' && onApply && (
-            <Button variant="primary" disabled={locked} onClick={onApply}>
-              {COPY.apply}
-            </Button>
-          )}
         </div>
+        <PluginFileDisclosure key={record.revision} bundle={bundle} />
       </div>
     </SettingsGroup>
   )

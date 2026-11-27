@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
-import { act, createElement } from 'react'
+import { act, createElement, Fragment } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import type { PluginPackageReview } from '@latch/protocol'
+import type { PluginPackageReview, PluginPackageSummary } from '@latch/protocol'
 import {
   isPluginPackageReview,
   PluginMutationDialog,
@@ -11,6 +11,8 @@ import {
   reviewedPluginMutation,
   type PluginMutationTarget,
 } from '../src/settings/PluginMutationReview.tsx'
+
+import { usePluginAssets } from '../src/settings/PluginAssetsSettings.tsx'
 
 const base = '1'.repeat(64)
 const revision = '2'.repeat(64)
@@ -77,6 +79,64 @@ describe('plugin mutation review', () => {
     })
   })
 
+  it('keeps a fast successful settings update in the same dialog while the list refreshes', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const record: PluginPackageSummary = {
+      id: target.id,
+      name: target.name,
+      version: review.version,
+      description: '',
+      revision,
+      appliedRevision: base,
+      state: 'update-available',
+      enabled: true,
+      trusted: true,
+      capabilities: [],
+    }
+    let writes = 0
+    let finishRead!: () => void
+    const refreshing = new Promise<void>(resolve => {
+      finishRead = resolve
+    })
+    vi.stubGlobal('fetch', async (input: string) => {
+      if (input.endsWith('/plugin-packages')) {
+        if (writes) await refreshing
+        return Response.json({ packages: [record] })
+      }
+      if (input.endsWith('/apply')) {
+        writes++
+        return Response.json({})
+      }
+      return Response.json({ review: { ...review, installId } })
+    })
+    function Settings() {
+      const assets = usePluginAssets({ canEdit: true, onChanged: () => {}, onPreview: () => {} })
+      return createElement(Fragment, null, createElement('button', { onClick: () => assets.applyDraft(record) }, 'open'), assets.dialogs)
+    }
+    const host = document.body.appendChild(document.createElement('div'))
+    const root = createRoot(host)
+    const action = (label: string) => [...host.querySelectorAll('button')].find(button => button.textContent === label)!
+    try {
+      await act(async () => root.render(createElement(Settings)))
+      await act(async () => action('open').click())
+      const dialog = host.querySelector<HTMLDialogElement>('dialog.plugin-mutation-dialog')!
+      await act(async () => action('确认更新').click())
+      expect(dialog.open).toBe(true)
+      expect(dialog.querySelector('[role="status"]')?.textContent).toBe('已更新至 v2.0.0')
+      await act(async () => finishRead())
+      expect(host.querySelector('dialog.plugin-mutation-dialog')).toBe(dialog)
+      expect(action('确认更新')).toBeUndefined()
+      await act(async () => action('完成').click())
+      expect(host.querySelector('dialog.plugin-mutation-dialog')).toBeNull()
+      expect(writes).toBe(1)
+    } finally {
+      finishRead()
+      await act(async () => root.unmount())
+      host.remove()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('cannot write without the current installation identity or reuse an earlier review', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
     vi.stubGlobal(
@@ -95,16 +155,16 @@ describe('plugin mutation review', () => {
     const action = (label: string) => [...host.querySelectorAll('button')].find(button => button.textContent === label)!
     try {
       await render(target)
-      expect(action('确认应用').getAttribute('aria-disabled')).not.toBe('true')
+      expect(action('确认更新').getAttribute('aria-disabled')).not.toBe('true')
       await render({ ...target, operation: 'rollback' })
       expect(action('确认回退').getAttribute('aria-disabled')).toBe('true')
       expect(host.textContent).toContain('无法读取此版本的完整审阅信息')
       act(() => action('确认回退').click())
       expect(onConfirm).not.toHaveBeenCalled()
       await render({ ...target, operation: 'apply', revision: '3'.repeat(64) })
-      expect(action('确认应用').getAttribute('aria-disabled')).toBe('true')
+      expect(action('确认').getAttribute('aria-disabled')).toBe('true')
       expect(host.textContent).toContain('无法读取此版本的完整审阅信息')
-      act(() => action('确认应用').click())
+      act(() => action('确认').click())
       expect(onConfirm).not.toHaveBeenCalled()
     } finally {
       await act(async () => root.unmount())

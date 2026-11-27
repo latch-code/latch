@@ -12,21 +12,20 @@ import { Button, Hint, Icon, InlineNotice, Switch, CheckGlyph, RefreshGlyph } fr
 import { api, inlineError, isUncertain, newRequestId, type ApiOptions } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { handDraft } from '../core/draftHandoff.ts'
-import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { AppFrame, hostInfo } from '../plugin-pages/AppFrame.tsx'
 import { useSecureCover } from '../plugin-pages/secureCover.ts'
 import { useShellTheme } from '../hooks/useShellTheme.ts'
 import { useMounted } from '../hooks/useMounted.ts'
 import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
-import { PluginMutationDialog, reviewedPluginMutation, type PluginMutationTarget } from './PluginMutationReview.tsx'
+import { pendingPluginChange } from './pluginAssets.ts'
 
 const COPY = defineCopy(
   {
-    draft: '草稿',
+    draft: '准备文件',
     build: '构建',
     preview: '预览',
-    apply: '应用',
-    newApp: '新应用',
+    apply: '确认',
+    newApp: '应用页面',
     inDevelopment: '开发中',
     progress: '进度',
     sourceSession: '来自会话',
@@ -39,28 +38,27 @@ const COPY = defineCopy(
     sample: '样例预览',
     previousSample: '上次构建成功的样例预览',
     previewNoSessions: '预览里不会开会话',
-    applied: '已应用',
+    applied: '已安装',
     open: '打开',
     retrySame: '重试同一请求',
     unknown: '结果尚未确认。',
     builtInBuilder: '用 Latch 自带的工具构建',
     buildScope: '构建只读导入时的快照，不运行草稿里的代码。',
     approveOnMac: '页面权限',
-    approveScope: '首次应用或增加页面能力时，在这台 Mac 上确认。应用后可从侧栏打开。',
+    approveScope: '首次安装或增加页面权限时，需要在这台 Mac 上确认。安装后可从侧栏打开。',
     discard: '丢弃',
     returnToAgent: '交回 Agent',
-    applyVersion: '应用新版本',
     rebuild: '重新构建',
-    appId: (id: string) => `新应用 ${id}`,
+    appId: (id: string) => `应用页面 ${id}`,
     allDiagnostics: (count: number) => `全部 ${formatNumber(count)} 条`,
     previewFailed: (message: string) => `预览没有打开：${message}`,
   },
   {
-    draft: 'Draft',
+    draft: 'Prepare files',
     build: 'Build',
     preview: 'Preview',
-    apply: 'Apply',
-    newApp: 'New app',
+    apply: 'Confirm',
+    newApp: 'App page',
     inDevelopment: 'In development',
     progress: 'Progress',
     sourceSession: 'From session',
@@ -73,19 +71,18 @@ const COPY = defineCopy(
     sample: 'Sample preview',
     previousSample: 'Sample preview from the last successful build',
     previewNoSessions: 'The preview cannot start sessions',
-    applied: 'Applied',
+    applied: 'Installed',
     open: 'Open',
     retrySame: 'Retry same request',
     unknown: 'Result unknown.',
     builtInBuilder: 'Build with Latch tools',
     buildScope: 'The builder reads the imported snapshot. Draft code does not run during the build.',
     approveOnMac: 'Page permissions',
-    approveScope: 'Confirm on this Mac the first time you apply a page or add capabilities. The applied page is available in the sidebar.',
+    approveScope: 'Installing a page or adding permissions requires confirmation on this Mac. Open the installed page from the sidebar.',
     discard: 'Discard',
     returnToAgent: 'Hand back to Agent',
-    applyVersion: 'Apply new version',
     rebuild: 'Rebuild',
-    appId: (id: string) => `New app ${id}`,
+    appId: (id: string) => `App page ${id}`,
     allDiagnostics: (count: number) => plural(count, { one: 'All {n} diagnostic', other: 'All {n} diagnostics' }),
     previewFailed: (message: string) => `Couldn’t open the preview. ${message}`,
   },
@@ -95,7 +92,7 @@ export type AppPhase = 'draft' | 'building' | 'build-failed' | 'preview' | 'conf
 const PHASES = ['draft', 'build', 'preview', 'apply'] as const
 const AT: Record<AppPhase, number> = { draft: 0, building: 1, 'build-failed': 1, preview: 2, confirm: 3, applied: 4 }
 
-/** Where a draft from a session stands: the four steps 草稿 › 构建 › 预览 › 应用. */
+/** Which step of the installation the imported page has reached. */
 export function appPhase(record: PluginPackageSummary, busy: 'build' | 'apply' | null): AppPhase {
   if (busy === 'apply') return 'confirm'
   if (busy === 'build') return 'building'
@@ -127,7 +124,7 @@ export function handBackText(diagnostics: readonly PluginBuildDiagnostic[]): str
 const route = (id: string) => 'plugin-packages/' + encodeURIComponent(id)
 
 interface Pending {
-  kind: 'build' | 'apply' | 'dev' | 'import' | 'discard'
+  kind: 'build' | 'dev' | 'import' | 'discard'
   path: string
   options: ApiOptions
 }
@@ -140,18 +137,23 @@ export function AppDraftCard({
   record,
   snapshot,
   onChanged,
+  onReview,
+  applying,
+  reviewLocked,
   onOpenSession,
   onOpenApp,
 }: {
   record: PluginPackageSummary
   snapshot: AppSnapshot
   onChanged: () => void
+  onReview: () => void
+  applying: boolean
+  reviewLocked: boolean
   onOpenSession?: (id: string) => void
   onOpenApp?: (target: { pluginId: string; appId: string }) => void
 }) {
   const [busy, setBusy] = useState<Pending['kind'] | null>(null)
   const [pending, setPending] = useState<Pending | null>(null)
-  const [reviewTarget, setReviewTarget] = useState<PluginMutationTarget | null>(null)
   const [error, setError] = useState('')
   const [detail, setDetail] = useState<PluginPackageDetail | null>(null)
   const [diagnostics, setDiagnostics] = useState<{ revision: string; items: PluginBuildDiagnostic[] } | null>(null)
@@ -211,8 +213,8 @@ export function AppDraftCard({
       if (alive.current) setBusy(null)
     }
   }
-  const phase = appPhase(record, busy === 'build' || busy === 'apply' ? busy : null)
-  const locked = busy !== null || pending !== null || reviewTarget !== null
+  const phase = appPhase(record, applying ? 'apply' : busy === 'build' ? 'build' : null)
+  const locked = busy !== null || pending !== null || reviewLocked
   const marks = phaseMarks(phase)
   const source = record.source
   const sessionTitle = source ? snapshot.tasks.find(task => task.id === source.sessionId)?.title : undefined
@@ -354,7 +356,7 @@ export function AppDraftCard({
           )}
         </div>
       )}
-      {phase === 'confirm' && <InlineConfirm active rank={1} className="new-app-confirm" />}
+
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       {pending && !busy && (
         <InlineNotice tone="warn" action={<Button onClick={() => void perform(pending)}>{COPY.retrySame}</Button>}>
@@ -391,14 +393,8 @@ export function AppDraftCard({
               {COPY.returnToAgent}
             </Button>
           ) : phase === 'preview' ? (
-            <Button
-              variant="primary"
-              loading={busy === 'apply'}
-              disabled={locked}
-              onClick={() => {
-                setReviewTarget({ operation: 'apply', id: record.id, name: record.name, revision: record.revision })
-              }}>
-              {applied ? COPY.applyVersion : COPY.apply}
+            <Button variant="primary" disabled={locked} onClick={onReview}>
+              {pendingPluginChange(record)?.review ?? COPY.apply}
             </Button>
           ) : (
             <Button
@@ -416,17 +412,6 @@ export function AppDraftCard({
             </Button>
           )}
         </footer>
-      )}
-      {reviewTarget && (
-        <PluginMutationDialog
-          target={reviewTarget}
-          onClose={() => setReviewTarget(null)}
-          onConfirm={review => {
-            const request = reviewedPluginMutation(reviewTarget, review)
-            setReviewTarget(null)
-            void perform({ ...request, kind: 'apply' })
-          }}
-        />
       )}
     </section>
   )

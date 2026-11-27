@@ -30,11 +30,11 @@ import { shortcutKeys } from '../workbenchShortcuts.ts'
 const COPY = defineCopy(
   {
     importedDraft: '已作为应用草稿导入',
-    importedPlugin: '已导入插件草稿，可以审阅后应用',
+    importedPlugin: '已导入插件文件',
   },
   {
     importedDraft: 'Imported as an app draft',
-    importedPlugin: 'Plugin draft imported for review',
+    importedPlugin: 'Plugin files imported',
   },
 )
 

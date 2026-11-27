@@ -1,4 +1,4 @@
-import type { AppSnapshot, PluginInfo, PluginPackageBundle, PluginPackageManifest } from '@latch/protocol'
+import type { AppSnapshot, PluginInfo, PluginPackageBundle, PluginPackageManifest, PluginPackageSummary } from '@latch/protocol'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { PLUGIN_REACH_COPY } from '../core/securityCopy.ts'
 import { MessageError } from '../core/api.ts'
@@ -9,6 +9,9 @@ const COPY = defineCopy(
     badBundle: '请选择有效的 .latch-plugin.json 文件，文件总大小不超过 8 MiB。',
     badPath: '使用未被占用的包内相对路径，例如 helpers/format.mjs。最多 128 个文件。',
     activeSessions: (count: number) => `${formatNumber(count)} 个会话在用，结束后才能停用`,
+    install: { status: '待安装', review: '审阅安装', confirm: '确认安装' },
+    update: { status: '待更新', review: '审阅更新', confirm: '确认更新' },
+    edit: { status: '本地修改待确认', review: '审阅修改', confirm: '确认修改' },
   },
   {
     badBundle: 'Choose a valid .latch-plugin.json file, 8 MiB or less in total.',
@@ -18,10 +21,22 @@ const COPY = defineCopy(
         one: 'End the {n} session using this plugin to turn it off',
         other: 'End the {n} sessions using this plugin to turn it off',
       }),
+    install: { status: 'Ready to install', review: 'Review installation', confirm: 'Confirm installation' },
+    update: { status: 'Update ready', review: 'Review update', confirm: 'Confirm update' },
+    edit: { status: 'Local changes to review', review: 'Review changes', confirm: 'Confirm changes' },
   },
 )
 
 const fail = () => new MessageError(COPY.badBundle)
+
+export const pluginChangeCopy = (kind: 'install' | 'update' | 'edit') => ({ kind, ...COPY[kind] })
+
+export function pendingPluginChange(record: PluginPackageSummary) {
+  if (record.state === 'applied' || record.revision === record.appliedRevision) return undefined
+  if (record.appliedRevision === undefined) return pluginChangeCopy('install')
+  const release = record.catalog ?? record.npm ?? record.external
+  return pluginChangeCopy(release?.revision === record.revision ? 'update' : 'edit')
+}
 
 export function pluginInUseReason(plugin?: PluginInfo): string | undefined {
   return plugin?.enabled && plugin.activeRuns > 0 && plugin.managed === undefined ? COPY.activeSessions(plugin.activeRuns) : undefined

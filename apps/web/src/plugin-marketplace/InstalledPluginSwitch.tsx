@@ -109,7 +109,6 @@ export function useInstalledPluginSwitch({
     running.current = true
     setBusy(true)
     setError('')
-    setTarget(null)
     rememberPending(key, change)
     setPending(change)
     const { id, ...body } = change
@@ -126,6 +125,7 @@ export function useInstalledPluginSwitch({
       )
       forgetReceipt(key, change.requestId)
       setPending(null)
+      setTarget(null)
       onChanged()
     } catch (cause) {
       if (signal.aborted) return
@@ -152,6 +152,7 @@ export function useInstalledPluginSwitch({
           disabled={!available || !record.appliedRevision || !runtime || locked || reason !== undefined}
           title={reason}
           onCheckedChange={enabled => {
+            setError('')
             if (enabled && record.appliedRevision) setTarget({ id: record.id, name, revision: record.appliedRevision, operation: 'enable' })
             else if (!enabled) void send({ id: record.id, ...pluginEnabledBody(false) })
           }}
@@ -188,6 +189,9 @@ export function useInstalledPluginSwitch({
       {target && available && (
         <PluginMutationDialog
           target={target}
+          busy={busy}
+          failure={error}
+          retryRequest={pending ? () => void send(pending) : undefined}
           onClose={() => setTarget(null)}
           onConfirm={review => {
             void send({ id: target.id, ...pluginEnabledBody(review) })
