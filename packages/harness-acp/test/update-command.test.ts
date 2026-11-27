@@ -8,7 +8,10 @@ import { HARNESS_PROFILES } from '../src/profiles/index.ts'
 
 const claude = {
   npm: '@anthropic-ai/claude-code',
-  native: { markers: ['/.local/share/claude/', '/claude/versions/'], command: 'claude update' },
+  native: {
+    matches: (file: string) => file.includes('/.local/share/claude/') || file.includes('/claude/versions/'),
+    command: 'claude update',
+  },
   channel: 'claude' as const,
 }
 const codex = { npm: '@openai/codex', brew: ['codex'] }
@@ -18,7 +21,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup()
 })
 
-describe('the update command a found program gets, by its path alone', () => {
+describe('the update command a found program gets, by its install layout', () => {
   it('names npm only for the package’s own global folder, under any prefix', () => {
     expect(updateCommand('/usr/local/bin/codex', '/usr/local/lib/node_modules/@openai/codex/bin/codex.js', codex)).toBe(
       'npm i -g @openai/codex@latest',
@@ -49,6 +52,35 @@ describe('the update command a found program gets, by its path alone', () => {
   it('names Claude’s own updater only for its installer’s layout', () => {
     expect(updateCommand('/Users/a/.local/bin/claude', '/Users/a/.local/share/claude/versions/2.1.330', claude)).toBe('claude update')
     expect(updateCommand('/Users/a/.local/bin/codex', '/Users/a/.local/share/claude/versions/2.1.330', codex)).toBeUndefined()
+  })
+
+  it('updates managed Pi with its own updater, and distinguishes a global npm install', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-pi-update-')))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const agentDir = join(root, 'custom pi')
+    const launcher = join(agentDir, 'bin', 'pi')
+    const entrypoint = join(root, 'bin', 'pi')
+    await mkdir(join(agentDir, 'bin'), { recursive: true })
+    await mkdir(join(agentDir, 'install'))
+    await mkdir(join(root, 'bin'))
+    await writeFile(launcher, '')
+    await symlink(launcher, entrypoint)
+    const profile = HARNESS_PROFILES.get('pi')!
+    const gate = profile.minimumVersion!
+    expect(updateCommand(entrypoint, launcher, gate.source!)).toBeUndefined()
+    await writeFile(
+      join(agentDir, 'install', 'managed-install.json'),
+      JSON.stringify({
+        kind: 'pi-managed-install',
+        schemaVersion: 1,
+        layout: 'releases-v1',
+      }),
+    )
+    expect(upgradeCommand(gate, entrypoint)).toBe('pi update --self')
+    expect(upgradeCommand(profile.gateway!.minimumVersion!, entrypoint)).toBe('pi update --self')
+    expect(updateCommand(entrypoint, join(root, 'lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js'), gate.source!)).toBe(
+      'npm i -g @earendil-works/pi-coding-agent@latest',
+    )
   })
 
   it('names nothing for any other layout', () => {

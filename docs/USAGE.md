@@ -52,6 +52,7 @@ Latch 不下载、不安装 Agent，也不代为登录。在运行 Host 的电�
 | [Grok Build](https://docs.x.ai/build) | `npm i -g @xai-official/grok` | `grok … agent stdio` | Grok Build 发布版条款；开源源码 Apache-2.0 |
 
 - 每个预设的最低版本、登录命令、权限模式与已知限制见 [HARNESSES.md](HARNESSES.md)。预设定义在 `packages/protocol/src/agent-presets.ts`。
+- 若用 pi 官方安装器安装，运行 `pi update --self` 更新这份安装，然后在「设置 › Harness › pi」按「重新检测」。[Pi 命令行文档](https://docs.pi.dev/latest/cli#update-pi-or-packages)
 - 有工作和个人账号时，先为每个账号配置好原生 CLI，再在这台 Mac 的「设置 › Harness › 账号」添加。新对话可按账号选模型，iPhone 和 iPad 也能使用。每条对话保留自己的账号，可在「额度与用量」查看该实例报告的额度。Cursor 使用每个账号自己的 API 密钥；Antigravity 的额外实例使用 Gemini Enterprise ADC。见[各 Harness 的账号设置](HARNESSES.md#同一个-harness-的多个账号)。
 
   例如，在这台 Mac 的终端给 Codex 工作账号准备一个专用目录，并用工作账号登录。

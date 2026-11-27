@@ -1,5 +1,5 @@
 /**
- * The command that updates a found program the way it was installed, read from its path alone: nothing is run to ask
+ * The command that updates a found program the way it was installed, inferred from its layout: nothing is run to ask
  * (no `npm prefix`, `brew --prefix` or version manager), and Latch never runs the command it returns.
  */
 import type { ReleaseSource } from './profiles/types.ts'
@@ -22,7 +22,7 @@ export function updateCommand(path: string, real: string | undefined, source: Re
   const brew = BREW_PATH.exec(file)
   if (brew) return BREW_NAME.test(brew[2]!) ? `brew upgrade ${brew[2]}` : undefined
   if (source.npm && file.includes(`/lib/node_modules/${source.npm}/`)) return `npm i -g ${source.npm}@latest`
-  if (source.native?.markers.some(marker => file.includes(marker))) return source.native.command
+  if (source.native?.matches(file)) return source.native.command
   return undefined
 }
 

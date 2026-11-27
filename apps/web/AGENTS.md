@@ -24,7 +24,7 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 - `permissions.ts` 只是展示，Host 再查；事件流用 `eventStream.ts`（fetch），不用 `EventSource`。
 - 本机按 `isLocalListener`；回环浏览器算远程。缺邀请或用掉后重领（ARCHITECTURE）。
 - 仅链 http(s)、mailto，行内代码继承链接。路径无 href，正文与 @ 共用文件图标，目录开树。网址输入可改、发出可点；闭合围栏保留原文。
-- 确认走 `withConfirmation`；未知留原请求，确认后解锁设置。换权限后等成功再发送。草稿只存文字，按设备与会话存浏览器，14 天过期；像凭据的只存内存，摘录要 `all`；删会话、撤权或退出即清。项目失效保留草稿供显式继续（`composer/WorkspaceRecovery.tsx`）。
+- 确认走 `withConfirmation`，Harness「检测」反馈。未知留原号，确认后解锁设置。换权限成功再发。草稿只存文字，按设备与会话存浏览器，14 天过期，像凭据的留内存，摘录要 `all`。删会话、撤权或退出即清。项目失效留草稿供显式继续（`composer/WorkspaceRecovery.tsx`）。
 - 用 `@latch/ui` 令牌、层、原语。对话/看板同底，分列滚动。
 - 图标在 `src/assets/brands/`，许可在 `public/licenses/brands/`，用 `?no-inline`，缺图用中性图形。模型面板按账号 Harness ID 读缺失选项，旧会话固定账号。
 - 读 `HarnessInfo.capabilities` 与 `level`，不判 Driver；共享编码与 Host、测试向量一致。

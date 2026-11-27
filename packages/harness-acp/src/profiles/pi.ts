@@ -1,7 +1,25 @@
+import { lstatSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { bareVersion } from '../version-line.ts'
-import type { HarnessProfile } from './types.ts'
+import type { HarnessProfile, ReleaseSource } from './types.ts'
 import { prefixedModels } from './gateway-model.ts'
 import { deliverPiGateway, PI_GATEWAY_PROVIDER, piGatewayBudget, piGatewayStartupFailure } from './pi-gateway.ts'
+
+const PI_RELEASE_SOURCE: ReleaseSource = {
+  npm: '@earendil-works/pi-coding-agent',
+  native: {
+    matches: file => {
+      if (!file.endsWith('/bin/pi')) return false
+      // The official installer keeps the launcher in bin/ beside install/, even with a custom agent directory.
+      try {
+        return lstatSync(join(dirname(file), '..', 'install', 'managed-install.json')).isFile()
+      } catch {
+        return false
+      }
+    },
+    command: 'pi update --self',
+  },
+}
 
 export const piProfile: HarnessProfile = {
   presetId: 'pi',
@@ -21,7 +39,7 @@ export const piProfile: HarnessProfile = {
       read: bareVersion,
       minimum: '1.5.0',
       upgrade: 'npm i -g @earendil-works/pi-coding-agent@latest',
-      source: { npm: '@earendil-works/pi-coding-agent' },
+      source: PI_RELEASE_SOURCE,
     },
     deliver: deliverPiGateway,
   },
@@ -66,6 +84,6 @@ export const piProfile: HarnessProfile = {
     read: bareVersion,
     minimum: '0.84.4',
     upgrade: 'npm i -g @earendil-works/pi-coding-agent@latest',
-    source: { npm: '@earendil-works/pi-coding-agent' },
+    source: PI_RELEASE_SOURCE,
   },
 }

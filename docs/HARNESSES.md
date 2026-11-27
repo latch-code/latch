@@ -65,7 +65,7 @@ ACP Agent 是本机可信代码，Latch 不给它加操作系统沙箱，也不�
 - **不再使用的适配器。** pi 曾经经 `pi-acp` 适配器运行，现在直接说它自己程序的 RPC。那时预设存下的定义（`presetId: pi`，命令是 `pi-acp`，没有参数与变量）在 Host 启动时移除并写审计（`agent.deleted`，`via: startup`），不替它绑定别的程序；pi 随后作为这台电脑上已安装的预设重新出现，第一次使用时照常绑定。带参数或变量的同名定义是人自己的，保留（`isRetiredAdapterDefinition`）。
 - 每个预设上次绑定的路径记在 `settings.json` 的 `presetBindings`，保存与删除定义时都写入；预设与它、与同一预设其他定义的路径都一致才不确认。客户端只收到这个路径以 Host 自己的密钥（`boundKey`）算出的摘要。绑定比较的是路径，不是文件内容：同一路径上的程序被替换时它不会发现。
 - 其他都要本机确认 `harness.command.apply`：自定义命令、绝对路径、多出或改过的参数、任何环境变量（新增、修改、移除都算），确认绑定名称与命令解析出的路径。
-- 保存时记下解析出的路径 `confirmedCommand`。之后同一命令解析到别的程序时会话不启动（409 `harness-command-moved`），在这台 Mac 上再保存一次即确认新路径，预设也一样。这时 Harness 带 `statusReason: 'moved'`：「设置 → Harness」里这一行显示命令现在找到的程序，这台 Mac 的桌面端给出「确认新程序」（原样保存一次，经本机确认），其他设备只标「需要确认」。
+- 保存时记下解析出的路径 `confirmedCommand`。之后同一命令解析到别的程序时会话不启动（409 `harness-command-moved`），在这台 Mac 上再保存一次即确认新路径，预设也一样。这时 Harness 带 `statusReason: 'moved'`。这台 Mac 的桌面端可以在「设置 › Harness」的列表或详情按「确认新程序」，原样保存定义并经本机确认。详情的按钮会转圈，确认失败或被挡住时在「检测」里显示原因，可以在原处重试。保存成功后重新读取检测结果。其他设备显示「需要确认」。
 - 没有 `confirmedCommand` 的定义：在这台 Mac 上第一次用它开始会话时绑定（预设不确认）；此前其他设备开始它被拒（409 `harness-unconfirmed`），版本也不读。
 - 改名、开关、删除、模型与权限预设，有 `admin` 的设备都能改。每次改动写 `agent.defined`（确认过的带 `lpc-local`，预设带 `preset`），变量的值不返回。
 - Host 只为确认过、且仍解析到同一路径的定义运行 `--version`。
@@ -166,10 +166,11 @@ profile 的 `minimumVersion` 是它的命令支持的最低版本，用 `<命令
 - 来源随安装方式：Homebrew 的 `Cellar/<formula>/` 或 `Caskroom/<cask>/` 下、且是 profile 列出的名称，问 `https://formulae.brew.sh/api/<formula|cask>/<名称>.json`（formula 取 `versions.stable`，cask 取 `version` 逗号前的部分）；Homebrew 的构建比 npm 晚几小时，不拿 npm 比。未列出的 Homebrew 安装不问。其他布局在 profile 写了 npm 包时问 `https://registry.npmjs.org/-/package/<包>/dist-tags`，否则不问（goose 自己的安装器没有来源）。见 [ARCHITECTURE](ARCHITECTURE.md#各功能的安全规则)。结果只在内存，每个包、formula 或 cask 6 小时；失败或形状不对不提示，10 分钟内不再问。只在管理设备读取 Agent 设置（`GET /link/api/agents`；工作台首次加载有已启用外部 Harness 时用 `?recheck=0` 复用已读版本，点开「检查更新」或「重新检测」时重读命令版本）时问，不定时；已启用定义的 `update` 与 `outdated` 只投影给有 `admin` 的设备的 `catalog.harnesses`。只有启动脚本传入 `startServer({ harnessUpdates })` 时开启，测试 Host 不发请求。
 - Claude 的通道（只用于 npm 来源）：读 Claude 配置目录（`CLAUDE_CONFIG_DIR`，否则 `~/.claude`）里 `settings.json` 的 `autoUpdatesChannel` 这一个键（不跟随链接，最多 1 MiB）；`stable` 取 `stable` 标签，缺失或其他值取 `latest`；那个标签不存在就不提示。不读登录与凭据。
 - 比较：当前版本严格低于该标签才提示；比较不了、相同或本机预发布版更高都不提示。已有 `outdated` 时不另提示，那一行已带命令。
-- 命令只看路径（找到的路径与 `realpath`），不运行 `npm prefix`、`brew --prefix` 或版本管理器：
+- 命令按真实路径和安装布局选择，无需运行包管理器或版本管理器来识别安装方式。
   - 在 Homebrew 的 `Cellar/<formula>/` 或 `Caskroom/<cask>/` 下：`brew upgrade <名称>`（先于 npm 判断，Homebrew 从 npm 包构建的 formula 也带 `lib/node_modules`）；
   - 含 `/lib/node_modules/<包>/`：`npm i -g <包>@latest`；
   - Claude 自己的安装器布局（含 `/.local/share/claude/` 或 `/claude/versions/`）：`claude update`；
+  - pi 官方安装器的 `bin/pi` 旁有 `install/managed-install.json`，用 `pi update --self` 更新。之后按「重新检测」读取同一入口现在运行的版本。版本提示沿用 pi 的 npm 发布版本。[Pi 命令行文档](https://docs.pi.dev/latest/cli#update-pi-or-packages)
   - 其他：只显示版本，不给命令。
 - 低于门槛时 `outdated.upgrade` 与拒绝文字用同一规则，看不出安装方式时才回落到 profile 的 `upgrade`。
 - 没有开关；v1 只覆盖上面这些预设。

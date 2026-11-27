@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useId, useState, type FormEvent, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { CircleArrowUp, ShieldCheck, ShieldQuestion } from 'lucide-react'
 import {
   harnessAccountDirectories,
@@ -375,10 +375,10 @@ function Detection({ agent, preset, harness }: { agent: AgentSettings; preset?: 
 }
 
 /** The preset's install command and project page as two rows of a card. */
-function InstallRows({ preset }: { preset: AgentPreset }) {
+function InstallRows({ preset, showInstall = true }: { preset: AgentPreset; showInstall?: boolean }) {
   return (
     <>
-      {preset.install && (
+      {showInstall && preset.install && (
         <SettingsRow
           title={COPY.installCommand}
           description={<code className="settings-mono">{preset.install}</code>}
@@ -925,7 +925,7 @@ function AgentPage({
   /** This device may start sessions, so it may ask about logging in and log out. */
   run?: boolean
   onRecheck: () => void
-  onSaved: () => void
+  onSaved: () => Promise<void>
   onDeleted: () => void
   onAddAccount?: ((preset: AgentPreset) => void) | undefined
   /** 「这台 Mac 上」 or 「 <name> 上」: where the definition starts. */
@@ -933,8 +933,16 @@ function AgentPage({
   /** The desktop app on this Mac: the only place a command, its arguments or variables can change. */
   local?: boolean
 }) {
-  const [busy, setBusy] = useState(false)
+  const [saving, setSaving] = useState<'settings' | 'program' | null>(null)
+  const busy = saving !== null
+  const confirming = saving === 'program'
   const [error, setError] = useState('')
+  const [confirmationAttempt, setConfirmationAttempt] = useState(0)
+  const [confirmationError, setConfirmationError] = useState('')
+  const confirmationErrorLine = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (confirmationError) confirmationErrorLine.current?.scrollIntoView({ block: 'nearest' })
+  }, [confirmationError])
   const [dialog, setDialog] = useState<null | 'name' | 'definition' | 'env'>(null)
   const [removing, setRemoving] = useState(false)
   const [enabled, setEnabled] = useState(agent.enabled)
@@ -950,26 +958,27 @@ function AgentPage({
   const id = encodeURIComponent(agent.id)
 
   /** One change. */
-  const update = async (body: Record<string, unknown>): Promise<string> => {
-    setBusy(true)
+  const update = async (body: Record<string, unknown>, action: 'settings' | 'program' = 'settings'): Promise<string> => {
+    setSaving(action)
     setError('')
     try {
       // Another command, other arguments or a variable's new value: the Host asks for Touch ID on this Mac first.
       await withConfirmation(confirmation => api(`agents/${id}`, { method: 'PUT', body, ...(confirmation ? { confirmation } : {}) }))
-      onSaved()
+      if (action === 'program') await onSaved()
+      else void onSaved()
       return ''
     } catch (cause) {
       return inlineError(cause)
     } finally {
-      setBusy(false)
+      setSaving(null)
     }
   }
   const missing = missingText(agent) !== undefined
   const moved = !missing && !agent.detected.outdated && commandMoved(harness)
-  const confirmMoved = () => {
-    void update({ command: agent.command }).then(text => {
-      if (text) setError(text)
-    })
+  const confirmMoved = async () => {
+    setConfirmationError('')
+    setConfirmationAttempt(attempt => attempt + 1)
+    setConfirmationError(await update({ command: agent.command }, 'program'))
   }
   return (
     <>
@@ -1044,7 +1053,7 @@ function AgentPage({
         }
         caption={COPY.environmentStored}
         captionIcon="lock">
-        <InlineConfirm active={busy && dialog === null} rank={1} />
+        <InlineConfirm active={saving === 'settings' && dialog === null} rank={1} />
         {agent.envKeys.length === 0 && <SettingsRow title={COPY.noEnvironment} />}
         {agent.envKeys.map(key => (
           <SettingsRow
@@ -1091,7 +1100,7 @@ function AgentPage({
             }
             trailing={
               local ? (
-                <Button variant="secondary" disabled={busy} onClick={confirmMoved}>
+                <Button variant="secondary" disabled={busy} pending={confirming} onClick={() => void confirmMoved()}>
                   {COPY.confirmProgram}
                 </Button>
               ) : undefined
@@ -1122,6 +1131,18 @@ function AgentPage({
         )}
         {moved && harness?.bound?.path && (
           <SettingsRow title={COPY.confirmedBefore} description={<MiddleEllipsis text={harness.bound.path} className="settings-mono" />} />
+        )}
+        {moved && local && confirmationAttempt > 0 && (
+          <>
+            <InlineConfirm key={confirmationAttempt} active={confirming} rank={1} reveal />
+            {confirmationError && (
+              <div ref={confirmationErrorLine}>
+                <InlineNotice tone="error" secure>
+                  {confirmationError}
+                </InlineNotice>
+              </div>
+            )}
+          </>
         )}
         {agent.detected.outdated && (
           <SettingsRow title={COPY.upgradeCommand} description={<span className="settings-mono">{agent.detected.outdated.upgrade}</span>} />
@@ -1155,7 +1176,7 @@ function AgentPage({
           title={agent.verified ? COPY.listed : COPY.unverified}
           description={agent.verified ? undefined : COPY.differentCommand}
         />
-        {preset && <InstallRows preset={preset} />}
+        {preset && <InstallRows preset={preset} showInstall={!agent.detected.outdated && !agent.detected.update?.command} />}
       </SettingsGroup>
       {canAddAccount && preset && onAddAccount && (
         <SettingsGroup>
@@ -1627,7 +1648,7 @@ export function AgentsSettings({
   }
   const refreshed = () => {
     onChanged()
-    void load()
+    return load()
   }
   const done = () => {
     setEditing(null)

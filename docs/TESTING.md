@@ -568,6 +568,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 - 原生对话框、`shell.openExternal`、`shell.showItemInFolder`、通知与剪贴板在主进程中替换成记录调用的内存实现：不打开真实面板，不投递系统通知，不读写系统剪贴板。系统剪贴板、原生粘贴快捷键、通知授权与专注模式要实机验证。
 - `desktop-recovery.e2e.ts` 终止隔离 Electron 的真实渲染进程，核对原窗口、原分区重新连上同一 Host，且读回已保存的草稿。主文档加载失败时检查原生重载，连续退出时检查「回到起始页」保留未确认的请求且没有重发。两台临时 Host 的用例覆盖主窗口内的远端视图、单独打开的远端窗口及恢复后的设备撤销。
 - `desktop-first-use.e2e.ts` 用临时的假 DeepSeek Harness 验证首次打开模型面板会添加已安装的预设，读到模型与思考档位，重开复用同一份结果。
+- `desktop.e2e.ts` 用移动后的假 Harness 验证列表取消、详情等待、拒绝与重试后读回新路径。`shell.e2e.ts` 用两份假 pi 验证升级命令适用官方安装方式，以及重新检测会读同一入口的新版。
 - 模型服务用例阻断外部 DNS，只用本地假服务；终端用例用假终端组件，登录用例运行夹具里的假 `codex login`，从不运行真实 CLI 的登录。
 - 拒绝导航的检查放在用例最后：Playwright 把被拒绝的导航一直当作进行中，所以由主进程触发并监听 `will-frame-navigate`，之后只读取地址、不再驱动页面。
 - 常规用例以开发模式运行（`devMode: true`）。正式打包模式拒绝调试参数与 mock keychain，不能为 Playwright 放宽这条规则。`desktop-cli.e2e.ts` 可通过 `LATCH_PACKAGE_APP` 指向本机应用包，使用复制出的主进程与 preload、临时用户目录和 mock keychain，验证命令行链接与布局；这不等于真实签名应用或钥匙串验收。

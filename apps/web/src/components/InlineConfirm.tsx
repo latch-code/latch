@@ -352,12 +352,15 @@ export function InlineConfirm({
   rank,
   className,
   list = false,
+  reveal = false,
 }: {
   active: boolean
   rank?: number
   className?: string
   /** Name every session that holds a refused confirmation back, one row each (设置 › 设备). */
   list?: boolean
+  /** Keep a new line in view when it appears below a control on a scrolling page. */
+  reveal?: boolean
 }) {
   const id = useId()
   const line = useRef<HTMLElement>(null)
@@ -366,13 +369,13 @@ export function InlineConfirm({
   const flowId = live?.id
   const visible = live !== null && hasLine(live.view)
   useEffect(() => {
-    if (flowId === undefined || !visible || !line.current?.closest('.ui-popover')) return undefined
-    // A new line can grow below the visible part of a picker. Reveal it after the fold opens.
-    const timer = setTimeout(() => line.current?.scrollIntoView({ block: 'start' }), MOTION.panel)
+    if (flowId === undefined || !visible || (!reveal && !line.current?.closest('.ui-popover'))) return undefined
+    // Reveal the line after the fold opens so the scroll uses its full height.
+    const timer = setTimeout(() => line.current?.scrollIntoView({ block: reveal ? 'nearest' : 'start' }), MOTION.panel)
     return () => {
       clearTimeout(timer)
     }
-  }, [flowId, visible])
+  }, [flowId, visible, reveal])
   return (
     <>
       <ConfirmationStatus view={live?.view} />

@@ -181,7 +181,7 @@ export function upgradeCommand(gate: Gate, path: string | undefined): string {
   return installedUpdate(gate, path) ?? gate.upgrade
 }
 
-/** The update command the install's layout names, by its path alone; undefined when it names none. */
+/** The update command the install's layout names; undefined when it names none. */
 function installedUpdate(gate: Gate, path: string | undefined): string | undefined {
   if (!gate.source || path === undefined) return undefined
   let real: string | undefined
@@ -195,7 +195,7 @@ function installedUpdate(gate: Gate, path: string | undefined): string | undefin
 
 /**
  * Where a newer release of the program at `path` is asked, and the command that updates it the way it was installed,
- * both by its path alone (`update-command.ts`); undefined when the gate names no source or the layout no lookup.
+ * both by its layout (`update-command.ts`); undefined when the gate names no source or the layout no lookup.
  */
 export function installedRelease(gate: Gate, path: string): { lookup: ReleaseLookup; command?: string } | undefined {
   if (!gate.source) return undefined
