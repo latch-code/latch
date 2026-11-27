@@ -1077,16 +1077,17 @@ describe("choosing one of Codex's own models in a draft", () => {
       .filter({ visible: true })
       .first()
 
-  it('reads its list when its menu opens, lists the real names with the default marked, and starts on the one picked', async () => {
+  it('prefetches its list in the draft, lists the real names with the default marked, and starts on the one picked', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', reducedMotion: 'reduce' })
     try {
       const page = await context.newPage()
       page.setDefaultTimeout(15_000)
       await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
       await connected(page)
-      // The draft starts on Codex, the one Harness saved; opening its model menu reads model/list once, with no thread.
+      // The draft starts on Codex, the one Harness saved; showing it reads model/list once, with no thread, and opening
+      // the model menu does not read again.
       expect(await chip(page, 'Harness').getAttribute('aria-label')).toBe('Harness：Codex')
-      expect(await received('model/list')).toEqual([])
+      await expect.poll(async () => (await received('model/list')).length, { timeout: 15_000 }).toBe(1)
       await chip(page, '模型').click()
       await expect.poll(() => chip(page, '模型').innerText(), { timeout: 15_000 }).toContain('GPT Fake')
       expect(await received('model/list')).toHaveLength(1)
