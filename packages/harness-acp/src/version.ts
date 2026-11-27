@@ -91,12 +91,12 @@ function sameFile(a: string, b: string): boolean {
   }
 }
 
-const keyOf = (path: string, minimum: string) => `${path}\0${minimum}`
+const keyOf = (record: AgentRecord, path: string, minimum: string) => `${path}\0${minimum}\0${record.accountDirectory ?? ''}`
 
 /** The cached read of this file, when it is still this file and no re-check came since. Starts nothing. */
 function cached(record: AgentRecord, path: string, own?: Gate): Entry | undefined {
   const gate = gateOf(record, path, own)
-  const known = gate ? cache.get(keyOf(path, gate.minimum)) : undefined
+  const known = gate ? cache.get(keyOf(record, path, gate.minimum)) : undefined
   return known && known.epoch === epoch && known.stamp === stampOf(path) ? known : undefined
 }
 
@@ -108,7 +108,7 @@ function entryFor(record: AgentRecord, path: string, fresh = false, own?: Gate):
   const gate = gateOf(record, path, own)
   const stamp = stampOf(path)
   if (!gate || stamp === undefined) return undefined
-  const key = keyOf(path, gate.minimum)
+  const key = keyOf(record, path, gate.minimum)
   const known = cache.get(key)
   if (!fresh && known && known.stamp === stamp && known.epoch === epoch) return known
   const before = known?.verdict
@@ -143,7 +143,7 @@ function entryFor(record: AgentRecord, path: string, fresh = false, own?: Gate):
 /** Whether this command was ever read, whatever has happened since: a preset chosen once is read again on a re-check. */
 export function wasRead(record: AgentRecord, path: string): boolean {
   const gate = gateOf(record, path)
-  return gate !== undefined && cache.has(keyOf(path, gate.minimum))
+  return gate !== undefined && cache.has(keyOf(record, path, gate.minimum))
 }
 
 /** What is known now, from reads already made; it starts none. */
@@ -157,7 +157,7 @@ export function knownVersion(record: AgentRecord, path: string): VersionVerdict 
  */
 export function lastVersion(record: AgentRecord, path: string): VersionVerdict | undefined {
   const gate = gateOf(record, path)
-  const known = gate ? cache.get(keyOf(path, gate.minimum)) : undefined
+  const known = gate ? cache.get(keyOf(record, path, gate.minimum)) : undefined
   return known && known.stamp === stampOf(path) ? known.verdict : undefined
 }
 
@@ -254,17 +254,19 @@ export async function assertVersion(
   use?: string,
   requireFresh = false,
 ): Promise<VersionVerdict | undefined> {
-  // A program read only for its releases has nothing to reach: a start never waits for it.
-  if (!own && !selectProfile(record).profile?.minimumVersion) return
-  const reused = requireFresh ? undefined : cached(record, path, own)
-  const entry = reused ?? entryFor(record, path, requireFresh, own)
-  if (!entry && !requireFresh) return
+  // Older agy versions ignore ADC. This account must not start on the person's keyring when a wrapper's version is unknown.
+  const gate = own ?? selectProfile(record).profile?.minimumVersion
+  if (!gate) return
+  const fresh = requireFresh || gate.requireKnown === true || (record.presetId === 'antigravity' && record.accountDirectory !== undefined)
+  const reused = fresh ? undefined : cached(record, path, own)
+  const entry = reused ?? entryFor(record, path, fresh, own)
+  if (!entry && !fresh) return
   let verdict = (await entry?.read) ?? { tooOld: false }
-  if (requireFresh && verdict.version === undefined)
+  if (fresh && verdict.version === undefined)
     throw new AppError(
       409,
       'harness-version-unsupported',
-      `${record.name} ${use ?? ''}需要 ${own!.minimum} 或更高版本；当前版本无法确认。请使用受支持的官方命令后重试。`,
+      `${record.name} ${use ?? ''}需要 ${gate.minimum} 或更高版本；当前版本无法确认。请使用受支持的官方命令后重试。`,
     )
   if (verdict.tooOld && reused) verdict = (await entryFor(record, path, true, own)?.read) ?? verdict
   const refused = versionRefusal(record, verdict, own, use, path)

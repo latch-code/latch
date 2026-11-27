@@ -816,12 +816,18 @@
   background: var(--press);
 }
 .settings-row[data-nav]:focus-visible,
-.settings-row:has(> .settings-row-main:focus-visible) {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
 .settings-row-main:focus-visible {
   outline: none;
+}
+/* Keep the entire ring inside the well's curved corners, regardless of which rows are expanded. */
+.settings-row[data-nav]:focus-visible::after,
+.settings-row:has(> .settings-row-main:focus-visible)::after {
+  content: '';
+  position: absolute;
+  inset: var(--sp-4);
+  border: 2px solid var(--accent);
+  border-radius: var(--r-8);
+  pointer-events: none;
 }
 .settings-row-chevron {
   color: var(--muted);
@@ -1053,6 +1059,23 @@
 .agent-preset .settings-row-text {
   gap: var(--sp-2);
 }
+.agent-account-list .agent-row {
+  --account-row-indent: calc(var(--sp-16) + 24px + var(--sp-12));
+  align-items: center;
+  padding-inline-start: var(--account-row-indent);
+}
+.agent-account-list .agent-row + .agent-row::before {
+  inset-inline-start: var(--account-row-indent);
+}
+.settings-card > :is(.settings-row, .agent-account-group) + .agent-account-group > .settings-row::before,
+.settings-card > .agent-account-group + .settings-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  inset-inline: var(--row-rule-inset, 0);
+  height: 1px;
+  background: var(--line);
+}
 /*
  * A preset to install: its row, and under it what 「怎么装」 opens, on the row's text line (past the 24 tile and its 12):
  * the command in a well with copy and 重新检测, the preset's note, then one quiet line to the start form.
@@ -1061,7 +1084,7 @@
   display: grid;
   min-width: 0;
 }
-.settings-card > :is(.settings-row, .agent-install) + .agent-install > .settings-row::before {
+.settings-card > :is(.settings-row, .agent-account-group, .agent-install) + .agent-install > .settings-row::before {
   content: '';
   position: absolute;
   top: 0;

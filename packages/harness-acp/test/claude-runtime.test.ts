@@ -133,7 +133,11 @@ async function activate(plugin: HarnessPlugin): Promise<HarnessDriver> {
 }
 
 /** A computer whose `claude` is a stub that only prints a version, and a runtime whose SDK is the script. */
-async function computer(script: Script, host: Partial<HarnessHostOptions> = {}, extra: { options?: AcpAgentOptions } = {}) {
+async function computer(
+  script: Script,
+  host: Partial<HarnessHostOptions> = {},
+  extra: { options?: AcpAgentOptions; accountDirectory?: string } = {},
+) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-claude-runtime-')))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const bin = join(root, 'bin')
@@ -157,6 +161,7 @@ async function computer(script: Script, host: Partial<HarnessHostOptions> = {}, 
     command: 'claude',
     args: [],
     env: {},
+    ...(extra.accountDirectory ? { accountDirectory: extra.accountDirectory } : {}),
     enabled: true,
   }
   const projects = [{ id: 'proj', folders: [{ id: 'main', path: main }] }]
@@ -486,6 +491,25 @@ describe('Claude’s own store under the runtime (a configuration directory of t
     expect(t.driver.historyDelete).toBeUndefined()
     const bridge = await t.open(false)
     await expect(bridge.listExternalSessions!()).rejects.toMatchObject({ code: 'history-not-supported' })
+  })
+
+  it('lists only the bound Claude account even when the Host uses another Claude home', async () => {
+    const original = await withStore(true)
+    const selected = await claudeFixture()
+    cleanups.push(() => selected.remove())
+    const t = await computer(
+      async (query, prompt) => query.reply(prompt, 'ok'),
+      {},
+      { options: { claudeStore: true }, accountDirectory: selected.config },
+    )
+    const bridge = await t.open()
+    const other = await original.open()
+    await original.fixture.write(S1, [line(S1, original.main)(prompt(uuidOf(1), null, 'personal'))])
+    const selectedId = uuidOf(41)
+    await selected.write(selectedId, [line(selectedId, t.main)(prompt(uuidOf(2), null, 'work'))])
+    expect(bridge.historyStore!()).not.toBe(other.historyStore!())
+    expect((await bridge.listExternalSessions!()).sessions.map(item => item.agentSessionId)).toEqual([selectedId])
+    expect((await other.listExternalSessions!()).sessions.map(item => item.agentSessionId)).toEqual([S1])
   })
 
   it('counts both routes as one store, Claude’s configuration directory, so a session is brought in once', async () => {

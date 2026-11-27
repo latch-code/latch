@@ -4,7 +4,7 @@
  * (`GET https://api.deepseek.com/user/balance`, `Authorization: Bearer <key>`; api-docs.deepseek.com).
  *
  * Where the key goes, and nowhere else:
- * 1. `readDshKey` reads `~/.dsh/.credentials.yaml` (fixed path; refused when `DSH_HOME` moves the home) through a file
+ * 1. `readDshKey` reads `.credentials.yaml` in the default or explicitly bound account directory through a file
  *    descriptor opened without following links, owned by this user and unreadable by others, and returns the value of
  *    `refs.DEEPSEEK_API_KEY` as a string in memory.
  * 2. `fetchDeepSeekBalance` puts it in one request header to the fixed origin, over TLS, through the Host's outbound
@@ -120,6 +120,7 @@ async function silent(path: string, uid: number): Promise<boolean> {
  * `cwd` (someone looking at the limits, with no session) there is no folder to check: the home's checks are all of it.
  */
 export async function readDshKey(input: {
+  accountDirectory?: string | undefined
   home: string
   env: Readonly<Record<string, string | undefined>>
   cwd?: string
@@ -128,8 +129,8 @@ export async function readDshKey(input: {
   config: () => Promise<DshConfigVerdict>
 }): Promise<{ key: string } | 'none' | 'skip'> {
   const { home, env, cwd, uid } = input
-  if (env.DSH_HOME?.trim() || env.DEEPSEEK_BASE_URL !== undefined) return 'none'
-  const dir = join(home, DSH_DIR)
+  if ((env.DSH_HOME?.trim() || undefined) !== input.accountDirectory || env.DEEPSEEK_BASE_URL !== undefined) return 'none'
+  const dir = input.accountDirectory ?? join(home, DSH_DIR)
   if ((await ownDirectory(dir, uid)) !== 'ok') return 'none'
   for (const path of [join(dir, '.env'), join(dir, 'profiles', DSH_PROFILE, '.env')]) if (!(await silent(path, uid))) return 'none'
   if (cwd !== undefined && !(await silent(join(cwd, '.env'), uid))) return 'skip'

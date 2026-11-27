@@ -185,6 +185,7 @@
  */
 .ui-board {
   --board-height: 400px;
+  --board-rail: 44px;
   --board-levels: 168px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--board-levels);
@@ -192,7 +193,7 @@
   margin: calc(-1 * var(--sp-6));
 }
 .ui-board[data-rail] {
-  grid-template-columns: 44px minmax(0, 1fr) var(--board-levels);
+  grid-template-columns: var(--board-rail) minmax(0, 1fr) var(--board-levels);
 }
 /*
  * With a foot: the columns keep a fixed block over it, and the foot runs across the whole board on a hairline, so the
@@ -213,7 +214,7 @@
   max-height: var(--board-height);
 }
 .ui-board[data-inline-level][data-rail] {
-  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-columns: var(--board-rail) minmax(0, 1fr);
 }
 .ui-board[data-inline-level][data-foot] {
   grid-template-rows: minmax(0, auto) auto;
@@ -263,6 +264,29 @@
   border-radius: var(--r-8);
   background: transparent;
   color: var(--muted);
+}
+.ui-board[data-source-labels] {
+  --board-rail: clamp(96px, 22%, 144px);
+}
+.ui-board[data-source-labels] .ui-board-rail {
+  padding-inline: var(--sp-4);
+}
+.ui-board[data-source-labels] .ui-board-source {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  width: 100%;
+  min-width: 0;
+  padding-inline: var(--sp-6);
+  text-align: start;
+}
+.ui-board-source-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
 @media (hover: hover) {
   .ui-board-source:hover {
@@ -475,6 +499,9 @@
   color: var(--ink-2);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
+}
+.ui-board[data-phone][data-source-labels] .ui-board-tab {
+  min-height: 44px;
 }
 .ui-board-tab[aria-selected='true'] {
   background: var(--seg-on);

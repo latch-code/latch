@@ -1220,6 +1220,7 @@ export function SessionComposer({
               </ComposerControl>
               <ComposerControl name="model">
                 <DraftModelControl
+                  chooseAccount
                   withLevel
                   catalog={catalog}
                   choice={choice}

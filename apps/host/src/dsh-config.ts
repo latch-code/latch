@@ -73,13 +73,18 @@ export function judgeDshDump(dump: string, ids: readonly string[]): DshConfigVer
 }
 
 /** The dump's standard output, or undefined when it did not exit 0 in time within the bound. */
-async function dump(command: string, home: string, path: string | undefined): Promise<string | undefined> {
+async function dump(command: string, home: string, path: string | undefined, accountDirectory?: string): Promise<string | undefined> {
   const cwd = await mkdtemp(join(tmpdir(), 'latch-dsh-config-'))
   try {
     return await new Promise<string | undefined>(resolve => {
       const child = spawn(command, ['--profile', 'acp', '--dump-config'], {
         cwd,
-        env: { HOME: home, ...(path ? { PATH: path } : {}), DSH_TELEMETRY_DISABLED: '1' },
+        env: {
+          HOME: home,
+          ...(path ? { PATH: path } : {}),
+          ...(accountDirectory ? { DSH_HOME: accountDirectory } : {}),
+          DSH_TELEMETRY_DISABLED: '1',
+        },
         stdio: ['ignore', 'pipe', 'ignore'],
         detached: false,
       })
@@ -109,12 +114,12 @@ async function dump(command: string, home: string, path: string | undefined): Pr
 }
 
 /** What the dump depends on that a person changes by hand: their patch layers and the profile's bundle list. */
-async function inputsKey(home: string): Promise<string> {
+async function inputsKey(directory: string): Promise<string> {
   const files = [
-    join(home, '.dsh', 'cordis.patch.yml'),
-    join(home, '.dsh', 'profiles', 'acp', 'cordis.patch.yml'),
-    join(home, '.dsh', 'profiles', 'acp', 'package.json'),
-    join(home, '.dsh', 'profiles', 'acp', 'node_modules'),
+    join(directory, 'cordis.patch.yml'),
+    join(directory, 'profiles', 'acp', 'cordis.patch.yml'),
+    join(directory, 'profiles', 'acp', 'package.json'),
+    join(directory, 'profiles', 'acp', 'node_modules'),
   ]
   const parts = await Promise.all(
     files.map(file =>
@@ -131,14 +136,14 @@ async function inputsKey(home: string): Promise<string> {
  * Asks DeepSeek Harness's dump whether `ids` are as its official bundles ship them, and keeps the answer for five
  * minutes while the person's layers and the bundle list stay as they were. `command` is the confirmed program.
  */
-export function dshConfigCheck(input: { home: string; path?: () => string | undefined }) {
+export function dshConfigCheck(input: { home: string; path?: () => string | undefined; accountDirectory?: string | undefined }) {
   const cache = new Map<string, { at: number; key: string; verdict: DshConfigVerdict }>()
   return async (command: string, ids: readonly string[]): Promise<DshConfigVerdict> => {
     const cacheKey = `${command}\n${[...ids].sort().join(',')}`
-    const key = await inputsKey(input.home)
+    const key = await inputsKey(input.accountDirectory ?? join(input.home, '.dsh'))
     const kept = cache.get(cacheKey)
     if (kept && kept.key === key && Date.now() - kept.at < CACHE_MS) return kept.verdict
-    const output = await dump(command, input.home, input.path?.())
+    const output = await dump(command, input.home, input.path?.(), input.accountDirectory)
     const verdict = output === undefined ? 'changed' : judgeDshDump(output, ids)
     cache.set(cacheKey, { at: Date.now(), key, verdict })
     return verdict

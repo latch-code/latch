@@ -24,12 +24,20 @@ interface Entry {
   sha256?: string
   /** In place of `sha256` once the byte budget is spent. */
   mtimeMs?: number
+  metadata?: ReturnType<typeof fileMetadata>
+  linkMetadata?: ReturnType<typeof fileMetadata>
   /** A symbolic link's own text; it is never followed into a directory. */
   target?: string
   /** What a symbolic link points at when that is not a file. */
   resolved?: 'directory' | 'other' | 'missing'
   /** Why the entry could not be read; it still counts, so becoming readable is a change too. */
   code?: string
+}
+
+const fileIdentity = (info: Stats) => `${info.dev}:${info.ino}`
+
+function fileMetadata(info: Stats) {
+  return { identity: fileIdentity(info), size: info.size, mtimeMs: info.mtimeMs, ctimeMs: info.ctimeMs }
 }
 
 export interface ProjectConfig {
@@ -70,10 +78,45 @@ export async function fingerprintProjectConfig(
   limits: { entries: number; bytes: number; depth: number } = PROJECT_CONFIG_LIMITS,
 ): Promise<ProjectConfig> {
   const entries: Entry[] = []
-  const skip = new Set(managed.skip ?? [])
+  const metadata = managed.metadata ?? []
+  const skip = new Set([...(managed.skip ?? []), ...metadata])
+  const metadataFiles = new Set<string>()
   let visited = 0
   let bytes = 0
   let truncated = false
+
+  /** A separately configured file counts even when its parent directory is a symlink. */
+  async function visitMetadata(path: string): Promise<void> {
+    let info: Stats
+    try {
+      info = await lstat(path)
+    } catch (error) {
+      const code = codeOf(error)
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') entries.push({ path, kind: 'unreadable', code })
+      return
+    }
+    if (++visited > limits.entries) {
+      truncated = true
+      return
+    }
+    if (info.isSymbolicLink()) {
+      const entry: Entry = { path, kind: 'symlink', linkMetadata: fileMetadata(info) }
+      try {
+        entry.target = await readlink(path)
+        const target = await stat(path)
+        if (target.isFile()) metadataFiles.add(fileIdentity(target))
+        entry.metadata = fileMetadata(target)
+      } catch (error) {
+        const code = codeOf(error)
+        if (code === 'ENOENT' || code === 'ENOTDIR') entry.resolved = 'missing'
+        else entry.code = code
+      }
+      entries.push(entry)
+      return
+    }
+    if (info.isFile()) metadataFiles.add(fileIdentity(info))
+    entries.push({ path, kind: info.isFile() ? 'file' : 'other', metadata: fileMetadata(info) })
+  }
 
   /** A file's content; `follow` reads through a symbolic link. Only regular files are read. */
   async function content(path: string, rel: string, follow: boolean): Promise<Partial<Entry> | 'omit'> {
@@ -86,6 +129,7 @@ export async function fingerprintProjectConfig(
         return code === 'ENOENT' ? { resolved: 'missing' } : { code }
       }
       if (!target.isFile()) return { resolved: target.isDirectory() ? 'directory' : 'other' }
+      if (metadataFiles.size && metadataFiles.has(fileIdentity(target))) return { metadata: fileMetadata(target) }
     }
     let handle: FileHandle
     try {
@@ -96,6 +140,8 @@ export async function fingerprintProjectConfig(
     try {
       const info = await handle.stat()
       if (!info.isFile()) return { resolved: info.isDirectory() ? 'directory' : 'other' }
+      // A configuration directory may also contain the file under its link target or another name.
+      if (metadataFiles.size && metadataFiles.has(fileIdentity(info))) return { metadata: fileMetadata(info) }
       if (info.size > limits.bytes - bytes) return { size: info.size, mtimeMs: info.mtimeMs }
       const data = await readAll(handle, info.size)
       bytes += data.length
@@ -157,6 +203,10 @@ export async function fingerprintProjectConfig(
       return
     }
     if (info.isFile()) {
+      if (metadataFiles.size && metadataFiles.has(fileIdentity(info))) {
+        entries.push({ path, kind: 'file', metadata: fileMetadata(info) })
+        return
+      }
       const found = await content(path, rel, false)
       if (found !== 'omit') entries.push({ ...found, path, kind: 'file' })
       return
@@ -165,8 +215,23 @@ export async function fingerprintProjectConfig(
   }
 
   const homes = new Set([resolve(home), await realpath(home).catch(() => resolve(home))])
+  const roots = typeof cwd === 'string' ? [cwd] : cwd
+  if (metadata.length) {
+    const seen = new Set<string>()
+    for (const root of roots) {
+      const literal = resolve(root)
+      const directory = await realpath(literal).catch(() => literal)
+      if (seen.has(directory) || homes.has(directory) || homes.has(literal)) continue
+      seen.add(directory)
+      for (const path of metadata) {
+        await visitMetadata(join(directory, path))
+        if (truncated) break
+      }
+      if (truncated) break
+    }
+  }
   const seen = new Set<string>()
-  for (const root of typeof cwd === 'string' ? [cwd] : cwd) {
+  for (const root of roots) {
     const literal = resolve(root)
     for (const start of new Set([literal, await realpath(literal).catch(() => literal)])) {
       for (let directory = start; ; directory = dirname(directory)) {

@@ -19,6 +19,7 @@ import {
   readChoice,
   resolveChoice,
   startChoices,
+  withOwnDefault,
   withServicePick,
   writeChoice,
   worktreeProject,
@@ -139,6 +140,13 @@ export function useSubmission({
   const pendingKey = `latch.pending.${location.origin}.${deviceId}`
   const [draft, setDraft] = useState('')
   const [fork, setFork] = useState<ForkDraft | null>(null)
+  const seedFork = useCallback(
+    (next: ForkDraft | null) => {
+      const id = next?.choice?.harnessId
+      setFork(next && id && findHarness(catalog, id)?.account ? { ...next, choice: { ...next.choice, accountId: id } } : next)
+    },
+    [catalog],
+  )
   const [held, setPending] = useState<PendingSubmission | null>(null)
   const [loadedPendingKey, setLoadedPendingKey] = useState(pendingKey)
   const creatorAccess = useRef({ pendingKey, creatorAllowed })
@@ -227,6 +235,15 @@ export function useSubmission({
   const [clearing, setClearing] = useState<ReadonlySet<string>>(() => new Set())
 
   const updateChoice = (patch: Partial<ComposerChoice>) => {
+    const target = patch.harnessId
+    if (target !== undefined) {
+      const account = findHarness(catalog, target)?.account
+      patch = { ...patch, accountId: account ? target : undefined }
+      if (account && target !== choice.harnessId && !('config' in patch)) {
+        const saved = harnessPicks(choice, target)
+        patch = { ...patch, ...saved, config: saved.config ?? withOwnDefault(undefined) }
+      }
+    }
     if (fork?.choice) {
       const forkPatch = patch
       setFork(previous => {
@@ -255,6 +272,7 @@ export function useSubmission({
         setDraftPick(previous => ({
           ...previous,
           ...(pickedHarness ? { harnessId: pickedHarness } : {}),
+          ...(harnessId !== undefined ? { accountId: rest.accountId } : {}),
           ...(model ? { model } : {}),
           ...(changesConfig ? { config: rest.config } : {}),
         }))
@@ -635,7 +653,7 @@ export function useSubmission({
     draft,
     setDraft,
     fork,
-    setFork,
+    setFork: seedFork,
     pending,
     pendingReason: pending ? pendingReason : '',
     sendingElsewhere,

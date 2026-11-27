@@ -270,6 +270,8 @@ pnpm exec vitest run --config e2e/vitest.config.ts e2e/harness-acceptance.e2e.ts
 
 `usage-empty` 展示没有自有登录 Harness 且 Host 未提供用量统计的弹窗，截图用例检查空提示在弹窗中的水平位置。
 
+`account-models` 打开「Codex · 工作」的模型页，在窄、宽 iPhone 与 iPad 的浅色和深色画面上核对工作账号的模型与刷新入口。`account-thinking` 显示选中工作账号的 Fast 模型和它报告的思考档位。Swift 互操作用例核对开始和分叉的请求、切换账号或模型后清除原选项、项目默认网关、额度与锁屏简称。
+
 `usage-widgets` 用额度页的数据写出额度小组件的副本（Antigravity 读于 40 分钟前），供在主屏与锁屏手动放置小号、中号、矩形与圆形小组件，核对过时标记、设置里选 Harness 与按下回到额度表。App Group 只在带权限文件的模拟器构建（`CODE_SIGN_IDENTITY=-`）里可用，无签名构建的小组件只显示「打开 Latch 读取」；文件保护只能在设了密码的真机上看。
 
 | 开关 | 用例 | 作用 |

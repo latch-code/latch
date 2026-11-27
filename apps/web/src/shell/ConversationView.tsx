@@ -535,6 +535,7 @@ export function ConversationView({
                                       harnessInfo?.login
                                         ? {
                                             harnessId: harnessInfo.id,
+                                            account: harnessInfo.account,
                                             login: harnessInfo.login,
                                             // In this session's 终端 tab, where it can have one.
                                             surface: loginSurface(

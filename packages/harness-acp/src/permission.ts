@@ -5,7 +5,7 @@ import { AGENT_PRESETS, isReservedAgentEnvName, isRetiredAgentPreset, runsPreset
 import { AppError, type ConfigChangeClass } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { resolveCommand } from './command.ts'
-import { antigravityFixedPermissions, antigravitySkipsPermissions } from './profiles/antigravity.ts'
+import { antigravityAdcProfile, antigravityFixedPermissions, antigravitySkipsPermissions } from './profiles/antigravity.ts'
 import {
   CURSOR_SDK_PROFILE,
   FALLBACK_PROFILES,
@@ -14,6 +14,7 @@ import {
   type HarnessProfile,
 } from './profiles/index.ts'
 import { CURSOR_KEY_ENV, cursorSdkAvailable } from './wires/cursor.ts'
+import { qwenAccountProfile } from './profiles/qwen.ts'
 import type { PermissionOption } from './protocol.ts'
 import type { AgentRecord } from './types.ts'
 import { claudeArgs } from './wires/claude.ts'
@@ -119,6 +120,8 @@ export function selectProfile(record: AgentRecord, locate: CommandLocator = reso
       : (viaFallback ? FALLBACK_PROFILES : HARNESS_PROFILES).get(preset.id)
     : undefined
   if (profile?.presetId === 'antigravity' && antigravitySkipsPermissions(record.args)) profile = antigravityFixedPermissions
+  if (profile?.presetId === 'antigravity' && record.accountDirectory !== undefined) profile = antigravityAdcProfile
+  if (profile?.presetId === 'qwen' && record.accountDirectory !== undefined) profile = qwenAccountProfile
   const configEnv = profile?.permission.configEnv ?? []
   const redirected = Object.keys(record.env)
     .filter(key => matchesName(configEnv, key))
@@ -193,6 +196,7 @@ export function launchHash(input: {
   resolvedCommand: string
   args: string[]
   definitionEnv: Record<string, string>
+  accountDirectory?: string
   presetId?: string
   /** The preset's profile version, or 1 for a definition with no profile. */
   profileVersion: number
@@ -216,6 +220,7 @@ export function launchHash(input: {
       args: input.args,
       envNames: Object.keys(input.definitionEnv).sort(),
       envValues: sha256Hex(canonicalJson(input.definitionEnv)),
+      ...(input.accountDirectory !== undefined ? { accountDirectory: input.accountDirectory } : {}),
       presetId: input.presetId,
       profileVersion: input.profileVersion,
       projectConfig: input.projectConfig,

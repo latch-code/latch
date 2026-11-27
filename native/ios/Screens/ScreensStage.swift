@@ -135,6 +135,45 @@ import UIKit
         case "workspace", "workspace-offline":
             model.snapshot = workSnapshot()
             if name == "workspace-offline" { stageDisconnected(model) }
+        case "harness-accounts":
+            model.tab = .settings
+            model.snapshot = patched(value) { root in
+                root["catalog"] = patched(value["catalog"]) { catalog in
+                    catalog["harnesses"] = json(#"""
+                    [
+                      {"id":"codex","presetId":"codex","capabilities":{"display":{"label":"Codex","mark":"codex"}}},
+                      {"id":"codex-work","presetId":"codex","account":true,"capabilities":{"display":{"label":"Codex · 工作","mark":"codex"}}},
+                      {"id":"codex-research","presetId":"codex","account":true,"capabilities":{"display":{"label":"研究项目","mark":"codex"}}},
+                      {"id":"codex-command","presetId":"codex","capabilities":{"display":{"label":"自定命令","mark":"codex"}}},
+                      {"id":"qwen","presetId":"qwen","capabilities":{"display":{"label":"Qwen Code","mark":"qwen"}}},
+                      {"id":"grok","presetId":"grok","offer":{"presetId":"grok"},"capabilities":{"display":{"label":"Grok Build","mark":"grok"}}},
+                      {"id":"plugin","capabilities":{"display":{"label":"插件实例","mark":"codex"}}}
+                    ]
+                    """#)
+                }
+            }
+        case "account-models", "account-thinking":
+            creating = true
+            model.snapshot = patched(value) { root in
+                root["catalog"] = patched(value["catalog"]) { catalog in
+                    let codex = PhoneStart.harness(value["catalog"], "codex")
+                    let work = patched(codex) { item in
+                        item["id"] = .string("codex-2"); item["account"] = .bool(true); item["presetId"] = .string("codex")
+                        item["capabilities"] = patched(codex["capabilities"]) {
+                            $0["display"] = .object(["label": .string("Codex · 工作"), "mark": .string("codex")])
+                        }
+                        item["catalogueRead"] = .object(["when": .string("select")])
+                        item["catalogue"] = json(#"""
+                        {"options":[{"id":"model","category":"model","currentValue":"work-balanced","options":[{"value":"work-balanced","name":"Balanced"},{"value":"work-fast","name":"Fast"}]}],
+                        "perModel":[{"model":"work-fast","options":[{"id":"work-reasoning","category":"thought_level","options":[{"value":"low","name":"简短思考"},{"value":"high","name":"深入思考"}]}]}]}
+                        """#)
+                    }
+                    catalog["harnesses"] = .array(value["catalog"]["harnesses"].array.map { engine in
+                        engine["id"].string == "codex" ? patched(engine) { $0["presetId"] = .string("codex") } : engine
+                    } + [work])
+                    catalog["defaults"] = patched(value["catalog"]["defaults"]) { $0["harnessId"] = .string("codex-2") }
+                }
+            }
         case "harness-menu":
             creating = true
             let names = [("standard", "Latch 内置"), ("codex", "Codex"), ("claude-agent", "Claude Agent"),

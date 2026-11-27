@@ -9,6 +9,7 @@ import {
   Loading as InlineLoading,
   type IconComponent,
   type MenuTriggerProps,
+  ChevronDownGlyph,
   ChevronLeftGlyph,
   ChevronRightGlyph,
   MoreGlyph,
@@ -199,7 +200,7 @@ export function ObjectRow({
   )
 }
 
-/** A row that goes into an object or a list: the whole row is the button, ending in a quiet value and chevron-right. */
+/** A settings row that opens a page or reveals its own rows. */
 export function NavRow({
   leading,
   title,
@@ -210,8 +211,15 @@ export function NavRow({
   value,
   label,
   disabled,
+  disclosure,
   onClick,
-}: RowContent & { value?: ReactNode; label?: string; disabled?: boolean; onClick: () => void }) {
+}: RowContent & {
+  value?: ReactNode
+  label?: string
+  disabled?: boolean
+  disclosure?: { expanded: boolean; controls: string }
+  onClick: () => void
+}) {
   const id = useId()
   return (
     <button
@@ -222,13 +230,15 @@ export function NavRow({
       data-dim={dim ? '' : undefined}
       aria-label={label}
       aria-describedby={label === undefined && description ? `${id}-description` : undefined}
+      aria-expanded={disclosure?.expanded}
+      aria-controls={disclosure?.controls}
       disabled={disabled}
       onClick={onClick}>
       {leading && <span className="settings-row-lead">{leading}</span>}
       <RowText title={title} description={description} record={record} ids={id} />
       <span className="settings-row-end">
         {value !== undefined && <span className="settings-row-value">{value}</span>}
-        <Icon icon={ChevronRightGlyph} size={12} className="settings-row-chevron" />
+        <Icon icon={disclosure?.expanded ? ChevronDownGlyph : ChevronRightGlyph} size={12} className="settings-row-chevron" />
       </span>
     </button>
   )

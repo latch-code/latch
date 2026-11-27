@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AppError } from '@latch/sdk'
-import type { AgentRecord, AppSnapshot, ProviderSettings, TaskDetail, WorkspaceInfo } from '@latch/protocol'
+import type { AgentRecord, AgentSettings, AppSnapshot, ProviderSettings, TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { createAcpAgentPlugin } from '@latch/harness-acp'
 import { FAKE_ACP_AGENT, startFakeModels, type FakeModels, type FakeReply, type TestDevice } from '@latch/testkit'
-import { startTestHost, type TestHost } from './helpers/host.ts'
+import { startTestHost, type TestHost, type TestHostOptions } from './helpers/host.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -36,10 +36,11 @@ function failAudit(t: TestHost, failing: (action: string) => boolean) {
   cleanups.push(async () => spy.mockRestore())
 }
 
-async function host(demo = false) {
+async function host(demo = false, programs: Pick<TestHostOptions, 'commandDirectories' | 'loginPrograms'> = {}) {
   const t = await startTestHost({
     demo,
     agentPlugin: (agent: AgentRecord) => createAcpAgentPlugin(agent, { stopGraceMs: 100, cancelGraceMs: 500 }),
+    ...programs,
   })
   cleanups.push(() => t.close())
   const desktop = await t.enroll({ listener: 'unix' })
@@ -337,12 +338,30 @@ describe('「出错时改用」 and a service limit in the Host', () => {
     expect(b.requests).toHaveLength(2)
   })
 
-  it("leaves a routed Harness on its own default when the start says the person chose it, whatever the project's default is", async () => {
+  it("uses the chosen account's own models unless the start specifies a gateway model", async () => {
     const a = await models([{ text: 'via the project default' }])
-    const { t, desktop, phone, service } = await host()
-    const first = await service('openai-compatible', 'First', `${a.origin}/v1`, KEY_A)
     const folder = await realpath(await mkdtemp(join(tmpdir(), 'latch-project-')))
     cleanups.push(() => rm(folder, { recursive: true, force: true }))
+    const isolated = await realpath(await mkdtemp(join(tmpdir(), 'latch-named-opencode-')))
+    cleanups.push(() => rm(isolated, { recursive: true, force: true }))
+    const accountDirectory = join(isolated, 'account')
+    const program = join(isolated, 'opencode')
+    await mkdir(accountDirectory)
+    await writeFile(
+      program,
+      [
+        '#!/bin/sh',
+        `export FAKE_ACP_STATE='${join(isolated, 'acp-state.json')}' FAKE_ACP_CONFIG=options FAKE_ACP_VERSION=2.2.6`,
+        'export FAKE_ACP_MODES=plan,build,auto-edit,yolo FAKE_ACP_INITIAL_MODE=build FAKE_ACP_GATEWAY=opencode',
+        `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
+      ].join('\n'),
+      { mode: 0o755 },
+    )
+    const { t, desktop, phone, service } = await host(false, {
+      commandDirectories: () => [isolated],
+      loginPrograms: name => (name === 'opencode' ? program : undefined),
+    })
+    const first = await service('openai-compatible', 'First', `${a.origin}/v1`, KEY_A)
     const project = ((await (await desktop.addFolders({ paths: [folder], name: 'Project' })).json()) as { workspace: WorkspaceInfo })
       .workspace
     expect(
@@ -373,6 +392,9 @@ describe('「出错时改用」 and a service limit in the Host', () => {
       },
     })
     expect(agent.status).toBe(201)
+    const named = await desktop.confirmedJson<{ agent: AgentSettings }>('agents', {
+      body: { name: 'OpenCode · Work', presetId: 'opencode', command: 'opencode', args: ['acp'], accountDirectory },
+    })
     const start = async (body: Record<string, unknown>) => {
       const response = await phone.request('tasks', {
         method: 'POST',
@@ -389,6 +411,10 @@ describe('「出错时改用」 and a service limit in the Host', () => {
     expect(await start({ ownModel: true })).not.toHaveProperty('modelRoute')
     // A model named with it is the choice; the flag takes nothing away.
     expect((await start({ ownModel: true, model: { providerId: first.id, model: 'fake-model' } })).modelRoute).toMatchObject({
+      providerId: first.id,
+    })
+    expect(await start({ harnessId: named.agent.id })).not.toHaveProperty('modelRoute')
+    expect((await start({ harnessId: named.agent.id, model: { providerId: first.id, model: 'fake-model' } })).modelRoute).toMatchObject({
       providerId: first.id,
     })
   }, 60_000)

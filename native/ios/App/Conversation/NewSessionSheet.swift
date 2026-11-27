@@ -35,7 +35,7 @@ struct NewSessionSheet: View {
         var value = PhoneSlashContext(bodyOpen: model.connected && model.verifiedUntil.map { $0 > Date() } == true, canRun: model.canRun, harness: harness)
         value.pending = starting || model.busy || !model.pending.isEmpty; value.firstTurn = fork != nil
         value.harnessId = choice.harnessId; value.projectId = choice.workspaceId
-        if PhoneStart.usesServices(harness), !PhoneStart.models(catalog).isEmpty { value.actions.insert(.model) }
+        if canPickModel { value.actions.insert(.model) }
         value.actionReasons[.new] = "已经在新会话里"
         return value
     }
@@ -61,6 +61,11 @@ struct NewSessionSheet: View {
     private var plan: PhoneForkPlan? { fork?.plan(catalog, source: source, choice: choice, picked: picked) }
     private var shownModel: PhoneModelChoice? { plan.map { $0.choice.model ?? $0.forwarded } ?? choice.model }
     private var harness: NativeJSON { catalog["harnesses"].array.first { $0["id"].string == choice.harnessId } ?? .null }
+    private var nativeModel: PhoneConfigPick? { plan?.pick(.model) ?? choice.ownModel }
+    private var canPickModel: Bool {
+        if PhoneStart.usesServices(harness) { return !PhoneStart.models(catalog).isEmpty }
+        return choice.ownModel != nil || harness["catalogueRead"] != .null || !PhoneStart.ownModels(harness).isEmpty
+    }
     private var blocker: String? {
         PhoneStart.blocker(catalog, choice: choice) ?? (PhoneSlash.actionOf(prompt) == nil ? PhoneConversation.promptLengthIssue(prompt) : nil)
     }
@@ -81,7 +86,7 @@ struct NewSessionSheet: View {
                     Divider().overlay(PhoneTheme.line)
                     modelRow
                     Divider().overlay(PhoneTheme.line)
-                    row("思考") { Text(plan?.thinkingWords ?? "模型默认").foregroundStyle(plan?.thinkingWords == nil ? PhoneTheme.muted : PhoneTheme.ink2) }
+                    thinkingRow
                     Divider().overlay(PhoneTheme.line)
                     row("权限") { HStack(spacing: 6) { Image(systemName: "shield").font(.system(size: 13)); Text(plan?.pick(.permission)?.name ?? "先问你") }.foregroundStyle(PhoneTheme.ink2) }
                 }
@@ -141,7 +146,16 @@ struct NewSessionSheet: View {
             .frame(maxHeight: .infinity, alignment: .top)
             .navigationTitle(fork == nil ? "新会话" : "从这里分叉").navigationBarTitleDisplayMode(.inline)
             .navigationDestination(isPresented: $modelPicker) {
-                ModelList(models: PhoneStart.models(catalog), chosen: Binding(get: { shownModel }, set: { choice.model = $0; picked = fork == nil ? nil : $0 }), initialQuery: modelQuery)
+                if PhoneStart.usesServices(harness) {
+                    ModelList(models: PhoneStart.models(catalog), chosen: Binding(get: { shownModel }, set: { choice.model = $0; picked = fork == nil ? nil : $0 }), initialQuery: modelQuery)
+                } else if let id = choice.harnessId {
+                    HarnessModelList(harnessId: id, initialQuery: modelQuery, selected: choice.ownModel,
+                        defaultLabel: defaultExternalModelLabel, chooseAccount: { changeHarness($0) }) { pick in
+                        choice.ownModel = pick
+                        choice.model = pick == nil && fork == nil
+                            ? PhoneStart.newSessionModel(catalog, harnessId: id, workspaceId: choice.workspaceId) : nil
+                    }.id(id)
+                }
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly) }
@@ -150,22 +164,16 @@ struct NewSessionSheet: View {
                 }
             }
         }
-        // The Host's model choice belongs to the Harness it was saved for.
-        .onChange(of: choice.harnessId) { old, new in
-            if old != nil, old != new {
-                choice.model = fork == nil
-                    ? PhoneStart.newSessionModel(catalog, harnessId: new, workspaceId: choice.workspaceId)
-                    : PhoneStart.defaultModel(catalog, harnessId: new)
-                picked = nil
-            }
-        }
         .onChange(of: choice.workspaceId) { _, new in
-            if fork == nil, !PhoneStart.usesServices(harness) {
+            if fork == nil, choice.ownModel == nil, !PhoneStart.usesServices(harness) {
                 choice.model = PhoneStart.newSessionModel(catalog, harnessId: choice.harnessId, workspaceId: new)
             }
         }
         .onChange(of: prompt) { _, value in slash.changed(value) }
-        .onChange(of: model.privateSnapshot.epoch) { _, _ in slash.clear(); modelPicker = false }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in
+            slash.clear()
+            if !model.hasContentWindow || model.generation != openedHost { modelPicker = false }
+        }
         .onChange(of: mentions.context) { _, _ in mentionState.clear() }
         .task(id: slashRead) { await slash.load(model, key: slashRead) }
         // The sheet goes once the cover has; the session opens once both have (InboxView's onDismiss).
@@ -199,6 +207,11 @@ struct NewSessionSheet: View {
             else if let held = model.takeDraft(for: draftKey) { prompt = held }
             #if LATCH_SCREENS
             if model.staged, ScreensStage.importing, fork == nil { importing = HistoryScope(model.snapshot, workspaceId: choice.workspaceId) }
+            if model.staged, ScreensStage.scene == "account-models" { modelPicker = true }
+            if model.staged, ScreensStage.scene == "account-thinking" {
+                choice.ownModel = PhoneStart.ownModels(harness).first { $0.value == "work-fast" }
+                choice.ownThinking = PhoneStart.ownThinking(harness, model: choice.ownModel).first { $0.value == "high" }
+            }
             #endif
         }
     }
@@ -278,9 +291,17 @@ struct NewSessionSheet: View {
             }
         } label: { row("项目") { HStack(spacing: 6) { Image(systemName: "folder").font(.system(size: 13)).foregroundStyle(PhoneTheme.muted); Text(projectName).foregroundStyle(PhoneTheme.ink2); updown } } }
     }
+    private func changeHarness(_ id: String?) {
+        guard choice.harnessId != id else { return }
+        choice.harnessId = id
+        choice.model = fork == nil
+            ? PhoneStart.newSessionModel(catalog, harnessId: id, workspaceId: choice.workspaceId)
+            : PhoneStart.defaultModel(catalog, harnessId: id)
+        picked = nil
+    }
     private var engineRow: some View {
         Menu {
-            Picker("Harness", selection: $choice.harnessId) {
+            Picker("Harness", selection: Binding(get: { choice.harnessId }, set: changeHarness)) {
                 ForEach(PhoneStart.engines(catalog)) { engine in
                     let info = catalog["harnesses"].array.first { $0["id"].string == engine.id } ?? .null
                     Label { Text(engine.name) } icon: { EngineTile.menuImage(PhoneStart.mark(info), scheme: scheme) }
@@ -289,7 +310,7 @@ struct NewSessionSheet: View {
             }
             .pickerStyle(.inline)
         } label: {
-            row("Harness") {
+            row(catalog["harnesses"].array.contains { $0["account"].bool } ? "Harness 与账号" : "Harness") {
                 HStack(spacing: 6) {
                     if choice.harnessId != nil { EngineTile(mark: PhoneStart.mark(harness), size: 18); Text(PhoneStart.engineName(harness)).foregroundStyle(PhoneTheme.ink2) }
                     else { Text("没有可用的 Harness").foregroundStyle(PhoneTheme.muted) }
@@ -298,26 +319,150 @@ struct NewSessionSheet: View {
             }
         }
     }
+    private var defaultExternalModelLabel: String {
+        let option = harness["catalogue"]["options"].array.first { $0["category"].string == "model" }
+        let current = option?["currentValue"].string
+        let nativeDefault = PhoneStart.ownModels(harness).first { $0.value == current }?.name ?? "由 Harness 决定"
+        if let fork {
+            var base = choice; base.ownModel = nil
+            let carried = fork.plan(catalog, source: source, choice: base)
+            if let service = carried.forwarded { return service.providerName + " · " + service.model }
+            return carried.pick(.model)?.name ?? nativeDefault
+        }
+        if let service = PhoneStart.newSessionModel(catalog, harnessId: choice.harnessId, workspaceId: choice.workspaceId) {
+            return service.providerName + " · " + service.model
+        }
+        return nativeDefault
+    }
     @ViewBuilder private var modelRow: some View {
-        if !PhoneStart.usesServices(harness) {
-            let forwarded = plan?.forwarded ?? (fork == nil ? choice.model : nil)
-            row("模型") { Text(forwarded?.model ?? "由 Harness 决定").foregroundStyle(forwarded == nil ? PhoneTheme.muted : PhoneTheme.ink2) }
-        } else {
-            NavigationLink {
-                ModelList(models: PhoneStart.models(catalog), chosen: Binding(get: { shownModel }, set: { choice.model = $0; picked = fork == nil ? nil : $0 }))
-            } label: {
+        let name = PhoneStart.usesServices(harness) ? shownModel?.model ?? "还没有模型" : choice.ownModel?.name ?? defaultExternalModelLabel
+        if canPickModel {
+            Button { modelQuery = ""; modelPicker = true } label: {
                 row("模型") {
                     HStack(spacing: 6) {
-                        Text(shownModel?.model ?? "还没有模型").foregroundStyle(shownModel == nil ? PhoneTheme.muted : PhoneTheme.ink2)
+                        Text(name).foregroundStyle(PhoneTheme.ink2)
                         Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(PhoneTheme.faint)
                     }
                 }
             }.buttonStyle(.plain)
+        } else {
+            row("模型") { Text(name).foregroundStyle(PhoneTheme.muted) }
+        }
+    }
+    @ViewBuilder private var thinkingRow: some View {
+        let native = !PhoneStart.usesServices(harness) && choice.model == nil && plan?.forwarded == nil
+        let options = native ? PhoneStart.ownThinking(harness, model: nativeModel) : []
+        let selected = options.first { $0.configId == choice.ownThinking?.configId && $0.value == choice.ownThinking?.value }
+        let name = selected?.name ?? plan?.thinkingWords ?? "模型默认"
+        if !options.isEmpty {
+            Menu {
+                Button { choice.ownThinking = nil } label: {
+                    menuLabel(fork == nil ? "模型默认" : "沿用分叉设置", line: nil, on: selected == nil)
+                }
+                ForEach(options, id: \.value) { pick in
+                    Button { choice.ownThinking = pick } label: { menuLabel(pick.name, line: nil, on: selected == pick) }
+                }
+            } label: {
+                row("思考") { HStack(spacing: 6) { Text(name).foregroundStyle(PhoneTheme.ink2); updown } }
+            }
+        } else if native, let id = choice.harnessId, let value = PhoneStart.unreadThinkingModel(harness, model: nativeModel), model.canRun {
+            Button {
+                let host = model.generation
+                Task {
+                    do { try await model.refreshHarnessModels(id, automatic: false, selectedModel: value) }
+                    catch {
+                        if model.generation == host, choice.harnessId == id, nativeModel?.value == value,
+                           !(error is CancellationError), (error as? NativeFailure) != .declined { model.report(error) }
+                    }
+                }
+            } label: {
+                row("思考") {
+                    if harness["catalogueRead"]["running"].bool { ProgressView().accessibilityLabel("正在读取思考档位") }
+                    else { Text(model.hasContentWindow ? "读取档位" : "解锁并读取档位").foregroundStyle(PhoneTheme.accent) }
+                }
+            }.buttonStyle(.plain).disabled(harness["catalogueRead"]["running"].bool)
+        } else {
+            row("思考") { Text(name).foregroundStyle(plan?.thinkingWords == nil ? PhoneTheme.muted : PhoneTheme.ink2) }
         }
     }
     @ViewBuilder private func menuLabel(_ name: String, line: String?, on: Bool) -> some View {
         if on { Label(line.map { name + " · " + $0 } ?? name, systemImage: "checkmark") }
         else { Text(line.map { name + " · " + $0 } ?? name) }
+    }
+}
+
+private struct HarnessModelList: View {
+    @EnvironmentObject private var model: PhoneModel
+    @Environment(\.dismiss) private var dismiss
+    let harnessId: String
+    let initialQuery: String
+    let selected: PhoneConfigPick?
+    let defaultLabel: String
+    let chooseAccount: (String) -> Void
+    let choose: (PhoneConfigPick?) -> Void
+    @State private var query = ""
+    @State private var attempt = 0
+    @State private var reading = false
+    @State private var failed = false
+    private var harness: NativeJSON { model.engineInfo(harnessId) }
+    private var models: [PhoneConfigPick] { PhoneStart.ownModels(harness) }
+    private var catalogueRead: NativeJSON { harness["catalogueRead"] }
+    private var isReading: Bool { reading || catalogueRead["running"].bool }
+    var body: some View {
+        let matching = models.filter { query.isEmpty || ($0.name + " " + $0.value).localizedCaseInsensitiveContains(query) }
+        let accounts = model.snapshot["catalog"]["harnesses"].array.filter {
+            harness["presetId"].string != nil && $0["presetId"] == harness["presetId"] && $0["status"].string == "ready" && $0["offer"] == .null
+        }
+        List {
+            if accounts.count > 1, accounts.contains(where: { $0["account"].bool }) {
+                Picker("账号", selection: Binding(get: { harnessId }, set: chooseAccount)) {
+                    ForEach(accounts, id: \.id) { account in Text(PhoneStart.engineName(account)).tag(account.id) }
+                }
+            }
+            Section(accounts.count > 1 ? "" : PhoneStart.engineName(harness)) {
+                if query.isEmpty { option("默认 · " + defaultLabel, pick: nil) }
+                ForEach(matching, id: \.value) { pick in
+                    option(pick.name, pick: pick)
+                }
+                if matching.isEmpty && !isReading {
+                    Text(query.isEmpty ? "还没有可选模型" : "没有匹配的模型").foregroundStyle(PhoneTheme.muted)
+                }
+            }
+            if catalogueRead != .null, model.canRun {
+                Section {
+                    if isReading { ProgressView("正在读取模型") }
+                    else { Button(model.hasContentWindow ? "刷新模型列表" : "解锁并刷新模型") { attempt += 1 } }
+                } footer: {
+                    if failed || catalogueRead["last"]["ok"] == .bool(false) {
+                        Text(catalogueRead["last"]["loginRequired"].bool ? "请先在 Mac 上登录这个账号。" : "读取失败，可重试。")
+                    }
+                }
+            }
+        }
+        .navigationTitle("模型").navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索模型")
+        .onAppear { query = initialQuery }
+        .task(id: attempt) {
+            let automatic = attempt == 0
+            guard model.canRun, catalogueRead != .null, !catalogueRead["running"].bool else { return }
+            if automatic {
+                guard model.hasContentWindow, catalogueRead["when"].string == "select",
+                      harness["catalogue"] == .null, catalogueRead["last"] == .null else { return }
+            }
+            reading = true; failed = false
+            defer { reading = false }
+            do { try await model.refreshHarnessModels(harnessId, automatic: automatic) }
+            catch { if !Task.isCancelled, (error as? NativeFailure) != .declined { failed = true } }
+        }
+    }
+    private func option(_ name: String, pick: PhoneConfigPick?) -> some View {
+        Button { choose(pick); dismiss() } label: {
+            HStack {
+                Text(name).foregroundStyle(PhoneTheme.ink)
+                Spacer()
+                if selected?.value == pick?.value { Image(systemName: "checkmark").foregroundStyle(PhoneTheme.accent) }
+            }
+        }
     }
 }
 

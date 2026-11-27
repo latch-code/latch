@@ -233,7 +233,7 @@ export function RunEndNote({
   onRetry?: () => void
   onContinue?: () => void
   /** How to log in, when this run ended for want of it. */
-  login?: { harnessId: string; login: HarnessLogin; surface: LoginSurface } | undefined
+  login?: { harnessId: string; account?: boolean | undefined; login: HarnessLogin; surface: LoginSurface } | undefined
 }) {
   const end = summary.runEnd
   const refused = end?.reason === 'login-required'

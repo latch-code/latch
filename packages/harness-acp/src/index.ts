@@ -36,6 +36,7 @@ import { AgentHealth, resolveOptions, type AcpAgentOptions, type AgentRecord } f
 
 export { agentProbePreview, probeAgent } from './probe.ts'
 export { checkLogin, harnessLogin, loginCheckAddsDate, loginTerminalScript, presetRecord, setLoginPrograms } from './login.ts'
+export { accountEnvironment } from './environment.ts'
 export { loadLoginShell, loginShellValues } from './login-shell.ts'
 export { compareVersions, onVersionChange } from './version.ts'
 export { claudeConfigDir } from './claude-store.ts'
@@ -74,7 +75,7 @@ export function outdatedCommand(record: AgentRecord, path: string | undefined): 
 export function updateSource(
   record: AgentRecord,
   path: string | undefined,
-): { lookup: ReleaseLookup; current: string; channel?: 'claude'; command?: string } | undefined {
+): { lookup: ReleaseLookup; current: string; channel?: 'claude'; claudeDirectory?: string; command?: string } | undefined {
   const gate = releaseGate(selectProfile(record).profile)
   if (!path || !gate?.source) return undefined
   const verdict = knownVersion(record, path) ?? lastVersion(record, path)
@@ -85,7 +86,9 @@ export function updateSource(
     lookup: release.lookup,
     current: verdict.version,
     // The channel names an npm dist-tag; Homebrew has one release per formula or cask.
-    ...(gate.source.channel && release.lookup.registry === 'npm' ? { channel: gate.source.channel } : {}),
+    ...(gate.source.channel === 'claude' && release.lookup.registry === 'npm'
+      ? { channel: gate.source.channel, ...(record.accountDirectory ? { claudeDirectory: record.accountDirectory } : {}) }
+      : {}),
     ...(release.command ? { command: release.command } : {}),
   }
 }

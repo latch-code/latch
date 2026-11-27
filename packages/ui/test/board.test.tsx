@@ -130,6 +130,34 @@ const board = () => document.querySelector<HTMLElement>('.ui-board')!
 const levelNames = () => Array.from(document.querySelectorAll('.ui-board-level'), level => level.getAttribute('aria-label'))
 
 describe('the picker board', () => {
+  it('shows named sources sharing one icon and reports which source the person chose', async () => {
+    const onSourceChange = vi.fn()
+    const sources = ['Work', 'Personal'].map(name => ({
+      id: name,
+      label: name,
+      icon: GALLERY_SOURCES[1]!.icon,
+      items: [{ value: name, label: 'Same model' }],
+    }))
+    const screen = await render(
+      <PickerBoard
+        label="Model"
+        levelsLabel="Thinking"
+        sources={sources}
+        sourceLabels
+        value="Work"
+        onSourceChange={onSourceChange}
+        levels={galleryLevels}
+        onItem={() => {}}
+        onLevel={() => {}}
+      />,
+    )
+    const personal = screen.getByRole('tab', { name: 'Personal' })
+    await expect.element(personal).toHaveTextContent('Personal')
+    await personal.click()
+    expect(onSourceChange).toHaveBeenCalledWith('Personal')
+    await expect.element(personal).toHaveAttribute('aria-selected', 'true')
+  })
+
   it('shows a fixed level as text in a short board and keeps keyboard focus on the model', async () => {
     const choose = vi.fn()
     const sources = [{ ...GALLERY_SOURCES[1]!, items: [{ value: 'lab/gamma', label: 'gamma' }] }]

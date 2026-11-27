@@ -6,7 +6,7 @@ import { authFacts, reportedLogin, terminalLogins, type ReportedLogin } from './
 import { harnessRetired, redactor, resolveCommand } from './command.ts'
 import { openWire, wireLaunch } from './wires/index.ts'
 import { ConnectionClosed } from './wires/process.ts'
-import { agentEnvironment, programPaths } from './environment.ts'
+import { agentEnvironment, assertAccountWorkspace, programPaths } from './environment.ts'
 import { checkLogin, readProgramVersion } from './login.ts'
 import { launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
 import { fingerprintProjectConfig } from './project-config.ts'
@@ -35,6 +35,7 @@ export async function agentProbePreview(agent: AgentRecord, options: ProbeOption
   if (!found) throw new AppError(503, 'agent-not-found', '未找到 Agent 命令，请先完成安装或修改命令。')
   const command = await realpath(found)
   const cwd = await realpath(options.cwd)
+  assertAccountWorkspace(agent, cwd)
   const selection = selectProfile(agent)
   const profile = selection.profile
   const project = await fingerprintProjectConfig(cwd, profile?.projectConfigPaths ?? [], profile?.projectConfigManaged)
@@ -42,6 +43,7 @@ export async function agentProbePreview(agent: AgentRecord, options: ProbeOption
     resolvedCommand: command,
     args: agent.args,
     definitionEnv: agent.env,
+    accountDirectory: agent.accountDirectory,
     profileVersion: profile?.version ?? 1,
     ...(profile ? { presetId: profile.presetId } : {}),
     ...(profile?.permission.inheritEnv ? { inheritEnv: profile.permission.inheritEnv } : {}),
@@ -55,6 +57,7 @@ export async function agentProbePreview(agent: AgentRecord, options: ProbeOption
     profile: profile?.permission,
     materializedEnv,
     definitionEnv: agent.env,
+    account: agent,
     sessionTmpDir: cwd,
   })
   return {
@@ -83,7 +86,7 @@ export async function probeAgent(
   if (preview.launchHash !== options.expectedLaunchHash)
     throw new AppError(409, 'agent-definition-changed', 'Agent 启动内容已变化，请重新测试。')
   if (options.signal?.aborted) throw new AppError(409, 'probe-cancelled', '测试启动已取消。')
-  const mask = redactor(agent.env)
+  const mask = redactor({ ...agent.env, ...(agent.accountDirectory ? { accountDirectory: agent.accountDirectory } : {}) })
   const shortSecrets = Object.entries(agent.env)
     .filter(([name, value]) => /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH/iu.test(name) && value.length > 0 && value.length < 4)
     .map(([, value]) => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'))
@@ -101,6 +104,7 @@ export async function probeAgent(
   const final = await agentProbePreview(agent, options)
   if (final.launchHash !== preview.launchHash || options.signal?.aborted)
     throw new AppError(409, 'agent-definition-changed', 'Agent 启动内容已变化，请重新测试。')
+  assertAccountWorkspace(agent, final.cwd)
   const connection = openWire(
     profile?.wire,
     {
@@ -112,6 +116,7 @@ export async function probeAgent(
         profile: profile?.permission,
         materializedEnv,
         definitionEnv: agent.env,
+        account: agent,
         sessionTmpDir: final.cwd,
       }),
       maxLineBytes: 1024 * 1024,

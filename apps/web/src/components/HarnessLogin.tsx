@@ -176,6 +176,7 @@ export function useLoginStatus(
  */
 function LoginCommand({
   harnessId,
+  account,
   command,
   method,
   name,
@@ -183,6 +184,7 @@ function LoginCommand({
   onEnded,
 }: {
   harnessId: string
+  account: boolean
   command: string
   /** One the harness advertised; absent for the preset's own command. */
   method?: string
@@ -240,10 +242,14 @@ function LoginCommand({
         </p>
       )}
       <div className="harness-login-command">
-        <code>
-          <VisibleText text={command} />
-        </code>
-        <CopyButton text={command} label={COPY.copy} size="xs" />
+        {!account && (
+          <>
+            <code>
+              <VisibleText text={command} />
+            </code>
+            <CopyButton text={command} label={COPY.copy} size="xs" />
+          </>
+        )}
         {surface.kind !== 'none' && (
           <Button size="xs" variant="secondary" icon={TerminalGlyph} loading={opening} onClick={() => void open()}>
             {COPY.terminal}
@@ -281,6 +287,7 @@ function LoginCommand({
  */
 export function HarnessLoginSteps({
   harnessId,
+  account = false,
   login,
   surface,
   onCheck,
@@ -288,6 +295,7 @@ export function HarnessLoginSteps({
   onLoggedIn,
 }: {
   harnessId: string
+  account?: boolean | undefined
   login: HarnessLogin
   /** Where the Host can run the command for this device. */
   surface: LoginSurface
@@ -314,6 +322,7 @@ export function HarnessLoginSteps({
       {methods.map(method => (
         <LoginCommand
           key={method.id}
+          account={account}
           harnessId={harnessId}
           command={method.command}
           method={method.id}
@@ -322,9 +331,11 @@ export function HarnessLoginSteps({
           onEnded={onEnded}
         />
       ))}
-      {login.command && <LoginCommand harnessId={harnessId} command={login.command} surface={surface} onEnded={onEnded} />}
+      {login.command && (
+        <LoginCommand account={account} harnessId={harnessId} command={login.command} surface={surface} onEnded={onEnded} />
+      )}
       {login.note && <p>{login.note}</p>}
-      {runnable && surface.kind === 'none' && <p>{COPY.runHere}</p>}
+      {runnable && !account && surface.kind === 'none' && <p>{COPY.runHere}</p>}
       {onCheck && (
         <div className="harness-login-command">
           <Button
@@ -390,6 +401,7 @@ export function DraftLoginNotice({
         </strong>
         <HarnessLoginSteps
           harnessId={harness.id}
+          account={harness.account}
           login={login ?? {}}
           surface={surface}
           onCheck={recheck}

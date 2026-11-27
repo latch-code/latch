@@ -21,7 +21,10 @@ struct QuotaHarnessQuery: EntityQuery {
             harness["id"].string.map { QuotaHarnessEntity(id: $0, name: PhoneStart.engineName(harness)) }
         }
     }
-    func entities(for identifiers: [String]) async throws -> [QuotaHarnessEntity] { all().filter { identifiers.contains($0.id) } }
+    func entities(for identifiers: [String]) async throws -> [QuotaHarnessEntity] {
+        let matching = Set(identifiers + identifiers.map(PhoneQuotaWidget.anonymousId))
+        return all().filter { matching.contains($0.id) }
+    }
     func suggestedEntities() async throws -> [QuotaHarnessEntity] { all() }
 }
 

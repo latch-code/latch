@@ -175,6 +175,7 @@ export interface HistoryProject {
 }
 
 export interface HistoryDeps {
+  hasAccountDirectory(id: string): boolean
   /** A saved project, or undefined. */
   project(id: string): HistoryProject | undefined
   /** Refuses a project whose folders are gone or disabled, as a new session would be refused. */
@@ -304,10 +305,17 @@ export class HistoryImports {
 
   /**
    * Which record an external session ID belongs to: the store the harness's adapter reads, as the driver names it (for
-   * ACP, its command: definitions running the same adapter read the same store), else the harness.
+   * ACP, its account directory or the legacy command identity), else the harness.
    */
   private storeOf(harnessId: string): string {
     return this.hub.historyStoreOf(harnessId) ?? `harness:${harnessId}`
+  }
+
+  private ownSessions(from: string): Set<string> {
+    const store = this.storeOf(from)
+    const bound = this.deps.hasAccountDirectory(from)
+    // Keep the conservative legacy check across unbound definitions. A native ID in an isolated store is only evidence for that store.
+    return new Set(this.hub.agentSessionIds(id => (!bound && !this.deps.hasAccountDirectory(id)) || this.storeOf(id) === store))
   }
 
   private sameSource(imported: ImportedMeta, store: string, agentSessionId: string): boolean {
@@ -344,7 +352,7 @@ export class HistoryImports {
     // One listing process per harness at a time.
     const listed = await this.serial(`list\n${input.harnessId}`, () => bridge.listExternalSessions!())
     this.allData(caller)
-    const own = new Set(this.hub.agentSessionIds())
+    const own = this.ownSessions(input.harnessId)
     const imported = new Map<string, string>()
     for (const { sessionId, imported: record } of this.hub.importedSessions())
       if (record.agentSessionId && this.sameSource(record, this.storeOf(input.harnessId), record.agentSessionId))
@@ -609,7 +617,7 @@ export class HistoryImports {
       const taken = await this.importedBy(receipt.from, receipt.agentSessionId)
       if (taken && taken !== receipt.taskId)
         throw new AppError(409, 'history-already-imported', '这个会话已经接入过了。', { taskId: taken })
-      if (this.hub.agentSessionIds().includes(receipt.agentSessionId))
+      if (this.ownSessions(receipt.from).has(receipt.agentSessionId))
         throw new AppError(409, 'history-latch-session', '这是 Latch 自己开始的会话，直接在 Latch 里打开它。')
     }
     if (receipt.workspaceId) await this.usableProject(receipt.workspaceId)

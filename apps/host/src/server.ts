@@ -191,6 +191,7 @@ import {
   outdatedCommand,
   updateSource,
   claudeConfigDir,
+  accountEnvironment,
   versionUnread,
   outdatedRefusal,
   recheckVersions,
@@ -262,6 +263,7 @@ import {
 import { GitClones, parseCloneUrl } from './git-clone.ts'
 import { foldersHash, newProject, planFolders, reorderFolders, type FolderRefusal, type ProjectPrimary } from './projects.ts'
 import { PolicyStore, isLowering, policyDiff, type Policy } from './policy.ts'
+import { resolveAccountDirectory } from './harness-account.ts'
 import { PresenceService, createPresenceBackend, paramsHash, policySubject, type PresenceBackend } from './presence.ts'
 import {
   BROWSER_PLUGIN,
@@ -779,12 +781,21 @@ const agentCreateSchema = z.object({
   id: z.string().regex(PROVIDER_ID).optional(),
   name: z.string().trim().min(1).max(80),
   presetId: z.string().regex(PROVIDER_ID).optional(),
+  accountDirectory: z
+    .string()
+    .min(1)
+    .max(4096)
+    .refine(isAbsolute, '请填写账号配置目录的绝对路径')
+    .refine(path => !/[\u0000-\u001f\u007f]/u.test(path), '目录不能包含控制字符')
+    .optional(),
   command: z.string().trim().min(1).max(1024),
   args: z.array(argText).max(64).default([]),
   env: z.record(envName, envValue).optional(),
   enabled: z.boolean().optional(),
 })
 const agentUpdateSchema = z.object({
+  accountDirectory: z.never().optional(),
+  presetId: z.unknown().optional(),
   name: z.string().trim().min(1).max(80).optional(),
   command: z.string().trim().min(1).max(1024).optional(),
   args: z.array(argText).max(64).optional(),
@@ -1443,6 +1454,7 @@ function agentSettings(agent: AgentRecord): AgentSettings {
     id: agent.id,
     name: agent.name,
     ...(agent.presetId ? { presetId: agent.presetId } : {}),
+    ...(hasSeparateAccount(agent) ? { account: true } : {}),
     command: agent.command,
     args: [...agent.args],
     envKeys: Object.keys(agent.env).sort(),
@@ -1455,8 +1467,24 @@ function agentSettings(agent: AgentRecord): AgentSettings {
   }
 }
 
+function hasSeparateAccount(agent: AgentRecord): boolean {
+  return agent.accountDirectory !== undefined || (agent.presetId === 'cursor' && !!agent.env.CURSOR_API_KEY?.trim())
+}
+
+const CURSOR_ACCOUNT_ID = /^cursor-key-[0-9a-f]{8}-[0-9a-f-]{27}$/u
+
+function requireDedicatedCursorRoute(agent: AgentRecord): void {
+  if (!CURSOR_ACCOUNT_ID.test(agent.id)) return
+  if (agent.presetId !== 'cursor' || !agent.env.CURSOR_API_KEY?.trim())
+    throw new AppError(400, 'agent-account-key', '这个账号需要专用的 Cursor API 密钥')
+  if (!runsPresetCommand({ ...agent, env: {} }))
+    throw new AppError(400, 'agent-account-command', '这个账号需要使用 Cursor 的预设命令和参数')
+  if (selectProfile(agent).profile?.wire !== 'cursor')
+    throw new AppError(409, 'agent-account-unavailable', '这台电脑上的 Cursor SDK 不可用，无法使用这个账号')
+}
+
 /** Hash of what an agent definition would run; values of env entries only as one digest. */
-function definitionHash(agent: Pick<AgentRecord, 'command' | 'args' | 'env' | 'presetId'>): string {
+function definitionHash(agent: Pick<AgentRecord, 'command' | 'args' | 'env' | 'presetId' | 'accountDirectory'>): string {
   return sha256Hex(
     canonicalJson({
       command: agent.command,
@@ -1464,6 +1492,7 @@ function definitionHash(agent: Pick<AgentRecord, 'command' | 'args' | 'env' | 'p
       envNames: Object.keys(agent.env).sort(),
       envValues: sha256Hex(canonicalJson(agent.env)),
       presetId: agent.presetId,
+      ...(agent.accountDirectory ? { accountDirectory: agent.accountDirectory } : {}),
     }),
   )
 }
@@ -1657,11 +1686,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * session log and session removal rely on before they touch its files.
      */
     const dshConfigs = new Map<string, ReturnType<typeof dshConfigCheck>>()
-    const dshConfig = (home: string) => {
-      let check = dshConfigs.get(home)
+    const dshConfig = (home: string, accountDirectory?: string) => {
+      const key = accountDirectory ?? join(home, '.dsh')
+      let check = dshConfigs.get(key)
       if (!check) {
-        check = dshConfigCheck({ home, path: () => loginShellValues().PATH || process.env.PATH })
-        dshConfigs.set(home, check)
+        check = dshConfigCheck({ home, accountDirectory, path: () => loginShellValues().PATH || process.env.PATH })
+        dshConfigs.set(key, check)
       }
       return check
     }
@@ -1675,16 +1705,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (!current || !confirmedDshPreset(current) || uid === undefined) return null
         // What DeepSeek Harness inherits (`agentEnvironment`): `DSH_HOME` from the Host or the login shell.
         const env = {
-          DSH_HOME: process.env.DSH_HOME || loginShellValues().DSH_HOME,
+          DSH_HOME: accountEnvironment(current).DSH_HOME ?? (process.env.DSH_HOME || loginShellValues().DSH_HOME),
           DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL ?? loginShellValues().DEEPSEEK_BASE_URL,
         }
         const command = current.confirmedCommand!
         const read = await readDshKey({
           home: cliQuota.home,
+          accountDirectory: current.accountDirectory,
           env,
           ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
           uid,
-          config: () => dshConfig(cliQuota.home)(command, DSH_KEY_PLUGINS),
+          config: () => dshConfig(cliQuota.home, current.accountDirectory)(command, DSH_KEY_PLUGINS),
         })
         // A folder that could send the key elsewhere skips this read and keeps what the others showed.
         if (read === 'skip') return undefined
@@ -1724,9 +1755,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const command = current.confirmedCommand!
         return readDshTurnUsage({
           home: cliUsage.home,
-          env: { DSH_HOME: process.env.DSH_HOME || loginShellValues().DSH_HOME },
+          accountDirectory: current.accountDirectory,
+          env: { DSH_HOME: accountEnvironment(current).DSH_HOME ?? (process.env.DSH_HOME || loginShellValues().DSH_HOME) },
           uid,
-          config: () => dshConfig(cliUsage.home)(command, DSH_STORE_PLUGINS),
+          config: () => dshConfig(cliUsage.home, current.accountDirectory)(command, DSH_STORE_PLUGINS),
           ...input,
         })
       }
@@ -1736,9 +1768,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * The Host's reads and removals in a Harness CLI's own store (`cli-stores.ts`), each for the one preset whose store it
      * knows; the profile decides when each is asked. Only verdicts, IDs and a digest come back.
      */
-    const cliStoreAccess = (cliStores: NonNullable<ServerOptions['cliStore']>): CliStoreAccess | undefined => {
+    const cliStoreAccess = (cliStores: NonNullable<ServerOptions['cliStore']>, agent: AgentRecord): CliStoreAccess => {
       const uid = process.getuid?.()
-      if (uid === undefined) return undefined
+      if (uid === undefined) return {}
       const { home } = cliStores
       return {
         resumeState: async ({ presetId, sessionId, inherited }) =>
@@ -1747,13 +1779,20 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           presetId === 'goose' ? gooseChildSessions({ home, env: inherited, uid, sessionIds }) : [],
         removeSession: async ({ presetId, sessionId, cwd, command, inherited }) =>
           presetId === 'dsh'
-            ? removeDshSession({ home, env: inherited, uid, sessionId, cwd, config: () => dshConfig(home)(command, DSH_STORE_PLUGINS) })
+            ? removeDshSession({
+                home,
+                accountDirectory: agent.accountDirectory,
+                env: inherited,
+                uid,
+                sessionId,
+                cwd,
+                config: () => dshConfig(home, agent.accountDirectory)(command, DSH_STORE_PLUGINS),
+              })
             : false,
         launchCode: ({ presetId, command, inherited }) =>
           presetId === 'qwen' ? qwenRunningCode({ home, env: inherited, command }) : undefined,
       }
     }
-    const storeAccess = options.cliStore ? cliStoreAccess(options.cliStore) : undefined
     /**
      * The tokens of a goose turn from goose's own ledger (`cli-stores.ts`), whose prompt answer reports only its last
      * call's context. Only numbers come back; nothing is audited, as for DeepSeek Harness's log.
@@ -1774,6 +1813,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             const env = Object.fromEntries(
               ['GOOSE_PATH_ROOT', 'XDG_DATA_HOME'].map(name => [name, process.env[name] || loginShellValues()[name]]),
             )
+            Object.assign(env, accountEnvironment(current))
             return gooseTurnUsage({ home, env, uid, sessionId: input.sessionId, from: input.from, to: input.to })
           }
         })()
@@ -1789,7 +1829,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(readCliUsage && confirmedDshPreset(agent) ? { readTurnUsage: input => readCliUsage(agent.id, input) } : {}),
           ...(options.cliStore ? { cliStore: { home: options.cliStore.home } } : {}),
           ...(readGooseUsage && agent.presetId === 'goose' ? { readTurnUsage: input => readGooseUsage(agent.id, input) } : {}),
-          ...(storeAccess ? { storeAccess } : {}),
+          ...(options.cliStore && process.getuid ? { storeAccess: cliStoreAccess(options.cliStore, agent) } : {}),
         }))
     const egressExtra = [...(options.egressAllow ?? [])]
     const egressFetch = createEgressFetch({
@@ -1915,6 +1955,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const tlsKeyPath = options.tls ? resolve(options.tls.keyPath) : undefined
 
     const workspaceGuard: FolderGuardContext = {
+      accountDirectories: () => config.accountDirectories(),
       dataDir: realDataDir,
       agentsDir,
       runtimeDir: runtime.runtimeDir,
@@ -1959,7 +2000,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (!options.generalHomeMigration) return undefined
       const generalHomeKey = await canonicalThroughAncestor(generalHomeParent)
       const reserved = await Promise.all(
-        [realDataDir, realWorkspace, agentsDir, runtime.runtimeDir, worktreesDir].map(canonicalThroughAncestor),
+        [realDataDir, realWorkspace, agentsDir, runtime.runtimeDir, worktreesDir, ...config.accountDirectories()].map(
+          canonicalThroughAncestor,
+        ),
       )
       if (
         generalHomeKey === undefined
@@ -2098,6 +2141,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       ],
       cliHomes,
     }
+    const accountReservedPaths = [
+      ...outsidePaths.excluded,
+      ...cliHomes,
+      generalHomeParent,
+      worktreesDir,
+      ...(options.legacyWorkspaceRoot ? [options.legacyWorkspaceRoot] : []),
+      ...(options.legacyWorktreesDir ? [options.legacyWorktreesDir] : []),
+    ]
+    function protectAccountDirectory(directory: string): void {
+      if (!guardedPaths.includes(directory)) guardedPaths.push(directory)
+      if (!outsidePaths.excluded.includes(directory)) outsidePaths.excluded.push(directory)
+    }
+    for (const directory of config.accountDirectories()) protectAccountDirectory(directory)
 
     const startupActor: AuditActor = { listener: 'host', via: 'startup' }
     // The last settings this Host knowingly started with or wrote; a write whose commit failed leaves its previous state.
@@ -2557,7 +2613,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const { pendingQuestions: _untrustedCount, ...summary } = task
       return { ...summary, pendingQuestions: questions.view(task.id).length }
     }
-    const workspaceFiles = createWorkspacePlugin({ protectedPaths: guardedPaths, ...(managedHome ? { managedHome } : {}) })
+    const workspaceFiles = createWorkspacePlugin({ protectedPaths: () => guardedPaths, ...(managedHome ? { managedHome } : {}) })
     /** Latch's own optional plugins, as 设置 › 扩展 tells them from ones a developer added. */
     const builtInPlugins = new Set<string>()
     const workspacePages = new Set<BundledWorkspacePage>()
@@ -3698,6 +3754,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         VERSION_RECHECK_MS,
       )
     const historyImports = new HistoryImports(routeContext, await HistoryReceipts.open(dataDir), {
+      hasAccountDirectory: id => config.settings().agents.some(agent => agent.id === id && !!agent.accountDirectory),
       project: id => savedProject(id),
       async assertProjectUsable(id) {
         const record = savedProject(id)
@@ -4317,7 +4374,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         return 'own-permissions'
       if (trust.kind === 'builtin' && harnessId === STANDARD)
         return levelAtMost(trust.level, policy.get().unattended.maxLevel) ? 'text-only' : undefined
-      if (grant.scope === 'builtin' || (grant.scope === 'legacy-dsh' && (!record || !confirmedDshPreset(record)))) return undefined
+      if (
+        grant.scope === 'builtin'
+        || (grant.scope === 'legacy-dsh' && (!record || record.accountDirectory || !confirmedDshPreset(record)))
+      )
+        return undefined
       return hub!.supportsConsultation(harnessId) ? 'text-only' : undefined
     }
 
@@ -5225,7 +5286,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           .filter(agent => agent.presetId === next.presetId && agent.command === next.command)
           .map(agent => agent.confirmedCommand),
       ].filter((path): path is string => path !== undefined)
-      if (resolved && runsPresetCommand(next) && onPath(resolved) && bound.every(path => path === resolved)) {
+      if (resolved && !next.accountDirectory && runsPresetCommand(next) && onPath(resolved) && bound.every(path => path === resolved)) {
         requireDevice(caller)
         await presence.assertNotHeldBack('harness.command.apply', devices.get(caller.device.id)?.scopes.includes('view') === true)
         return { stepup: 'preset', found: resolved }
@@ -5244,6 +5305,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           args: next.args,
           envNames: names,
           envHash: sha256Hex(canonicalJson(next.env)),
+          ...(next.accountDirectory ? { directoryHash: sha256Hex(next.accountDirectory) } : {}),
         },
         { form: 'harness.command.apply', slots: { command: found, harness: next.name } },
         [
@@ -5251,6 +5313,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           { label: '参数', value: next.args.length ? next.args.join(' ') : '无' },
           { label: '环境变量', value: names.length ? names.join('、') : '无' },
           { label: 'Harness', value: `${next.name}（${next.id}）` },
+          ...(next.accountDirectory ? [{ label: '账号配置目录', value: next.accountDirectory }] : []),
         ],
       )
       // Exactly the path the sheet showed is what the definition is bound to; nothing is looked up again.
@@ -7489,7 +7552,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     async function installAgent(agent: AgentRecord): Promise<void> {
-      const plugin = buildAgentPlugin(agent)
+      const plugin = buildAgent(agent)
       registry.register(plugin, { managed: 'agent' })
       agentPlugins.set(plugin.id, agent.id)
       if (agent.enabled) await registry.enable(plugin.id)
@@ -7507,6 +7570,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     function buildAgent(next: AgentRecord): HarnessPlugin {
+      requireDedicatedCursorRoute(next)
       try {
         return buildAgentPlugin(next)
       } catch (error) {
@@ -7558,7 +7622,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       try {
         await writeSettings(caller, draft => {
           const removed = draft.agents.find(agent => agent.id === id)
-          if (removed) keepBinding(draft, removed)
+          if (removed) {
+            keepBinding(draft, removed)
+            const directory = removed.accountDirectory
+            if (directory && !draft.retiredAccountDirectories?.includes(directory))
+              draft.retiredAccountDirectories = [...(draft.retiredAccountDirectories ?? []), directory]
+          }
           draft.agents = draft.agents.filter(agent => agent.id !== id)
         })
       } catch (error) {
@@ -9041,7 +9110,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           at: Date.now(),
           found: AGENT_PRESETS.filter(preset => detect(preset).found),
         }
-      const saved = new Set(config.settings().agents.map(agent => agent.presetId))
+      const saved = new Set(
+        config
+          .settings()
+          .agents.filter(agent => !hasSeparateAccount(agent))
+          .map(agent => agent.presetId),
+      )
       // One known to be too old is listed too, unavailable with `statusReason: 'outdated'`: a draft shows it greyed with
       // 需要升级 instead of as a choice, and a draft that had chosen it keeps it, with the upgrade command.
       return presetLookup.found.filter(preset => !saved.has(preset.id) && !hub!.info(preset.id)).map(presetOffer)
@@ -9074,6 +9148,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         promptTemplatesVersion: templateStore.revision(),
         features: {
           agentProbe: true,
+          harnessAccounts: true,
           queue: true,
           queueAttachments: true,
           queueControl: true,
@@ -9111,7 +9186,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             harness.capabilities.permission.enforcement === 'latch'
               ? BUILTIN_HELPER_CARD
               : AGENT_PRESETS.find(preset => preset.id === harness.capabilities.display.mark)?.helperCard
-          const { helperCard: _ignored, ...info } = harness
+          const { helperCard: _ignored, presetId: _driverPreset, account: _driverAccount, ...info } = harness
           const agent = config.settings().agents.find(item => item.id === harness.id)
           const path = agent?.confirmedCommand
           const found = isAdmin && agent ? resolveCommand(agent.command) : undefined
@@ -9122,6 +9197,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               : undefined
           return {
             ...info,
+            ...(agent?.presetId ? { presetId: agent.presetId } : harness.offer ? { presetId: harness.offer.presetId } : {}),
+            ...(agent && hasSeparateAccount(agent) ? { account: true as const } : {}),
             ...(reported ? { attachmentsReported: reported } : {}),
             ...(card ? { helperCard: card } : {}),
             ...(path
@@ -10799,8 +10876,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
       }
       const harnessId = input.harnessId ?? defaultHarnessId()
-      // The session or Agent's explicit choice comes first, then the project, then this Harness's default.
-      if (!input.model && !input.ownModel && !input.forkOf) {
+      // Selecting a bound account names its own models unless this session or its Agent chose a model service.
+      const selectedAccount =
+        input.harnessId !== undefined
+        && config
+          .settings()
+          .agents.some(agent => agent.id === harnessId && (agent.accountDirectory !== undefined || CURSOR_ACCOUNT_ID.test(agent.id)))
+      if (!input.model && !input.ownModel && !input.forkOf && !selectedAccount) {
         const harness = hub!.info(harnessId)
         const ownPick = input.config?.some(pick =>
           harness?.catalogue?.options.some(option => option.id === pick.configId && option.category === 'model'),
@@ -12827,6 +12909,23 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         requireScope(caller, 'admin')
         const input = agentCreateSchema.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
         recheck(caller, 'admin')
+        requireLocal(caller)
+        const resolveDirectory = async (path: string) => {
+          const settings = config.settings()
+          const directory = await resolveAccountDirectory({
+            path,
+            presetId: input.presetId,
+            home,
+            protected: accountReservedPaths,
+            projects: [realWorkspace, ...settings.workspaces.flatMap(project => project.folders.map(folder => folder.path))],
+            agents: settings.agents,
+            retired: settings.retiredAccountDirectories ?? [],
+            inherited: name => process.env[name] || loginShellValues()[name],
+          }).finally(() => recheck(caller, 'admin'))
+          if (input.presetId) accountEnvironment({ presetId: input.presetId, accountDirectory: directory })
+          return directory
+        }
+        const directory = input.accountDirectory && (await resolveDirectory(input.accountDirectory))
         const agents = config.settings().agents
         const taken = [
           STANDARD,
@@ -12835,12 +12934,22 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             .list()
             .flatMap(plugin => plugin.capabilities.filter(item => item.startsWith('harness:')).map(item => item.slice('harness:'.length))),
         ]
-        const id = input.id ?? availableId(input.presetId ?? input.name, taken)
-        if (taken.includes(id) || hub!.info(id) || pluginInfo(`agent-${id}`)) throw new AppError(409, 'agent-exists', `标识 ${id} 已被占用`)
+        // Stable across the confirmation round trip. A different directory can never inherit this account's sessions.
+        const accountId =
+          directory
+          && `account-${createHmac('sha256', boundKey).update(input.presetId!).update('\0').update(pathKey(directory)).digest('hex').slice(0, 24)}`
+        const id = accountId || input.id || availableId(input.presetId ?? input.name, taken)
+        if ((accountId && input.id && input.id !== accountId) || (!accountId && /^account-[a-f0-9]{24}$/u.test(id)))
+          throw new AppError(400, 'agent-account-id', '账号标识由这台电脑分配')
+        if (taken.includes(id) || hub!.info(id) || pluginInfo(`agent-${id}`)) {
+          if (directory && agents.some(agent => agent.id === id)) await resolveDirectory(directory)
+          throw new AppError(409, 'agent-exists', `标识 ${id} 已被占用`)
+        }
         const next: AgentRecord = {
           id,
           name: input.name,
           ...(input.presetId ? { presetId: input.presetId } : {}),
+          ...(directory ? { accountDirectory: directory } : {}),
           command: input.command,
           args: input.args,
           env: { ...input.env },
@@ -12860,7 +12969,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         // A new definition is a new program sessions start: only this Mac's desktop app saves one, and confirms it. A
         // preset's command too old for it is refused first, so nobody confirms what cannot run.
-        requireLocal(caller)
         const { stepup, found } = await confirmHarnessCommand(req, caller, next)
         // Bound to the program the sheet named: one that later resolves elsewhere waits for a new confirmation. Its
         // version is read only now, from that program.
@@ -12879,6 +12987,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           recheck(caller, 'admin')
         }
         const record = await serial(caller, 'admin', async () => {
+          if (directory && (await resolveDirectory(directory)) !== directory)
+            throw new AppError(409, 'agent-account-directory', '账号配置目录已变更，请重新选择')
           if (config.settings().agents.some(agent => agent.id === id)) throw new AppError(409, 'agent-exists', `标识 ${id} 已被占用`)
           const seq = await audited({
             action: 'agent.defined',
@@ -12888,8 +12998,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             detail: { agentId: id, definitionHash: hash, created: true },
           })
           try {
+            if (directory) protectAccountDirectory(directory)
             await saveAgent(caller, next, true)
           } catch (error) {
+            if (directory && !config.accountDirectories().includes(directory)) {
+              for (const paths of [guardedPaths, outsidePaths.excluded]) {
+                const index = paths.indexOf(directory)
+                if (index >= 0) paths.splice(index, 1)
+              }
+            }
             auditFailed(seq, caller)
             throw error
           }
@@ -13277,6 +13394,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         recheck(caller, 'admin')
         const current = config.settings().agents.find(agent => agent.id === id)
         if (!current) throw new AppError(404, 'agent-not-found', '找不到该 Agent')
+        if (CURSOR_ACCOUNT_ID.test(id) && input.presetId !== undefined && input.presetId !== current.presetId)
+          throw new AppError(400, 'agent-account-command', '这个账号必须沿用 Cursor 预设')
         const env = { ...current.env }
         for (const [key, value] of Object.entries(input.env ?? {})) {
           if (value === null) delete env[key]
@@ -13290,6 +13409,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           env,
           enabled: input.enabled ?? current.enabled,
         }
+        requireDedicatedCursorRoute(next)
         const changed = definitionHash(next) !== definitionHash(current)
         if (changed) {
           next.startedHash = null
@@ -13564,6 +13684,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     /** Checks a definition before it is saved, and returns its hash for the audit. Values of its variables are never returned. */
     function checkAgent(next: AgentRecord): string {
+      if (next.accountDirectory && !runsPresetCommand(next))
+        throw new AppError(400, 'agent-account-command', '独立账号使用预设命令和参数，不能另设环境变量')
       const verdict = validateAgentDefinition(next)
       if (!verdict.ok) throw verdict.error
       buildAgent(next)

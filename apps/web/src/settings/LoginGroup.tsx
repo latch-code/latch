@@ -140,7 +140,7 @@ export function LoginGroup({
       />
       {steps && (
         <div className="settings-card-body">
-          <HarnessLoginSteps harnessId={harness.id} login={login} surface={surface} onEnded={() => check(true)} />
+          <HarnessLoginSteps harnessId={harness.id} account={harness.account} login={login} surface={surface} onEnded={() => check(true)} />
         </div>
       )}
       {leaving && (

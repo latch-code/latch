@@ -1385,6 +1385,21 @@ public actor NativeWorkspace {
         try lease.requireValid()
         return try NativeJSON.decode(response.body)
     }
+    /** A read for one bound Harness. The resulting models arrive in the Host's catalog. */
+    public func refreshHarnessModels(_ harnessId: String, automatic: Bool, selectedModel: String? = nil) async throws {
+        guard LinkBytes.matches(harnessId, "[A-Za-z0-9_-]{1,64}") else { throw NativeFailure.invalidRecord }
+        let (connection, current) = try transport()
+        guard let lease = await verification.currentLease() else { throw NativeFailure.expired }
+        try lease.requireValid()
+        var fields: [String: NativeJSON] = ["auto": .bool(automatic)]
+        if let selectedModel { fields["model"] = .string(selectedModel) }
+        let response = try await connection.request(.post, path: "/link/api/agents/\(harnessId)/catalogue",
+            body: NativeJSON.object(fields).encoded(), maximum: 65_536, timeoutSeconds: 30)
+        guard epoch == current else { throw NativeFailure.unavailable }
+        guard response.status == 200 else { throw await responseFailure(response, lease: lease) }
+        try lease.requireValid()
+    }
+
     /**
      * Asks the Host to read every Harness's limits again (`retry`: also those whose last read failed). What arrives comes
      * with the catalog; the answer only names the Harnesses it asked. The Host rechecks `run` and the window.

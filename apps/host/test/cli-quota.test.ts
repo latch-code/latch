@@ -66,6 +66,17 @@ describe('reading the key from a home', () => {
     expect(await read(await home())).toEqual({ key: KEY })
   })
 
+  it('reads only the explicitly bound account when two credentials exist', async () => {
+    const defaultHome = await home()
+    const accountDirectory = await temp('latch-dsh-account-')
+    const other = `sk-${'abcd0123'.repeat(4)}`
+    await writeFile(join(accountDirectory, '.credentials.yaml'), credentials(other), { mode: 0o600 })
+    const input = { home: defaultHome, uid, accountDirectory, config: official }
+    expect(await readDshKey({ ...input, env: { DSH_HOME: accountDirectory } })).toEqual({ key: other })
+    expect(await readDshKey({ ...input, env: {} })).toBe('none')
+    expect(await read(defaultHome)).toEqual({ key: KEY })
+  })
+
   it.each([
     ['DSH_HOME moves the home', {}, { DSH_HOME: '/elsewhere' }],
     ['DEEPSEEK_BASE_URL is in the environment', {}, { DEEPSEEK_BASE_URL: 'https://elsewhere.example' }],

@@ -422,18 +422,19 @@ function ListBody({
   if (view.kind === 'not-supported')
     return <EmptyState className="history-state" title={COPY.cannotList} description={COPY.notDeclared(source.label)} />
   if (view.kind === 'login') {
-    const login = catalog.harnesses.find(harness => harness.id === source.harnessId)?.login
+    const harness = catalog.harnesses.find(item => item.id === source.harnessId)
+    const command = !harness?.account && harness?.login?.command
     return (
       <EmptyState
         className="history-state"
         title={COPY.signIn(source.label)}
-        description={login?.command ? COPY.withCommand : COPY.useOwnLogin}
+        description={command ? COPY.withCommand : COPY.useOwnLogin}
         action={
           <div className="history-login">
-            {login?.command && (
+            {command && (
               <span className="history-login-command">
-                <code>{login.command}</code>
-                <CopyButton text={login.command} label={COPY.copyLogin} size="xs" />
+                <code>{command}</code>
+                <CopyButton text={command} label={COPY.copyLogin} size="xs" />
               </span>
             )}
             <Button size="sm" icon={RefreshGlyph} onClick={onRetry}>

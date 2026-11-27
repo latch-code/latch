@@ -1,6 +1,9 @@
 /** The environment an agent process starts with: an allowlist of the Host's variables, never the whole of it. */
-import { delimiter, dirname, isAbsolute, resolve } from 'node:path'
-import { isReservedAgentEnvName } from '@latch/protocol'
+import { lstatSync, realpathSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { harnessAccountDirectories, isReservedAgentEnvName, type AgentRecord } from '@latch/protocol'
+import { AppError } from '@latch/sdk'
 import { extraDirectories, resolveCommand } from './command.ts'
 import { ALWAYS_INHERITED, loginShellValues } from './login-shell.ts'
 import type { AcpPermissionProfile } from './profiles/index.ts'
@@ -59,6 +62,92 @@ function withLoopback(value: string): string {
   return [...new Set([...listed, ...LOOPBACK])].join(',')
 }
 
+type AccountBinding = Pick<AgentRecord, 'presetId' | 'accountDirectory'>
+
+/** The CLI's native directories for a binding confirmed by this Host. A missing or redirected root never opens a default home. */
+export function accountEnvironment(record: AccountBinding): Record<string, string> {
+  const root = record.accountDirectory
+  if (root === undefined) return {}
+  const directories = record.presetId && harnessAccountDirectories(record.presetId)
+  if (!directories) throw new AppError(409, 'harness-account-unsupported', '这个 Harness 不支持绑定账号目录。')
+  const env: Record<string, string> = {}
+  try {
+    if (!isAbsolute(root) || realpathSync(root) !== root || !statSync(root).isDirectory()) throw new Error()
+    for (const [key, child] of Object.entries(directories)) {
+      const path = child ? join(root, child) : root
+      // XDG trees may be absent until the CLI needs them. A link could redirect its login or history to another account.
+      if (child && key.startsWith('XDG_')) {
+        const entry = lstatSync(path, { throwIfNoEntry: false })
+        if (entry && !entry.isDirectory()) throw new Error()
+      }
+      env[key] = path
+    }
+    if (record.presetId === 'qwen') assertLocalDotenv(root)
+  } catch {
+    throw new AppError(409, 'harness-account-unavailable', '绑定的账号目录不可用，请在 Host 电脑检查原来的目录。')
+  }
+  if (record.presetId === 'antigravity') {
+    // Google resolves ADC through this file. Do not read it, or start agy on another credential source if it disappears.
+    try {
+      const file = lstatSync(env.GOOGLE_APPLICATION_CREDENTIALS!)
+      if (!file.isFile() || (process.getuid && file.uid !== process.getuid())) throw new Error()
+    } catch {
+      throw new AppError(409, 'harness-account-unavailable', '这个账号目录缺少属于当前用户的 ADC 凭据文件。')
+    }
+    env.AGY_ADC_AUTH = 'true'
+  }
+  // goose's system keyring is shared by every configuration directory. Named accounts use their own file-based secrets.
+  if (record.presetId === 'goose') env.GOOSE_DISABLE_KEYRING = '1'
+  // QWEN_HOME alone still lets Qwen load both dotenv files under the person's normal HOME.
+  if (record.presetId === 'qwen') {
+    env.HOME = root
+    if (process.platform === 'win32') env.USERPROFILE = root
+  }
+  return env
+}
+
+const QWEN_ENV_FILES = ['.env', join('.qwen', '.env')]
+
+function envFileInfo(path: string) {
+  try {
+    return lstatSync(path, { throwIfNoEntry: false })
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOTDIR') return undefined
+    throw error
+  }
+}
+
+function assertLocalDotenv(directory: string): void {
+  for (const file of QWEN_ENV_FILES) {
+    const path = join(directory, file)
+    if (!envFileInfo(path)) continue
+    const target = realpathSync(path)
+    const fromDirectory = relative(directory, target)
+    if (isAbsolute(fromDirectory) || fromDirectory === '..' || fromDirectory.startsWith(`..${sep}`) || !statSync(target).isFile())
+      throw new Error()
+  }
+}
+
+/** Qwen walks upward for the first project dotenv file. Allow the project itself, and fail closed on ancestor candidates. */
+export function assertAccountWorkspace(record: AccountBinding, cwd: string, additional: readonly string[] = []): void {
+  if (record.presetId !== 'qwen' || record.accountDirectory === undefined) return
+  try {
+    const personal = realpathSync(homedir())
+    for (const directory of [cwd, ...additional]) {
+      const workspace = realpathSync(directory)
+      if (workspace === personal) throw new Error()
+      assertLocalDotenv(workspace)
+      if (workspace === record.accountDirectory) continue
+      for (let ancestor = dirname(workspace); ; ancestor = dirname(ancestor)) {
+        if (QWEN_ENV_FILES.some(file => envFileInfo(join(ancestor, file)))) throw new Error()
+        if (ancestor === dirname(ancestor)) break
+      }
+    }
+  } catch {
+    throw new AppError(409, 'harness-account-unavailable', 'Qwen Code 可能从项目外加载 .env，无法确认会使用所选账号。请选择其他项目目录。')
+  }
+}
+
 /** The values of the profile's `inheritEnv` the agent gets, as `agentEnvironment` takes them: the Host's before the login shell's. */
 export function inheritedValues(
   profile: AcpPermissionProfile | undefined,
@@ -85,6 +174,7 @@ export function agentEnvironment(input: {
   /** What the profile's `materialize` returned: paths of Host-only files. */
   materializedEnv?: Record<string, string>
   definitionEnv: Record<string, string>
+  account?: AccountBinding
   sessionTmpDir: string
   /** A session on a gateway route: the variables that point the harness at it. Its token is among the values. */
   gatewayEnv?: Record<string, string>
@@ -98,7 +188,7 @@ export function agentEnvironment(input: {
     if (value !== undefined && (INHERITED.has(name) || name.startsWith('LC_'))) env[name] = value
   }
   env.PATH = agentPath(input.resolvedCommand, [shell.PATH, host.PATH])
-  for (const name of [...ALWAYS_INHERITED, ...(input.profile?.inheritEnv ?? [])]) {
+  for (const name of [...ALWAYS_INHERITED, ...(input.account?.accountDirectory === undefined ? (input.profile?.inheritEnv ?? []) : [])]) {
     const value = host[name] || shell[name]
     if (value) env[name] = value
   }
@@ -107,6 +197,7 @@ export function agentEnvironment(input: {
   for (const [name, value] of Object.entries(input.definitionEnv)) {
     if (!isReservedAgentEnvName(name)) env[name] = value
   }
+  if (input.account) Object.assign(env, accountEnvironment(input.account))
   Object.assign(env, input.profile?.defaultEnv ?? {}, input.materializedEnv ?? {})
   env.TMPDIR = input.sessionTmpDir
   env.NODE_TLS_REJECT_UNAUTHORIZED = '1'

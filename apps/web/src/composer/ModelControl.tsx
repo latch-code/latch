@@ -633,7 +633,7 @@ export const ROUTING_COPY = defineCopy(
  * A group of the model panel. `gateway`: a service's models that go through Latch's gateway, all of which the panel
  * shows under the one 「Latch 网关」 source, each service under its own name.
  */
-export type ModelGroup = PickerGroup<string> & { gateway?: { experimental: boolean }; note?: BoardNote }
+export type ModelGroup = PickerGroup<string> & { railLabel?: string; gateway?: { experimental: boolean }; note?: BoardNote }
 
 // Only a turn with no request through the gateway can be told apart; a turn that sends some elsewhere cannot.
 export const ROUTE_NOTE = (name: string, computer?: string, inherited?: boolean): Brief & { detail: string } => ({

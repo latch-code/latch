@@ -1,16 +1,18 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentRecord, AgentSettings, HarnessInfo } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { createAcpAgentPlugin, forgetCommandLookups } from '@latch/harness-acp'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import { resolveAccountDirectory } from '../src/harness-account.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+  vi.unstubAllEnvs()
 })
 
 const ADMIN = ['view', 'run', 'approve:standard', 'admin'] as const
@@ -71,6 +73,163 @@ async function startOn(t: TestHost, device: Awaited<ReturnType<TestHost['enroll'
 }
 
 describe("a preset's own command", () => {
+  it('protects the XDG default account directories goose selects on macOS with a non-absolute home override', async () => {
+    const home = await folder('latch-goose-home-')
+    const configuredData = join(home, 'xdg-data')
+    const configDirectory = join(home, '.config', 'goose')
+    const dataDirectory = join(configuredData, 'goose')
+    const separate = join(home, 'separate')
+    for (const path of [configDirectory, dataDirectory, separate]) await mkdir(path, { recursive: true })
+    const env: Record<string, string> = {
+      GOOSE_PATH_ROOT: '~/relative',
+      XDG_CONFIG_HOME: '~/.custom-config',
+      XDG_DATA_HOME: configuredData,
+    }
+    const bind = (path: string) =>
+      resolveAccountDirectory({
+        path,
+        home,
+        presetId: 'goose',
+        protected: [],
+        projects: [],
+        agents: [],
+        retired: [],
+        inherited: n => env[n],
+      })
+    for (const path of [configDirectory, dataDirectory]) await expect(bind(path)).rejects.toMatchObject({ code: 'agent-account-bound' })
+    await expect(bind(separate)).resolves.toBe(separate)
+  })
+
+  it('refuses account folders that overlap a default or protected directory through a link', async () => {
+    const root = await folder('latch-account-roots-')
+    const home = join(root, 'home')
+    const defaultAccount = join(root, 'default-goose')
+    const credentialStore = join(root, 'credentials')
+    const generalHomeBase = join(root, 'general')
+    const general = join(generalHomeBase, 'agent-homes', 'account')
+    const legacyWorkspaceRoot = join(root, 'legacy')
+    const legacy = join(legacyWorkspaceRoot, 'account')
+    for (const directory of [home, join(defaultAccount, 'child'), credentialStore, general, legacy])
+      await mkdir(directory, { recursive: true })
+    const alias = join(root, 'default-link')
+    await symlink(defaultAccount, alias, 'dir')
+    await symlink(credentialStore, join(home, '.ssh'), 'dir')
+    vi.stubEnv('HOME', home)
+    vi.stubEnv('GOOSE_PATH_ROOT', alias)
+    const t = await startTestHost({ generalHomeBase, generalHomeMigration: true, legacyWorkspaceRoot })
+    cleanups.push(() => t.close())
+    const desktop = await t.enroll({ listener: 'unix' })
+    const { id: _id, ...preset } = GOOSE
+    for (const accountDirectory of [defaultAccount, join(defaultAccount, 'child')])
+      expect(await body(await desktop.request('agents', { body: { ...preset, accountDirectory } }))).toMatchObject({
+        error: 'agent-account-bound',
+      })
+    for (const accountDirectory of [credentialStore, general, legacy])
+      expect(await body(await desktop.request('agents', { body: { ...preset, accountDirectory } }))).toMatchObject({
+        error: 'agent-account-overlap',
+      })
+  })
+
+  it('binds a second account only on the Host and keeps its directory out of the catalog and audit', async () => {
+    const root = await folder('latch-accounts-')
+    const work = await folder('latch-account-work-')
+    const personal = await folder('latch-account-personal-')
+    await program(join(root, 'bin'), 'goose', root)
+    const { id: _id, ...preset } = GOOSE
+    const { t, desktop, browser } = await presetHost(() => [join(root, 'bin')])
+    const workInput = { ...preset, name: 'goose · Work', accountDirectory: work }
+    expect(await body(await browser.request('agents', { body: workInput }))).toMatchObject({ error: 'local-only' })
+    const first = await desktop.request('agents', { body: workInput })
+    expect(await body(first)).toMatchObject({ error: 'stepup-required' })
+    expect(t.presence.requests.at(-1)?.preview.lines).toContainEqual({ label: '账号配置目录', value: work })
+    const add = async (name: string, accountDirectory: string) =>
+      (await desktop.confirmedJson<{ agent: AgentSettings }>('agents', { body: { ...preset, name, accountDirectory } })).agent
+    const a = await add(workInput.name, work)
+    const b = await add('goose · Personal', personal)
+    expect(a).toMatchObject({ name: workInput.name, account: true, presetId: 'goose' })
+    expect(a.id).not.toBe(b.id)
+    expect(a.id).not.toBe('goose')
+    expect(await harnessOn(browser, b.id)).toMatchObject({ presetId: 'goose', account: true })
+    const duplicate = await desktop.request('agents', { body: workInput })
+    expect(duplicate.status).toBe(409)
+    expect(await body(duplicate)).toMatchObject({ error: 'agent-account-bound', agentId: a.id })
+    const remoteDuplicate = await body(await browser.request('agents', { body: workInput }))
+    expect(remoteDuplicate).toMatchObject({ error: 'local-only' })
+    expect(remoteDuplicate).not.toHaveProperty('agentId')
+    const child = join(work, 'child')
+    await mkdir(child)
+    const alias = join(root, 'work-link')
+    await symlink(work, alias, 'dir')
+    expect(await body(await desktop.request('agents', { body: { ...workInput, accountDirectory: alias } }))).toMatchObject({
+      error: 'agent-account-bound',
+      agentId: a.id,
+    })
+    for (const conflicting of [
+      { ...workInput, accountDirectory: join(alias, 'child') },
+      { ...workInput, presetId: 'codex', command: 'codex', args: ['app-server'] },
+    ]) {
+      const conflict = await body(await desktop.request('agents', { body: conflicting }))
+      expect(conflict).toMatchObject({ error: 'agent-account-bound' })
+      expect(conflict).not.toHaveProperty('agentId')
+    }
+    expect((await desktop.request(`agents/${a.id}`, { method: 'PUT', body: { accountDirectory: personal } })).ok).toBe(false)
+    expect((await desktop.request('agents', { body: GOOSE })).status).toBe(201)
+    expect((await harnessOn(browser, 'goose'))?.account).toBeUndefined()
+    expect(JSON.stringify([a, b, await browser.json('snapshot'), await audit(t)])).not.toContain(work)
+    expect((await desktop.request(`agents/${a.id}`, { method: 'DELETE' })).ok).toBe(true)
+    expect(await realpath(work)).toBe(work)
+    expect(await harnessOn(browser, b.id)).toBeDefined()
+  })
+
+  it('protects a bound account from file previews and project grants through removal and restart', async () => {
+    const root = await folder('latch-account-retirement-')
+    const accountDirectory = join(root, 'WorkAccount')
+    const dataDir = join(root, 'data')
+    const workspaceRoot = join(root, 'workspace')
+    const file = join(accountDirectory, 'notes.txt')
+    await mkdir(accountDirectory)
+    await writeFile(file, 'fixture notes')
+    const { id: _id, ...preset } = GOOSE
+    let t = await startTestHost({ dataDir, workspaceRoot })
+    cleanups.push(() => t.close())
+    let desktop = await t.enroll({ listener: 'unix' })
+    const session = await desktop.json<{ sessionId: string }>('tasks', {
+      body: { prompt: `Read ${file}`, requestId: randomUUID(), mode: 'chat', harnessId: 'standard' },
+    })
+    const preview = () =>
+      desktop.json<{ files: Array<{ status: string; file?: { handle: string } }> }>(`tasks/${session.sessionId}/files/resolve`, {
+        body: { paths: [file] },
+      })
+    await expect.poll(preview).toMatchObject({ files: [{ status: 'ok' }] })
+    const handle = (await preview()).files[0]!.file!.handle
+    const input = { ...preset, accountDirectory }
+    const { agent } = await desktop.confirmedJson<{ agent: AgentSettings }>('agents', { body: input })
+    expect(await preview()).toMatchObject({ files: [{ status: 'protected' }] })
+    expect(await body(await desktop.request(`files/${handle}`))).toMatchObject({ error: 'file-protected' })
+    const grant = async () => body(await desktop.addFolders({ paths: [accountDirectory] }))
+    expect(await grant()).toMatchObject({ error: 'workspace-folders-refused', refused: [{ code: 'workspace-overlap' }] })
+    await desktop.json(`agents/${agent.id}`, { method: 'DELETE' })
+    expect(await preview()).toMatchObject({ files: [{ status: 'protected' }] })
+    expect(await grant()).toMatchObject({ error: 'workspace-folders-refused' })
+    await t.close()
+    t = await startTestHost({ dataDir, workspaceRoot })
+    desktop = await t.enroll({ listener: 'unix' })
+    expect(await preview()).toMatchObject({ files: [{ status: 'protected' }] })
+    expect(await grant()).toMatchObject({ error: 'workspace-folders-refused' })
+    expect(await readFile(file, 'utf8')).toBe('fixture notes')
+    const alias = join(root, 'account-link')
+    await symlink(accountDirectory, alias, 'dir')
+    const variant = `/System/Volumes/Data${join(root, 'workaccount')}`
+    const restoredPath = process.platform === 'darwin' && (await realpath(variant).catch(() => undefined)) ? variant : alias
+    const restored = await desktop.confirmedJson<{ agent: AgentSettings }>('agents', {
+      body: { ...input, accountDirectory: restoredPath },
+    })
+    expect(restored.agent.id).toBe(agent.id)
+    expect(JSON.parse(await readFile(join(dataDir, 'settings.json'), 'utf8'))).toMatchObject({
+      agents: [{ id: agent.id, accountDirectory }],
+    })
+  })
+
   it('is saved on this Mac without a confirmation, bound to the path the Host found, and on record as a preset', async () => {
     const root = await folder('latch-preset-')
     const path = await program(join(root, 'bin'), 'goose', root)

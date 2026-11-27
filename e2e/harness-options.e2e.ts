@@ -9,6 +9,7 @@ import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/t
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, permissionControl, permissionWords } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUTPUT = 'test-results/harness-options'
 /** The phone's entry on the start page: the same one entry as on a desktop, at the end of the input's line. */
@@ -84,6 +85,7 @@ describe("choosing a Harness's own options before the first message", () => {
     host = await startTestHost({
       demo: false,
       sessionFolders: true,
+      hostName: '测试执行电脑',
       detectPreset: preset => (preset.id === 'codex' ? { found: true, path: join(bin, 'codex-acp') } : { found: false }),
       // Only this directory: no agent installed on the computer running the test is ever found.
       commandDirectories: () => [bin],
@@ -962,6 +964,83 @@ describe("choosing one of Codex's own models in a draft", () => {
       await page.emulateMedia({ colorScheme: 'dark' })
       await page.screenshot({ path: `${OUTPUT}/codex-models-390-dark.png`, animations: 'disabled' })
       await noHorizontalOverflow(page)
+    } finally {
+      await context.close()
+    }
+  })
+  it('keeps identical model IDs on their own accounts across selection, search and session start', async () => {
+    const accountDirectory = join(directory, 'work-account')
+    await mkdir(accountDirectory)
+    const owner = await host.enroll({ listener: 'unix' })
+    const { agent } = await owner.confirmedJson<{ agent: { id: string } }>('agents', {
+      method: 'POST',
+      body: { name: 'Codex · 工作', presetId: 'codex', command: 'codex', args: [], accountDirectory },
+    })
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', reducedMotion: 'reduce' })
+    try {
+      const page = await context.newPage()
+      page.setDefaultTimeout(15_000)
+      await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
+      await connected(page)
+      await chip(page, '模型').click()
+      await row(page, /^GPT Fake Mini/u).waitFor()
+      const work = page.getByRole('tab', { name: 'Codex · 工作', exact: true }).filter({ visible: true })
+      await work.click()
+      await row(page, /^GPT Fake Mini/u).waitFor()
+      await expect.poll(() => chip(page, 'Harness').innerText()).toContain('Codex · 工作')
+      const shot = (name: string) => page.screenshot({ path: `${OUTPUT}/accounts-${name}.png`, animations: 'disabled' })
+      await shot('1440-light')
+      await page.keyboard.press('Escape')
+      for (const width of [390, 820, 1440]) {
+        await page.setViewportSize({ width, height: 900 })
+        await page.emulateMedia({ colorScheme: 'dark' })
+        await chip(page, '模型').click()
+        await work.waitFor()
+        await noHorizontalOverflow(page)
+        await shot(`${width}-dark`)
+        await page.keyboard.press('Escape')
+      }
+      await chip(page, '模型').click()
+      await page.getByRole('tab', { name: 'Codex', exact: true }).filter({ visible: true }).click()
+      await page.locator('.ui-board-search input:visible').fill('Mini')
+      const workResults = page.locator('.ui-board-section:visible').filter({ has: page.getByText('Codex · 工作', { exact: true }) })
+      await workResults.getByText('GPT Fake Mini', { exact: true }).click()
+      await page.keyboard.press('Escape')
+      await expect.poll(() => chip(page, 'Harness').innerText()).toContain('Codex · 工作')
+      await expect.poll(() => chip(page, '模型').innerText()).toContain('GPT Fake Mini')
+      const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
+      await input.fill('账号选择')
+      await input.press('Meta+Enter')
+      const elsewhere = page.getByRole('menuitemradio', { name: /^不选项目/u }).or(page.getByRole('radio', { name: /^不选项目/u }))
+      if (
+        await elsewhere.waitFor({ timeout: 3000 }).then(
+          () => true,
+          () => false,
+        )
+      ) {
+        await elsewhere.click()
+        await input.press('Meta+Enter')
+      }
+      await page.locator('.transcript').getByText('echo: 账号选择', { exact: true }).first().waitFor()
+      expect((await owner.json<AppSnapshot>('snapshot')).tasks.some(task => task.harnessId === agent.id)).toBe(true)
+      expect((await received('thread/start')).at(-1)?.params?.model ?? (await received('turn/start')).at(-1)?.params?.model).toBe(
+        'gpt-fake-mini',
+      )
+      await chip(page, '模型').click()
+      expect(await page.getByRole('tab', { name: 'Codex', exact: true }).count()).toBe(0)
+      await page.keyboard.press('Escape')
+      await openNew(page)
+      await expect.poll(() => chip(page, 'Harness').innerText()).toContain('Codex · 工作')
+      await input.fill('保留原来的草稿')
+      expect((await owner.request(`agents/${agent.id}`, { method: 'DELETE' })).ok).toBe(true)
+      const unavailable = page.locator('.setup-card').getByText('原来选择的账号已停用或移除。请重新选择 Harness。', { exact: true })
+      await unavailable.waitFor()
+      expect(await promptValue(input)).toBe('保留原来的草稿')
+      await page.reload()
+      await connected(page)
+      await openNew(page)
+      await unavailable.waitFor()
+      expect(await promptValue(input)).toBe('保留原来的草稿')
     } finally {
       await context.close()
     }

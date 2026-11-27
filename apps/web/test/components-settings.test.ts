@@ -3,9 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DeviceAccess } from '../src/core/permissions.ts'
 import { DEVICES_COPY, ENROLLMENT_COPY, NATIVE_LINK_COPY } from '../src/core/securityCopy.ts'
-import { PROVIDER_PRESETS, type AgentPreset, type AgentSettings, type AppSnapshot, type HarnessInfo } from '@latch/protocol'
+import { AGENT_PRESETS, PROVIDER_PRESETS, type AgentPreset, type AgentSettings, type AppSnapshot, type HarnessInfo } from '@latch/protocol'
 import { AboutSettings } from '../src/settings/AboutSettings.tsx'
-import { AgentRow, engineGroups, missingText } from '../src/settings/AgentsSettings.tsx'
+import { AgentRow, engineGroups, missingText, settingsEngines } from '../src/settings/AgentsSettings.tsx'
 import { PresetGrid, protocolChoices, ProviderAddForm } from '../src/settings/ProvidersSettings.tsx'
 import { ProviderSetupPanel } from '../src/components/SetupPanels.tsx'
 import { SERVICE_FORM } from '../src/core/providerSetup.ts'
@@ -45,7 +45,7 @@ describe('engine rows', () => {
       detected: { found: true },
       ...overrides,
     }) as AgentSettings
-  const row = (value: AgentSettings, extra: { harness?: HarnessInfo; local?: boolean } = {}) =>
+  const row = (value: AgentSettings, extra: { harness?: HarnessInfo; local?: boolean; accountBrand?: string } = {}) =>
     renderToStaticMarkup(
       createElement(AgentRow, {
         agent: value,
@@ -89,6 +89,57 @@ describe('engine rows', () => {
   it('keeps a definition whose program is missing out of 已安装', () => {
     const missing = agent({ id: 'b', detected: { found: false } })
     expect(engineGroups([agent({}), missing])).toEqual({ installed: [agent({})], missing: [missing] })
+  })
+
+  const codex = { ...AGENT_PRESETS.find(preset => preset.id === 'codex')!, detected: { found: true } }
+  const work = agent({ id: 'work', name: 'Codex · 工作', presetId: codex.id, account: true })
+  const personal = agent({ id: 'personal', name: 'Codex · 个人', presetId: codex.id, account: true, enabled: false })
+
+  it('places the detected default launch under a brand only when it has multiple saved accounts', () => {
+    expect(settingsEngines([codex], [work])).toMatchObject({ installed: [work], found: [codex] })
+    expect(settingsEngines([codex], [work, personal])).toEqual({
+      installed: [{ preset: codex, accounts: [work, personal], foundDefault: true }],
+      missing: [],
+      found: [],
+      installable: [],
+    })
+  })
+
+  it('includes the verified default once and keeps additional definitions on their own rows', () => {
+    const other = agent({ id: 'other', name: 'Codex', presetId: codex.id, verified: false })
+    const copy = agent({ id: 'codex-2', name: 'Codex 旧配置', presetId: codex.id })
+    const savedDefault = agent({ id: codex.id, name: 'Codex', presetId: codex.id, detected: { found: false } })
+    expect(settingsEngines([codex], [other, copy, work, savedDefault])).toEqual({
+      installed: [other, copy, { preset: codex, accounts: [savedDefault, work], foundDefault: false }],
+      missing: [],
+      found: [],
+      installable: [],
+    })
+    expect(settingsEngines([codex], [other, work]).installed).toEqual([other, work])
+  })
+
+  it('keeps accounts together with a separate installation entry when none of their commands are found', () => {
+    const missingCodex = { ...codex, detected: { found: false } }
+    const missingWork = { ...work, detected: { found: false } }
+    const missingPersonal = { ...personal, detected: { found: false } }
+    expect(settingsEngines([missingCodex], [missingWork, missingPersonal])).toEqual({
+      installed: [],
+      missing: [{ preset: missingCodex, accounts: [missingWork, missingPersonal], foundDefault: false }],
+      found: [],
+      installable: [missingCodex],
+    })
+  })
+
+  it('shortens account titles and keeps the full accessible name, switch and warning', () => {
+    const html = row(personal, { accountBrand: 'Codex' })
+    expect(html).toContain('>个人</span>')
+    expect(html).toContain('aria-label="编辑 Codex · 个人"')
+    expect(html).toContain('aria-label="启用 Codex · 个人"')
+    expect(html).toContain('已停用')
+    expect(html).not.toContain('预设的说明')
+    expect(row(agent({ name: 'Codex' }), { accountBrand: 'Codex' })).toContain('>默认账号</span>')
+    expect(row(agent({ name: '原来的名字' }), { accountBrand: 'Codex' })).toContain('>原来的名字</span>')
+    expect(row(agent({ name: 'Codex · 自定名字' }), { accountBrand: 'Codex' })).toContain('aria-label="编辑 Codex · 自定名字"')
   })
 })
 

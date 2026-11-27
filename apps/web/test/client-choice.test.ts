@@ -36,6 +36,7 @@ import {
   loginHarness,
   servicePick,
   startConfig,
+  startChoices,
   withOwnDefault,
   withServicePick,
   type ComposerChoice,
@@ -43,6 +44,7 @@ import {
 } from '../src/composerChoice.ts'
 import { forkedChoice } from '../src/forkChoice.ts'
 import { presetsFound } from '../src/core/agentDetection.ts'
+import { harnessAccountAlias } from '../src/core/harnessName.ts'
 import { GeneralSettings } from '../src/settings/GeneralSettings.tsx'
 
 const at = (id: string) => AGENT_PRESETS.find(preset => preset.id === id)!
@@ -762,6 +764,31 @@ describe('harness entries', () => {
     expect(
       startBlock({ catalog: limited } as AppSnapshot, { harnessId: 'standard', workspaceId: 'wide', mode: 'agent' })?.message,
     ).toContain('最多使用 1 个')
+  })
+
+  it('keeps the default preset available and never silently substitutes another account', () => {
+    const codex = { ...testHarness('codex', { kind: 'agent', label: 'Codex' }), presetId: 'codex' }
+    const work = { ...codex, id: 'work', account: true as const }
+    const both = catalog({ harnesses: [work, codex] })
+    expect(resolveChoice(both, null).harnessId).toBe('codex')
+    const picked = resolveChoice(both, { harnessId: 'work' })
+    expect(picked.accountId).toBe('work')
+    expect(startChoices(both, picked).ownModel).toBe(true)
+    const gone = catalog({ harnesses: [codex] })
+    const blocked = resolveChoice(gone, picked)
+    expect(blocked.harnessId).toBe('work')
+    expect(startBlock(snapshot({ catalog: gone }), blocked)?.kind).toBe('harness-unavailable')
+    const bound = 'account-123456789abcdef012345678'
+    expect(resolveChoice(gone, { harnessId: bound }).accountId).toBe(bound)
+    expect(resolveChoice(gone, { ...picked, harnessId: 'codex' }).accountId).toBeUndefined()
+    expect(presetsToAdd(catalog({ harnesses: [work] })).some(item => item.id === 'codex')).toBe(true)
+  })
+
+  it('uses an account alias only when the name starts with its own preset prefix', () => {
+    expect(harnessAccountAlias('Codex · 工作', 'Codex')).toBe('工作')
+    expect(harnessAccountAlias('Codex · 工作', 'Cursor')).toBeUndefined()
+    expect(harnessAccountAlias('工作 · Codex', 'Codex')).toBeUndefined()
+    expect(harnessAccountAlias('Codex · ', 'Codex')).toBe('')
   })
 
   it('offers only the presets no agent was added from yet', () => {

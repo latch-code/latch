@@ -54,6 +54,7 @@ const CHOICE_COPY = defineCopy(
     oldHostHint: '更新 Latch 并重新启动后再添加。',
     executionDown: '当前模型接口不可用，请检查模型插件状态。',
     noHarness: '没有可用的 Harness。',
+    accountUnavailable: '原来选择的账号已停用或移除。请重新选择 Harness。',
     harnessDown: (name: string) => `${name} 暂不可用。`,
     projectTooBig: (count: number, name: string, max: number) => `这个项目有 ${count} 个文件夹，${name} 最多使用 ${max} 个。`,
     noUsableService: (message: string) => `还没有可用的模型服务。${message}`,
@@ -73,6 +74,7 @@ const CHOICE_COPY = defineCopy(
     oldHostHint: 'Update Latch and restart it, then add one.',
     executionDown: 'The model interface is unavailable. Check the model plugin.',
     noHarness: 'No Harness available.',
+    accountUnavailable: 'The selected account was disabled or removed. Choose a Harness to continue.',
     harnessDown: name => `${name} is unavailable.`,
     projectTooBig: (count, name, max) =>
       `This project has ${plural(count, { one: '{n} folder', other: '{n} folders' })}; ${name} uses at most ${formatCount(max)}.`,
@@ -92,6 +94,8 @@ type PinAccess = Pick<DeviceAccess, 'legacy' | 'local'>
 export interface ComposerChoice {
   mode: TaskMode
   harnessId?: string
+  /** Keeps an explicitly selected account blocked if its definition disappears. */
+  accountId?: string
   workspaceId?: string
   model?: ModelRef
   projectSkipped?: boolean
@@ -392,7 +396,7 @@ export function engineEntries(catalog: HostCatalog, workspaceId?: string): Engin
   const count = project?.folders?.length ?? 1
   return catalog.harnesses
     .filter(harness => harness.status === 'ready' || needsUpgrade(harness))
-    .toSorted((a, b) => harnessRank(a) - harnessRank(b))
+    .toSorted((a, b) => harnessRank(a) - harnessRank(b) || Number(!!a.account) - Number(!!b.account))
     .map(harness => {
       if (needsUpgrade(harness)) return { harness, label: harnessName(harness), line: '', disabledReason: COMPOSER_WORDS.upgrade }
       const max = harness.projectFolders?.access === 'all' ? harness.projectFolders.max : undefined
@@ -407,7 +411,9 @@ export function engineEntries(catalog: HostCatalog, workspaceId?: string): Engin
 
 /** Agent presets the Host knows that no added agent was made from yet. */
 export function presetsToAdd(catalog: HostCatalog | undefined): AgentPreset[] {
-  const added = new Set((catalog?.harnesses ?? []).map(harness => harness.capabilities.display.mark))
+  const added = new Set(
+    (catalog?.harnesses ?? []).filter(harness => !harness.account).map(harness => harness.presetId ?? harness.capabilities.display.mark),
+  )
   return AGENT_PRESETS.filter(preset => !added.has(preset.id))
 }
 
@@ -448,7 +454,7 @@ export function defaultModel(catalog: HostCatalog): ModelRef | undefined {
 }
 
 /** The engine and model a pick in a draft can change. */
-export type DraftPick = Partial<Pick<ComposerChoice, 'harnessId' | 'model' | 'config'>>
+export type DraftPick = Partial<Pick<ComposerChoice, 'harnessId' | 'accountId' | 'model' | 'config'>>
 
 /**
  * Where every new session starts on the Host computer, when it set one. Other devices cannot see or take back a pin,
@@ -565,18 +571,20 @@ export function noProjectLine(harness: Pick<HarnessInfo, 'modes' | 'capabilities
   return harness.modes.includes('chat') ? CHOICE_COPY.chatsOnly(harnessName(harness)) : CHOICE_COPY.startsInNewFolder(harnessName(harness))
 }
 
-/**
- * A remembered or partial choice, repaired against what the Host offers now: a
- * missing harness, removed workspace or model falls back to the Host defaults
- * instead of failing at submit time.
- */
+// A fork or pending request can still name a bound account after the Host has removed its catalogue entry.
+const BOUND_ACCOUNT_ID = /^(?:account-[0-9a-f]{24}|cursor-key-[0-9a-f]{8}-[0-9a-f-]{27})$/u
+
+/** Reconcile remembered choices with the catalogue and keep a missing selected account blocked. */
 export function resolveChoice(catalog: HostCatalog | undefined, stored: Partial<ComposerChoice> | null): ComposerChoice {
   if (!catalog) return { mode: stored?.mode ?? 'agent' }
   const entries = engineEntries(catalog)
   const usable = entries.filter(entry => entry.harness.status === 'ready').map(entry => entry.harness)
   // This device's last engine, otherwise the first it can start. Nothing is asked: the first send says what will run. One
   // found too old after it was chosen stays chosen: the person picked it, and the input says what to upgrade.
-  const harness = entries.find(entry => entry.harness.id === stored?.harnessId)?.harness ?? usable[0]
+  const selected = entries.find(entry => entry.harness.id === stored?.harnessId)?.harness
+  const id = stored?.harnessId
+  const missingAccount = !selected && id && (stored?.accountId === id || BOUND_ACCOUNT_ID.test(id)) ? id : undefined
+  const harness = selected ?? (missingAccount ? undefined : (usable.find(item => !item.account) ?? usable[0]))
   const workspaces = startableWorkspaces(catalog)
   const named =
     workspaces.find(item => item.id === stored?.workspaceId)
@@ -592,13 +600,17 @@ export function resolveChoice(catalog: HostCatalog | undefined, stored: Partial<
   const service = servicePick(catalog, harness, own)
   const picks = harness ? startConfig(harness, own) : []
   // Chosen, not merely absent: it stays through a repair of the picks, as a service pick does.
-  const ownDefault = !service && harness?.capabilities.models.owner !== 'latch' && pickedOwnDefault(own)
+  const ownDefault = !service && harness?.capabilities.models.owner !== 'latch' && (harness?.account || pickedOwnDefault(own))
   // A remembered Harness that cannot start now keeps its picks for when it can.
   const away = stored?.harnessId && stored.harnessId !== harness?.id && stored.config ? { [stored.harnessId]: stored.config } : {}
   const others = Object.entries({ ...stored?.otherPicks, ...away }).filter(([id]) => id !== harness?.id)
   return {
     mode: startMode(catalog, harness, workspace?.id),
-    ...(harness ? { harnessId: harness.id } : {}),
+    ...(harness
+      ? { harnessId: harness.id, ...(harness.account ? { accountId: harness.id } : {}) }
+      : missingAccount
+        ? { harnessId: missingAccount, accountId: missingAccount, ...(stored?.config ? { config: stored.config } : {}) }
+        : {}),
     ...(workspace ? { workspaceId: workspace.id } : {}),
     ...(model ? { model } : {}),
     ...(picks.length || service || ownDefault
@@ -679,7 +691,12 @@ export function startBlock(snapshot: AppSnapshot, choice: ComposerChoice): Start
     const builtin = builtinHarness(catalog)
     return {
       kind: 'harness-unavailable',
-      message: builtin?.status === 'unavailable' && builtin.statusMessage ? builtin.statusMessage : CHOICE_COPY.noHarness,
+      message:
+        choice.accountId && choice.harnessId === choice.accountId
+          ? CHOICE_COPY.accountUnavailable
+          : builtin?.status === 'unavailable' && builtin.statusMessage
+            ? builtin.statusMessage
+            : CHOICE_COPY.noHarness,
     }
   }
   if (harness.status !== 'ready')
@@ -744,6 +761,7 @@ export function readChoice(deviceId: string): Partial<ComposerChoice> | null {
     return {
       ...(item.mode === 'chat' || item.mode === 'agent' ? { mode: item.mode } : {}),
       ...(typeof item.harnessId === 'string' ? { harnessId: item.harnessId } : {}),
+      ...(typeof item.accountId === 'string' && item.accountId === item.harnessId ? { accountId: item.accountId } : {}),
       ...(typeof item.workspaceId === 'string' ? { workspaceId: item.workspaceId } : {}),
       ...(model && typeof model.providerId === 'string' && typeof model.model === 'string'
         ? {

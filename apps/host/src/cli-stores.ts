@@ -291,6 +291,7 @@ async function dshHeader(path: string, uid: number): Promise<{ id?: unknown; cwd
  * which other sessions may share. Call it only after the process is gone. False when nothing was removed.
  */
 export async function removeDshSession(input: {
+  accountDirectory?: string | undefined
   home: string
   env: Inherited
   uid: number
@@ -300,8 +301,15 @@ export async function removeDshSession(input: {
   config: () => Promise<DshConfigVerdict>
 }): Promise<boolean> {
   const { home, env, uid, sessionId, cwd } = input
-  if (env.DSH_HOME?.trim() || !DSH_ID.test(sessionId) || !cwd.startsWith('/') || cwd.length > 4096 || cwd.includes('\0')) return false
-  const dir = join(home, '.dsh')
+  if (
+    (env.DSH_HOME?.trim() || undefined) !== input.accountDirectory
+    || !DSH_ID.test(sessionId)
+    || !cwd.startsWith('/')
+    || cwd.length > 4096
+    || cwd.includes('\0')
+  )
+    return false
+  const dir = input.accountDirectory ?? join(home, '.dsh')
   if (!(await ownDirectory(dir, uid))) return false
   if ((await input.config()) !== 'official') return false
   const sessions = join(dir, 'sessions')

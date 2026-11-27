@@ -448,7 +448,7 @@ MermaidKit 由 Xcode 的 Package.resolved 精确锁定，只链接到 App 和模
 | 次序 | 检查 | 结果 |
 | --- | --- | --- |
 | 1 | 不是绝对路径、含 NUL、超过 4096 字节、不存在或不是目录 | 400 `workspace-invalid`；因权限读不到时 409 `workspace-permission` |
-| 2 | 与数据目录、Agent 安装目录或运行目录重叠 | 409 `workspace-overlap` |
+| 2 | 与数据目录、Agent 安装目录、运行目录或现在及过去绑定的 Harness 账号目录重叠 | 409 `workspace-overlap` |
 | 3 | 就是主目录 | 409 `workspace-overlap` |
 | 4 | 与主目录下的敏感目录（`DENY_READ_HOME_PATHS`，如 `~/.ssh`）或登录时自启动的目录（`Library/LaunchAgents`、`.config/autostart`、`.config/systemd`）重叠；包含 TLS 私钥；在 macOS 上触及别名根（`/System/Volumes/Data`、`/.nofollow`、`/.resolve`、`/.vol`） | 409 `workspace-overlap` |
 | 5 | 包含主目录，或与主目录下的隐藏条目、`.config`、`.local`、`bin`、（macOS）`Library` 重叠 | 409 `workspace-overlap` |
@@ -1091,7 +1091,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `POST /provider-origins` | 本机 `admin` | 保存服务之前确认一个地址 |
 | `GET`/`POST /providers/additions/:requestId` | 本机 `admin` | 新增服务的回执与核对（见「Host 的生命周期」） |
 | `POST /providers/:id/models`、`POST /provider-checks` | `admin` | 经出站策略获取模型列表、检测连接；用已保存的密钥时只发往已确认的地址 |
-| `GET`/`POST /agents`、`PUT`/`DELETE /agents/:id` | `admin`；新增与改命令、参数、变量要本机与本机确认 | ACP Agent 定义；环境变量只返回名称 |
+| `GET`/`POST /agents`、`PUT`/`DELETE /agents/:id` | `admin`；新增与改命令、参数、变量要本机与本机确认 | ACP Agent 定义；额外账号仅在创建时绑定配置目录并确认，设备只收到账号标记；环境变量只返回名称。同一配置目录与预设已绑定时，本机创建请求的 409 带 `agentId`，供核对读取不到的保存结果 |
 | `POST /agents/:id/probe` | `admin` 与 `run` | 检测一个 Agent 定义 |
 | `POST /agents/:id/commands` | `view` | 读取 Harness 的命令目录 |
 | `GET /extensions` | `admin` | 每个外部 Harness 最新一份普通会话报告的命令、技能与可用的插件短名（[HARNESSES.md](./HARNESSES.md#扩展)） |

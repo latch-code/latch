@@ -232,9 +232,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
   const handles = new FileHandles(options.now)
   const guard = new ProtectedPaths(options.protectedPaths)
   const managedHome = options.managedHome
-  const managedProtectedPaths = managedHome
-    ? options.protectedPaths.filter(path => path !== managedHome.protectedAncestor)
-    : options.protectedPaths
+  const managedProtectedPaths = () => options.protectedPaths.filter(path => path !== managedHome?.protectedAncestor)
   let managedGuard: { root: string; guard: ProtectedPaths } | undefined
   const outsideGuard: OutsideGuard | undefined = options.outsidePaths
     ? { excluded: new ProtectedPaths(options.outsidePaths.excluded), cliHomes: new ProtectedPaths(options.outsidePaths.cliHomes) }
@@ -363,7 +361,15 @@ export function createFileRoutes(options: FileRoutesOptions) {
   function guardFor(root: string | undefined): ProtectedPaths {
     if (!root) return guard
     if (managedGuard?.root !== root)
-      managedGuard = { root, guard: new ProtectedPaths(options.protectedPaths, { root, protectedPaths: managedProtectedPaths }) }
+      managedGuard = {
+        root,
+        guard: new ProtectedPaths(options.protectedPaths, {
+          root,
+          get protectedPaths() {
+            return managedProtectedPaths()
+          },
+        }),
+      }
     return managedGuard.guard
   }
   async function contextLease(caller: FileCaller, context: FileContext, entry?: HandleEntry) {
@@ -381,7 +387,9 @@ export function createFileRoutes(options: FileRoutesOptions) {
       hash,
       revision,
       guard: guardFor(managed),
-      protectedPaths: managed ? managedProtectedPaths : options.protectedPaths,
+      get protectedPaths() {
+        return managed ? managedProtectedPaths() : options.protectedPaths
+      },
       managedHomeAncestor: managed ? managedHome?.protectedAncestor : undefined,
       check: () => check(caller, context, revision),
       async recheck() {

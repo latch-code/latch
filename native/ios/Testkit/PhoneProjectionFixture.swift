@@ -5,6 +5,41 @@ import Security
 /** Reads synthetic Host JSON through the App's own projections, and answers in plain values the test can compare. */
 func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
     let value = try NativeJSON.decode(JSONSerialization.data(withJSONObject: input))
+    if case let .array(cases) = value["forkAccountCases"] {
+        let fork = PhoneForkDraft(taskId: "source", upToMessageId: "turn", title: "Source", turn: 1)
+        return ["choices": cases.map { item in
+            let catalog = item["catalog"]
+            let choice = fork.choice(catalog, source: item["source"])
+            return ["harnessId": choice.harnessId ?? "", "blocker": PhoneStart.blocker(catalog, choice: choice) ?? ""]
+        }]
+    }
+    if let id = value["accountHarness"].string {
+        let catalog = value["catalog"], harness = PhoneStart.harness(catalog, id)
+        var choice = PhoneStartChoice(harnessId: id)
+        let models = PhoneStart.ownModels(harness)
+        choice.ownModel = models.last
+        let thinking = PhoneStart.ownThinking(harness, model: choice.ownModel)
+        choice.ownThinking = thinking.last
+        let start = PhoneStart.newSessionFields(catalog, choice: choice, prompt: "test")
+        let fork = PhoneForkDraft(taskId: "source", upToMessageId: "turn", title: "Source", turn: 1)
+        let plan = fork.plan(catalog, source: value["source"], choice: choice)
+        let forked = fork.fields(catalog, plan: plan, prompt: "test")
+        choice.ownModel = models.first
+        let nextModel = PhoneStart.newSessionFields(catalog, choice: choice, prompt: "test")
+        let thinkingAfterModelChange = PhoneStart.ownThinking(harness, model: choice.ownModel)
+        choice.ownThinking = thinkingAfterModelChange.last
+        choice.harnessId = value["otherHarness"].string
+        let next = PhoneStart.newSessionFields(catalog, choice: choice, prompt: "test")
+        return ["models": models.map(\.value), "start": try JSONSerialization.jsonObject(with: NativeJSON.object(start).encoded()),
+            "thinking": thinking.map(\.value), "fork": try JSONSerialization.jsonObject(with: NativeJSON.object(forked).encoded()),
+            "nextModel": try JSONSerialization.jsonObject(with: NativeJSON.object(nextModel).encoded()),
+            "thinkingAfterModelChange": thinkingAfterModelChange.map(\.value),
+            "other": try JSONSerialization.jsonObject(with: NativeJSON.object(next).encoded()),
+            "thinkingAfterAccountChange": PhoneStart.ownThinking(PhoneStart.harness(catalog, choice.harnessId), model: choice.ownModel).map(\.value),
+            "projectRoutes": [id, choice.harnessId].map { PhoneStart.newSessionModel(catalog, harnessId: $0, workspaceId: "project")?.model ?? "own" },
+            "limits": PhoneUsage.quotaPage(catalog, now: Date()).blocks.map { [$0.id, $0.name] },
+            "widget": PhoneQuotaWidget.shelf(catalog, now: Date())["harnesses"].array.map { [$0["id"].string ?? "", PhoneStart.engineName($0)] }]
+    }
     if case let .array(cases) = value["teamShelfCases"] {
         let answers = cases.map { item -> [String: Any] in
             var snapshot = item["snapshot"]

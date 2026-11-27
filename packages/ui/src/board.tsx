@@ -248,6 +248,8 @@ export interface BoardSource<T extends string> {
   id: string
   /** Its name: the rail entry's accessible name, and the list's heading while it has no groups. */
   label: string
+  /** A shorter visible name. The accessible name and tooltip still identify the full source. */
+  railLabel?: string
   /** The rail entry's tooltip when it says a few words more than the name (「Latch 网关 · 实验性」). */
   tip?: string | undefined
   /** A 16px tile or glyph for the rail. */
@@ -306,6 +308,9 @@ export interface PickerBoardProps<T extends string, L extends string> {
   /** A 14px glyph before that word, in the column's head. */
   levelsIcon?: ReactNode
   sources: Array<BoardSource<T>>
+  /** Show names beside the rail icons when the icons alone cannot distinguish sources. */
+  sourceLabels?: boolean
+  onSourceChange?: ((id: string) => void) | undefined
   /** The chosen item. */
   value: T | undefined
   /** The second column for an item: it follows the highlighted one. */
@@ -384,6 +389,8 @@ export function PickerBoard<T extends string, L extends string>({
   levelsLabel,
   levelsIcon,
   sources,
+  sourceLabels = false,
+  onSourceChange,
   value,
   levels,
   onItem,
@@ -532,6 +539,7 @@ export function PickerBoard<T extends string, L extends string>({
   }
   const showSource = (sourceId: string) => {
     setViewed(sourceId)
+    onSourceChange?.(sourceId)
     setQuery('')
     // The levels stay the chosen item's: a source without it highlights nothing until a row is focused.
     const source = sources.find(item => item.id === sourceId)
@@ -784,7 +792,12 @@ export function PickerBoard<T extends string, L extends string>({
 
   if (phone)
     return (
-      <div className={cx('ui-board', className)} data-phone="" onKeyDown={boardKeys} onFocusCapture={noteFocus}>
+      <div
+        className={cx('ui-board', className)}
+        data-phone=""
+        data-source-labels={withRail && sourceLabels ? '' : undefined}
+        onKeyDown={boardKeys}
+        onFocusCapture={noteFocus}>
         {withRail && (
           <div className="ui-board-tabs" role="tablist" aria-label={UI_COPY.sources}>
             {sources.map(source => (
@@ -838,6 +851,7 @@ export function PickerBoard<T extends string, L extends string>({
     <div
       className={cx('ui-board', className)}
       data-rail={withRail ? '' : undefined}
+      data-source-labels={withRail && sourceLabels ? '' : undefined}
       data-foot={foot ? '' : undefined}
       data-compact={compact ? '' : undefined}
       data-inline-level={inlineLevel ? '' : undefined}
@@ -867,6 +881,7 @@ export function PickerBoard<T extends string, L extends string>({
                     showSource(source.id)
                   }}>
                   {source.icon}
+                  {sourceLabels && <span className="ui-board-source-label">{source.railLabel ?? source.label}</span>}
                 </button>
               </Tooltip>
             )

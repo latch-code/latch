@@ -271,6 +271,7 @@ function attributeTurn(facts: Facts, from: number, to: number): TokenUsage | und
  * from `from` to `to` (milliseconds), or undefined: not known. `env` is what DeepSeek Harness inherits.
  */
 export async function readDshTurnUsage(input: {
+  accountDirectory?: string | undefined
   home: string
   env: Readonly<Record<string, string | undefined>>
   uid: number
@@ -285,11 +286,11 @@ export async function readDshTurnUsage(input: {
   bounds?: Bounds
 }): Promise<TokenUsage | undefined> {
   const { home, env, uid, cwd, sessionId, from, to, signal } = input
-  if (env.DSH_HOME?.trim()) return undefined
+  if ((env.DSH_HOME?.trim() || undefined) !== input.accountDirectory) return undefined
   if (!SESSION_ID.test(sessionId)) return undefined
   if (!cwd.startsWith('/') || cwd.length > MAX_CWD || cwd.includes('\0')) return undefined
   if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from > to) return undefined
-  const dir = join(home, DSH_DIR)
+  const dir = input.accountDirectory ?? join(home, DSH_DIR)
   if (!(await ownDirectory(dir, uid))) return undefined
   if ((await input.config()) !== 'official') return undefined
   const sessions = join(dir, SESSIONS)

@@ -121,12 +121,14 @@ export interface LoginCheck {
   expiresAt?: string
 }
 
-/** What the harness itself writes below its `projectConfigPaths` when it starts, so that is not a change. */
+/** How a profile fingerprints particular project files. */
 export interface ProjectConfigManaged {
   /** Paths relative to the directory holding the entry (`.opencode/node_modules`), left out with everything below them. */
   skip?: readonly string[]
   /** Files compared after `reduce` removes what the harness adds; `undefined` leaves the file out. */
   reduce?: Readonly<Record<string, (text: string) => unknown>>
+  /** Files relative to a project folder, compared only by identity, size and times, with no content read. */
+  metadata?: readonly string[]
 }
 
 /**
@@ -445,6 +447,8 @@ export interface HarnessProfile {
     readonly args: readonly string[]
     read(output: string): string | undefined
     readonly minimum: string
+    /** Every launch needs fresh proof from the native command because an unsupported CLI can use other credentials. */
+    readonly requireKnown?: true
     /** The command a person runs to upgrade; Latch never runs it. */
     readonly upgrade: string
     /**

@@ -96,6 +96,8 @@ export interface HostSettings {
   boundKey?: string
   /** The path each preset's command was last bound to, kept when its definition is removed. */
   presetBindings?: Array<{ presetId: string; command: string; path: string }>
+  /** An unbound Harness may still have its native credentials and history at this path. */
+  retiredAccountDirectories?: string[]
   plugins: { disabled: string[] }
   /** Owner-added projects. The startup workspace is the implicit `default` and is not stored. */
   workspaces: WorkspaceRecord[]
@@ -369,6 +371,7 @@ const agentProbeSchema = z.object({
   checkedAt: z.string().datetime(),
   launchHash: z.string().regex(/^[a-f0-9]{64}$/u),
 })
+const accountDirectorySchema = z.string().min(1).max(4096).refine(noControl).refine(isAbsolute)
 const agentSchema = z.object({
   lastProbe: agentProbeSchema.optional(),
   probedDefinitionHash: z
@@ -379,6 +382,7 @@ const agentSchema = z.object({
   id: id('Agent 标识').refine(value => value !== 'standard', 'Agent 标识 standard 已被内置 Harness 使用'),
   name,
   presetId: id('预设标识').optional(),
+  accountDirectory: accountDirectorySchema.optional(),
   command: z.string().trim().min(1, '命令不能为空').max(1024, '命令过长').refine(noControl, '命令不能包含控制字符'),
   args: z
     .array(
@@ -446,6 +450,7 @@ const settingsSchema = z
       )
       .max(MAX_PRESET_BINDINGS)
       .optional(),
+    retiredAccountDirectories: z.array(accountDirectorySchema).optional(),
     plugins: z.object({ disabled: z.array(z.string().min(1).max(128)).max(256) }).default({ disabled: [] }),
     workspaces: z.array(workspaceSchema).max(100, '项目数量过多').default([]),
     agents: z.array(agentSchema).max(64, 'Agent 数量过多').default([]),
@@ -588,6 +593,15 @@ export class HostConfig {
 
   settings(): HostSettings {
     return structuredClone(this.hostSettings)
+  }
+
+  accountDirectories(): string[] {
+    return [
+      ...new Set([
+        ...this.hostSettings.agents.flatMap(agent => agent.accountDirectory ?? []),
+        ...(this.hostSettings.retiredAccountDirectories ?? []),
+      ]),
+    ]
   }
 
   /**

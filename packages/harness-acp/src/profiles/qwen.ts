@@ -196,3 +196,19 @@ export const qwenProfile: HarnessProfile = {
     return update.name == null && typeof named === 'string' && named ? { ...update, name: named } : update
   },
 }
+
+// The native home, environment discovery and upward project search were checked together in this release.
+export const QWEN_ACCOUNT_MINIMUM = '0.27.4'
+
+export const qwenAccountProfile: HarnessProfile = {
+  ...qwenProfile,
+  version: 5,
+  minimumVersion: {
+    args: ['--version'],
+    read: bareVersion,
+    minimum: QWEN_ACCOUNT_MINIMUM,
+    upgrade: 'npm i -g @qwen-code/qwen-code@latest',
+    requireKnown: true,
+  },
+  projectConfigManaged: { metadata: ['.env', '.qwen/.env'] },
+}

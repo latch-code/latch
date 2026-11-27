@@ -393,7 +393,10 @@ public struct PhoneForkDraft: Equatable, Sendable, Identifiable {
     public func choice(_ catalog: NativeJSON, source: NativeJSON) -> PhoneStartChoice {
         var choice = PhoneStart.defaults(catalog)
         let engines = PhoneStart.engines(catalog)
-        if let harness = source["harnessId"].string, engines.contains(where: { $0.id == harness }) { choice.harnessId = harness }
+        if let harness = source["harnessId"].string,
+           engines.contains(where: { $0.id == harness }) || PhoneStart.isBoundAccount(catalog, harness) {
+            choice.harnessId = harness
+        }
         if source["mode"].string == "chat" && PhoneStart.acceptsChat(catalog, harnessId: choice.harnessId) { choice.workspaceId = nil }
         else if let project = source["workspaceId"].string, PhoneStart.projects(catalog).contains(where: { $0.id == project }) { choice.workspaceId = project }
         choice.model = PhoneStart.defaultModel(catalog, harnessId: choice.harnessId)
@@ -456,19 +459,24 @@ public struct PhoneForkDraft: Equatable, Sendable, Identifiable {
             }
             let modelOption = find("model", sourceModel?.id)
             // A service is kept only on the same Harness it was forwarded for, while that service still lists the model.
-            let forwarded = same && !builtinSource ? service.flatMap { route in models.first { $0.providerId == route.provider && $0.model == route.model } } : nil
+            let forwarded = base.ownModel == nil && same && !builtinSource ? service.flatMap { route in models.first { $0.providerId == route.provider && $0.model == route.model } } : nil
+            let carriedModel = sourceModel.flatMap { source -> PhoneConfigPick? in
+                guard let id = modelOption?["id"].string, offers(modelOption, source.value) else { return nil }
+                return PhoneConfigPick(kind: .model, configId: id, value: source.value, name: source.name)
+            }
             if let forwarded { plan.forwarded = forwarded }
-            else if let sourceModel, let modelOption, let id = modelOption["id"].string, offers(modelOption, sourceModel.value) {
-                plan.picks.append(PhoneConfigPick(kind: .model, configId: id, value: sourceModel.value, name: sourceModel.name))
-                if modelOption["currentValue"].string != sourceModel.value {
-                    // On another model the Harness lists what that model reported, or nothing yet.
-                    shown = shown.filter { !["thought_level", "model_config"].contains($0["category"].string ?? "") }
-                        + (catalogue["perModel"].array.first { $0["model"].string == sourceModel.value }?["options"].array ?? [])
-                }
+            else if let chosen = base.ownModel ?? carriedModel {
+                plan.picks.append(chosen)
+                shown = PhoneStart.options(catalogue, forModel: chosen.value)
             }
             else if unread && sourceModel != nil { pending.append("模型「\(modelWords ?? "")」") }
             else if let modelWords { lost.append("模型「\(modelWords)」") }
-            if let thinkingValue {
+            if plan.forwarded == nil, let explicit = base.ownThinking,
+               let selected = PhoneStart.ownThinking(harness, model: plan.pick(.model)).first(where: {
+                   $0.configId == explicit.configId && $0.value == explicit.value
+               }) {
+                plan.picks.append(selected)
+            } else if let thinkingValue {
                 let option = plan.forwarded != nil ? nil : find("thought_level", sourceThinking?.id)
                 if offers(option, thinkingValue), let id = option?["id"].string {
                     plan.picks.append(PhoneConfigPick(kind: .thinking, configId: id, value: thinkingValue,
@@ -518,10 +526,9 @@ public struct PhoneForkDraft: Equatable, Sendable, Identifiable {
     }
     public func fields(_ catalog: NativeJSON, plan: PhoneForkPlan, prompt: String) -> [String: NativeJSON] {
         var result = PhoneStart.fields(catalog, choice: plan.choice, prompt: prompt, forwarded: plan.forwarded)
+        if plan.choice.ownModel != nil { result["ownModel"] = .bool(true) }
         if let effort = plan.effort, case var .object(model) = result["model"] ?? .null { model["effort"] = .string(effort); result["model"] = .object(model) }
-        if !plan.picks.isEmpty {
-            result["config"] = .array(plan.picks.map { .object(["configId": .string($0.configId), "value": .string($0.value)]) })
-        }
+        if !plan.picks.isEmpty { result["config"] = PhoneStart.config(plan.picks) }
         result["forkOf"] = .object(["taskId": .string(taskId), "upToMessageId": .string(upToMessageId)])
         return result
     }

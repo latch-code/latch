@@ -145,7 +145,7 @@ import {
   withModelOptions,
   withServiceOptions,
 } from './catalogue.ts'
-import { authFacts, reportedLogin, terminalLogins, type AuthFacts } from './auth.ts'
+import { authFacts, CURSOR_SDK_SIGN_IN, reportedLogin, terminalLogins, type AuthFacts } from './auth.ts'
 import { QUOTA_UPDATE, QuotaFacts, quotaReport, type QuotaReport } from './quota.ts'
 import {
   CODEX_EFFORT_ID,
@@ -162,7 +162,7 @@ import { commandMoved, commandUnconfirmed, harnessRetired, redactor, resolveComm
 import { openWire, wireLaunch } from './wires/index.ts'
 import { ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } from './wires/process.ts'
 import { ForkRefused, type AgentWire } from './wires/types.ts'
-import { agentEnvironment, inheritedValues, programPaths } from './environment.ts'
+import { accountEnvironment, agentEnvironment, assertAccountWorkspace, inheritedValues, programPaths } from './environment.ts'
 import { loginShellValues } from './login-shell.ts'
 import { ClaudeStore, claudeConfigDir } from './claude-store.ts'
 import {
@@ -1116,7 +1116,7 @@ export class AgentRuntime implements Bridge {
       notify: id => this.notify(id),
     })
     this.workspaceRoot = resolve(options.workspaceRoot)
-    const own = redactor(agent.env)
+    const own = redactor({ ...agent.env, ...(agent.accountDirectory ? { accountDirectory: agent.accountDirectory } : {}) })
     // An agent's error may echo the gateway token it was given, or part of a key from its own configuration.
     this.redact = text =>
       redactKnownSecrets([...this.tokens].reduce((current, token) => current.split(token).join('[redacted]'), own(text)))
@@ -1411,6 +1411,7 @@ export class AgentRuntime implements Bridge {
       profile: this.profile,
       materializedEnv,
       definitionEnv: this.agent.env,
+      account: this.agent,
       sessionTmpDir: this.tmpRoot(),
       ...(input.modelRoute ? { gatewayEnv: this.gatewayNames(input.modelRoute.wire) } : {}),
     })
@@ -1995,6 +1996,7 @@ export class AgentRuntime implements Bridge {
     definitionHash: string,
     signal: AbortSignal,
   ): Promise<QuotaReport | null | undefined> {
+    if (this.agent.accountDirectory !== undefined) accountEnvironment(this.agent)
     const quota = this.selection.profile?.quota
     if (route === 'host') return this.limits.readQuota!({ signal })
     if (route === 'command') return readQuotaCommand(this.agent, quota!.command!, this.clock(), { signal })
@@ -2132,6 +2134,9 @@ export class AgentRuntime implements Bridge {
     await this.ready()
     this.assertOpen()
     const name = this.agent.name
+    if (this.selection.profile?.wire === 'cursor') throw new AppError(409, 'logout-unsupported', CURSOR_SDK_SIGN_IN)
+    if (this.agent.presetId === 'antigravity' && this.agent.accountDirectory !== undefined)
+      throw new AppError(409, 'logout-unsupported', '请在 Host 电脑上管理这个账号的 ADC 凭据。')
     const running = () => [...this.runs.keys(), ...this.attaching.keys()].some(key => this.state.tasks[key] !== undefined)
     if (running()) throw new AppError(409, 'harness-busy', `${name} 有会话正在运行，等它结束后再退出登录。`)
     const key = `logout-${randomUUID()}`
@@ -2186,6 +2191,7 @@ export class AgentRuntime implements Bridge {
       resolvedCommand: resolveCommand(this.agent.command) ?? this.agent.command,
       profile: this.profile,
       definitionEnv: this.agent.env,
+      account: this.agent,
       sessionTmpDir: this.tmpRoot(),
     })
     return { env, home, uid }
@@ -2468,6 +2474,7 @@ export class AgentRuntime implements Bridge {
     // Claude keeps its sessions in its configuration directory, which the adapter and the direct wire read alike: one
     // store for both routes, wherever the variable that names it comes from (as `agentEnvironment` takes it).
     if (this.selection.profile?.presetId === 'claude-agent') {
+      if (this.agent.accountDirectory !== undefined) return `claude-config:${sha256Hex(this.agent.accountDirectory)}`
       let place = claudeConfigDir(homedir())
       try {
         place = realpathSync(place)
@@ -2476,6 +2483,8 @@ export class AgentRuntime implements Bridge {
       }
       return `claude-config:${sha256Hex(place)}`
     }
+    if (this.agent.accountDirectory !== undefined)
+      return `acp-account:${sha256Hex(canonicalJson([this.agent.presetId, this.agent.accountDirectory]))}`
     const command = resolveCommand(this.agent.command) ?? this.agent.command
     let resolved = command
     try {
@@ -2701,7 +2710,7 @@ export class AgentRuntime implements Bridge {
     } finally {
       await this.discardProcess(key)
       // A harness that cannot delete one keeps even this empty session in its history: the Host removes it.
-      if (sessionId) await this.removeOwnSessions([sessionId], cwd)
+      if (sessionId) await this.removeOwnSessions([sessionId], cwd).catch(() => {})
       await this.removeTemporaryDirectory(cwd).catch(() => {})
     }
   }
@@ -2750,6 +2759,7 @@ export class AgentRuntime implements Bridge {
       profile: this.profile,
       materializedEnv,
       definitionEnv: this.agent.env,
+      account: this.agent,
       sessionTmpDir: await this.prepareTmpDir(key),
     })
     this.assertOpen()
@@ -3742,6 +3752,7 @@ export class AgentRuntime implements Bridge {
       resolvedCommand: command,
       ...(this.profile ? { profile: this.profile } : {}),
       definitionEnv: this.agent.env,
+      account: this.agent,
       sessionTmpDir: this.tmpDirFor(key),
     })
   }
@@ -4822,6 +4833,7 @@ export class AgentRuntime implements Bridge {
    * profile names none. With other folders the profile's own folder configuration counts in all of them.
    */
   private async projectConfig(cwd: string, passed?: LaunchFolders): Promise<ProjectConfig | undefined> {
+    assertAccountWorkspace(this.agent, cwd, passed?.paths)
     const profile = this.selection.profile
     const names = new Set(profile?.projectConfigPaths ?? [])
     if (passed && profile?.folders?.via === 'acp') for (const name of profile.folders.configPaths) names.add(name)
@@ -4889,6 +4901,7 @@ export class AgentRuntime implements Bridge {
       resolvedCommand: command,
       args: [...args],
       definitionEnv: this.agent.env,
+      accountDirectory: this.agent.accountDirectory,
       ...(selection.profile ? { presetId: selection.profile.presetId } : {}),
       profileVersion: selection.profile?.version ?? 1,
       ...(profile?.inheritEnv ? { inheritEnv: profile.inheritEnv } : {}),
@@ -4913,6 +4926,11 @@ export class AgentRuntime implements Bridge {
     return { command, hash, definitionHash, ...(launchMode ? { launchMode } : {}) }
   }
 
+  /** A Host-side record must come from the same account as the process which wrote it. */
+  private storeEnvironment(): Record<string, string> {
+    return this.agent.accountDirectory === undefined ? inheritedValues(this.profile) : accountEnvironment(this.agent)
+  }
+
   /**
    * For a program that may run another version it downloaded itself (`selfUpdates`): the Host's digest of that, which a
    * silent update changes. Nothing when it runs itself, so the fingerprint is the one it always was.
@@ -4922,7 +4940,7 @@ export class AgentRuntime implements Bridge {
     if (!profile?.selfUpdates || !read) return {}
     let code: string | undefined
     try {
-      code = read({ presetId: profile.presetId, command, inherited: inheritedValues(profile.permission) })
+      code = read({ presetId: profile.presetId, command, inherited: this.storeEnvironment() })
     } catch {
       code = undefined
     }
@@ -4945,9 +4963,7 @@ export class AgentRuntime implements Bridge {
         'harness-resume-unchecked',
         `Latch 读不到 ${name} 自己的会话记录，不能确认重新打开这个会话不会让它自己接着运行，所以没有打开它。清空上下文后可以在这里接着发，或新建会话。`,
       )
-    const state = await read({ presetId: profile.presetId, sessionId, inherited: inheritedValues(profile.permission) }).catch(
-      () => 'blocked' as const,
-    )
+    const state = await read({ presetId: profile.presetId, sessionId, inherited: this.storeEnvironment() }).catch(() => 'blocked' as const)
     if (state !== 'clear')
       throw new AppError(
         409,
@@ -6448,6 +6464,10 @@ export class AgentRuntime implements Bridge {
 
   private async ensureProcess(key: string, cwd: string, confirmed: Confirmed): Promise<Live> {
     for (;;) {
+      if (this.agent.accountDirectory !== undefined) {
+        accountEnvironment(this.agent)
+        assertAccountWorkspace(this.agent, cwd, confirmed.folders?.paths)
+      }
       const pending = this.spawning.get(key)
       if (pending) {
         await pending
@@ -6574,6 +6594,7 @@ export class AgentRuntime implements Bridge {
       this.processModeChanges.get(key)?.authorize?.()
       this.launchThinkingChanges.get(key)?.authorize?.()
       this.routeChanges.get(key)?.authorize?.()
+      assertAccountWorkspace(this.agent, cwd, confirmed.folders?.paths)
       this.makeRoom(key)
       if (run?.authorizeConsultation) this.authorizeConsultation(key, run.id)
     } catch (error) {
@@ -6601,6 +6622,7 @@ export class AgentRuntime implements Bridge {
             profile: this.profile,
             materializedEnv: { ...materializedEnv, ...processSettings?.env },
             definitionEnv: this.agent.env,
+            account: this.agent,
             sessionTmpDir,
             ...(delivered ? { gatewayEnv: delivered.env } : {}),
           }),
@@ -7154,7 +7176,7 @@ export class AgentRuntime implements Bridge {
     target.acp.deletable = live.capabilities.delete
     if (facts) target.acp.permissionFacts = facts
     else delete target.acp.permissionFacts
-    void this.readSavedRules(taskId, live, target.acp.cwd)
+    void this.readSavedRules(taskId, live, target.acp.cwd).catch(() => {})
     if (live.agentVersion) target.acp.agentVersion = live.agentVersion
     // What the harness's own settings do that Latch's approvals do not show (Claude's direct wire reads them).
     const said = z.object({ _meta: z.object({ latch: z.object({ permissionNotes: z.array(z.string()).max(20) }) }) }).safeParse(result).data
@@ -7574,6 +7596,7 @@ export class AgentRuntime implements Bridge {
   }
 
   private authMessage(): string {
+    if (this.selection.profile?.wire === 'cursor') return CURSOR_SDK_SIGN_IN
     return `${this.agent.name} 还没登录。${this.selection.preset?.signIn ?? '按它自己的方式登录后重试。'}`
   }
 
@@ -7662,11 +7685,7 @@ export class AgentRuntime implements Bridge {
     // A session on a gateway route runs in a home of its own, with nothing of the person's saved there.
     if (!read || live.gateway) return
     // Where its home is, as its own process would find it: HOME and the profile's inherited names, nothing else.
-    const env: Record<string, string> = {}
-    for (const name of ['HOME', ...(this.profile?.inheritEnv ?? [])]) {
-      const value = process.env[name] || loginShellValues()[name]
-      if (value) env[name] = value
-    }
+    const env = { HOME: process.env.HOME || loginShellValues().HOME || '', ...this.storeEnvironment() }
     const notes = await read(cwd, env).catch(() => [])
     if (this.closed || !this.state.tasks[taskId]) return
     const before = this.savedRules.get(taskId) ?? []
@@ -7683,7 +7702,7 @@ export class AgentRuntime implements Bridge {
     const folders = this.selection.profile?.sessionFolders
     if (!folders || !ids.length) return
     const home = process.env.HOME || loginShellValues().HOME
-    const root = folders.root({ ...(home ? { HOME: home } : {}), ...this.agent.env })
+    const root = folders.root({ ...(home ? { HOME: home } : {}), ...this.agent.env, ...accountEnvironment(this.agent) })
     if (!root || !isAbsolute(root)) return
     const realRoot = await realpath(root).catch(() => undefined)
     if (!realRoot) return
@@ -7794,7 +7813,7 @@ export class AgentRuntime implements Bridge {
         if (live) await live.wire.stop('stop', this.limits.stopGraceMs).catch(() => {})
         await this.removeTemporaryDirectory(this.tmpDirFor(key)).catch(() => {})
         await this.removeSessionFolders(acpSessionIds, cwd).catch(() => {})
-        if (this.selection.profile?.removesOwnSessions) await this.removeOwnSessions(acpSessionIds, cwd)
+        if (this.selection.profile?.removesOwnSessions) await this.removeOwnSessions(acpSessionIds, cwd).catch(() => {})
       }
     })().finally(() => {
       if (this.forgetting.get(key) === work) this.forgetting.delete(key)
@@ -7843,7 +7862,7 @@ export class AgentRuntime implements Bridge {
     const profile = this.selection.profile
     const read = this.limits.storeAccess?.childSessions
     if (!profile?.childSessionsInRecord || !read || !sessionIds.length) return []
-    return read({ presetId: profile.presetId, sessionIds, inherited: inheritedValues(profile.permission) }).catch(() => [])
+    return read({ presetId: profile.presetId, sessionIds, inherited: this.storeEnvironment() }).catch(() => [])
   }
 
   /** The record of sessions Latch opened, removed by the Host for a harness that cannot delete one (`removesOwnSessions`). */
@@ -7852,7 +7871,7 @@ export class AgentRuntime implements Bridge {
     const remove = this.limits.storeAccess?.removeSession
     const command = this.agent.confirmedCommand ?? resolveCommand(this.agent.command)
     if (!profile?.removesOwnSessions || !remove || !command) return
-    const inherited = inheritedValues(profile.permission)
+    const inherited = this.storeEnvironment()
     for (const sessionId of sessionIds) await remove({ presetId: profile.presetId, sessionId, cwd, command, inherited }).catch(() => false)
   }
 

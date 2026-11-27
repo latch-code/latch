@@ -119,6 +119,24 @@ it('denies every tool access to protected paths, including when the workspace co
   expect(() => createWorkspacePlugin({ protectedPaths: ['relative/data'] })).toThrow('absolute')
 })
 
+it('sees paths protected after the tools mount, including in the managed general home', async () => {
+  const root = await directory()
+  const managed = join(root, 'agent-homes')
+  const general = join(managed, 'general')
+  const account = join(general, 'account')
+  await mkdir(account, { recursive: true })
+  await writeFile(join(account, 'notes.txt'), 'fixture notes')
+  const paths = [managed]
+  const tools = await mount({
+    protectedPaths: () => paths,
+    managedHome: { protectedAncestor: managed, permits: async () => true },
+  })
+  const read = () => tools.get('read_file')!.execute({ path: 'account/notes.txt' }, contextFor(general))
+  expect(await read()).toEqual({ text: 'fixture notes' })
+  paths.push(account)
+  await expect(read()).rejects.toThrow('私有数据目录')
+})
+
 it('allows only the verified session to work in its managed home under a protected ancestor', async () => {
   const latch = join(await realpath(await directory()), '.latch')
   const general = join(latch, 'agent-homes', 'general')

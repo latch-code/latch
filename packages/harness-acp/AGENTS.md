@@ -7,8 +7,9 @@
 不变量：
 
 - 子进程环境只来自 `agentEnvironment`：白名单加代理、CA 文件和 profile 的 `inheritEnv`，移除 `NODE_OPTIONS`、`LATCH_*`、`npm_*`、`DYLD_*`、`LD_*`（不区分大小写，`test/acp.test.ts`）；opencode 线另加口令。`inheritEnv` 不点名秘密（`test/login.test.ts`）。
-- 登录 shell 只读点名的变量；登录与版本命令只在启动脚本经 `startServer({ loginPrograms })` 打开后运行，测试 Host 碰不到真实程序；状态命令的输出不离开 `read`（`test/login.test.ts`）。
-- 启动须匹配记录的 `launchHash`，覆盖命令、参数、环境定义、预设、profile 版本及其项目配置、`inheritEnv` 名称和 `programEnv` 路径（`test/acp.test.ts`）。
+- 绑定账号的启动、登录、探测、模型、额度与历史共用目录，失效即拒绝。目录计入指纹；Qwen ≥0.27.4 使用账号 HOME。
+- 登录 shell 只读点名变量，登录与版本命令经 `startServer({ loginPrograms })` 启用，状态输出留在 `read`。
+- 启动须匹配会话的 `launchHash`，覆盖命令、参数、环境定义、预设、profile 版本及项目配置、`inheritEnv` 名称和 `programEnv` 路径。
 - 只有 profile 声明了 `folders` 的预设收到项目的其他文件夹（Codex 经 ACP `additionalDirectories`，只在 Agent 声明支持时；Qwen Code 经 `--include-directories`）；它们计入 `launchHash`，没有其他文件夹时指纹不变（`test/acp.test.ts`）。
 - 权限行为只写在 `src/profiles/`；改变 profile 行为时提高其 `version`，它计入 `launchHash`。Agent 自行放宽权限时停止该轮（`test/acp.test.ts`）。
 - 取消等执行结算，`runId` 只取消本轮，恢复时显示本轮 ID。Codex 中断后仍核对命令。强停只清理父进程仍在时查明的后代，归属或结算不明时保留结果未知。子 Agent 请求不宽于会话模式，一轮后仍给人答，只单独停止宣告 `cancel` 的。MCP 审批只关联同轮唯一调用。
@@ -21,7 +22,7 @@
 - 审批 `since` 沿用 RunClock 等待起点（`test/acp.test.ts`）。
 - 不支持的请求共用事件时间，不回退已知输出（HARNESSES）。
 - 测试只用假 Agent、回放与假 SDK，不提示真实 Agent。
-- Cursor 密钥只经运行器环境（`test/cursor-sdk.test.ts`）。
+- Cursor SDK 只用运行器环境的密钥登录（`test/cursor-sdk.test.ts`）。
 
 测试：`pnpm test --project @latch/harness-acp` 与 `e2e/permissions-ui.e2e.ts`。先读 [docs/HARNESSES.md](../../docs/HARNESSES.md)。
 

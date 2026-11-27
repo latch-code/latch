@@ -389,6 +389,90 @@ async function invoke(input: unknown, timeoutMs = 15_000): Promise<Record<string
 }
 
 describe.skipIf(process.platform !== 'darwin')('Swift native core interoperability', () => {
+  it('keeps a fork on its source account when the account is disabled or removed', async () => {
+    const defaultHarness = { id: 'codex', status: 'ready', modes: ['chat'] }
+    const disabled = { id: 'work', account: true, status: 'unavailable', modes: ['chat'] }
+    const account = 'account-123456789abcdef012345678'
+    const cursor = 'cursor-key-b4475dbd-3205-4256-bb7b-02de9fa63b49'
+    const catalog = { defaults: { harnessId: 'codex', mode: 'chat' }, harnesses: [defaultHarness, disabled] }
+    const forkAccountCases = [disabled.id, account, cursor, 'codex-2'].map(harnessId => ({
+      catalog,
+      source: { harnessId, mode: 'chat' },
+    }))
+    const blocker = '原来选择的账号现在不能开始。请选择可用的 Harness。'
+    expect(await invoke({ operation: 'phoneProjection', forkAccountCases })).toEqual({
+      choices: [
+        { harnessId: disabled.id, blocker },
+        { harnessId: account, blocker },
+        { harnessId: cursor, blocker },
+        { harnessId: 'codex', blocker: '' },
+      ],
+    })
+  })
+
+  it('uses the selected Harness account for native model choices, thinking and quotas', async () => {
+    const reasoning = (id: string, levels: string[]) => ({
+      id,
+      category: 'thought_level',
+      currentValue: levels[0],
+      options: levels.map(value => ({ value, name: value })),
+    })
+    const account = (id: string, name: string, models: string[]) => ({
+      id,
+      presetId: 'codex',
+      account: id !== 'codex',
+      status: 'ready',
+      quota: { state: 'ok', windows: [{ kind: 'weekly', usedPercent: 10 }] },
+      capabilities: { display: { label: name, mark: 'codex' }, models: { owner: 'harness', quota: true, wires: ['responses'] } },
+      catalogue: {
+        options: [
+          { id: 'model', category: 'model', currentValue: 'shared', options: models.map(value => ({ value, name: value })) },
+          reasoning('default-effort', id === 'codex' ? ['personal-standard'] : ['work-standard']),
+        ],
+        perModel: [
+          { model: models[1], options: [reasoning(`effort-${id}`, id === 'codex' ? ['personal-low'] : ['work-low', 'work-high'])] },
+        ],
+      },
+    })
+    const harnesses = [account('codex', 'Codex', ['shared', 'personal']), account('codex-2', 'Codex · 工作', ['shared', 'work'])]
+    const catalog = {
+      harnesses,
+      providers: [{ id: 'gateway', name: 'Gateway', kind: 'openai-responses', models: ['project-model'] }],
+      workspaces: [{ id: 'project', defaultModel: { providerId: 'gateway', model: 'project-model' } }],
+    }
+    const source = { summary: { harnessId: 'codex', mode: 'chat' }, config: harnesses[0]!.catalogue.options }
+    const workPicks = [
+      { configId: 'model', value: 'work' },
+      { configId: 'effort-codex-2', value: 'work-high' },
+    ]
+    expect(await invoke({ operation: 'phoneProjection', catalog, accountHarness: 'codex-2', otherHarness: 'codex', source })).toEqual({
+      models: ['shared', 'work'],
+      thinking: ['work-low', 'work-high'],
+      start: { harnessId: 'codex-2', prompt: 'test', mode: 'chat', ownModel: true, config: workPicks },
+      fork: {
+        harnessId: 'codex-2',
+        prompt: 'test',
+        mode: 'chat',
+        ownModel: true,
+        config: workPicks,
+        forkOf: { taskId: 'source', upToMessageId: 'turn' },
+      },
+      nextModel: { harnessId: 'codex-2', prompt: 'test', mode: 'chat', ownModel: true, config: [{ configId: 'model', value: 'shared' }] },
+      thinkingAfterModelChange: ['work-standard'],
+      other: { harnessId: 'codex', prompt: 'test', mode: 'chat', ownModel: true },
+      thinkingAfterAccountChange: ['personal-standard'],
+      projectRoutes: ['own', 'project-model'],
+      limits: [
+        ['codex', 'Codex'],
+        ['codex-2', 'Codex · 工作'],
+      ],
+      widget: [
+        ['codex', 'Codex'],
+        [expect.stringMatching(/^widget-[a-f0-9]{32}$/u), expect.stringMatching(/^Codex · [A-F0-9]{4}$/u)],
+      ],
+    })
+  })
+
   it('shows one local prompt until its own Host echo and keeps a resumed run off the previous reply', async () => {
     const summary = { id: 'selected', runId: 'new' }
     const previous = { role: 'user', id: 'old-prompt', text: 'same', turnId: 'old', requestId: 'different-request' }

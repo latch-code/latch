@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -137,6 +137,56 @@ const importOf = (device: TestDevice, body: Record<string, unknown>) => device.r
 const received = (log: LogEntry[], method: string) => log.filter(entry => entry.event === 'recv' && entry.method === method)
 
 describe('接入已有会话 on the Host', () => {
+  it('uses the account store when a native session ID appears in two Codex directories', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-history-accounts-')))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const bin = join(root, 'bin')
+    const main = join(root, 'project')
+    const work = join(root, 'work-account')
+    const personal = join(root, 'personal-account')
+    for (const directory of [bin, main, work, personal]) await mkdir(directory)
+    await writeFile(
+      join(bin, 'codex-acp'),
+      [
+        '#!/bin/sh',
+        'export FAKE_ACP_CONFIG=options FAKE_ACP_MODES=read-only,workspace-write,agent,agent-full-access',
+        'export FAKE_ACP_INITIAL_MODE=agent-full-access FAKE_ACP_CAPS=list,load,resume,close,delete,dirs',
+        'export FAKE_ACP_STATE="$CODEX_HOME/state.json" FAKE_ACP_HISTORY_FILE="$CODEX_HOME/fake-history.json"',
+        `exec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
+      ].join('\n'),
+      { mode: 0o755 },
+    )
+    const t = await startTestHost({ commandDirectories: () => [bin] })
+    cleanups.push(() => t.close())
+    const owner = await t.enroll({ listener: 'unix' })
+    const added = await owner.addFolders({ paths: [main] })
+    expect(added.status).toBe(201)
+    const { workspace }: { workspace: { id: string } } = await added.json()
+    const bind = async (name: string, accountDirectory: string) =>
+      (
+        await owner.confirmedJson<{ agent: { id: string } }>('agents', {
+          body: { name, accountDirectory, presetId: 'codex', command: 'codex-acp', args: [] },
+        })
+      ).agent.id
+    const workId = await bind('Codex · Work', work)
+    const personalId = await bind('Codex · Personal', personal)
+    const own = await owner.confirmedJson<{ sessionId: string }>('tasks', {
+      body: { prompt: 'Work account session', requestId: randomUUID(), mode: 'agent', harnessId: workId, workspaceId: workspace.id },
+    })
+    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${own.sessionId}`)).summary.status, SLOW).toBe('idle')
+    const nativeIds = Object.keys(JSON.parse(await readFile(join(work, 'state.json'), 'utf8')))
+    expect(nativeIds).toHaveLength(1)
+    await writeFakeHistory(personal, [{ sessionId: nativeIds[0], cwd: main, title: 'Personal session', updates: fakeConversation() }])
+    const listAccount = (harnessId: string) => owner.json<HistoryList>('history/list', { body: { harnessId, projectId: workspace.id } })
+    expect((await listAccount(workId)).rows).toEqual([])
+    const personalRows = (await listAccount(personalId)).rows
+    expect(personalRows.map(row => row.title)).toEqual(['Personal session'])
+    const preview = await owner.json<HistoryPreview>('history/previews', { body: { handle: personalRows[0].handle } })
+    const imported = await importOf(owner, { requestId: randomUUID(), previewId: preview.previewId })
+    expect(imported.status).toBe(201)
+    expect((await listAccount(personalId)).rows[0]?.importedTaskId).toEqual(expect.any(String))
+  })
+
   it('lists the project’s sessions only: main folder and below, a count for its other folders, none from outside or from Latch', async () => {
     const f = await fixture()
     // The catalog says which harness lists its sessions and which takes a text rebuild.

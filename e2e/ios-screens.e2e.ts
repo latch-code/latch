@@ -88,6 +88,7 @@ const SCENES = [
   'session-team',
   'team-results',
   'team-graph',
+  'harness-accounts',
   'usage-empty',
   'usage-quota',
   'usage-spend',
@@ -186,6 +187,8 @@ const SCENES = [
   'history-lost',
   'brands',
   'harness-menu',
+  'account-models',
+  'account-thinking',
   'about',
   'licenses',
   'computers',
@@ -251,6 +254,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
     const buildCache = process.env.LATCH_IOS_SCREENS_DERIVED_DATA
     const derived = buildCache ? resolve(buildCache) : await mkdtemp(join(tmpdir(), 'latch-ios-screens-'))
     const created: string[] = []
+    let borrowed: { udid: string; appearance: string } | undefined
     try {
       await run(
         '/usr/bin/xcodebuild',
@@ -285,6 +289,9 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
           [
             'inbox-first-rows',
             'agent-consent',
+            'harness-accounts',
+            'account-models',
+            'account-thinking',
             'usage-empty',
             'prompt-queue',
             'steer',
@@ -329,7 +336,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
         await simctlSlow('bootstatus', udid, '-b')
         await simctl('install', udid, application)
         await simctl('privacy', udid, 'grant', 'camera', 'codes.latch.ios.screens').catch(() => {})
-        const before = given ? (await simctl('ui', udid, 'appearance')).stdout.trim() : undefined
+        if (given) borrowed = { udid, appearance: (await simctl('ui', udid, 'appearance')).stdout.trim() }
         // A fresh install's first launch is slow, so the first scene would be shot blank.
         await simctl('launch', '--terminate-running-process', udid, 'codes.latch.ios.screens', '-LatchScene', chosen[0] ?? 'code')
         await pause(6000)
@@ -413,20 +420,54 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
                 { timeout: 20_000, interval: 500 },
               )
               await copyFile(frame, shot)
+            } else if (scene === 'harness-accounts') {
+              await vi.waitFor(
+                async () => {
+                  await simctl('io', udid, 'screenshot', shot)
+                  const visible = ['Codex', '默认账号', '工作', '研究项目', '自定命令', 'Qwen Code', '管理账号']
+                  const absent = ['Grok Build', '插件实例']
+                  const positions = JSON.parse((await run(textReader, [shot, ...visible, ...absent, '小组件'])).stdout) as Record<
+                    string,
+                    number[]
+                  >
+                  for (const word of visible) expect(positions[word], word).toHaveLength(1)
+                  for (const word of absent) expect(positions[word], word).toHaveLength(0)
+                  expect(positions['小组件']).toHaveLength(2)
+                  const brandX = positions.Codex?.[0] ?? Number.NaN
+                  for (const alias of ['默认账号', '工作', '研究项目']) {
+                    const aliasX = positions[alias]?.[0] ?? Number.NaN
+                    expect(Math.abs(aliasX - brandX), alias).toBeLessThan(0.006)
+                  }
+                },
+                { timeout: 20_000, interval: 500 },
+              )
             } else if (
               scene === 'agent-consent'
+              || scene === 'account-models'
+              || scene === 'account-thinking'
               || scene === 'usage-empty'
               || scene === 'prompt-queue'
               || scene === 'steer'
               || scene === 'conversation-sending'
             ) {
+              const account = scene === 'account-models' || scene === 'account-thinking'
+              const frame = account ? join(derived, 'account-frame.png') : shot
               await vi.waitFor(
                 async () => {
-                  await simctl('io', udid, 'screenshot', shot)
-                  if (scene === 'agent-consent') {
-                    const words = ['允许主动联系', '允许按自身权限接单']
-                    const positions = JSON.parse((await run(textReader, [shot, '--settled', ...words])).stdout) as Record<string, number[]>
+                  await simctl('io', udid, 'screenshot', frame)
+                  if (scene === 'agent-consent' || account) {
+                    const words =
+                      scene === 'account-models'
+                        ? ['工作', 'Fast', '刷新模型列表']
+                        : scene === 'account-thinking'
+                          ? ['工作', 'Fast', '深入思考']
+                          : ['允许主动联系', '允许按自身权限接单']
+                    const positions = JSON.parse((await run(textReader, [frame, '--settled', ...words])).stdout) as Record<string, number[]>
                     for (const word of words) expect(positions[word], word).toHaveLength(1)
+                    if (scene === 'account-models') {
+                      const search = JSON.parse((await run(textReader, [frame, '搜索模型'])).stdout) as { 搜索模型: number[] }
+                      expect(search.搜索模型).toHaveLength(1)
+                    }
                     return
                   }
                   if (scene === 'conversation-sending') {
@@ -451,13 +492,12 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
                   expect(positions.Harness).toHaveLength(1)
                   expect(positions.Harness[0]).toBeLessThan(0.5)
                 },
-                { timeout: 20_000, interval: 500 },
+                { timeout: account ? 60_000 : 20_000, interval: 500 },
               )
+              if (frame !== shot) await copyFile(frame, shot)
             } else await simctl('io', udid, 'screenshot', shot)
           }
         }
-        if (!KEEP_RUNNING) await simctl('terminate', udid, 'codes.latch.ios.screens').catch(() => {})
-        if (before === 'light' || before === 'dark') await simctl('ui', udid, 'appearance', before)
         if (!given) {
           // Fresh runtimes consume several GB each; release our completed device before booting the next.
           await simctl('shutdown', udid).catch(() => {})
@@ -467,6 +507,12 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
       }
       expect(used).toBeGreaterThan(0)
     } finally {
+      if (borrowed) {
+        if (!KEEP_RUNNING) await simctl('terminate', borrowed.udid, 'codes.latch.ios.screens').catch(() => {})
+        if (borrowed.appearance === 'light' || borrowed.appearance === 'dark') {
+          await simctl('ui', borrowed.udid, 'appearance', borrowed.appearance)
+        }
+      }
       // Only the simulators this test made are shut down and deleted.
       for (const udid of created) {
         await simctl('shutdown', udid).catch(() => {})

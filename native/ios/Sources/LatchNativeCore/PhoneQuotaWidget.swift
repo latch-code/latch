@@ -32,6 +32,17 @@ public enum PhoneQuotaWidget {
     /** The Host reads limits only as sessions open, turns end or someone looks; figures older than this are drawn as out of date. */
     public static let staleAfter: TimeInterval = 15 * 60
     static let maximumHarnesses = 12, maximumWindows = 8, maximumBytes = 32_768
+    public static func anonymousId(_ id: String) -> String {
+        "widget-" + LinkBytes.hex(LinkBytes.hash(Data(id.utf8)).prefix(16))
+    }
+    /** WidgetKit can show these on the Lock Screen; even a user-defined Harness ID or display name may identify an account. */
+    private static func widgetIdentity(_ harness: NativeJSON, id: String) -> (id: String, label: String, mark: NativeJSON) {
+        let preset = harness["presetId"].string ?? (harness["capabilities"]["display"]["mark"].string == id ? id : "")
+        let name = PhoneStart.presetName(preset), mark = name == nil ? NativeJSON.null : .string(preset)
+        if !harness["account"].bool, id == preset, let name { return (id, name, mark) }
+        let local = anonymousId(id)
+        return (local, (name ?? "Harness") + " · " + local.suffix(4).uppercased(), mark)
+    }
 
     private static func word(_ value: NativeJSON, _ pattern: String) -> NativeJSON {
         value.string.map { LinkBytes.matches($0, pattern) ? NativeJSON.string($0) : .null } ?? .null
@@ -59,7 +70,7 @@ public enum PhoneQuotaWidget {
         for harness in catalog["harnesses"].array where harnesses.count < maximumHarnesses {
             guard let id = harness["id"].string, LinkBytes.matches(id, "[A-Za-z0-9_.-]{1,64}"),
                   let held = PhoneUsage.current(harness["quota"], now: now), !held.windows.isEmpty || held.state == .limited else { continue }
-            let label = harness["capabilities"]["display"]["label"].string.flatMap { $0.isEmpty || $0.utf8.count > 64 ? nil : NativeJSON.string($0) }
+            let identity = widgetIdentity(harness, id: id)
             let windows: [NativeJSON] = held.windows.prefix(maximumWindows).map { window in
                 present([
                     "kind": word(window["kind"], "[a-z0-9-]{1,32}"),
@@ -70,8 +81,8 @@ public enum PhoneQuotaWidget {
                 ])
             }
             harnesses.append(.object([
-                "id": .string(id),
-                "capabilities": .object(["display": present(["label": label ?? .string(id), "mark": word(harness["capabilities"]["display"]["mark"], "[a-z0-9-]{1,32}")])]),
+                "id": .string(identity.id),
+                "capabilities": .object(["display": present(["label": .string(identity.label), "mark": identity.mark])]),
                 "quota": present(["state": state(harness["quota"]["state"]), "observedAt": time(harness["quota"]["observedAt"]), "windows": .array(windows)]),
             ]))
         }
@@ -129,7 +140,7 @@ public enum PhoneQuotaWidget {
 
     /** The person's choice first, then the rest in order; the first is shown when nothing or something since gone was chosen. */
     public static func ordered(_ harnesses: [PhoneQuotaWidgetHarness], chosen: String?) -> [PhoneQuotaWidgetHarness] {
-        guard let chosen, let index = harnesses.firstIndex(where: { $0.id == chosen }) else { return harnesses }
+        guard let chosen, let index = harnesses.firstIndex(where: { $0.id == chosen }) ?? harnesses.firstIndex(where: { $0.id == anonymousId(chosen) }) else { return harnesses }
         var result = harnesses
         result.insert(result.remove(at: index), at: 0)
         return result

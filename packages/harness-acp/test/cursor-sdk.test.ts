@@ -4,7 +4,9 @@ import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AppError } from '@latch/sdk'
 import { createAcpAgentPlugin, forgetCommandLookups, setCommandSearch, type AgentRecord } from '../src/index.ts'
-import { selectProfile } from '../src/permission.ts'
+import { authFacts } from '../src/auth.ts'
+import { harnessLogin, loginTerminalScript, setLoginPrograms } from '../src/login.ts'
+import { launchHash, selectProfile } from '../src/permission.ts'
 import { agentEnvironment } from '../src/environment.ts'
 import { ConnectionClosed, type ExitInfo } from '../src/wires/process.ts'
 import { RpcError } from '../src/protocol.ts'
@@ -21,6 +23,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
   setCursorSdkModule(undefined)
   setCommandSearch(undefined)
+  setLoginPrograms(undefined)
   forgetCommandLookups()
 })
 
@@ -317,6 +320,29 @@ describe('choosing the Cursor route', () => {
     expect(acp.extensionSupport?.reports).toContain('commands')
   })
 
+  it('keeps the SDK key instructions separate from the legacy CLI login, including advertised methods', async () => {
+    const root = await scratch()
+    const bin = join(root, 'bin')
+    const marks = join(root, 'marks')
+    await mkdir(bin)
+    await mkdir(marks)
+    await fakePrograms(bin, marks)
+    setCommandSearch(() => [bin])
+    const path = join(bin, 'cursor-agent')
+    setLoginPrograms(command => (command === 'cursor-agent' ? path : undefined))
+    const sdk = definition({ CURSOR_API_KEY: KEY })
+    const legacy = definition({})
+    const method = { id: 'legacy', name: 'Legacy sign-in', args: ['login'], env: {} }
+    for (const record of [sdk, legacy]) authFacts(record, true).learn(path, [method], true)
+    expect(harnessLogin(sdk)).toEqual({ note: expect.stringContaining('CURSOR_API_KEY') })
+    expect(loginTerminalScript(sdk)).toBeUndefined()
+    expect(loginTerminalScript(sdk, 'legacy')).toBeUndefined()
+    expect(harnessLogin(legacy)).toMatchObject({ methods: [expect.objectContaining({ id: 'legacy' })], logout: true })
+    expect(loginTerminalScript(legacy)).toContain(`'${path}' 'login'`)
+    expect(loginTerminalScript(legacy, 'legacy')).toContain(`'${path}' 'acp' 'login'`)
+    expect(await readdir(marks)).toEqual([])
+  })
+
   it('passes the runner no Host variable', async () => {
     const root = await scratch()
     const profile = selectProfile(definition({ CURSOR_API_KEY: KEY })).profile!
@@ -351,9 +377,20 @@ describe('choosing the Cursor route', () => {
     )
     expect(driver.permission).toMatchObject({ approvals: 'none' })
     const bridge = await openBridge(driver, { dataDir: join(root, 'data'), workspace, tmpRoot }, cleanups)
+    await expect(bridge.logout!()).rejects.toMatchObject({ code: 'logout-unsupported' })
+    expect(await calls(log)).toEqual([])
     const preview = await bridge.launchPreview!({ cwd: workspace })
     expect(preview.command).toBe(process.execPath)
     expect(preview.args).toEqual(cursorRunnerArgs())
+    expect(preview.launchHash).toBe(
+      launchHash({
+        resolvedCommand: join(bin, 'cursor-agent'),
+        args: record.args,
+        definitionEnv: record.env,
+        presetId: 'cursor',
+        profileVersion: 1,
+      }),
+    )
     expect(JSON.stringify(preview)).not.toContain(KEY)
     await expect(
       bridge.createTask({ prompt: 'hi', requestId: 'asks', cwd: workspace, config: [{ configId: 'mode', value: 'agent' }] }),

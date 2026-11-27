@@ -43,7 +43,6 @@ export function createFileTrackingService(options: TrackerOptions) {
   const active = new Set<FileTrackingHandle>(),
     baseGuard = new ProtectedPaths(options.protectedPaths)
   const managedHome = options.managedHome
-  const managedProtectedPaths = managedHome ? options.protectedPaths.filter(path => path !== managedHome.protectedAncestor) : undefined
   const entryLimit = Math.min(options.entryLimit ?? 50_000, 50_000),
     pathLimit = Math.min(options.pathLimit ?? 1000, 1000)
   const scanMs = Math.min(options.scanMs ?? 2000, 2000),
@@ -82,9 +81,14 @@ export function createFileTrackingService(options: TrackerOptions) {
         if (!isAbsolute(folder.path) || !isFileMention({ root: folder.id, path: 'file' })) return unavailable()
         const path = await realpath(folder.path).catch(() => undefined)
         if (!path || (options.allowedRoot && !(await options.allowedRoot({ id: folder.id, path })))) return unavailable()
-        if (input.folders.length === 1 && managedProtectedPaths && (await managedHome?.permits(input.sessionId, path))) {
+        if (input.folders.length === 1 && managedHome && (await managedHome.permits(input.sessionId, path))) {
           managedRoot = path
-          guard = new ProtectedPaths(options.protectedPaths, { root: path, protectedPaths: managedProtectedPaths })
+          guard = new ProtectedPaths(options.protectedPaths, {
+            root: path,
+            get protectedPaths() {
+              return options.protectedPaths.filter(candidate => candidate !== managedHome.protectedAncestor)
+            },
+          })
         }
         if (await guard.contains(path)) return unavailable()
         if (roots.some(root => root.id === folder.id || isInsidePath(root.path, path) || isInsidePath(path, root.path)))

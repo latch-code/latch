@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,20 +8,24 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentRecord } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { personCommandDirectories, redactor, resolveCommand, setCommandSearch } from '../src/command.ts'
-import { agentEnvironment, programPaths } from '../src/environment.ts'
+import { agentEnvironment, assertAccountWorkspace, programPaths } from '../src/environment.ts'
+import { assertCommandVersion, createAcpAgentPlugin } from '../src/index.ts'
 import { checkLogin, harnessLogin, loginTerminalScript, presetRecord, setLoginPrograms } from '../src/login.ts'
 import { ALWAYS_INHERITED, loadLoginShell, loginShellValues, readLoginShell, setLoginShellValues } from '../src/login-shell.ts'
-import { launchHash } from '../src/permission.ts'
+import { launchHash, selectProfile } from '../src/permission.ts'
 import { agentProbePreview, probeAgent } from '../src/probe.ts'
 import { FALLBACK_PROFILES, HARNESS_PROFILES, profileFor } from '../src/profiles/index.ts'
 import { AcpWire } from '../src/wires/acp.ts'
+import { activate, openBridge } from './helpers/replay.ts'
 
 const run = promisify(execFile)
 /** The Codex preset on its ACP adapter, as a definition saved before Codex was reached directly. */
 const codexAdapter = (): AgentRecord => ({ ...presetRecord('codex')!, command: 'codex-acp' })
 const roots: string[] = []
+const cleanups: Array<() => Promise<void> | void> = []
 const savedPath = process.env.PATH
 afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
   setLoginShellValues({})
   setLoginPrograms(undefined)
   setCommandSearch(undefined)
@@ -168,6 +172,42 @@ describe('the environment an agent inherits', () => {
     expect(codex).not.toHaveProperty('QWEN_HOME')
     const plain = agentEnvironment({ ...base, hostEnv: { PATH: '/usr/bin', CODEX_HOME: '/me/.codex' }, shellEnv })
     expect(plain).not.toHaveProperty('CODEX_HOME')
+  })
+
+  it('uses only the bound store for a named account and refuses a missing or redirected directory', async () => {
+    const directory = await root()
+    const own = join(directory, 'selected')
+    await mkdir(own)
+    const use = (id: string) =>
+      agentEnvironment({
+        ...base,
+        account: { presetId: id, accountDirectory: own },
+        profile: profileFor(id)?.permission,
+        hostEnv: { PATH: '/usr/bin', CODEX_HOME: '/other', CODEX_SQLITE_HOME: '/other-db', PI_CODING_AGENT_SESSION_DIR: '/other-sessions' },
+        shellEnv: {},
+      })
+    expect(use('codex')).toMatchObject({ CODEX_HOME: own, CODEX_SQLITE_HOME: own })
+    expect(use('qwen')).toMatchObject({ HOME: own, QWEN_HOME: own, QWEN_RUNTIME_DIR: own })
+    expect(use('goose')).toMatchObject({ GOOSE_PATH_ROOT: own, GOOSE_DISABLE_KEYRING: '1' })
+    expect(use('pi')).not.toHaveProperty('PI_CODING_AGENT_SESSION_DIR')
+    expect(() => use('custom')).toThrow(expect.objectContaining({ code: 'harness-account-unsupported' }))
+    expect(() => use('antigravity')).toThrow(expect.objectContaining({ code: 'harness-account-unavailable' }))
+    const adc = join(own, 'application_default_credentials.json')
+    const other = join(directory, 'project-credentials')
+    await writeFile(other, 'fixture')
+    await symlink(other, adc)
+    expect(() => use('antigravity')).toThrow(expect.objectContaining({ code: 'harness-account-unavailable' }))
+    await rm(adc)
+    await writeFile(adc, 'fixture')
+    expect(use('antigravity')).toMatchObject({ AGY_ADC_AUTH: 'true', GOOGLE_APPLICATION_CREDENTIALS: adc, CLOUDSDK_CONFIG: own })
+    expect(use('opencode').XDG_DATA_HOME).toBe(join(own, 'data'))
+    await symlink(directory, join(own, 'data'))
+    expect(() => use('opencode')).toThrow(expect.objectContaining({ code: 'harness-account-unavailable' }))
+    const moved = join(directory, 'moved')
+    await rename(own, moved)
+    expect(() => use('codex')).toThrow(expect.objectContaining({ code: 'harness-account-unavailable' }))
+    await symlink(moved, own)
+    expect(() => use('codex')).toThrow(expect.objectContaining({ code: 'harness-account-unavailable' }))
   })
 
   it('never inherits a name that holds a secret or a loader', () => {
@@ -459,6 +499,223 @@ describe('the login command', () => {
     await run(path, [], { cwd: directory })
     await expect(readFile(file, 'utf8')).resolves.toContain('logged in')
     await expect(stat(path)).rejects.toThrow()
+  })
+
+  it('runs Codex login and its status against the selected directory even when the terminal uses a different account', async () => {
+    const directory = await root()
+    const own = join(directory, "work's account")
+    const elsewhere = join(directory, 'personal')
+    const bin = join(directory, 'bin')
+    for (const path of [own, elsewhere, bin]) await mkdir(path)
+    const proxy = 'http://fixture-user:fake-proxy-password@proxy.example:8080'
+    const mise = "fixture's mise state\n$(echo uninterpreted-mise-state) café\n"
+    const otherKey = 'unrelated-account-key'
+    const program = join(bin, 'codex')
+    await writeFile(
+      program,
+      [
+        '#!/bin/sh',
+        '[ "$CODEX_HOME" = "$CODEX_SQLITE_HOME" ] && [ -z "$OPENAI_API_KEY" ] || exit 7',
+        'if [ "$2" = status ]; then [ -f "$CODEX_HOME/login" ] || { echo "Not logged in"; exit 1; };',
+        'else [ "$#" = 1 ] && [ "$1" = login ] && [ "$SSL_CERT_FILE" = "/fixtures/CA bundle.pem" ] || exit 8;',
+        '[ -z "${ALL_PROXY+x}" ] && IFS= read -r reply && [ "$reply" = "browser reply" ] || exit 9;',
+        'printf "%s" "$HTTPS_PROXY" > "$CODEX_HOME/proxy"; printf "%s" "$__MISE_DIFF" > "$CODEX_HOME/mise";',
+        'touch "$CODEX_HOME/login"; fi',
+      ].join('\n'),
+      { mode: 0o700 },
+    )
+    useOnly(bin)
+    const record = { ...codexAdapter(), accountDirectory: own }
+    expect((await checkLogin(record)).status).toBe('unauthenticated')
+    const script = join(directory, 'login.command')
+    const source = loginTerminalScript(record, undefined, { inLatch: true })!
+    for (const value of [proxy, otherKey, 'uninterpreted-mise-state']) expect(source).not.toContain(value)
+    await writeFile(script, source, { mode: 0o700 })
+    const login = run('/bin/sh', ['-x', script], {
+      env: {
+        PATH: '/usr/bin:/bin',
+        CODEX_HOME: elsewhere,
+        OPENAI_API_KEY: otherKey,
+        HTTPS_PROXY: proxy,
+        __MISE_DIFF: mise,
+        SSL_CERT_FILE: '/fixtures/CA bundle.pem',
+      },
+    })
+    login.child.stdin!.end('browser reply\n')
+    const { stdout, stderr } = await login
+    for (const value of [proxy, otherKey, 'uninterpreted-mise-state']) {
+      expect(stdout).not.toContain(value)
+      expect(stderr).not.toContain(value)
+    }
+    await expect(readFile(join(own, 'proxy'), 'utf8')).resolves.toBe(proxy)
+    await expect(readFile(join(own, 'mise'), 'utf8')).resolves.toBe(mise)
+    expect((await checkLogin(record)).status).toBe('authenticated')
+    expect(existsSync(join(elsewhere, 'login'))).toBe(false)
+  })
+
+  it('allows Enterprise ADC only with a known agy version and leaves personal quota and sign-in to the default profile', async () => {
+    const directory = await root()
+    const bin = join(directory, 'bin')
+    await mkdir(bin)
+    const recorded = join(directory, 'application_default_credentials.json')
+    await writeFile(recorded, 'fixture')
+    const program = join(bin, 'agy')
+    useOnly(bin)
+    const original = presetRecord('antigravity')!
+    const account = { ...original, accountDirectory: directory }
+    await writeFile(program, '#!/bin/sh\necho unknown', { mode: 0o700 })
+    await expect(assertCommandVersion(account)).rejects.toMatchObject({ code: 'harness-version-unsupported' })
+    await writeFile(program, '#!/bin/sh\necho 1.5.8')
+    await expect(assertCommandVersion(account)).resolves.toBeUndefined()
+    expect(loginTerminalScript(account)).toBeUndefined()
+    expect(selectProfile(account).profile?.quota).toBeUndefined()
+    expect(selectProfile(original).profile?.quota).toBeDefined()
+  })
+
+  it('runs named Qwen only on a known version, with login in the account home and project dotenv confined to the project', async () => {
+    const directory = await root()
+    const bin = join(directory, 'bin')
+    const own = join(directory, "work's account")
+    const elsewhere = join(directory, 'others')
+    const workspace = join(elsewhere, 'project')
+    await Promise.all([mkdir(bin), mkdir(own), mkdir(workspace, { recursive: true })])
+    const path = join(bin, 'qwen')
+    const version = join(bin, 'version')
+    await writeFile(
+      path,
+      [
+        '#!/bin/sh',
+        '[ "$PWD" = "$HOME" ] && [ "$QWEN_HOME" = "$HOME" ] && [ "$QWEN_RUNTIME_DIR" = "$HOME" ] || exit 7',
+        '[ -z "$OPENAI_API_KEY" ] || exit 8',
+        'if [ "$1" = "--version" ]; then exec /bin/cat "${0%/*}/version"; fi',
+        'touch "$HOME/signed-in"',
+      ].join('\n'),
+      { mode: 0o700 },
+    )
+    useOnly(bin)
+    const legacy = presetRecord('qwen')!
+    const account = { ...legacy, accountDirectory: own }
+    const script = join(directory, 'login.command')
+    const open = async () => {
+      await writeFile(script, loginTerminalScript(account, undefined, { inLatch: true })!, { mode: 0o700 })
+      return run('/bin/sh', [script], {
+        cwd: workspace,
+        env: { PATH: '/usr/bin:/bin', HOME: elsewhere, QWEN_HOME: elsewhere, OPENAI_API_KEY: 'fake-other' },
+      })
+    }
+    for (const rejected of ['unknown', ' ', '0.27.3', '0.27.4-rc.1']) {
+      await writeFile(version, `${rejected}\n`)
+      await expect(assertCommandVersion(account)).rejects.toMatchObject({ code: 'harness-version-unsupported' })
+      await expect(open()).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('0.27.4') })
+    }
+    expect(existsSync(join(own, 'signed-in'))).toBe(false)
+    await expect(assertCommandVersion(legacy)).resolves.toBeUndefined()
+    await writeFile(version, 'v0.27.4\n')
+    await expect(assertCommandVersion(account)).resolves.toBeUndefined()
+    await open()
+    expect(existsSync(join(own, 'signed-in'))).toBe(true)
+    expect(existsSync(join(elsewhere, 'signed-in'))).toBe(false)
+    expect(selectProfile(account).profile?.quota).toBeUndefined()
+
+    await writeFile(join(workspace, '.env'), 'PROJECT_VALUE=fixture\n')
+    expect(() => assertAccountWorkspace(account, workspace)).not.toThrow()
+    const ancestorEnv = join(elsewhere, '.env')
+    await writeFile(ancestorEnv, 'OPENAI_API_KEY=fake-personal\n')
+    expect(() => assertAccountWorkspace(account, workspace)).toThrow(expect.objectContaining({ code: 'harness-account-unavailable' }))
+    expect(() => assertAccountWorkspace(legacy, workspace)).not.toThrow()
+    await expect(agentProbePreview(account, { dataDir: directory, cwd: workspace })).rejects.toMatchObject({
+      code: 'harness-account-unavailable',
+    })
+    await rm(join(workspace, '.env'))
+    const outsideEnv = join(directory, 'outside.env')
+    await rename(ancestorEnv, outsideEnv)
+    await symlink(outsideEnv, join(workspace, '.env'))
+    expect(() => assertAccountWorkspace(account, workspace)).toThrow(expect.objectContaining({ code: 'harness-account-unavailable' }))
+  })
+
+  it('probes, lists models and starts a Qwen session with the same named home', async () => {
+    const directory = await root()
+    const workspace = join(directory, 'workspace')
+    const own = join(directory, 'account')
+    const bin = join(directory, 'bin')
+    const marks = join(directory, 'started')
+    const dataDir = join(directory, 'data')
+    const tmpRoot = join(directory, 'tmp')
+    await Promise.all([mkdir(workspace), mkdir(own), mkdir(bin), mkdir(tmpRoot, { mode: 0o700 })])
+    await writeFile(
+      join(bin, 'qwen'),
+      [
+        '#!/bin/sh',
+        `[ "$HOME" = '${own}' ] && [ "$HOME" = "$QWEN_HOME" ] && [ "$HOME" = "$QWEN_RUNTIME_DIR" ] || exit 7`,
+        'if [ "$1" = "--version" ]; then [ "$PWD" = "$HOME" ] || exit 8; echo 0.27.4; exit 0; fi',
+        `printf '%s\\n' "$HOME" >> '${marks}'`,
+        'export FAKE_ACP_CONFIG=options FAKE_ACP_MODES=plan,default,auto-edit,auto,yolo FAKE_ACP_INITIAL_MODE=default',
+        `exec '${process.execPath}' '${FAKE_ACP_AGENT}'`,
+      ].join('\n'),
+      { mode: 0o700 },
+    )
+    useOnly(bin)
+    const account = { ...presetRecord('qwen')!, accountDirectory: own }
+    const projectEnv = join(workspace, '.env')
+    await writeFile(projectEnv, 'MODEL=one\n')
+    const fixedMtime = new Date('2026-10-01T00:00:00Z')
+    await utimes(projectEnv, fixedMtime, fixedMtime)
+    const preview = await agentProbePreview(account, { dataDir, cwd: workspace })
+    expect(await probeAgent(account, { dataDir, cwd: workspace, expectedLaunchHash: preview.launchHash })).toMatchObject({
+      status: 'ready',
+    })
+    const driver = await activate(createAcpAgentPlugin(account, { log: () => {}, stopGraceMs: 300 }), cleanups)
+    const bridge = await openBridge(driver, { dataDir, workspace, tmpRoot }, cleanups)
+    expect(await bridge.readCatalogue!({ auto: false })).toEqual({ ran: true })
+    expect(bridge.catalogue?.()?.options).toContainEqual(expect.objectContaining({ category: 'model' }))
+    const { sessionId } = await bridge.createTask({ prompt: 'fixture', requestId: 'qwen-bound' })
+    await expect.poll(async () => (await bridge.detail(sessionId)).summary.status).toBe('idle')
+    expect(bridge.quotaRead?.()).toBeUndefined()
+    expect((await readFile(marks, 'utf8')).trim().split('\n')).toEqual([own, own, own])
+    const initial = await bridge.launchPreview!({ cwd: workspace })
+    await writeFile(join(own, '.env'), 'MODEL=private\n')
+    expect((await bridge.launchPreview!({ cwd: workspace })).launchHash).toBe(initial.launchHash)
+    await writeFile(projectEnv, 'MODEL=two\n')
+    await utimes(projectEnv, fixedMtime, fixedMtime)
+    await expect(bridge.prompt(sessionId, 'changed', 'qwen-changed')).rejects.toMatchObject({ code: 'project-config-changed' })
+    await writeFile(join(directory, '.env'), 'OPENAI_API_KEY=fake-personal\n')
+    await expect(bridge.prompt(sessionId, 'blocked', 'qwen-blocked')).rejects.toMatchObject({ code: 'harness-account-unavailable' })
+    expect((await readFile(marks, 'utf8')).trim().split('\n')).toEqual([own, own, own])
+  })
+
+  it('fingerprints a named Qwen project dotenv link, changes to its target, and its removal', async () => {
+    const directory = await root()
+    const workspace = join(directory, 'workspace')
+    const own = join(directory, 'account')
+    const bin = join(directory, 'bin')
+    await Promise.all([mkdir(workspace), mkdir(own), mkdir(bin)])
+    await writeFile(join(bin, 'qwen'), '#!/bin/sh\n', { mode: 0o700 })
+    useOnly(bin)
+    const legacy = presetRecord('qwen')!
+    const account = { ...legacy, accountDirectory: own }
+    const qwenDir = join(workspace, '.qwen')
+    const qwenEnv = join(qwenDir, '.env')
+    const first = join(workspace, 'first.env')
+    const second = join(workspace, 'second.env')
+    await mkdir(qwenDir)
+    await writeFile(first, 'MODEL=one\n')
+    await writeFile(second, 'MODEL=one\n')
+    const preview = (record: AgentRecord = account) => agentProbePreview(record, { dataDir: directory, cwd: workspace })
+    const legacyBefore = await preview(legacy)
+    await writeFile(join(workspace, '.env'), 'MODEL=legacy\n')
+    expect((await preview(legacy)).launchHash).toBe(legacyBefore.launchHash)
+    const absent = await preview()
+    await symlink(first, qwenEnv)
+    const linked = await preview()
+    expect(linked.launchHash).not.toBe(absent.launchHash)
+    await writeFile(first, 'MODEL=new-version\n')
+    const changed = await preview()
+    expect(changed.launchHash).not.toBe(linked.launchHash)
+    await rm(qwenEnv)
+    await symlink(second, qwenEnv)
+    expect((await preview()).launchHash).not.toBe(changed.launchHash)
+    await rm(qwenEnv)
+    expect((await preview()).launchHash).toBe(absent.launchHash)
   })
 
   it('ends a Latch terminal’s script with the same command and its exit code, without words about a window', async () => {

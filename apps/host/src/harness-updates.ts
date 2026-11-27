@@ -9,7 +9,7 @@
  * configuration directory only `settings.json` is opened, and only that key is kept.
  */
 import { constants } from 'node:fs'
-import { open } from 'node:fs/promises'
+import { open, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { compareVersions, type ReleaseLookup } from '@latch/harness-acp'
@@ -44,6 +44,7 @@ export interface UpdateSource {
   lookup: ReleaseLookup
   current: string
   channel?: 'claude'
+  claudeDirectory?: string
   command?: string
 }
 
@@ -99,9 +100,10 @@ export function updateHint(source: UpdateSource, latest: string | undefined): Co
  * The dist-tag Claude Code follows, from `settings.json` in its configuration directory: opened without following a
  * link, a regular file of at most 1 MiB; anything missing, unreadable or unknown is `latest`.
  */
-export async function readClaudeChannel(dir: string): Promise<UpdateChannel> {
+export async function readClaudeChannel(dir: string, bound = false): Promise<UpdateChannel> {
   let handle
   try {
+    if (bound && (await realpath(dir)) !== dir) return 'latest'
     handle = await open(join(dir, 'settings.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
   } catch {
     return 'latest'
@@ -196,7 +198,7 @@ interface Entry {
 /** The Host's lookups: kept in memory per package, formula or cask, never written anywhere. */
 export class HarnessUpdates {
   private readonly entries = new Map<string, Entry>()
-  private channel: UpdateChannel = 'latest'
+  private readonly channels = new Map<string, UpdateChannel>()
   private notifying = false
 
   constructor(
@@ -221,14 +223,20 @@ export class HarnessUpdates {
   hint(source: UpdateSource): CommandDetection['update'] | undefined {
     const tags = this.entries.get(keyOf(source.lookup))?.tags
     const npmChannel = source.lookup.registry === 'npm' && source.channel === 'claude'
-    return updateHint(source, tags?.[npmChannel ? this.channel : 'latest'])
+    const channel = npmChannel ? (this.channels.get(source.claudeDirectory ?? '') ?? 'latest') : 'latest'
+    return updateHint(source, tags?.[channel])
   }
 
   /** Starts the lookups that are missing or old for these programs, and waits for them at most `timeoutMs`. */
   async settle(sources: readonly UpdateSource[], timeoutMs: number): Promise<void> {
     const waits: Promise<unknown>[] = []
-    if (sources.some(source => source.channel === 'claude' && source.lookup.registry === 'npm'))
-      waits.push(readClaudeChannel(this.options.claudeDir()).then(channel => (this.channel = channel)))
+    const directories = new Set(
+      sources.filter(source => source.channel === 'claude' && source.lookup.registry === 'npm').map(source => source.claudeDirectory ?? ''),
+    )
+    for (const directory of directories)
+      waits.push(
+        readClaudeChannel(directory || this.options.claudeDir(), !!directory).then(channel => this.channels.set(directory, channel)),
+      )
     const lookups = new Map(sources.map(source => [keyOf(source.lookup), source.lookup]))
     for (const [key, lookup] of lookups) {
       const pending = this.lookup(key, lookup)

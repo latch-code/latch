@@ -67,6 +67,9 @@ export const antigravityProfile: HarnessProfile = {
   },
 }
 
+/** Enterprise ADC has no personal plan /usage or keyring login/logout. Its minimum version predates our ACP minimum (1.5.8). */
+export const antigravityAdcProfile: HarnessProfile = { ...antigravityProfile, version: 6, quota: undefined }
+
 /** agy's Go boolean flag: the last occurrence before the end of options wins. An invalid value is refused by agy. */
 export function antigravitySkipsPermissions(args: readonly string[]): boolean {
   let skip = false

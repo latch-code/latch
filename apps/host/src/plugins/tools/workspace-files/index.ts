@@ -18,7 +18,7 @@ const NOFOLLOW = constants.O_NOFOLLOW ?? 0
 
 export interface WorkspacePluginOptions {
   /** Absolute paths no tool may read, list, or write, e.g. the Host's private data directory. */
-  protectedPaths?: string[]
+  protectedPaths?: readonly string[] | (() => readonly string[])
   /** The Host authenticates the session and the exact real directory before omitting this one protected ancestor. */
   managedHome?: { protectedAncestor: string; permits(sessionId: string, canonicalHome: string): Promise<boolean> }
   /**
@@ -79,19 +79,22 @@ class ProtectedPaths {
   private readonly managedGuard: ProtectedPaths | undefined
 
   constructor(
-    private readonly paths: readonly string[],
+    private readonly paths: () => readonly string[],
     private readonly managedHome?: WorkspacePluginOptions['managedHome'],
   ) {
-    if (managedHome) this.managedGuard = new ProtectedPaths(paths.filter(path => path !== resolve(managedHome.protectedAncestor)))
+    if (managedHome) {
+      const ancestor = resolve(managedHome.protectedAncestor)
+      this.managedGuard = new ProtectedPaths(() => paths().filter(path => path !== ancestor))
+    }
   }
 
   get empty(): boolean {
-    return this.paths.length === 0
+    return this.paths().length === 0
   }
 
   async identities(): Promise<Set<string>> {
     const ids = new Set<string>()
-    for (const path of this.paths) {
+    for (const path of this.paths()) {
       try {
         ids.add(identity(await stat(path, { bigint: true })))
       } catch (error) {
@@ -107,7 +110,7 @@ class ProtectedPaths {
       return this.managedGuard.assertAllowed(target)
     if (this.empty) return
     const ids = await this.identities()
-    const spelled = await Promise.all(this.paths.map(path => realpath(path).catch(() => resolve(path))))
+    const spelled = await Promise.all(this.paths().map(path => realpath(path).catch(() => resolve(path))))
     for (let current = target; ; current = dirname(current)) {
       let id: string | undefined
       try {
@@ -224,13 +227,21 @@ async function writeRegular(
   }
 }
 
-/** Built-in file capabilities; all writes pass through the runtime approval gate. */
-export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): HarnessPlugin {
-  const protectedPaths = (options.protectedPaths ?? []).map(path => {
+function normalizeProtectedPaths(paths: readonly string[]): string[] {
+  return paths.map(path => {
     if (!isAbsolute(path)) throw new Error('Protected workspace paths must be absolute')
     return resolve(path)
   })
-  const guard = new ProtectedPaths(protectedPaths, options.managedHome)
+}
+
+/** Built-in file capabilities; all writes pass through the runtime approval gate. */
+export function createWorkspacePlugin(options: WorkspacePluginOptions = {}): HarnessPlugin {
+  const inputPaths = options.protectedPaths
+  const fixed = typeof inputPaths === 'function' ? [] : normalizeProtectedPaths(inputPaths ?? [])
+  const guard = new ProtectedPaths(
+    typeof inputPaths === 'function' ? () => normalizeProtectedPaths(inputPaths()) : () => fixed,
+    options.managedHome,
+  )
   const hooks = options.hooks
   return {
     id: 'workspace-files',

@@ -140,7 +140,7 @@ profile 的 `minimumVersion` 是它的命令支持的最低版本，用 `<命令
 | Antigravity | 1.5.8 | 不支持 |
 | Grok Build | 1.0.77 | 同左 |
 | OpenCode | 直连 2.2.6（`opencode --version` 打印 `opencode v2.2.6`）；`opencode acp` 无（版本规则 1.x、2.x） | 2.2.6 |
-| Qwen Code | 无 | 0.26.8 |
+| Qwen Code | 默认账号无；独立账号 0.27.4，版本无法确认时拒绝 | 0.26.8 |
 | goose | 无 | 1.57.0 |
 | Claude Agent | 直连 2.1.322（`claude --version`）；适配器无（版本规则见下） | 直连同左；适配器上是它自带的 Claude Code 2.1.318（`--cli --version`） |
 
@@ -156,7 +156,7 @@ profile 的 `minimumVersion` 是它的命令支持的最低版本，用 `<命令
 
 - 定义与预设在目录里是 `unavailable`、`statusReason: 'outdated'`，检测结果 `CommandDetection.outdated` 带 `need` 与 `upgrade`。草稿已选它时选择不变，不会自己换成别的 Harness。
 - 新会话、已有会话的下一轮（已在运行的进程也不再接收）与「测试启动」都在启动进程前以 409 `harness-version-unsupported` 拒绝；这不记为「上次运行异常」。读版本发生在启动前的项目配置复查之前，复查仍是最后一步。
-- 读不出版本（命令失败、超时、没打印）不挡任何事，由握手时限兜底（见「进程与环境」）。pi 的线另用 `clear_queue` 检查读不出版本的 pi（见「pi 的 RPC 模式」）。
+- 通常读不出版本（命令失败、超时、没打印）时由握手时限兜底。Qwen Code 独立账号每次启动都要确认版本。pi 的线另用 `clear_queue` 核对读不出版本的 pi（见「pi 的 RPC 模式」）。
 
 ### 新版本提示
 
@@ -547,7 +547,7 @@ Cursor 预设的定义在这台 Mac 上带了 `CURSOR_API_KEY`，且 Host 找得
 
 **文档里的三件事（决定这条路线的形状）：**
 
-1. **只认 API key。**「Authentication」写的顺序是显式 `apiKey`、`CURSOR_API_KEY`、再是 `Cursor.auth.login()` 存在 `~/.cursor/sdk/auth.json` 的登录；不读 `cursor-agent` 的登录。运行器每个调用都显式传 `apiKey`，没有密钥就拒绝，所以 SDK 从不回退到这台电脑上存的登录。
+1. **只认 API key。** 运行器每次调用都显式传 `apiKey`，缺少密钥时拒绝。SDK 实例的设置页引导人在 Cursor 网页创建密钥，再到 Host 电脑的该实例定义里填写或更换 `CURSOR_API_KEY`。默认 `cursor-agent acp` 实例继续用 CLI 自己的登录流程。[Cursor SDK 认证文档](https://cursor.com/docs/sdk/typescript#authentication)
 2. **agent 循环在调用它的 Node 进程里。**「Local means local agent loop, not local model」：循环与文件在本机，推理在 Cursor 的服务上。所以 SDK 只在运行器里加载，从不进 Host 进程。
 3. **本机工具调用不逐次审批。**「Quickstart approves tool calls automatically」写明默认直接运行；「Hooks」写明只有文件钩子、没有程序回调；能管住它的只有「Restricting the toolset」（`tools`、`disallowedTools`）、「Sandbox options」与「Auto-review」。
 
@@ -626,7 +626,7 @@ Cursor 预设的定义在这台 Mac 上带了 `CURSOR_API_KEY`，且 Host 找得
 Latch 读 CLI 自己的存储时只读要用的那部分（另见下面的「DeepSeek Harness 的余额」与「Claude 的 Agent SDK 线」）。Host 只读它启动的那一个会话的日志里的 tokens 数（`apps/host/src/cli-usage.ts`），依据 `@deepseek-ai/dsh-session-persistence-jsonl` 与 `dsh-session` 0.2.2-rc.1 的源码与说明：
 
 - **何时。** 只对预设自己的命令（与额度同一判断 `readsCliQuota`），只在启动脚本给了 `cliUsage` 时；测试 Host 没有它就不读。一轮不经模型路由、Agent 没报这一轮的 tokens、会话不是接入的（`imported`）时，轮次结束 1 秒后读一次（dsh 每 200 ms 批量写一次事件），10 秒内读不完就按没有 tokens 记；驱动另有自己的计时，读的一方再过 1 秒还没答复，这一行照写、关闭也不等它。
-- **读哪个文件。** 固定路径 `~/.dsh/sessions/<projectKey(cwd)>/<会话 ID>/session.v4.jsonl.zstd`：`cwd` 是 Latch 在 `session/new` 发的目录，ID 是 dsh-acp 回的 UUID（形状不对不读）。不列目录、不找别的格式代号。`DSH_HOME` 有值，或它自己的配置（见「DeepSeek Harness 的余额」的「它自己的配置」）说 `session-persistence-jsonl` 不是官方 bundle 原样的，就不读。
+- **读哪个文件。** 默认路径 `~/.dsh/sessions/<projectKey(cwd)>/<会话 ID>/session.v4.jsonl.zstd`：`cwd` 是 Latch 在 `session/new` 发的目录，ID 是 dsh-acp 回的 UUID（形状不对不读）。不列目录、不找别的格式代号。额外账号从绑定目录读取。其他自设的 `DSH_HOME`，或它自己的配置（见「DeepSeek Harness 的余额」的「它自己的配置」）说 `session-persistence-jsonl` 不是官方 bundle 原样的，就不读。
 - **怎么读。** 每层目录都必须是这个用户的真目录（不是链接）；文件以不跟随链接的方式打开，必须是这个用户的普通文件，不超过 64 MiB；Zstandard 流式解压、逐行处理，文字超过 256 MiB、一行超过 16 MiB 或这几类事件超过 10 万条就放弃；中止或读失败时整条解压链一起结束。最后一帧写了一半时，它之前的完整行照用。首行必须是这个 ID、这个目录、格式 4。只看 `turn/start`、`turn/end`、`assistant/message`、`subagent/catalog`，每行必须以 `{"type":` 开头；回复会随整行解析进内存，只取出轮号、时间与 `usage` 的数字，其余随行丢掉。
 - **怎么归到这一轮。** 开始与结束都在 Latch 这一轮之内的 dsh 轮次，把它们的 `assistant/message.usage` 相加（输入加回缓存读写）。有 dsh 轮次跨过这一轮的边、没有完整的轮、有回复没带 `usage`、会话到这一轮为止建过子 Agent（它的用量在 Latch 没有 ID 的子会话日志里），都一个数也不写。
 - **去向。** 只有数字，只进轮次记录（`usage/turns-*.jsonl`），不进会话的 `TurnStats`，不进日志、错误、SSE。失败不说话。不写审计：不碰秘密，没有东西离开这台电脑，读到的数就是记录里那一行。
@@ -680,6 +680,30 @@ Claude Agent 与 OpenCode 的预设原先保存的是适配器路线（`claude-a
 | 预热备用进程（`prewarm`） | 环境、MCP 与 `canUseTool` 在停车时就固定，每个约 250 MB，收益没有测过 |
 | 适配器其他私有功能 | 文件改动报告、按某一条分叉、空闲压缩、目标（goal）与 AIR 扩展只在适配器里 |
 
+## 同一个 Harness 的多个账号
+
+在运行 Host 的 Mac 桌面端打开「设置 › Harness › 账号」，选择预设并给账号起名。配置目录应当是本人已用原生程序设置好的绝对路径，与项目、默认账号和其他账号目录分开。添加时经本机确认；手机和浏览器按设备已有权限使用保存的实例。Host 用独立的 Harness ID 保存每个实例，名称可以改。移除定义保留原生账号和磁盘文件，重启后仍禁止文件工具打开该目录的文件，也不能把该目录加入项目。绑定确认在本机显示配置目录，设备目录与设置接口只收到账号标记和名称。
+
+提交超时或连接中断时，在原对话里按「重试添加」。Host 核对同一配置目录和预设，已保存的账号会直接打开。
+
+| Harness | 额外账号用什么 | 使用条件 |
+| --- | --- | --- |
+| Codex | 该账号的 `CODEX_HOME` | SQLite 索引也放在绑定目录。各自的 app-server 报告模型、思考与额度，在原目录恢复 thread。 |
+| Claude Agent | 该账号的 `CLAUDE_CONFIG_DIR` | 凭据由官方 CLI 管理。SDK 会话、模型和历史读取使用同一目录。Latch 沿用原生登录说明；[Anthropic 的认证要求](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use)与上文的发布约定同样适用。 |
+| pi | `PI_CODING_AGENT_DIR` | 选择含该账号配置的 agent 目录。 |
+| OpenCode | 独立的 XDG 根 | 原生程序分别使用根下的 `config`、`data`、`state`、`cache`。 |
+| DeepSeek Harness | `DSH_HOME` | 余额仅适用于可核实的官方 DeepSeek API key 路线。配置检查、读余额和读取用量均使用该账号目录。 |
+| Qwen Code | `QWEN_HOME`、`QWEN_RUNTIME_DIR` 和 `HOME` 均使用绑定目录 | 需要确认 CLI 为 0.27.4 或更高版本。打开登录终端时从绑定目录进入，再用 `/auth`。 |
+| goose | `GOOSE_PATH_ROOT` | 这个目录需要用 `GOOSE_DISABLE_KEYRING=1` 配置文件型凭据。绑定后的 goose 进程使用同一设置。 |
+| Grok Build | `GROK_HOME` | 选择该账号已经配置好的 Grok 目录。 |
+| Cursor | 每个实例各自的 `CURSOR_API_KEY` | 在运行 Host 的电脑填写，使用 [Cursor SDK 路线](#cursor-的-sdk-路线)，编辑定义时需保留专用密钥和预设命令。 |
+| Antigravity | Gemini Enterprise ADC 目录 | 在原生工具配置好 `application_default_credentials.json` 后绑定它所在的目录。CLI 使用 `AGY_ADC_AUTH` 和这份文件，Host 只检查文件元数据。个人 Google 登录继续使用系统钥匙串。ADC 实例不提供个人订阅的额度或退出登录，原生历史目录仍由 CLI 管理。[Google 的 ADC 说明](https://antigravity.google/docs/enterprise) |
+| Latch 内置 | 各自的模型服务 | 在「设置 › 模型服务」给每个服务命名并分别配置密钥，在模型选择器中按服务选择。 |
+
+在新对话选账号后，模型、思考档位、额度和登录状态均按该实例读取。界面和 API 启动时都默认使用所选账号自己的模型，明确指定的模型服务优先。已开的对话按原 Harness ID 恢复。并行使用两个账号时开两条对话；其中一个失效、停用或用尽额度，需要由人处理。CLI 没有提供稳定账号标识时，Host 只能核对绑定目录。因此，请为新身份另建目录；在同一目录直接改登，Latch 无法可靠发现身份已经变化。额度页只列 Harness 实际报告的额度。
+
+**Qwen Code 的项目配置。** 独立账号保留原生的项目信任和取值顺序。可信项目自己的 `.qwen/.env` 或 `.env` 可以给这次会话提供模型凭据，并优先于绑定目录的 `.env`。Latch 只用这些项目文件的身份、大小和时间计算启动指纹，变更后须新建会话。Qwen Code 还会向上查找同名文件。Latch 在启动与复用进程前发现项目祖先目录里的候选文件，或项目文件通过链接指向范围外时，就拒绝使用该项目。Qwen Code 运行期间可以重新读取文件，因此检查只覆盖启动与复用时的文件状态。默认账号沿用原生路径与版本规则。[Qwen Code 0.27.4 的环境加载](https://github.com/QwenLM/qwen-code/blob/v0.27.4/packages/cli/src/config/environment.ts#L390-L501)
+
 ## 登录
 
 Latch 从不替人登录：不调用 `authenticate`，不读凭据文件或钥匙串。它只运行程序自己的命令，并听 Agent 怎么说。
@@ -712,7 +736,7 @@ Latch 从不替人登录：不调用 `authenticate`，不读凭据文件或钥�
 | 带 `terminal` | Latch 自己的终端（`features.terminal`）：会话里是底部终端中以 Harness 命名的一个，没有会话时是不属于任何会话的终端。命令以 0 退出后页面重新检查；规则见 [ARCHITECTURE.md](ARCHITECTURE.md#终端) |
 | 不带 | 这台电脑默认的终端（`features.loginTerminal`，仅 macOS）：Host 写一个 0700 的 `.command` 临时文件交给 `open`，脚本先删除自己。页面只在 Host 不给这台设备 Latch 终端时走这条路 |
 
-其他设备只看到命令。macOS 以外的 Host 上这两条路径尚未实现。Claude Agent 没有登录命令，也就没有按钮。
+绑定账号的登录终端使用该账号的配置目录。终端、浏览器、代理和 CA 文件所需的变量只通过进程环境传递，Shell 里的其他账号及 API 密钥不会传给它。其他设备只看到命令。macOS 以外的 Host 上这两条路径尚未实现。Claude Agent 没有登录命令，也就没有按钮。
 
 **测试 Host。** `startServer` 没有 `loginPrograms` 时不运行任何登录命令，没有 `cliQuota` 时不读任何 CLI 的凭据、不问厂商余额，没有 `cliUsage` 时不读任何 CLI 的会话日志，没有 `cliStores` 时不碰任何 CLI 自己的存储（goose 会话因此不重新打开）；没有 `commandDirectories` 时只认绝对路径，按名字找命令一律找不到。只有启动脚本传 `resolveCommand` 与 `personCommandDirectories`，所以带预设定义的测试 Host 碰不到这台电脑上真实安装的程序。
 
@@ -746,8 +770,8 @@ DeepSeek Harness 用 API 密钥时，密钥是 DeepSeek 发给这个人的，Dee
 
 **密钥经过的每一处**（`cli-quota.ts`）：
 
-1. `readDshKey` 先排除可能把密钥发去别处的设置：DeepSeek Harness 会继承的环境（Host 的环境与登录 shell 读出的值）里有 `DSH_HOME` 或 `DEEPSEEK_BASE_URL`；`~/.dsh/.env` 或 `~/.dsh/profiles/acp/.env` 写了 `baseURL`、`DEEPSEEK_BASE_URL` 或 `apiKeyEnv`，或读不了、是链接。有一项就不读密钥，已显示的余额也清掉。会话文件夹的 `.env` 这样时只跳过这一次，已显示的余额不动；有人看时没有会话文件夹，只核对属于家目录的设置。这些都通过后，问 DeepSeek Harness 自己组合出的配置（见下面「它自己的配置」）：`llm-deepseek`、`credentials`、`llm-pi-ai`、`deepseek-account` 不是官方 bundle 原样的，或官方 bundle 以外加入的插件能碰到它们，也不读。
-2. 再读固定路径 `~/.dsh/.credentials.yaml`：`~/.dsh` 必须是本人的目录而不是链接；文件以 `O_NOFOLLOW` 打开，打开后核对是普通文件、属于本人、其他人不可读、不超过 64 KiB。只认 DeepSeek Harness 写的版本 1 布局里 `refs.DEEPSEEK_API_KEY`，值必须像 DeepSeek 密钥（`sk-…`）；引用里有 `DEEPSEEK_BASE_URL` 也不读。
+1. `readDshKey` 先排除可能把密钥发去别处的设置：DeepSeek Harness 会继承的环境（Host 的环境与登录 shell 读出的值）里有未绑定的 `DSH_HOME` 或 `DEEPSEEK_BASE_URL`；`~/.dsh/.env` 或 `~/.dsh/profiles/acp/.env` 写了 `baseURL`、`DEEPSEEK_BASE_URL` 或 `apiKeyEnv`，或读不了、是链接。有一项就不读密钥，已显示的余额也清掉。会话文件夹的 `.env` 这样时只跳过这一次，已显示的余额不动；有人看时没有会话文件夹，只核对属于家目录的设置。这些都通过后，问 DeepSeek Harness 自己组合出的配置（见下面「它自己的配置」）：`llm-deepseek`、`credentials`、`llm-pi-ai`、`deepseek-account` 不是官方 bundle 原样的，或官方 bundle 以外加入的插件能碰到它们，也不读。
+2. 再读默认或已绑定目录下的 `.credentials.yaml`：目录必须属于本人并且不是链接；文件以 `O_NOFOLLOW` 打开，打开后核对是普通文件、属于本人、其他人不可读、不超过 64 KiB。只认 DeepSeek Harness 写的版本 1 布局里 `refs.DEEPSEEK_API_KEY`，值必须像 DeepSeek 密钥（`sk-…`）；引用里有 `DEEPSEEK_BASE_URL` 也不读。
 3. 审计先写 `agent.quota.read`（只有 Harness 与预设 ID），写不进就不发。
 4. `fetchDeepSeekBalance` 把密钥放进这一次请求的头，地址写死，经 Host 出站策略（不加任何放行）、TLS、不跟随重定向。失败不记日志、不抛出、不重试；401、403 或形状不对就清掉已显示的余额。
 5. 离开这个模块的只有余额（百分之一单位）、币种与能不能用；随会话存进 `acp.json` 的也只有这些。
@@ -1093,7 +1117,7 @@ AGENTS.md「CLI 目录与配置」允许读 CLI 自己的目录，只是尽量�
 **删除。**
 
 - goose：`sessions.db` 里 `parent_session_id` 指向要删的会话的（任意层），先逐个 `session/delete`，最多 1000 个。读不了就只删主会话。
-- DeepSeek Harness：进程停下后删除 `~/.dsh/sessions/<projectKey(cwd)>/<ID>/`（日志与锁）与 `~/.dsh/storages/session_projcache/sessions/<ID>.json`，以及头里 `parentSession` 指向它（任意层）的同目录会话。前提与读 tokens 相同（`DSH_HOME` 无值、它自己的配置说会话存储是原样的、每层目录是本人的真目录），另要日志头的 ID 与目录正是这个会话的。附件按内容去重、可能被别的会话用，不删。只删 Latch 自己开的会话：删除会话时的那些 ID（接入的原会话不在其中），以及读模型列表那次的空会话。
+- DeepSeek Harness：进程停下后删除 `~/.dsh/sessions/<projectKey(cwd)>/<ID>/`（日志与锁）与 `~/.dsh/storages/session_projcache/sessions/<ID>.json`，以及头里 `parentSession` 指向它（任意层）的同目录会话。前提与读 tokens 相同（使用默认或已绑定的目录、它自己的配置说会话存储是原样的、每层目录是本人的真目录），另要日志头的 ID 与目录正是这个会话的。附件按内容去重、可能被别的会话用，不删。只删 Latch 自己开的会话：删除会话时的那些 ID（接入的原会话不在其中），以及读模型列表那次的空会话。
 
 **Qwen Code 的自更新（`selfUpdates`）。** 安装的入口会改去运行 `<QWEN_HOME>/updates/npm/<入口路径 sha256 前 16 位>/active.json` 指的版本（0.27.4 `scripts/cli-entry.js`），所以真正运行的代码可以在两次启动之间换掉而命令路径不变。Host 读这个文件与该版本的 `package.json`，摘要计入 `definitionHash`（`runningCode`）；没有更新时什么也不计入，指纹与以前相同。`QWEN_HOME` 取环境，否则取 `~/.qwen/.env`、`~/.env` 里的那一行（与它自己的顺序相同），文件其余内容不留。更新之后已有会话按「定义已变化」处理，换新会话继续。
 
@@ -1130,7 +1154,7 @@ AGENTS.md「CLI 目录与配置」允许读 CLI 自己的目录，只是尽量�
 
 **Claude Agent 的规则。**
 
-- 两条路线算同一份存储：`Bridge.historyStore` 是 Claude 配置目录（Host 环境或登录 shell 的 `CLAUDE_CONFIG_DIR`，否则 `~/.claude`）真实路径的哈希，同一会话不会经两条路线各接入一次。
+- 两条路线算同一份存储：`Bridge.historyStore` 是 Claude 配置目录（绑定的账号目录优先，否则取 Host 环境或登录 shell 的 `CLAUDE_CONFIG_DIR`，缺省 `~/.claude`）真实路径的哈希，同一会话不会经两条路线各接入一次。
 - 适配器 0.99 起的 0.x（`agentInfo.version`）：它自己的 `session/list`、`session/load` 与 `session/delete`，0.101 的源码核对过。它列出 SDK 启动的会话；Latch 自己的会话照常由「Latch 会话用过的不列出」去掉。
 - 直连线只在 `cliStore` 打开时：`session/list` 是 `listSessions({ includeProgrammatic: false })`，与终端的 `/resume` 一样不列 SDK 启动的会话（Latch 直连开始的、分叉出的都是 `sdk-ts`）；标题是 Claude 的自定义标题、自动标题或第一条提示。`session/load` 先查 Claude 的注册表（`<配置目录>/sessions/<pid>.json`，进程活着且启动时间吻合，`.key` 文件从不打开），被别的 `claude` 开着时回答 busy，Host 给 409 `history-session-busy`；再 `getSessionMessages` 重放，然后照常 `resume` 原会话——接入续写原会话，与 Codex 相同。
 - 重放：人的文字（去掉 Claude Code 的命令标记与 `<system-reminder>`；它自己回答的 `/compact`、`/model`、`/mcp` 等整条不显示，别的命令写成 `/名字 参数`）、Claude 的文字、工具调用与结果（标题照工具行）。不重放：Claude 自己加的说明（`isMeta`）、压缩摘要、`<synthetic>` 的登录与限额提示、思考、图片的字节、子 Agent 里面的消息（只有 Agent 调用与它的结果）。`getSessionMessages` 只给最后一次压缩之后的部分，压缩之前的只在 Claude 里。

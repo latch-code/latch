@@ -4,11 +4,13 @@ import { tmpdir } from 'node:os'
 import { AGENT_PRESETS, isReservedAgentEnvName, type AgentRecord, type HarnessLogin } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { redactSecrets } from '@latch/core/node-kit'
-import { authFacts, type TerminalLogin } from './auth.ts'
+import { authFacts, CURSOR_SDK_SIGN_IN, type TerminalLogin } from './auth.ts'
 import { redactor, resolveCommand } from './command.ts'
-import { agentEnvironment } from './environment.ts'
+import { accountEnvironment, agentEnvironment } from './environment.ts'
+import { ALWAYS_INHERITED } from './login-shell.ts'
 import { routeCommand, selectProfile } from './permission.ts'
 import type { LoginCheck, QuotaCommand } from './profiles/index.ts'
+import { QWEN_ACCOUNT_MINIMUM } from './profiles/qwen.ts'
 import type { QuotaReport } from './quota.ts'
 
 const STATUS_TIMEOUT_MS = 10_000
@@ -30,6 +32,7 @@ export function setLoginPrograms(locator: ((command: string) => string | undefin
 /** The preset's program when installed; otherwise the adapter's own copy, or nothing to run. */
 function loginProgram(record: AgentRecord): { command: string; args: readonly string[]; path: string; bundled: boolean } | undefined {
   const preset = selectProfile(record).preset
+  if (record.accountDirectory !== undefined && preset?.id === 'antigravity') return undefined
   const login = preset?.login
   if (!login || !locate) return undefined
   const path = locate(login.command)
@@ -60,8 +63,12 @@ function statusProgram(record: AgentRecord): { path: string; args: readonly stri
 function advertised(record: AgentRecord): { path: string; logins: TerminalLogin[]; logout: boolean } | undefined {
   const path = resolveCommand(record.command)
   const known = path === undefined ? undefined : authFacts(record)?.advertisedBy(path)
-  if (!path || !known) return undefined
-  return { path, logins: selectProfile(record).preset?.signIn ? [] : known.logins, logout: known.logout }
+  if (!path || !known || (record.accountDirectory !== undefined && record.presetId === 'antigravity')) return undefined
+  return {
+    path,
+    logins: selectProfile(record).preset?.signIn || record.accountDirectory !== undefined ? [] : known.logins,
+    logout: known.logout,
+  }
 }
 
 const PLAIN_WORD = /^[\w./:=@%+,-]+$/u
@@ -78,11 +85,17 @@ function loginLine(record: AgentRecord, login: TerminalLogin): string {
 
 /** What a client shows; Host-only details stay behind. Absent: Latch knows nothing about logging in to this harness. */
 export function harnessLogin(record: AgentRecord): HarnessLogin | undefined {
-  const preset = selectProfile(record).preset
+  const { preset, profile } = selectProfile(record)
+  if (profile?.wire === 'cursor') return { note: CURSOR_SDK_SIGN_IN }
   const known = advertised(record)
   const methods = known?.logins ?? []
   const program = methods.length ? undefined : loginProgram(record)
-  const note = program ? preset?.login?.note : preset?.signIn
+  const note =
+    program && record.accountDirectory !== undefined
+      ? [preset?.login?.note, '请在 Host 电脑上使用这个账号的配置目录登录。'].filter(Boolean).join(' ')
+      : program
+        ? preset?.login?.note
+        : preset?.signIn
   const checkable = statusProgram(record) !== undefined
   const reported = authFacts(record)?.reported()
   const login: HarnessLogin = {
@@ -129,6 +142,7 @@ function runProgram(
       resolvedCommand: path,
       profile: selectProfile(record).profile?.permission,
       definitionEnv: record.env,
+      account: record,
       sessionTmpDir: tmpdir(),
     }),
     ...options.quota?.env,
@@ -136,7 +150,8 @@ function runProgram(
   const ceiling = options.quota?.timeoutMs ?? STATUS_TIMEOUT_MS
   const maxOutput = options.quota?.maxOutput ?? MAX_OUTPUT
   return new Promise(resolve => {
-    const child = spawn(path, [...args], { cwd: tmpdir(), env, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
+    const cwd = record.presetId === 'qwen' && record.accountDirectory !== undefined ? record.accountDirectory : tmpdir()
+    const child = spawn(path, [...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
     let output = ''
     let stdout = ''
     const keep = (chunk: string) => {
@@ -305,11 +320,17 @@ const shellQuote = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`
  * that its exit code is the script's, and no closing words about a window.
  */
 export function loginTerminalScript(record: AgentRecord, method?: string, options: { inLatch?: boolean } = {}): string | undefined {
+  if (selectProfile(record).profile?.wire === 'cursor') return undefined
   if (method !== undefined) {
     const login = advertised(record)?.logins.find(item => item.id === method)
     if (!login) {
       const before = authFacts(record)?.advertisement()
-      if (before && !selectProfile(record).preset?.signIn && before.logins.some(item => item.id === method))
+      if (
+        before
+        && record.accountDirectory === undefined
+        && !selectProfile(record).preset?.signIn
+        && before.logins.some(item => item.id === method)
+      )
         throw new AppError(409, 'login-program-changed', '这个登录方式来自之前找到的程序，现在找到的不是它。请重新检测后再试。')
       return undefined
     }
@@ -329,7 +350,91 @@ export function loginTerminalScript(record: AgentRecord, method?: string, option
   const login = selectProfile(record).preset?.login
   const lines = ['#!/bin/sh', 'rm -f -- "$0"']
   if (login?.note) lines.push(`printf '%s\\n\\n' ${shellQuote(login.note)}`)
-  lines.push([program.path, ...program.args].map(shellQuote).join(' '))
+  const command = [program.path, ...program.args].map(shellQuote).join(' ')
+  if (record.accountDirectory !== undefined) {
+    // A person's interactive shell may already name a different API key, credential store, or runtime directory.
+    // Keep the terminal, browser and network environment, then apply the account binding.
+    const kept = [
+      'HOME',
+      'USER',
+      'PATH',
+      'SHELL',
+      'LANG',
+      'TERM',
+      'DISPLAY',
+      'WAYLAND_DISPLAY',
+      'XDG_RUNTIME_DIR',
+      'DBUS_SESSION_BUS_ADDRESS',
+      ...ALWAYS_INHERITED,
+    ]
+    const env = accountEnvironment(record)
+    // Proxy URLs can carry passwords. Pass exports through a pipe, and pass the terminal input separately to the CLI.
+    const writeEnvironment = String.raw`
+      BEGIN {
+        quote = sprintf("%c", 39)
+        count = split(keep, names, " ")
+        for (i = 1; i <= count; i++) {
+          name = names[i]
+          if (!(name in ENVIRON)) continue
+          value = ENVIRON[name]
+          printf "export %s=%s", name, quote
+          # Write single quotes as a quoted literal between two single-quoted segments.
+          while ((position = index(value, quote)) > 0) {
+            printf "%s%s\"%s\"%s", substr(value, 1, position - 1), quote, quote, quote
+            value = substr(value, position + 1)
+          }
+          printf "%s%s\n", value, quote
+        }
+        print "latch_login_env_ready=1"
+      }
+    `
+    const readEnvironment = [
+      'if ! . /dev/fd/3 || [ "$latch_login_env_ready" != 1 ]; then',
+      `  printf '%s\\n' ${shellQuote('无法读取登录终端环境，未运行登录命令。')} >&2`,
+      '  exit 1',
+      'fi',
+      'exec 3<&-',
+      ...Object.entries(env).map(([key, path]) => `export ${key}=${shellQuote(path)}`),
+      'exec "$@"',
+    ].join('\n')
+    lines.push(
+      `[ "$(cd -P ${shellQuote(record.accountDirectory)} 2>/dev/null && pwd -P)" = ${shellQuote(record.accountDirectory)} ] || exit 1`,
+      'run_login() (',
+      '  exec 4<&0',
+      `  LC_ALL=C /usr/bin/awk -v keep=${shellQuote(kept.filter(name => !Object.hasOwn(env, name)).join(' '))} ${shellQuote(writeEnvironment)} |`,
+      `    /usr/bin/env -i /bin/sh -c ${shellQuote(readEnvironment)} latch-login "$@" 3<&0 0<&4 4<&-`,
+      ')',
+    )
+    if (record.presetId === 'qwen') {
+      // Qwen skips project dotenv lookup when its working directory is HOME. Check the actual program the terminal runs.
+      const accepts = String.raw`
+        /^[[:space:]]*$/ { next }
+        /^[[:space:]]*v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?[[:space:]]*$/ {
+          sub(/^[[:space:]]*v?/, "")
+          split($0, version, /[.-]/)
+          split(minimum, need, /[.]/)
+          for (i = 1; i <= 3; i++) {
+            if (version[i] + 0 != need[i] + 0) {
+              valid = version[i] + 0 > need[i] + 0
+              exit
+            }
+          }
+          valid = ($0 !~ /-/)
+          exit
+        }
+        { exit }
+        END { exit !valid }
+      `
+      lines.push(
+        `cd -P ${shellQuote(record.accountDirectory)} || exit 1`,
+        `version=$(run_login ${shellQuote(program.path)} --version 2>/dev/null) && [ -n "$version" ] && printf '%s\\n' "$version" | /usr/bin/awk -v minimum=${shellQuote(QWEN_ACCOUNT_MINIMUM)} ${shellQuote(accepts)} || {`,
+        `  printf '%s\\n' ${shellQuote(`Qwen Code 独立账号需要可确认的 ${QWEN_ACCOUNT_MINIMUM} 或更高版本。请更新后重试。`)}`,
+        '  exit 1',
+        '}',
+      )
+    }
+    lines.push(`run_login ${command}`)
+  } else lines.push(command)
   if (!options.inLatch) lines.push(`printf '\\n%s\\n' ${shellQuote('完成后回到 Latch。这个窗口可以关闭。')}`)
   return `${lines.join('\n')}\n`
 }

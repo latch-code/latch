@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { Box, Brain, Zap } from 'lucide-react'
 import {
+  AGENT_PRESETS,
   parseModelChoice,
   type HarnessInfo,
   type HostCatalog,
@@ -26,6 +27,7 @@ import {
   type PickerGroup,
 } from '@latch/ui'
 import { currentShell } from '../core/shell.ts'
+import { harnessAccountAlias } from '../core/harnessName.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { MODE_COPY, SETUP_COPY, type Brief } from '../core/securityCopy.ts'
 import {
@@ -33,6 +35,7 @@ import {
   engineEntries,
   findProvider,
   harnessName,
+  harnessPicks,
   sameModel,
   servicePick,
   switchModel,
@@ -43,7 +46,7 @@ import {
   type ComposerChoice,
 } from '../composerChoice.ts'
 import { fuzzyModelMatch, modelKey, rememberModel, useModelPreferences } from '../modelPreferences.ts'
-import { ModelTile, ProviderTile } from '../components/BrandTile.tsx'
+import { HarnessTile, ModelTile, ProviderTile } from '../components/BrandTile.tsx'
 import { modelArt } from '../brands.ts'
 import { BrandMark } from '../components/ui.tsx'
 import { ModelAddPanel, modelGroups } from '../components/Pickers.tsx'
@@ -164,6 +167,7 @@ export interface Board {
   groups: ModelGroup[]
   value: string | undefined
   levels: (value: string | undefined) => BoardLevels<string>
+  onSourceChange?: (id: string) => void
   onModel: (value: string) => void
   onLevel: (model: string | undefined, level: string) => void
   staysOn?: (value: string) => boolean
@@ -207,6 +211,7 @@ export function boardSources(groups: ReadonlyArray<ModelGroup>): Array<BoardSour
       sources.push({
         id: group.id,
         label: group.label ?? '',
+        ...(group.railLabel ? { railLabel: group.railLabel } : {}),
         icon: sourceIcon(group),
         ...(group.hint ? { hint: group.hint } : {}),
         items: boardItems(group),
@@ -389,6 +394,8 @@ function BoardChip({ board, kind, withLevel = false }: { board: Board; kind: 'mo
               levelsLabel={COPY.thinking}
               levelsIcon={<Icon icon={Brain} size={14} />}
               sources={sources}
+              sourceLabels={board.onSourceChange !== undefined}
+              onSourceChange={board.onSourceChange}
               value={board.value}
               levels={levels}
               onItem={board.onModel}
@@ -772,12 +779,108 @@ function harnessBoard({
 
 // ---- A new session ------------------------------------------------------------------------------------------------
 
+/** Same-preset accounts share an icon and can report identical model IDs; every row retains its owning definition. */
+function accountModelBoard(
+  board: Board,
+  current: HarnessInfo,
+  accounts: HarnessInfo[],
+  choice: ComposerChoice,
+  onChoice: DraftBoardProps['onChoice'],
+  disabled: boolean,
+): Board {
+  const own = board.groups[0]!
+  const rowKey = (id: string, value: string) => JSON.stringify([id, value])
+  const rows = new Map<string, { account: HarnessInfo; value: string }>()
+  const ownPicks = (account: HarnessInfo) => withOwnDefault(account.id === current.id ? choice.config : choice.otherPicks?.[account.id])
+  const presetName = AGENT_PRESETS.find(preset => preset.id === current.presetId)?.name
+  const groups = accounts.map(account => {
+    const name = harnessName(account)
+    const railLabel = presetName ? harnessAccountAlias(name, presetName) : undefined
+    const config = draftConfig(account, ownPicks(account))
+    const model = config?.config.find(option => option.category === 'model')
+    const options =
+      account.id === current.id
+        ? own.options
+        : model
+          ? agentConfigValues(model).map(item => ({
+              value: item.value,
+              label: escapeHiddenCharacters(item.name),
+              ...defaultTag(item.value, defaultModelOf(account)),
+            }))
+          : [{ value: OWN_MODEL, label: REASONING_COPY.defaultModel }]
+    return {
+      id: account.id,
+      label: name,
+      ...(railLabel === undefined ? {} : { railLabel }),
+      media: <HarnessTile harness={account} size={16} />,
+      options: options.map(item => {
+        const key = rowKey(account.id, item.value)
+        rows.set(key, { account, value: item.value })
+        return {
+          ...item,
+          value: key,
+          media: <ModelTile model={item.value} size={16} fallback={<HarnessTile harness={account} size={16} />} />,
+        }
+      }),
+    }
+  })
+  const forModel = (account: HarnessInfo, value?: string) => {
+    const picks = ownPicks(account)
+    const model = draftConfig(account, picks)?.config.find(option => option.category === 'model')
+    return value !== undefined && model ? { ...picks, [model.id]: value } : picks
+  }
+  const move = (account: HarnessInfo, config: Record<string, string>) => {
+    if (!disabled) onChoice({ harnessId: account.id, ...harnessPicks(choice, account.id), config })
+  }
+  const thinking = (account: HarnessInfo, config: Record<string, string>) =>
+    draftConfig(account, config)?.config.find(option => option.category === 'thought_level')
+  const levels = (key: string | undefined) => {
+    const row = key === undefined ? undefined : rows.get(key)
+    if (!row || row.account.id === current.id) return board.levels(row?.value ?? key)
+    const option = thinking(row.account, forModel(row.account, row.value))
+    return option
+      ? {
+          value: option.currentValue,
+          options: agentConfigValues(option).map(item => ({ value: item.value, label: escapeHiddenCharacters(item.name) })),
+        }
+      : { value: MODEL_DEFAULT_LEVEL, options: defaultOnly() }
+  }
+  return {
+    ...board,
+    groups: [...groups, ...board.groups.slice(1)],
+    value:
+      board.value !== undefined && own.options.some(item => item.value === board.value) ? rowKey(current.id, board.value) : board.value,
+    levels,
+    onSourceChange: id => {
+      const account = accounts.find(item => item.id === id)
+      if (account && (account.id !== current.id || (board.value && serviceRef(board.value)))) move(account, forModel(account))
+    },
+    onModel: key => {
+      const row = rows.get(key)
+      if (!row || row.account.id === current.id) board.onModel(row?.value ?? key)
+      else move(row.account, forModel(row.account, row.value))
+    },
+    onLevel: (key, level) => {
+      const row = key === undefined ? undefined : rows.get(key)
+      if (!row || row.account.id === current.id) board.onLevel(row?.value ?? key, level)
+      else {
+        const picks = forModel(row.account, row.value)
+        const option = thinking(row.account, picks)
+        move(row.account, option && level !== MODEL_DEFAULT_LEVEL ? { ...picks, [option.id]: level } : picks)
+      }
+    },
+    staysOn: key => hasOtherBoardLevels(levels(key)),
+  }
+}
+
 export interface DraftBoardProps {
   catalog: HostCatalog
   choice: ComposerChoice
   onChoice: (patch: Partial<ComposerChoice>) => void
   access: Access
   disabled: boolean
+  /** The new-session composer may select another account for this preset. */
+  chooseAccount?: boolean
   onManageModels?: (() => void) | undefined
   onProvidersChanged?: (() => void) | undefined
   /** A read of the Harness's lists, or the IDs typed for it, changed. */
@@ -794,6 +897,7 @@ function useDraftBoard({
   access,
   disabled,
   onManageModels,
+  chooseAccount = false,
   onProvidersChanged,
   onRead,
   computer,
@@ -802,7 +906,8 @@ function useDraftBoard({
   const [typing, setTyping] = useState(false)
   const [panelOpen, setPanelOpen] = useState(false)
   const preferences = useModelPreferences()
-  const harness = engineEntries(catalog, choice.workspaceId).find(entry => entry.harness.id === choice.harnessId)?.harness
+  const entries = engineEntries(catalog, choice.workspaceId)
+  const harness = entries.find(entry => entry.harness.id === choice.harnessId)?.harness
   const reading = useReading(harness)
   const manage = onManageModels && (
     <MenuFooterLink icon={ModelGlyph} chevron={false} closes onClick={onManageModels}>
@@ -931,7 +1036,15 @@ function useDraftBoard({
         },
       },
     })
-    return { ...board, ...(bySelf ? { effects: <ReadPickedModel harness={harness} model={pickedModel} /> } : {}) }
+    const accounts =
+      chooseAccount && harness.presetId
+        ? entries.filter(entry => !entry.disabledReason && entry.harness.presetId === harness.presetId).map(entry => entry.harness)
+        : []
+    const scoped =
+      accounts.length > 1 && accounts.some(account => account.account)
+        ? accountModelBoard(board, harness, accounts, choice, onChoice, disabled)
+        : board
+    return { ...scoped, ...(bySelf ? { effects: <ReadPickedModel harness={harness} model={pickedModel} /> } : {}) }
   }
   const noService = !choice.model
   const groups = plain(modelGroups(catalog, preferences, choice.model, access))

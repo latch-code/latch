@@ -4,8 +4,10 @@ import SwiftUI
 import UIKit
 
 struct PhoneSettingsView: View {
+    private enum Destination: Hashable { case harnessAccounts }
     @EnvironmentObject private var model: PhoneModel
     let addComputer: () -> Void
+    @State private var path: [Destination] = []
     @ObservedObject private var push = PhonePush.shared
     @State private var copied = false
     @AppStorage(PhoneFaceID.key) private var faceID = false
@@ -18,7 +20,7 @@ struct PhoneSettingsView: View {
     @State private var noticesRefused = false
     @State private var usage: UsageTab?
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Form {
                 Section("电脑") {
                     ForEach(model.computerRows) { row in
@@ -31,6 +33,9 @@ struct PhoneSettingsView: View {
                     Button("添加电脑", action: addComputer)
                 }
                 Section {
+                    if model.snapshot["catalog"]["harnesses"].array.contains(where: { $0["presetId"].string != nil }) {
+                        NavigationLink("Harness 账号", value: Destination.harnessAccounts)
+                    }
                     Button { usage = .quota } label: {
                         HStack {
                             Text("额度与用量").foregroundStyle(PhoneTheme.ink)
@@ -95,11 +100,101 @@ struct PhoneSettingsView: View {
                 }
             }
             .navigationTitle("设置")
+            .navigationDestination(for: Destination.self) { _ in
+                PhoneHarnessAccounts()
+            }
         }
         .sheet(item: $usage) { tab in UsageSheet(tab: tab).environmentObject(model) }
         #if LATCH_SCREENS
-        .task(id: model.staged) { if model.staged, let tab = ScreensStage.usageTab { usage = tab } }
+        .task(id: model.staged) {
+            if model.staged, let tab = ScreensStage.usageTab { usage = tab }
+            if model.staged, ScreensStage.scene == "harness-accounts" { path = [.harnessAccounts] }
+        }
         #endif
+    }
+}
+
+private struct PhoneHarnessAccounts: View {
+    @EnvironmentObject private var model: PhoneModel
+
+    var body: some View {
+        let saved = model.snapshot["catalog"]["harnesses"].array.filter { harness in
+            harness["offer"] == .null && harness["id"].string != nil && harness["presetId"].string != nil
+        }
+        let groups = Dictionary(grouping: saved.filter(isPresetAccount)) { $0["presetId"].string ?? "" }
+        List {
+            Section {
+                if saved.isEmpty { Text("还没有已绑定的账号").foregroundStyle(.secondary) }
+                ForEach(saved) { harness in
+                    let preset = harness["presetId"].string ?? ""
+                    let accounts = groups[preset, default: []]
+                    if isPresetAccount(harness) && accounts.count > 1 {
+                        if accounts.first?.id == harness.id {
+                            PresetAccountRows(preset: preset, accounts: accounts)
+                        }
+                    } else {
+                        HarnessAccountRow(harness: harness)
+                    }
+                }
+            } footer: {
+                Text("要添加或管理账号，请在这台 Mac 的 Latch 桌面端打开「设置」里的「Harness」。")
+            }
+        }
+        .navigationTitle("Harness 账号")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func isPresetAccount(_ harness: NativeJSON) -> Bool {
+        // The native catalog marks separate accounts and identifies the saved default by its canonical preset ID.
+        harness["account"].bool || harness.id == harness["presetId"].string
+    }
+}
+
+private struct PresetAccountRows: View {
+    let preset: String
+    let accounts: [NativeJSON]
+    @State private var expanded = true
+
+    var body: some View {
+        let brand = PhoneStart.presetName(preset)
+        DisclosureGroup(isExpanded: $expanded) {
+            ForEach(accounts) { harness in
+                HarnessAccountRow(harness: harness, groupName: brand ?? preset)
+                    .padding(.leading, 8)
+            }
+        } label: {
+            HStack {
+                EngineTile(mark: brand == nil ? nil : preset, size: 20)
+                Text(brand ?? preset)
+                Spacer()
+                Text("\(accounts.count) 个账号").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct HarnessAccountRow: View {
+    let harness: NativeJSON
+    var groupName: String? = nil
+
+    var body: some View {
+        let name = PhoneStart.engineName(harness)
+        let prefix = groupName.map { $0 + " · " }
+        let alias = if let prefix, name.hasPrefix(prefix), name.count > prefix.count { String(name.dropFirst(prefix.count)) } else { name }
+        let isDefault = groupName != nil && !harness["account"].bool
+        let showsDefaultName = isDefault && name == groupName
+        HStack {
+            if groupName == nil { EngineTile(mark: PhoneStart.mark(harness), size: 20) }
+            Text(showsDefaultName ? "默认账号" : alias)
+            if isDefault && !showsDefaultName {
+                Text("默认").font(.caption).foregroundStyle(.secondary)
+            }
+            if harness["account"].bool {
+                Spacer()
+                Text("小组件 " + PhoneQuotaWidget.anonymousId(harness.id).suffix(4).uppercased()).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

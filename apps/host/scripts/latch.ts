@@ -1304,6 +1304,7 @@ async function addProjectFolders(
     const context = await offlineProjectContext(dataDir, flags, io)
     const identity = await loadOrCreateHostIdentity(dataDir)
     const guard = {
+      accountDirectories: () => config.accountDirectories(),
       dataDir: await realpath(dataDir),
       agentsDir: context.agentsDir,
       runtimeDir: await runtimeDirPath(identity.hostId8),

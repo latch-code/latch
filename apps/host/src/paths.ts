@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, realpath as realpathCallback, realpathSync, statSync } from 'node:fs'
 import { lstat, opendir, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import { makePrivateDirectory as makeOneDirectory, ownedDirectory } from '@latch/link-client/private-directory'
 import { AppError } from '@latch/sdk'
 import { latchEnv } from './env.ts'
@@ -424,6 +425,7 @@ const AUTOSTART_HOME_PATHS: readonly string[] = ['Library/LaunchAgents', '.confi
 const CONFIG_HOME_PATHS: readonly string[] = ['.config', '.local', 'bin']
 
 export interface WorkspaceGuardContext {
+  accountDirectories?: () => readonly string[]
   dataDir: string
   agentsDir: string
   runtimeDir: string
@@ -486,6 +488,13 @@ export async function canonicalPath(path: string): Promise<string> {
   return pathKey(await withoutAliases(await realpath(path)))
 }
 
+const nativeRealpath = promisify(realpathCallback.native)
+
+/** The actual spelling of an existing path, independent of how it was selected. */
+export async function canonicalPathSpelling(path: string): Promise<string> {
+  return withoutAliases(await nativeRealpath(path))
+}
+
 /** A path for overlap checks: its comparison key, plus filesystem identities that catch aliases strings cannot. */
 interface Located {
   /** Realpath (aliases removed) of the longest existing prefix, with the missing remainder appended. */
@@ -541,6 +550,12 @@ function overlapping(a: Located, b: Located): boolean {
   return within(a, b) || within(b, a)
 }
 
+/** Compares real paths and identities, including paths under aliases whose final component is missing. */
+export async function overlapsPaths(path: string, others: readonly string[]): Promise<boolean> {
+  const [candidate, ...roots] = await Promise.all([path, ...others].map(locate))
+  return roots.some(root => overlapping(candidate!, root))
+}
+
 function samePath(a: Located, b: Located): boolean {
   return a.key === b.key || (a.self !== undefined && a.self === b.self)
 }
@@ -588,6 +603,7 @@ async function ruleFailure(
     [context.agentsDir, 'Agent 安装目录'],
     [context.runtimeDir, '运行目录'],
   ]
+  for (const directory of context.accountDirectories?.() ?? []) reserved.push([directory, 'Harness 账号目录'])
   for (const [directory, label] of reserved) {
     if (overlapping(candidate, await locate(directory))) return overlapFailure(reservedMessage(label))
   }
@@ -802,6 +818,9 @@ async function sensitiveOverlap(
 ): Promise<DefaultWorkspaceFlags['sensitive']> {
   const home = await locate(context.home)
   if (samePath(workspace, home)) return { reason: 'home', message: HOME_MESSAGE }
+  for (const directory of context.accountDirectories?.() ?? []) {
+    if (overlapping(workspace, await locate(directory))) return { reason: 'deny-read', message: reservedMessage('Harness 账号目录') }
+  }
   for (const entry of DENY_READ_HOME_PATHS) {
     if (overlapping(workspace, await locate(join(home.real, entry)))) return { reason: 'deny-read', message: SENSITIVE_MESSAGE }
   }

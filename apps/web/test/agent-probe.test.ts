@@ -63,6 +63,7 @@ describe('Harness presets in settings', () => {
   it('stands a found preset with what is installed, never under 可以安装', () => {
     const { found, installable } = presetGroups([preset('codex', true), preset('pi', false), preset('goose')], [])
     expect(found.map(item => item.id)).toEqual(['codex'])
+    expect(presetGroups([preset('codex', true)], [{ presetId: 'codex', account: true }]).found).toHaveLength(1)
     expect(installable.map(item => item.id)).toEqual(['pi', 'goose'])
   })
 

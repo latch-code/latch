@@ -18,6 +18,7 @@ import {
   openPanelTab,
   openSession,
   openSessions,
+  phoneStartScreen,
   settleShell,
 } from './helpers/layout.ts'
 import { promptValue } from './helpers/prompt.ts'
@@ -329,7 +330,7 @@ describe('the shell', () => {
 
       // Tablet (820x1180) and phone (390x844) rendering.
       await page.setViewportSize({ width: 820, height: 1180 })
-      const railTrigger = page.getByRole('button', { name: '检查更新', exact: true }).filter({ visible: true }).first()
+      const railTrigger = page.locator('.workbench-tablet-rail').getByRole('button', { name: '检查更新', exact: true })
       await railTrigger.locator('.icon-dot').waitFor()
       await railTrigger.click()
       await dialog.getByText('0.2.2 → 0.3.0', { exact: true }).waitFor()
@@ -337,18 +338,29 @@ describe('the shell', () => {
       await noHorizontalOverflow(page)
       await page.keyboard.press('Escape')
       await dialog.waitFor({ state: 'hidden' })
-
-      await page.setViewportSize({ width: 390, height: 844 })
-      await backToPhoneSessions(page)
-      const phoneTrigger = page.getByRole('button', { name: '检查更新', exact: true }).filter({ visible: true }).first()
-      await phoneTrigger.locator('.icon-dot').waitFor()
-      await phoneTrigger.click()
-      await dialog.getByText('0.2.2 → 0.3.0', { exact: true }).waitFor()
-      await page.emulateMedia({ colorScheme: 'light' })
-      await page.screenshot({ path: `${CONNECTION_SHOTS}/update-check-390-light.png`, animations: 'disabled' })
-      await noHorizontalOverflow(page)
-
       await context.close()
+
+      const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'zh-CN', reducedMotion: 'reduce' })
+      phone.setDefaultTimeout(15_000)
+      try {
+        const handset = await phone.newPage()
+        await enrollBrowser(handset, updateHost, { name: '更新检查手机', scopes: ['view', 'run', 'admin'] })
+        await connected(handset)
+        await phoneStartScreen(handset)
+        const phoneTrigger = handset.locator('.workbench-phone-heading').getByRole('button', { name: '检查更新', exact: true })
+        await phoneTrigger.locator('.icon-dot').waitFor()
+        await phoneTrigger.click()
+        const updates = handset.getByRole('dialog', { name: '检查更新', exact: true })
+        await updates.getByText('0.2.2 → 0.3.0', { exact: true }).waitFor()
+        await handset.emulateMedia({ colorScheme: 'light' })
+        await handset.screenshot({ path: `${CONNECTION_SHOTS}/update-check-390-light.png`, animations: 'disabled' })
+        await noHorizontalOverflow(handset)
+        await updates.getByRole('button', { name: '在设置中打开 DeepSeek Harness', exact: true }).click()
+        const harness = handset.getByRole('region', { name: 'DeepSeek Harness', exact: true })
+        await harness.getByText('有新版本', { exact: true }).waitFor()
+      } finally {
+        await phone.close()
+      }
     } finally {
       await updateHost.close()
       await rm(root, { recursive: true, force: true })

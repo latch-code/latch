@@ -15,6 +15,7 @@ import {
   setLoginPrograms,
   type AgentRecord,
 } from '../src/index.ts'
+import { setProcessLister } from '../src/wires/process.ts'
 import { readQuotaCommand } from '../src/login.ts'
 import { antigravityQuotaCommand, readAntigravityUsage } from '../src/profiles/antigravity-quota.ts'
 import {
@@ -553,6 +554,7 @@ async function computer(
   presetId: string | undefined,
   env: Record<string, string>,
   install?: (root: string) => Promise<unknown>,
+  accountDirectory?: string,
 ) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-quota-')))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
@@ -586,6 +588,7 @@ async function computer(
   forgetCommandLookups()
   const record: AgentRecord = {
     id: `quota-${++requests}`,
+    ...(accountDirectory ? { accountDirectory } : {}),
     name: 'Fake',
     ...(presetId ? { presetId } : {}),
     command,
@@ -823,6 +826,55 @@ describe('when someone looks', () => {
       subscription_tier: 'SuperGrok',
     })
   const events = (log: LogEntry[], event: string) => log.filter(entry => entry.event === event)
+
+  it('reads models, usage and sessions under each Codex account and resumes on the original one', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-codex-accounts-')))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    // The fake only serves RPC on stdio and starts no tools or detached children.
+    setProcessLister(async () => '')
+    cleanups.push(() => setProcessLister(undefined))
+    const accounts = [join(root, 'personal'), join(root, 'work')]
+    const script = [
+      '#!/bin/sh',
+      '[ "$1" = --version ] && { echo "codex-cli 0.170.0"; exit 0; }',
+      '[ "$1" = login ] && exit 0',
+      '[ -d "$CODEX_HOME" ] && [ "$CODEX_HOME" = "$CODEX_SQLITE_HOME" ] || exit 9',
+      'export FAKE_ACP_LOG="$CODEX_HOME/rpc.log" FAKE_ACP_MODELS_FILE="$CODEX_HOME/models" FAKE_CODEX_STATE="$CODEX_SQLITE_HOME/threads.json"',
+      'FAKE_CODEX_RATE_LIMITS=$(cat "$CODEX_HOME/quota") || exit 9',
+      'export FAKE_CODEX_RATE_LIMITS',
+      `exec '${process.execPath}' '${FAKE_CODEX_APP_SERVER}' "$@"`,
+    ].join('\n')
+    const computers = []
+    for (const [index, account] of accounts.entries()) {
+      await mkdir(account)
+      await writeFile(join(account, 'models'), index === 0 ? 'gpt-fake' : 'gpt-fake-mini')
+      await writeFile(
+        join(account, 'quota'),
+        JSON.stringify({ rateLimits: { primary: { usedPercent: 12 + index, windowDurationMins: 300 } } }),
+      )
+      computers.push(await computer('codex', 'codex', {}, dir => writeFile(join(dir, 'bin', 'codex'), script), account))
+    }
+    await Promise.all(
+      computers.map(async (t, index) => {
+        await t.bridge.readCatalogue!({ auto: true })
+        await t.bridge.refreshQuota!()
+        expect(t.bridge.quota?.()?.windows[0]?.usedPercent).toBe(12 + index)
+        expect(
+          t.bridge
+            .catalogue?.()
+            ?.options.find(option => option.category === 'model')
+            ?.options.map(model => model.value),
+        ).toEqual([index === 0 ? 'gpt-fake' : 'gpt-fake-mini'])
+        const task = await t.start('echo first')
+        await t.bridge.close()
+        const reopened = await t.open()
+        await reopened.prompt(task.summary.id, 'echo second', rid())
+        await vi.waitFor(async () => expect((await reopened.detail(task.summary.id)).summary.status).toBe('idle'))
+        expect(await readFile(join(accounts[index]!, 'rpc.log'), 'utf8')).toContain('"method":"thread/resume"')
+      }),
+    )
+    expect(computers[0]!.bridge.historyStore!()).not.toBe(computers[1]!.bridge.historyStore!())
+  })
 
   it('reads Codex in a process of its own with no thread and no turn, stops that process, and keeps the figure', async () => {
     const now = Date.now()

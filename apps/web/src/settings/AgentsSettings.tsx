@@ -1,6 +1,7 @@
-import { Fragment, useCallback, useEffect, useId, useState, type FormEvent } from 'react'
+import { Fragment, useCallback, useEffect, useId, useState, type FormEvent, type ReactNode } from 'react'
 import { CircleArrowUp, ShieldCheck, ShieldQuestion } from 'lucide-react'
 import {
+  harnessAccountDirectories,
   runsPresetFallback,
   type AgentPresetSettings,
   type AgentSettings,
@@ -8,7 +9,7 @@ import {
   type AgentPreset,
   type HarnessInfo,
 } from '@latch/protocol'
-import { api, errorMessage, inlineError, MessageError } from '../core/api.ts'
+import { api, ApiError, errorMessage, inlineError, isUncertain, MessageError } from '../core/api.ts'
 import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
 import { computerName, RUNS_AS_YOU_COPY, SETUP_COPY } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
@@ -22,6 +23,7 @@ import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { withConfirmation } from '../core/confirmations.ts'
 import {
   Button,
+  Menu,
   ButtonLink,
   Collapse,
   Dialog,
@@ -52,11 +54,39 @@ import { loginSurface, type LoginSurface } from '../panel/terminal/loginRuns.ts'
 import { ExtensionsLink } from './ExtensionsLink.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 import { TerminalFillButton } from '../components/TerminalFillButton.tsx'
-import { defineCopy } from '../core/i18n.ts'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
 import { harnessPresetCopy } from '../core/harnessPresetCopy.ts'
+import { harnessAccountAlias } from '../core/harnessName.ts'
 
 const COPY = defineCopy(
   {
+    accounts: '账号',
+    accountCount: (count: number) => `${formatNumber(count)} 个账号`,
+    accountGroupLabel: (name: string, count: string) => `${name}，${count}`,
+    defaultAccount: '默认账号',
+    defaultLaunch: '默认启动方式',
+    addAccount: '添加账号…',
+    accountTitle: (name: string) => `添加 ${name} 账号`,
+    accountAlias: '账号名称',
+    aliasExample: '例如：工作',
+    accountDirectory: '已登录的配置目录',
+    key: '此账号的 Cursor API 密钥',
+    enterpriseAccount: 'Gemini Enterprise 账号',
+    enterpriseDirectory: 'ADC 凭据目录',
+    enterpriseHint: '填写这台 Mac 上存有 Gemini Enterprise 应用默认凭据（application_default_credentials.json）的目录绝对路径。',
+    codexLogin: '先在终端用 CODEX_HOME 指定此目录，再运行 codex login。',
+    gooseLogin: '请使用 GOOSE_DISABLE_KEYRING=1 在此目录完成原生登录。',
+    directoryHint: '填写这台 Mac 上此账号专用目录的绝对路径。',
+    directoryBinding: '用这个账号开始的会话会一直绑定此目录。要用其他目录，请另加账号。',
+    directoryLayout: '原生 CLI 登录和运行时使用的目录',
+    chosenDirectory: '所选目录',
+    addAccountButton: '添加账号',
+    retryAccount: '重试添加',
+    accountUnknown: '添加结果未知。重试会检查此账号是否已保存。',
+    leaveAccount: '关闭',
+    removeAccount: '移除账号',
+    removeAccountConfirm: (name: string) => `从 Latch 移除「${name}」？原生 CLI 的配置目录和登录会保留。`,
+    removeKeyAccountConfirm: (name: string) => `从 Latch 移除「${name}」？此账号在这台 Mac 上保存的 API 密钥也会删除。`,
     customStart: '自定义启动方式',
     environmentStored: '只存在这台 Mac 上，不再显示',
     notStarted: '还没有开启过会话',
@@ -154,6 +184,35 @@ const COPY = defineCopy(
     copyInstallFor: (name: string) => `复制 ${name} 的安装命令`,
   },
   {
+    accounts: 'Accounts',
+    accountCount: (count: number) => `${formatNumber(count)} accounts`,
+    accountGroupLabel: (name: string, count: string) => `${name}, ${count}`,
+    defaultAccount: 'Default account',
+    defaultLaunch: 'Default launch',
+    addAccount: 'Add account…',
+    accountTitle: (name: string) => `Add ${name} account`,
+    accountAlias: 'Account name',
+    aliasExample: 'e.g. Work',
+    accountDirectory: 'Signed-in configuration directory',
+    key: 'Cursor API key for this account',
+    enterpriseAccount: 'Gemini Enterprise account',
+    enterpriseDirectory: 'ADC credentials directory',
+    enterpriseHint:
+      'Enter the absolute path on this Mac to the directory containing your Gemini Enterprise Application Default Credentials (application_default_credentials.json).',
+    codexLogin: 'In Terminal, set CODEX_HOME to this directory when running codex login.',
+    gooseLogin: 'Sign in with GOOSE_DISABLE_KEYRING=1 for this directory.',
+    directoryHint: 'Enter the absolute path to this account’s own directory on this Mac.',
+    directoryBinding: 'Sessions started with this account stay bound to this directory. To use another directory, add another account.',
+    directoryLayout: 'Directories used for native CLI sign-in and sessions',
+    chosenDirectory: 'Selected directory',
+    addAccountButton: 'Add account',
+    retryAccount: 'Retry adding account',
+    accountUnknown: 'Outcome unknown. Retrying checks whether this account was already saved.',
+    leaveAccount: 'Close',
+    removeAccount: 'Remove account',
+    removeAccountConfirm: (name: string) => `Remove “${name}” from Latch? Its native CLI configuration directory and login will be kept.`,
+    removeKeyAccountConfirm: (name: string) =>
+      `Remove “${name}” from Latch? This also deletes the API key saved for this account on this Mac.`,
     customStart: 'Custom launch',
     environmentStored: 'Kept only on this Mac, never shown again',
     notStarted: 'No sessions started yet',
@@ -691,6 +750,151 @@ function EnvDialog({
   )
 }
 
+function AccountDialog({
+  preset,
+  directories,
+  onAdded,
+  onClose,
+}: {
+  preset: AgentPreset
+  directories: Readonly<Record<string, string>> | undefined
+  onAdded: (agent: AgentSettings) => void
+  onClose: (unknown: boolean) => void
+}) {
+  const form = useId()
+  const [cursorId] = useState(() => (directories ? undefined : `cursor-key-${crypto.randomUUID()}`))
+  const [alias, setAlias] = useState('')
+  const [directory, setDirectory] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const name = `${preset.name} · ${alias.trim()}`
+  const ready = alias.trim() && (directories ? directory.trim().startsWith('/') : apiKey.trim())
+  const [busy, setBusy] = useState(false)
+  const [unknown, setUnknown] = useState(false)
+  const [error, setError] = useState('')
+  const readSaved = async (id: string) => {
+    const saved = await api<AgentsResponse>('agents?recheck=0').catch(() => undefined)
+    return saved?.agents.find(item => item.id === id && item.presetId === preset.id && item.name === name && item.account)
+  }
+  const save = async (event: FormEvent) => {
+    event.preventDefault()
+    if (busy || !ready) return
+    setBusy(true)
+    setError('')
+    try {
+      if (unknown && cursorId) {
+        const saved = await readSaved(cursorId)
+        if (saved) {
+          onAdded(saved)
+          return
+        }
+      }
+      const body = {
+        presetId: preset.id,
+        name,
+        command: preset.command,
+        args: preset.args,
+        enabled: true,
+        ...(directories ? { accountDirectory: directory.trim(), env: {} } : { id: cursorId, env: { CURSOR_API_KEY: apiKey.trim() } }),
+      }
+      const { agent } = await withConfirmation(confirmation =>
+        api<{ agent: AgentSettings }>('agents', { method: 'POST', body, ...(confirmation ? { confirmation } : {}) }),
+      )
+      onAdded(agent)
+    } catch (cause) {
+      if (unknown || isUncertain(cause)) {
+        // On a repeated binding, the Host identifies a definition only when its canonical directory and preset match.
+        const boundId = unknown && cause instanceof ApiError && cause.code === 'agent-account-bound' ? cause.details.agentId : undefined
+        const id = cursorId ?? boundId
+        const agent = typeof id === 'string' ? await readSaved(id) : undefined
+        if (agent) {
+          onAdded(agent)
+          return
+        }
+        setUnknown(true)
+      }
+      setError(inlineError(cause))
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog
+      open
+      secure
+      className="harness-account-dialog"
+      title={preset.id === 'antigravity' ? COPY.enterpriseAccount : COPY.accountTitle(preset.name)}
+      size="lg"
+      onClose={() => {
+        if (!busy) onClose(unknown)
+      }}
+      footer={
+        <>
+          <Button size="md" disabled={busy} onClick={() => onClose(unknown)}>
+            {unknown ? COPY.leaveAccount : COPY.cancel}
+          </Button>
+          <Button size="md" type="submit" form={form} variant="primary" loading={busy} disabled={!ready}>
+            {unknown ? COPY.retryAccount : COPY.addAccountButton}
+          </Button>
+        </>
+      }>
+      <form
+        id={form}
+        className="settings-form"
+        onSubmit={event => {
+          void save(event)
+        }}>
+        <TextField
+          label={COPY.accountAlias}
+          value={alias}
+          placeholder={COPY.aliasExample}
+          autoComplete="off"
+          maxLength={80 - preset.name.length - 3}
+          readOnly={busy || unknown}
+          onChange={event => setAlias(event.target.value)}
+        />
+        {directories ? (
+          <>
+            <TextField
+              label={preset.id === 'antigravity' ? COPY.enterpriseDirectory : COPY.accountDirectory}
+              value={directory}
+              maxLength={4096}
+              autoComplete="off"
+              spellCheck={false}
+              readOnly={busy || unknown}
+              hint={`${preset.id === 'antigravity' ? COPY.enterpriseHint : COPY.directoryHint} ${COPY.directoryBinding}`}
+              onChange={event => setDirectory(event.target.value)}
+            />
+            <SettingsGroup title={COPY.directoryLayout}>
+              {Object.entries(directories).map(([key, subdirectory]) => (
+                <SettingsRow
+                  key={key}
+                  title={<code>{key}</code>}
+                  description={subdirectory ? `${COPY.chosenDirectory}/${subdirectory}` : COPY.chosenDirectory}
+                />
+              ))}
+            </SettingsGroup>
+            {preset.id === 'codex' && <p>{COPY.codexLogin}</p>}
+            {preset.id === 'goose' && <p>{COPY.gooseLogin}</p>}
+          </>
+        ) : (
+          <TextField
+            label={COPY.key}
+            hint={COPY.environmentStored}
+            type="password"
+            autoComplete="new-password"
+            spellCheck={false}
+            readOnly={busy || unknown}
+            value={apiKey}
+            onChange={event => setApiKey(event.target.value)}
+          />
+        )}
+        {unknown && <InlineNotice tone="warn">{COPY.accountUnknown}</InlineNotice>}
+        {error && <InlineNotice tone="error">{error}</InlineNotice>}
+        <InlineConfirm active={busy} rank={1} />
+      </form>
+    </Dialog>
+  )
+}
+
 /**
  * An added agent's page, in cards: everything on it changes from any admin device, and each change is on record. Detection
  * says what the Host found, with 重新检测 and the install command.
@@ -707,6 +911,7 @@ function AgentPage({
   onRecheck,
   onSaved,
   onDeleted,
+  onAddAccount,
   on,
   local = false,
 }: {
@@ -722,6 +927,7 @@ function AgentPage({
   onRecheck: () => void
   onSaved: () => void
   onDeleted: () => void
+  onAddAccount?: ((preset: AgentPreset) => void) | undefined
   /** 「这台 Mac 上」 or 「 <name> 上」: where the definition starts. */
   on: string
   /** The desktop app on this Mac: the only place a command, its arguments or variables can change. */
@@ -737,6 +943,10 @@ function AgentPage({
     setSeen(agent.enabled)
     setEnabled(agent.enabled)
   }
+  const directories = preset && harnessAccountDirectories(preset.id)
+  const canAddAccount = local && onAddAccount && preset && (directories || preset.id === 'cursor')
+  const canEditLaunch = local && !(directories && agent.account)
+  const keyAccount = agent.account && agent.presetId === 'cursor'
   const id = encodeURIComponent(agent.id)
 
   /** One change. */
@@ -797,7 +1007,7 @@ function AgentPage({
       <SettingsGroup
         title={COPY.launch}
         meta={
-          local && (
+          canEditLaunch && (
             <Button
               variant="link"
               size="xs"
@@ -820,7 +1030,7 @@ function AgentPage({
       <SettingsGroup
         title={COPY.environment}
         meta={
-          local && (
+          canEditLaunch && (
             <Button
               variant="link"
               size="xs"
@@ -842,7 +1052,8 @@ function AgentPage({
             title={<code className="settings-mono">{key}</code>}
             description={COPY.set}
             trailing={
-              local && (
+              canEditLaunch
+              && !(keyAccount && agent.id.startsWith('cursor-key-') && key === 'CURSOR_API_KEY') && (
                 <Button
                   variant="ghost"
                   disabled={busy}
@@ -946,12 +1157,17 @@ function AgentPage({
         />
         {preset && <InstallRows preset={preset} />}
       </SettingsGroup>
+      {canAddAccount && preset && onAddAccount && (
+        <SettingsGroup>
+          <NavRow title={COPY.addAccount} onClick={() => onAddAccount(preset)} />
+        </SettingsGroup>
+      )}
       {harness?.login && <LoginGroup harness={harness} allowed={run} surface={surface} probe={agent.lastProbe} />}
       {harness && <ExtensionsLink title={COPY.extensions} harnessId={harness.id} />}
       {probe && <AgentProbe agent={agent} disabled={busy} disabledReason={probeDisabledReason} onSaved={onSaved} />}
       <SettingsGroup>
         <SettingsRow
-          title={COPY.deleteHarness}
+          title={agent.account ? COPY.removeAccount : COPY.deleteHarness}
           trailing={
             <Button
               variant="danger"
@@ -959,7 +1175,7 @@ function AgentPage({
               onClick={() => {
                 setRemoving(true)
               }}>
-              {COPY.delete}
+              {agent.account ? COPY.remove : COPY.delete}
             </Button>
           }
         />
@@ -994,10 +1210,16 @@ function AgentPage({
       </>
       {removing && (
         <ConfirmDialog
-          title={COPY.deleteHarness}
+          title={agent.account ? COPY.removeAccount : COPY.deleteHarness}
           danger
-          confirmLabel={COPY.delete}
-          message={COPY.deleteConfirm(agent.name)}
+          confirmLabel={agent.account ? COPY.remove : COPY.delete}
+          message={
+            keyAccount
+              ? COPY.removeKeyAccountConfirm(agent.name)
+              : agent.account
+                ? COPY.removeAccountConfirm(agent.name)
+                : COPY.deleteConfirm(agent.name)
+          }
           onClose={() => {
             setRemoving(false)
           }}
@@ -1042,22 +1264,69 @@ function EngineStatus({ agent, harness }: { agent: AgentSettings; harness?: Harn
   )
 }
 
-/** 已安装 holds what can run; a definition whose program is not on this Mac waits with the others that can be installed. */
-export const engineGroups = (agents: readonly AgentSettings[]) => ({
-  installed: agents.filter(agent => missingText(agent) === undefined),
-  missing: agents.filter(agent => missingText(agent) !== undefined),
+interface HarnessAccountGroup {
+  preset: AgentPresetSettings
+  accounts: AgentSettings[]
+  foundDefault: boolean
+}
+type EngineListItem = AgentSettings | HarnessAccountGroup
+
+/** A group stays together as long as any member's command, or its default launch, is found. */
+function isInstalled(item: EngineListItem): boolean {
+  return 'accounts' in item ? item.foundDefault || item.accounts.some(agent => agent.detected.found) : item.detected.found
+}
+
+export const engineGroups = <T extends EngineListItem>(items: readonly T[]) => ({
+  installed: items.filter(isInstalled),
+  missing: items.filter(item => !isInstalled(item)),
 })
 
 /**
  * The presets with no saved definition: found on the computer (an executable with the command's name is there), which
  * stand with what is installed, and the rest, which can be installed. A Host that sends no detection finds none.
  */
-export function presetGroups(presets: readonly AgentPresetSettings[], agents: readonly Pick<AgentSettings, 'presetId'>[]) {
-  const unsaved = presets.filter(preset => !agents.some(agent => agent.presetId === preset.id))
+export function presetGroups(presets: readonly AgentPresetSettings[], agents: readonly Pick<AgentSettings, 'presetId' | 'account'>[]) {
+  const unsaved = presets.filter(preset => !agents.some(agent => !agent.account && agent.presetId === preset.id))
   return {
     found: unsaved.filter(preset => preset.detected?.found === true),
     installable: unsaved.filter(preset => preset.detected?.found !== true),
   }
+}
+
+export function settingsEngines(presets: readonly AgentPresetSettings[], agents: readonly AgentSettings[]) {
+  const { found, installable } = presetGroups(presets, agents)
+  const groupedPresets = new Set<string>()
+  const groupFor = new Map<string, HarnessAccountGroup>()
+  for (const preset of presets) {
+    const matching = agents.filter(agent => agent.presetId === preset.id)
+    const separate = matching.filter(agent => agent.account)
+    if (separate.length === 0) continue
+    // More than one verified definition can point at the same default account.
+    const defaults = matching.filter(agent => agent.verified && !agent.account)
+    const defaultAccount = defaults.find(agent => agent.id === preset.id) ?? defaults[0]
+    const accounts = defaultAccount ? [defaultAccount, ...separate] : separate
+    if (accounts.length < 2) continue
+    const group = { preset, accounts, foundDefault: found.includes(preset) }
+    groupedPresets.add(preset.id)
+    for (const account of accounts) groupFor.set(account.id, group)
+  }
+
+  const entries: EngineListItem[] = []
+  const emitted = new Set<HarnessAccountGroup>()
+  for (const agent of agents) {
+    const group = groupFor.get(agent.id)
+    if (!group) entries.push(agent)
+    else if (!emitted.has(group)) {
+      emitted.add(group)
+      entries.push(group)
+    }
+  }
+  return { ...engineGroups(entries), found: found.filter(preset => !groupedPresets.has(preset.id)), installable }
+}
+
+function accountRowTitle(agent: AgentSettings, brand: string): string {
+  if (!agent.account && agent.name === brand) return COPY.defaultAccount
+  return harnessAccountAlias(agent.name, brand) || agent.name
 }
 
 /** 可以安装 stands on the section's own page, so asking for the presets is asking for that page. */
@@ -1076,6 +1345,7 @@ export function AgentRow({
   onToggle,
   local = false,
   onConfirm,
+  accountBrand,
 }: {
   agent: AgentSettings
   preset?: AgentPreset
@@ -1088,36 +1358,38 @@ export function AgentRow({
   local?: boolean
   /** Saves the definition as it is, which confirms the program its command now finds. */
   onConfirm?: () => void
+  accountBrand?: string
 }) {
   // Saved on the preset's adapter rather than its own program: said, with what the direct route needs.
   const viaAdapter = preset?.fallback !== undefined && runsPresetFallback(preset, commandBase(agent.command), agent.args)
   const words = preset && harnessPresetCopy(preset)
   const moved = missingText(agent) === undefined && !agent.detected.outdated && commandMoved(harness)
+  const title = accountBrand ? accountRowTitle(agent, accountBrand) : agent.name
+  const label = accountBrand ? `${accountBrand} · ${title}` : title
+  // Keep the new path visible when a program moves. Ordinary account paths are in the detail page.
+  const description =
+    moved && agent.detected.path ? (
+      <MiddleEllipsis text={agent.detected.path} className="settings-mono" />
+    ) : !agent.verified || !preset ? (
+      <code className="agent-command">{[agent.command, ...agent.args].join(' ')}</code>
+    ) : accountBrand ? undefined : harness?.bound?.path ? (
+      <MiddleEllipsis text={harness.bound.path} className="settings-mono" />
+    ) : (
+      ((viaAdapter ? words?.adapterDescription : undefined) ?? words?.description)
+    )
   return (
     <ObjectRow
       className="agent-row"
-      label={COPY.editName(agent.name)}
+      label={COPY.editName(label)}
       dim={missingText(agent) !== undefined}
-      leading={<MarkTile mark={agent.presetId} cold={harness?.status === 'unavailable'} size={24} />}
+      leading={accountBrand ? undefined : <MarkTile mark={agent.presetId} cold={harness?.status === 'unavailable'} size={24} />}
       title={
         <span className="settings-row-name">
-          {agent.name}
+          {title}
           {!agent.verified && <span className="settings-row-note">{COPY.unverified}</span>}
         </span>
       }
-      description={
-        // A moved command shows the program it now finds, the one a confirmation would bind; a preset says which program
-        // it is bound to; anything else says what it runs.
-        moved && agent.detected.path ? (
-          <MiddleEllipsis text={agent.detected.path} className="settings-mono" />
-        ) : agent.verified && preset && harness?.bound?.path ? (
-          <MiddleEllipsis text={harness.bound.path} className="settings-mono" />
-        ) : agent.verified && words ? (
-          ((viaAdapter ? words.adapterDescription : undefined) ?? words.description)
-        ) : (
-          <code className="agent-command">{[agent.command, ...agent.args].join(' ')}</code>
-        )
-      }
+      description={description}
       onOpen={onOpen}
       trailing={
         <>
@@ -1129,14 +1401,14 @@ export function AgentRow({
               variant="secondary"
               disabled={busy}
               pending={confirming}
-              aria-label={COPY.confirmProgramName(agent.name)}
+              aria-label={COPY.confirmProgramName(label)}
               onClick={onConfirm}>
               {COPY.confirmProgram}
             </Button>
           ) : (
             <EngineStatus agent={agent} harness={harness} />
           )}
-          <Switch label={COPY.enableName(agent.name)} checked={agent.enabled} disabled={busy} onCheckedChange={onToggle} />
+          <Switch label={COPY.enableName(label)} checked={agent.enabled} disabled={busy} onCheckedChange={onToggle} />
         </>
       }
     />
@@ -1149,22 +1421,31 @@ export function AgentRow({
  */
 /** Behind 已找到's ⓘ: a preset is run for its version only once it is confirmed on this Mac. */
 
-function FoundRow({ preset, onOpen }: { preset: AgentPresetSettings; onOpen: () => void }) {
+function FoundRow({
+  preset,
+  onOpen,
+  inAccountGroup = false,
+}: {
+  preset: AgentPresetSettings
+  onOpen: () => void
+  inAccountGroup?: boolean
+}) {
   const outdated = preset.detected?.outdated
   const unread = preset.detected?.versionUnread === true
+  const title = inAccountGroup ? COPY.defaultLaunch : preset.name
   return (
     <NavRow
       className="agent-row"
-      leading={<MarkTile mark={preset.id} size={24} />}
+      leading={inAccountGroup ? undefined : <MarkTile mark={preset.id} size={24} />}
       record
-      title={preset.name}
+      title={title}
       description={
         outdated ? (
           <span className="detect is-warn">
             <Icon icon={AlertGlyph} size={12} />
             <span>{outdated.need}</span>
           </span>
-        ) : (
+        ) : inAccountGroup ? undefined : (
           <MiddleEllipsis text={preset.detected?.path ?? preset.command} className="settings-mono" />
         )
       }
@@ -1182,12 +1463,47 @@ function FoundRow({ preset, onOpen }: { preset: AgentPresetSettings; onOpen: () 
         )
       }
       label={COPY.offerLabel(
-        preset.name,
+        inAccountGroup ? `${preset.name} · ${title}` : title,
         outdated ? COPY.updateNeeded : unread ? COPY.foundWithNote(COPY.found, COPY.versionUnread) : COPY.found,
         COPY.customStart,
       )}
       onClick={onOpen}
     />
+  )
+}
+
+function AccountGroupRow({
+  group,
+  expanded,
+  onSetExpanded,
+  renderAccount,
+  onOpenDefault,
+}: {
+  group: HarnessAccountGroup
+  expanded: boolean
+  onSetExpanded: (expanded: boolean) => void
+  renderAccount: (agent: AgentSettings, brand: string) => ReactNode
+  onOpenDefault: () => void
+}) {
+  const id = useId()
+  const { preset, accounts, foundDefault } = group
+  const count = COPY.accountCount(accounts.length)
+  return (
+    <div className="agent-account-group">
+      <NavRow
+        leading={<MarkTile mark={preset.id} size={24} />}
+        record
+        title={preset.name}
+        value={count}
+        label={COPY.accountGroupLabel(preset.name, count)}
+        disclosure={{ expanded, controls: id }}
+        onClick={() => onSetExpanded(!expanded)}
+      />
+      <Collapse id={id} open={expanded} onReveal={() => onSetExpanded(true)} className="agent-account-list">
+        {accounts.map(account => renderAccount(account, preset.name))}
+        {foundDefault && <FoundRow preset={preset} inAccountGroup onOpen={onOpenDefault} />}
+      </Collapse>
+    </div>
   )
 }
 
@@ -1272,6 +1588,8 @@ export function AgentsSettings({
 }) {
   const [data, setData] = useState<AgentsResponse | null>(null)
   const [error, setError] = useState('')
+  const [accountPreset, setAccountPreset] = useState<AgentPreset>()
+  const [foldedAccounts, setFoldedAccounts] = useState<ReadonlySet<string>>(() => new Set())
   const [editing, setEditing] = useState<Editing>(initialPage ? editingOf(initialPage) : null)
   useEffect(() => {
     if (initialPage) setEditing(editingOf(initialPage))
@@ -1354,20 +1672,28 @@ export function AgentsSettings({
   if (data === null) return error ? <InlineNotice tone="error">{error}</InlineNotice> : <Loading />
 
   const builtin = builtinHarness(snapshot.catalog)
-  const local = deviceAccess(snapshot, currentShell()).local
+  const { local, admin } = deviceAccess(snapshot, currentShell())
   const on = onComputer(local, snapshot.hostName)
-  const { found, installable } = presetGroups(data.presets, data.agents)
-  const { installed, missing } = engineGroups(data.agents)
+  const { found, installable, installed, missing } = settingsEngines(data.presets, data.agents)
   const custom = (preset: AgentPreset) => {
     setEditing({ kind: 'new', preset })
   }
-  const engineRow = (agent: AgentSettings) => (
+  const canManageAccounts = local && admin && snapshot.catalog?.features?.harnessAccounts === true
+  const accountPresets = canManageAccounts
+    ? data.presets.filter(
+        preset =>
+          (harnessAccountDirectories(preset.id) || preset.id === 'cursor')
+          && (preset.detected?.found || data.agents.some(agent => agent.presetId === preset.id && agent.detected.found)),
+      )
+    : []
+  const engineRow = (agent: AgentSettings, accountBrand?: string) => (
     <Fragment key={agent.id}>
       <AgentRow
         agent={agent}
         preset={data.presets.find(item => item.id === agent.presetId)}
         harness={snapshot.catalog?.harnesses.find(item => item.id === agent.id)}
         busy={busy}
+        accountBrand={accountBrand}
         confirming={busy && confirmationTarget === agent.id}
         onOpen={() => {
           setEditing({ kind: 'agent', id: agent.id })
@@ -1383,6 +1709,27 @@ export function AgentsSettings({
       {local && editing === null && confirmationTarget === agent.id && <InlineConfirm active={busy} rank={1} />}
     </Fragment>
   )
+  const renderEngine = (entry: EngineListItem) => {
+    if (!('accounts' in entry)) return engineRow(entry)
+    const { preset } = entry
+    return (
+      <AccountGroupRow
+        key={`preset:${preset.id}`}
+        group={entry}
+        expanded={!foldedAccounts.has(preset.id)}
+        onSetExpanded={expanded => {
+          setFoldedAccounts(previous => {
+            const next = new Set(previous)
+            if (expanded) next.delete(preset.id)
+            else next.add(preset.id)
+            return next
+          })
+        }}
+        renderAccount={engineRow}
+        onOpenDefault={() => custom(preset)}
+      />
+    )
+  }
   const main = (
     <>
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
@@ -1409,14 +1756,40 @@ export function AgentsSettings({
             trailing={<span className="service-status">{builtin.status === 'ready' ? COPY.available : COPY.needsProvider}</span>}
           />
         )}
-        {installed.map(engineRow)}
+        {accountPresets.length > 0 && (
+          <SettingsRow
+            title={COPY.accounts}
+            trailing={
+              <Menu
+                label={COPY.addAccount}
+                align="end"
+                sections={[
+                  {
+                    id: 'presets',
+                    items: accountPresets.map(preset => ({
+                      id: preset.id,
+                      label: preset.name,
+                      onSelect: () => setAccountPreset(preset),
+                    })),
+                  },
+                ]}
+                trigger={menu => (
+                  <Button variant="outline" size="xs" icon={PlusGlyph} {...menu}>
+                    {COPY.addAccount}
+                  </Button>
+                )}
+              />
+            }
+          />
+        )}
+        {installed.map(renderEngine)}
         {found.map(preset => (
           <FoundRow key={preset.id} preset={preset} onOpen={() => custom(preset)} />
         ))}
       </SettingsGroup>
       {(missing.length > 0 || installable.length > 0) && (
         <SettingsGroup title={COPY.offers}>
-          {missing.map(engineRow)}
+          {missing.map(renderEngine)}
           {installable.map(preset => (
             <InstallRow
               key={preset.id}
@@ -1482,11 +1855,33 @@ export function AgentsSettings({
           }}
           onSaved={refreshed}
           onDeleted={done}
+          onAddAccount={canManageAccounts ? setAccountPreset : undefined}
           on={on}
           local={local}
         />
       ),
     })
 
-  return <SettingsPages main={main} levels={levels} />
+  return (
+    <>
+      <SettingsPages main={main} levels={levels} />
+      {canManageAccounts && accountPreset && (
+        <AccountDialog
+          key={accountPreset.id}
+          preset={accountPreset}
+          directories={harnessAccountDirectories(accountPreset.id)}
+          onClose={unknown => {
+            setAccountPreset(undefined)
+            if (unknown) refreshed()
+          }}
+          onAdded={item => {
+            setData({ ...data, agents: [...data.agents.filter(agent => agent.id !== item.id), item] })
+            setAccountPreset(undefined)
+            refreshed()
+            setEditing({ kind: 'agent', id: item.id })
+          }}
+        />
+      )}
+    </>
+  )
 }

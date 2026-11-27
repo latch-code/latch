@@ -208,6 +208,10 @@ describe('Claude’s update channel', () => {
     await writeFile(join(dir, 'settings.json'), JSON.stringify({ autoUpdatesChannel: 'stable', model: 'x' }))
     await updates.settle([claude], 1_000)
     expect(updates.hint(claude)).toEqual({ current: '2.1.322', latest: '2.1.330', command: 'claude update' })
+    const other = { ...claude, claudeDirectory: await directory() }
+    await updates.settle([claude, other], 1_000)
+    expect(updates.hint(other)?.latest).toBe('2.1.340')
+    expect(updates.hint(claude)?.latest).toBe('2.1.330')
     await writeFile(join(dir, 'settings.json'), JSON.stringify({ autoUpdatesChannel: 'nightly' }))
     expect(await readClaudeChannel(dir)).toBe('latest')
     await writeFile(join(dir, 'settings.json'), '{ broken')

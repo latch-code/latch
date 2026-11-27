@@ -32,14 +32,15 @@ export async function buildGatewayCatalog(
   const program = preset ? locateProgram(preset.command) : undefined
   const stamp = program ? stampOf(program) : undefined
   if (!catalog || !program || !stamp) return undefined
-  let known = reads.get(program)
+  const key = `${program}\0${record.accountDirectory ?? ''}`
+  let known = reads.get(key)
   if (known?.stamp !== stamp) {
     known = {
       stamp,
       stdout: runPresetProgram(record, catalog.read.args, catalog.read).then(result => (result?.code === 0 ? result.stdout : undefined)),
       accepted: new Set(),
     }
-    reads.set(program, known)
+    reads.set(key, known)
   }
   const stdout = await known.stdout
   // A program that does not answer is not asked again until its file changes: a launch never waits for it twice.

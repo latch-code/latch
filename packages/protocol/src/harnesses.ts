@@ -214,6 +214,10 @@ export interface CatalogueRead {
 }
 
 export interface HarnessInfo {
+  /** The saved definition's family, assigned by the Host. */
+  presetId?: string
+  /** An explicitly bound account for this preset. Its location stays on the Host. */
+  account?: true
   /** The Host can enforce a text-only incoming personal Agent consultation on this Harness. */
   textOnlyConsultations?: true
   /** What it really does; see `HarnessCapabilities`. */
@@ -335,6 +339,8 @@ export interface AgentRecord {
   id: string
   name: string
   presetId?: string
+  /** Canonical directory selected on this Host. Immutable for this definition. */
+  accountDirectory?: string
   command: string
   args: string[]
   env: Record<string, string>
@@ -388,6 +394,7 @@ export interface AgentSettings {
   id: string
   name: string
   presetId?: string
+  account?: true
   command: string
   args: string[]
   envKeys: string[]

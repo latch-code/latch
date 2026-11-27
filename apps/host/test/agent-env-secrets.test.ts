@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -18,6 +19,23 @@ const KEY = ['key', 'c'.repeat(48)].join('_')
 const CURSOR = { id: 'cursor', name: 'Cursor', command: process.execPath, args: [FAKE_ACP_AGENT], env: { CURSOR_API_KEY: KEY } }
 
 describe("a Harness definition's key", () => {
+  it('keeps a dedicated Cursor account on its SDK route when its definition is edited', async () => {
+    const t = await startTestHost()
+    cleanups.push(() => t.close())
+    const desktop = await t.enroll({ listener: 'unix' })
+    const id = `cursor-key-${randomUUID()}`
+    const input = { id, name: 'Work Cursor', presetId: 'cursor', command: 'cursor-agent', args: ['acp'], env: { CURSOR_API_KEY: KEY } }
+    await desktop.confirmedJson('agents', { body: input })
+    const edit = (body: unknown) => desktop.request(`agents/${id}`, { method: 'PUT', body })
+    for (const env of [{ CURSOR_API_KEY: null }, { CURSOR_API_KEY: ' ' }])
+      expect(await (await edit({ env })).json()).toMatchObject({ error: 'agent-account-key' })
+    for (const body of [{ presetId: 'codex' }, { command: 'codex' }, { args: [] }])
+      expect(await (await edit(body)).json()).toMatchObject({ error: 'agent-account-command' })
+    const renamed = await edit({ name: 'Renamed Cursor' })
+    expect(renamed.status).toBe(200)
+    expect(await renamed.json()).toMatchObject({ agent: { id, name: 'Renamed Cursor', account: true, envKeys: ['CURSOR_API_KEY'] } })
+  })
+
   it('is saved only on this Mac, kept 0600, never returned to a device and masked in what the Host writes', async () => {
     const t = await startTestHost()
     cleanups.push(() => t.close())

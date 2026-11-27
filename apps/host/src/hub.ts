@@ -1052,10 +1052,11 @@ export class HarnessHub implements Bridge {
       })
   }
 
-  /** Every harness session behind a Latch session of any driver, except those brought in: never offered for import. */
-  agentSessionIds(): string[] {
+  /** The native sessions Latch started in the stores that can contain the prospective import. */
+  agentSessionIds(include?: (harnessId: string) => boolean): string[] {
     const ids = new Set<string>()
     for (const member of this.members()) {
+      if (include && !include(member.driver.id)) continue
       try {
         for (const id of member.bridge.agentSessionIds?.() ?? []) ids.add(id)
       } catch (error) {

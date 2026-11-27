@@ -60,6 +60,8 @@ export interface HostFeatures {
   fileMentions?: true
   attachments?: true
   agentProbe?: true
+  /** Saved Harness instances can bind a distinct local login. */
+  harnessAccounts?: true
   usage?: true
   /** `/model-usage`, `/model-spend`: the usage ledger's sums, prices and monthly budgets. */
   modelUsage?: true

@@ -180,12 +180,13 @@ export function Boards() {
             />
           </div>
         </Cell>
-        <Cell caption="多个来源 · 档位 · 设置">
+        <Cell caption="具名来源 · 档位 · 设置">
           <div className="ui-popover" data-size="lg">
             <PickerBoard
               label="模型"
               levelsLabel="思考"
               sources={GALLERY_SOURCES}
+              sourceLabels
               value={model}
               levels={galleryLevels}
               onItem={setModel}

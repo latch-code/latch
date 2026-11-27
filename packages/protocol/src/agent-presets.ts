@@ -330,6 +330,23 @@ export const GLOBAL_RESERVED_ENV: readonly string[] = [
   'LMG_TOKEN',
 ]
 
+/** Directory layout used by the original program when a person binds another local account. */
+const ACCOUNT_DIRECTORIES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  codex: { CODEX_HOME: '', CODEX_SQLITE_HOME: '' },
+  'claude-agent': { CLAUDE_CONFIG_DIR: '' },
+  pi: { PI_CODING_AGENT_DIR: '' },
+  opencode: { XDG_CONFIG_HOME: 'config', XDG_DATA_HOME: 'data', XDG_STATE_HOME: 'state', XDG_CACHE_HOME: 'cache' },
+  dsh: { DSH_HOME: '' },
+  qwen: { QWEN_HOME: '', QWEN_RUNTIME_DIR: '' },
+  goose: { GOOSE_PATH_ROOT: '' },
+  antigravity: { CLOUDSDK_CONFIG: '', GOOGLE_APPLICATION_CREDENTIALS: 'application_default_credentials.json' },
+  grok: { GROK_HOME: '' },
+}
+
+export function harnessAccountDirectories(presetId: string): Readonly<Record<string, string>> | undefined {
+  return Object.hasOwn(ACCOUNT_DIRECTORIES, presetId) ? ACCOUNT_DIRECTORIES[presetId] : undefined
+}
+
 /** `LATCH_*` are the Host's own settings, a model key among them. */
 export const RESERVED_ENV_PREFIXES: readonly string[] = ['npm_', 'LATCH_', 'DYLD_', 'LD_', 'GIT_CONFIG_']
 

@@ -9715,6 +9715,24 @@ describe("what the Host reads and removes in a Harness CLI's own record", () => 
     expect(received(log, 'session/close')).toHaveLength(1)
   })
 
+  it('keeps native DeepSeek sessions when their bound account directory becomes unavailable', async () => {
+    const accountDirectory = await realpath(await mkdtemp(join(tmpdir(), 'latch-dsh-account-')))
+    cleanups.push(() => rm(accountDirectory, { recursive: true, force: true }))
+    const removeSession = vi.fn<NonNullable<CliStoreAccess['removeSession']>>(async () => true)
+    const fixture = await setup(
+      { FAKE_ACP_CONFIG: 'options', FAKE_ACP_PROCESS_MODE: '1', FAKE_ACP_CAPS: 'resume,close' },
+      { storeAccess: { removeSession } },
+      { presetId: 'dsh', accountDirectory },
+    )
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    await settled(bridge, sessionId)
+    await rm(accountDirectory, { recursive: true })
+    await bridge.remove!(sessionId)
+    await vi.waitFor(async () => expect(await readdir(fixture.tmpRoot)).toEqual([]))
+    expect(removeSession).not.toHaveBeenCalled()
+  })
+
   it("counts what Qwen Code's own update runs in its launch fingerprint, and nothing when it runs itself", async () => {
     let code: string | undefined
     const calls: unknown[] = []

@@ -9,6 +9,9 @@ import { authStatusUpdate, type initializeResult } from './protocol.ts'
 import type { LoginStatus } from './profiles/index.ts'
 import type { z } from 'zod'
 
+export const CURSOR_SDK_SIGN_IN =
+  '请在 Cursor 网页的 API Keys 创建密钥，然后在 Host 电脑的这个 Harness 定义中填写 CURSOR_API_KEY。更换密钥也在这里操作。'
+
 /** A login the harness runs as its own program in a terminal: the definition's command and arguments, then these. */
 export interface TerminalLogin {
   id: string
@@ -134,7 +137,16 @@ const facts = new Map<string, AuthFacts>()
 
 /** Same definition, same facts: its id, command, arguments, variables and preset. */
 const factsKey = (record: AgentRecord) =>
-  sha256Hex(JSON.stringify([record.id, record.command, record.args, Object.entries(record.env).sort(), record.presetId ?? null]))
+  sha256Hex(
+    JSON.stringify([
+      record.id,
+      record.command,
+      record.args,
+      Object.entries(record.env).sort(),
+      record.presetId ?? null,
+      record.accountDirectory ?? null,
+    ]),
+  )
 
 /** The facts of a definition; `create` only from a driver that runs it, so a lookup never adds one. */
 export function authFacts(record: AgentRecord, create: true): AuthFacts
