@@ -584,6 +584,28 @@ describe('adjudicated file content', () => {
     expect((await f.request('all', 'tasks/session/files/resolve', { paths: ['unmentioned.txt'] })).status).toBe(503)
   })
 
+  it('binds search pages to the device and root identities and requires fresh access to continue', async () => {
+    const f = await fixture()
+    const path = 'tasks/session/files/search'
+    const body = { q: 'report', limit: 1, page: true }
+    const first = (await (await f.request('all', path, body)).json()) as { files: Array<{ root: string }>; nextCursor?: string }
+    expect(first.files.map(file => file.root)).toEqual(['primary'])
+    expect(first.nextCursor).toBeTypeOf('string')
+    const next = { ...body, cursor: first.nextCursor }
+    expect((await f.request('desktop', path, next)).status).toBe(409)
+    expect((await f.request('work', path, next)).status).toBe(403)
+    f.revoked.add('all')
+    expect((await f.request('all', path, next)).status).toBe(403)
+    f.revoked.clear()
+    expect(await (await f.request('all', path, next)).json()).toEqual({
+      files: [{ name: 'report.md', root: 'second', path: 'report.md' }],
+      truncated: false,
+    })
+    await rename(f.second, f.second + '-old')
+    await mkdir(f.second)
+    expect((await f.request('all', path, next)).status).toBe(409)
+  })
+
   it('does not turn a warm filename index into scope, device or folder authority', async () => {
     const f = await fixture()
     const body = { q: 'report' }

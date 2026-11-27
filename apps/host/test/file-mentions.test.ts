@@ -47,6 +47,7 @@ describe('explicit file choices', () => {
     const body = { q: 'rpt', harnessId: 'standard' }
     const result = await owner.json<{ files: Array<{ root: string; path: string }> }>(`workspaces/${project.id}/files/search`, { body })
     expect(result.files).toEqual([{ name: 'report.txt', path: 'report.txt', root: project.folders![1]!.id }])
+    expect(await owner.json(`workspaces/${project.id}/files/search`, { body: { ...body, page: true, limit: 12 } })).toEqual(result)
     expect((await limited.request(`workspaces/${project.id}/files/search`, { body })).status).toBe(403)
     const fileRefs = [{ root: project.folders![1]!.id, path: 'report.txt' }],
       requestId = randomUUID()
