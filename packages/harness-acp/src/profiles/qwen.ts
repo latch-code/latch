@@ -159,7 +159,9 @@ export const qwenProfile: HarnessProfile = {
       }
     },
   },
-  // Prefetched once per definition in a private empty folder with no MCP servers and no prompt, then deleted.
+  // Its `session/new` connects the person's own MCP servers and fires their `SessionStart` hooks (0.27.4 `newSession` →
+  // `startChat` → `fireSessionStartHook`), though Latch passes none; no flag keeps the hooks from running. A draft still
+  // prefetches once per definition, with no prompt, and the empty session is deleted.
   catalogueRead: { when: 'select' },
   permission: {
     approvals: 'prompts',

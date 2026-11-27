@@ -101,7 +101,7 @@ const RESERVED = new Set([
 export const CODEX_MODE_ID = 'mode'
 const MAX_MODEL_PAGES = 5
 const MAX_THREADS = 50
-const COMPACT = { name: 'compact', description: '把之前的对话总结成摘要，腾出上下文' }
+export const COMPACT = { name: 'compact', description: '把之前的对话总结成摘要，腾出上下文' }
 /** Items that are what a model call wrote, rather than a tool it called. */
 const TEXT_ITEMS = new Set(['agentMessage', 'reasoning', 'userMessage', 'contextCompaction'])
 /** Context blocks are not command invocations, even when their instructions begin with a slash. */
@@ -1180,7 +1180,9 @@ export class CodexWire implements AgentWire {
               name: row.name,
               invocation: `$${row.name}`,
               scope,
-              ...(typeof row.description === 'string' && row.description ? { description: truncateUnits(row.description, 1000) } : {}),
+              ...(typeof row.description === 'string' && row.description
+                ? { description: truncateUnits(redactKnownSecrets(row.description), 1000) }
+                : {}),
             },
           ])
           candidates.push({ name: row.name, path: row.path, ...(parsed?.[0] ? { skill: parsed[0] } : {}) })

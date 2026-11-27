@@ -74,7 +74,9 @@ export const piProfile: HarnessProfile = {
   projectConfigPaths: ['.pi', '.agents/skills'],
   // Packages that project settings declare are installed below `.pi` by pi itself; the declarations are compared.
   projectConfigManaged: { skip: ['.pi/npm', '.pi/git'] },
-  // Prefetched once per definition in a private empty folder with no prompt.
+  // Starting pi loads the person's extensions and runs their session hooks, even in the read's empty folder; a draft
+  // still prefetches once per definition, with no prompt. `pi --list-models` builds the same runtime with the
+  // extensions before it lists, and says only whether a model thinks.
   catalogueRead: { when: 'select' },
   // `pi --version` prints the bare version and exits before loading extensions. The wire's own `clear_queue` check
   // stays for a pi that prints none.

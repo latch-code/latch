@@ -908,8 +908,9 @@ export class ClaudeWire implements AgentWire {
       if (session.terminalCommands.has(name)) continue
       const parsed = availableCommand.safeParse({
         name,
-        ...(read.data.description ? { description: truncateUnits(read.data.description, 1000) } : {}),
-        ...(read.data.argumentHint ? { input: { hint: truncateUnits(read.data.argumentHint, 500) } } : {}),
+        // Redacted before the cut: a credential split at the boundary no longer matches its pattern.
+        ...(read.data.description ? { description: truncateUnits(redactKnownSecrets(read.data.description), 1000) } : {}),
+        ...(read.data.argumentHint ? { input: { hint: truncateUnits(redactKnownSecrets(read.data.argumentHint), 500) } } : {}),
       })
       if (parsed.success) commands.push(previous?.get(name) ?? parsed.data)
       if (commands.length === SESSION_COMMAND_LIMIT) break

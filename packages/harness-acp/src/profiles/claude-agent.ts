@@ -242,7 +242,8 @@ export const claudeAgentProfile: HarnessProfile = {
       upgrade: 'npm i -g @agentclientprotocol/claude-agent-acp@latest',
     },
   },
-  // Prefetched once per definition in a private empty folder with no MCP servers and no prompt.
+  // Starting Claude Code runs the person's SessionStart hooks and loads their plugins, even in the read's empty folder;
+  // a draft still prefetches once per definition, with no prompt and no MCP servers of Latch's.
   catalogueRead: { when: 'select' },
   permission: {
     ...CLAUDE_PERMISSION,
@@ -297,6 +298,7 @@ export const claudeProfile: HarnessProfile = {
       source: CLAUDE_SOURCE,
     },
   },
+  // As the adapter: the person's SessionStart hooks and plugins load with the read's empty session.
   catalogueRead: { when: 'select' },
   // The wire lists, replays and deletes Claude's sessions itself through the SDK Latch pins, where the Host lets it read
   // Claude's store (`cliStore`); an import goes on in the original session, as the terminal's `/resume` would.

@@ -197,6 +197,42 @@ export function readOnSelect(harness: HarnessInfo, onDone?: () => void | Promise
     })
 }
 
+/**
+ * Reads a draft starts by itself, by what the Host last said of the Harness. An answer that changes nothing (`ran: false`
+ * for a command not confirmed here, or a read that ends before the snapshot recording it) still brings a new snapshot,
+ * and an effect would otherwise ask again on every one.
+ */
+const draftAsked = new Set<string>()
+function askOnce(kind: 'select' | 'slash', harness: HarnessInfo): boolean {
+  const key = JSON.stringify([kind, harness.id, observation(harness)])
+  if (draftAsked.has(key)) return false
+  draftAsked.add(key)
+  if (draftAsked.size > 256) draftAsked.delete(draftAsked.values().next().value!)
+  return true
+}
+
+/** A visible draft's own prefetch of the chosen Harness: once per Host observation, never a loop on its own refresh. */
+export function prefetchOnDraft(
+  harness: HarnessInfo | undefined,
+  access: Pick<DeviceAccess, 'scopes'>,
+  onDone?: () => void | Promise<void>,
+): void {
+  if (readsOnSelect(harness, access) && askOnce('select', harness)) readOnSelect(harness, onDone)
+}
+
+/** Opening a draft's slash menu reads the Harness's own commands, once per Host observation. */
+export function readOnSlash(
+  harness: HarnessInfo | undefined,
+  access: Pick<DeviceAccess, 'scopes' | 'local' | 'admin'>,
+  onDone?: () => void | Promise<void>,
+): void {
+  if (!slashCatalogueTarget(harness, access) || !askOnce('slash', harness)) return
+  void readHarnessCatalogue(harness, false).then(
+    () => onDone?.(),
+    () => {},
+  )
+}
+
 /** Opening a draft's slash menu asks for the Harness's own commands once when no cached or definition-level report exists yet. */
 export function slashCatalogueTarget(
   harness: HarnessInfo | undefined,

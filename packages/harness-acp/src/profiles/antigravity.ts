@@ -23,7 +23,8 @@ export const antigravityProfile: HarnessProfile = {
   },
   // Its own `/usage`, run beside a session: it starts no turn (checked on 1.5.8) and nothing waits for it.
   quota: { command: antigravityQuotaCommand },
-  // Prefetched once per definition in a private empty folder with no MCP servers and no prompt.
+  // Opening a session can load the person's hooks and plugins, even in the read's empty folder; a draft still
+  // prefetches once per definition, with no prompt and no MCP servers of Latch's.
   catalogueRead: { when: 'select' },
   permission: {
     approvals: 'prompts',
