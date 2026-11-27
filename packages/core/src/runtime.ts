@@ -74,7 +74,10 @@ import {
   type HostProject,
   type ProjectFolder,
   type PromptOptions,
+  type QueuedSteerOptions,
   type SessionFolder,
+  type SteerOptions,
+  type SteerOutcome,
   type MemoryProposalInput,
   type MemoryRecallInput,
   type MemoryRecallResult,
@@ -337,6 +340,7 @@ interface Run {
   lease: CapabilityLease
   done: Promise<void>
   resolveDone(): void
+  acceptsSteers: boolean
   activity?: DriverTaskDetail['activity']
   /** The run's own `propose_memory` and `propose_schedule`, when its context lets its agent propose. */
   proposals?: ToolDefinition[]
@@ -559,7 +563,7 @@ function toolMessage(task: StoredTask, callId: string): Message | undefined {
   // A Provider can reuse IDs once it starts receiving a fresh context. Settle only rows from the active turn.
   for (let index = task.messages.length - 1; index >= 0; index--) {
     const message = task.messages[index]!
-    if (message.role === 'user') return undefined
+    if (message.role === 'user' && !message.steered) return undefined
     if (message.role === 'tool' && message.id === id) return message
   }
 }
@@ -577,7 +581,7 @@ function recordResult(
 ): void {
   const previous = toolMessage(task, call.id)
   const resultId = previous?.contextToolId
-  const turnId = resultId && task.messages.findLast(message => message.role === 'user')?.id
+  const turnId = resultId && task.messages.findLast(message => message.role === 'user' && !message.steered)?.id
   task.history.push({
     role: 'tool',
     content: text,
@@ -632,6 +636,10 @@ function closeBatch(task: StoredTask, cancelled: boolean, at: string, interrupte
   }
   delete task.batch
   return unknownResults
+}
+
+function steerHistory({ text }: Message): ModelMessage {
+  return { role: 'user', content: text, steered: true }
 }
 
 /** A failure's reason as the note keeps it: as long as the other drivers' reasons, at most. */
@@ -779,6 +787,7 @@ class HarnessRuntime implements Bridge {
         const asked = task.approval?.toolCallId ? toolMessage(task, task.approval.toolCallId) : undefined
         if (asked) asked.tool = { ...asked.tool, decision: { outcome: 'cancelled', at } }
         const unknown = closeBatch(task, false, at, true)
+        this.closeSteers(task, at)
         if (task.pendingContextStep) recordContextStep(task, { ...task.pendingContextStep, status: 'interrupted' })
         const activeStep = task.contextSteps?.at(-1)
         if (activeStep?.status === 'running') activeStep.status = 'interrupted'
@@ -819,10 +828,11 @@ class HarnessRuntime implements Bridge {
     if (this.storageFailure) throw new AppError(503, 'storage-unavailable', '持久化失败，运行节点已停止接收新操作。请检查数据存储。')
   }
 
-  /** Serializes short state commits, never model calls, tools, or waiting approvals. */
-  private commit<T>(operation: (draft: RuntimeState) => T, sessionId?: string): Promise<T> {
+  /** Serializes state commits and their final authorization checks, never model calls, tools, or waiting approvals. */
+  private commit<T>(operation: (draft: RuntimeState) => T, sessionId?: string, authorize?: () => Promise<void>): Promise<T> {
     const result = this.queue.then(async () => {
       if (this.storageFailure) throw this.storageFailure
+      if (authorize) await authorize()
       const draft = structuredClone(this.state)
       const value = operation(draft)
       try {
@@ -964,6 +974,7 @@ class HarnessRuntime implements Bridge {
       ...(run?.activity ? { activity: run.activity } : {}),
       ...(run ? run.clock.live() : {}),
       ...(run?.lastOutputAt !== undefined ? { lastOutputAt: isoTime(run.lastOutputAt) } : {}),
+      ...(run && this.steerable(run) ? { steer: true as const } : {}),
       clearContext: true,
       ...this.permissionDetail(task),
     })
@@ -1198,6 +1209,8 @@ class HarnessRuntime implements Bridge {
           if (receipt.payloadHash !== payloadHash) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入')
           return
         }
+        if (draft.receipts[digest(['steer', sessionId, requestId])]?.steer === 'injected')
+          throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入')
         if (task.summary.personal) throw new AppError(409, 'session-read-only', '这个会话来自已移除的 Agent，只能查看。')
         if (task.summary.agent?.customAgentId !== agentContext?.agent?.customAgentId)
           throw new AppError(409, 'agent-context-required', '请通过原 Agent 继续这个会话。')
@@ -1288,6 +1301,89 @@ class HarnessRuntime implements Bridge {
     }
   }
 
+  steer(sessionId: string, prompt: string, requestId: string, options?: SteerOptions): Promise<SteerOutcome> {
+    return this.steerInput(sessionId, prompt, requestId, options)
+  }
+
+  steerQueued(sessionId: string, prompt: string, requestId: string, options: QueuedSteerOptions): Promise<SteerOutcome> {
+    return this.steerInput(sessionId, prompt, requestId, options, options)
+  }
+
+  private steerable(run: Run): boolean {
+    return run.acceptsSteers && !this.closed && !run.controller.signal.aborted
+  }
+
+  private async steerInput(
+    sessionId: string,
+    prompt: string,
+    requestId: string,
+    options?: SteerOptions,
+    queued?: QueuedSteerOptions,
+  ): Promise<SteerOutcome> {
+    await this.ready()
+    assertPrompt(prompt, requestId)
+    const key = digest(['steer', sessionId, requestId])
+    const promptKey = digest(['prompt', sessionId, requestId])
+    const payloadHash = digest(queued ? [prompt, queued.runId, queued.queuedAt] : prompt)
+    const checkReceipt = (state: RuntimeState) => {
+      const receipt = state.receipts[key]
+      if ((receipt && payloadHash !== receipt.payloadHash) || (!receipt && state.receipts[promptKey]))
+        throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入')
+      return receipt?.steer
+    }
+    const prior = checkReceipt(this.state)
+    if (prior) return prior
+    const run = this.runs.get(sessionId)
+    const canAccept = () => run && this.runs.get(sessionId) === run && this.steerable(run) && (!queued || queued.runId === run.id)
+    let finishAuthority: ((couldBeInjected: boolean) => void) | undefined
+    let accepted = false
+    try {
+      const outcome = await this.commit<SteerOutcome>(
+        draft => {
+          const task = this.task(draft, sessionId)
+          const prior = checkReceipt(draft)
+          if (prior) return prior
+          if (!run || !canAccept() || !this.isActive(task.summary)) {
+            // A retry must still get the same answer if the Host queued the text or started a turn with it.
+            draft.receipts[key] = { taskId: sessionId, payloadHash, steer: 'prompt-required' }
+            return 'prompt-required'
+          }
+          if (task.summary.personal) throw new AppError(409, 'session-read-only', '这个会话来自已移除的 Agent，只能查看。')
+          if (!this.stillListed(task.summary)) throw workspaceChanged()
+          finishAuthority = options?.beforeSteer?.(run.id)
+          const id = randomUUID()
+          const at = this.now()
+          task.messages.push({
+            id,
+            role: 'user',
+            text: prompt,
+            requestId,
+            steered: true,
+            ...(queued ? { queuedAt: queued.queuedAt } : {}),
+            createdAt: at,
+          })
+          const pending = (task.pendingSteers ??= [])
+          pending.push(id)
+          task.revision++
+          task.summary.updatedAt = at
+          draft.receipts[key] = { taskId: sessionId, payloadHash, steer: 'injected' }
+          return 'injected'
+        },
+        sessionId,
+        async () => {
+          if (!canAccept() || checkReceipt(this.state)) return
+          const task = this.task(this.state, sessionId)
+          if (!(await this.stillAllowed(task.summary))) throw workspaceChanged()
+          await options?.authorize?.()
+        },
+      )
+      accepted = outcome === 'injected'
+      return outcome
+    } finally {
+      finishAuthority?.(accepted)
+    }
+  }
+
   async remove(sessionId: string): Promise<void> {
     await this.ready()
     await this.commit(draft => {
@@ -1371,6 +1467,7 @@ class HarnessRuntime implements Bridge {
       lease,
       done,
       resolveDone,
+      acceptsSteers: runMode !== 'text-only' && this.maxSteps > 1,
       activity: { phase: 'model', since: isoTime(clock.startedAt) },
       lastEventAt: clock.startedAt,
     }
@@ -1615,7 +1712,7 @@ class HarnessRuntime implements Bridge {
     const signal = run.controller.signal
     const timeout = AbortSignal.timeout(JUDGE_TIMEOUT_MS)
     const task = this.task(this.state, run.sessionId)
-    const request = task.messages.findLast(message => message.role === 'user')?.text
+    const request = task.messages.findLast(message => message.role === 'user' && !task.pendingSteers?.includes(message.id))?.text
     let text = ''
     let usage: TokenUsage | undefined
     let finished = false
@@ -1987,11 +2084,29 @@ class HarnessRuntime implements Bridge {
         throw new AppError(415, 'attachments-unsupported', '当前 Harness 尚未接入附件读取。')
   }
 
+  private recordSteers(task: StoredTask, steers: Message[]): void {
+    if (!steers.length) return
+    task.history.push(...steers.map(steerHistory))
+    const recorded = new Set(steers.map(message => message.id))
+    const pending = task.pendingSteers?.filter(id => !recorded.has(id))
+    if (pending?.length) task.pendingSteers = pending
+    else delete task.pendingSteers
+  }
+
+  private closeSteers(task: StoredTask, at: string): Message | undefined {
+    if (!task.pendingSteers?.length) return
+    delete task.pendingSteers
+    const note: Message = { id: randomUUID(), role: 'system', text: '本轮已结束，模型可能还没读到追加的消息。', createdAt: at }
+    task.messages.push(note)
+    return note
+  }
+
   private async drive(run: Run): Promise<void> {
     const signal = run.controller.signal
     let status: TaskStatus = 'idle'
     let failure: string | undefined
     let failureCode: string | undefined
+    let sentSteers: Message[] = []
     try {
       if (run.mode === 'agent') await this.fileTracking.start(run.sessionId, run.id, run.folders)
       signal.throwIfAborted()
@@ -2011,6 +2126,11 @@ class HarnessRuntime implements Bridge {
       const availableTools = [...base, ...remote].filter(tool => !tool.returnsImages || this.sees(run))
       const tools = new Map(availableTools.map(tool => [tool.name, tool]))
       for (let step = 0; step < this.maxSteps; step++) {
+        if (step === this.maxSteps - 1 && run.acceptsSteers) {
+          run.acceptsSteers = false
+          // A steer already being committed can still go with this request.
+          await this.queue
+        }
         signal.throwIfAborted()
         const live: LiveStep = {
           id: randomUUID(),
@@ -2023,6 +2143,8 @@ class HarnessRuntime implements Bridge {
         this.live.set(run.sessionId, live)
         this.notify(run.sessionId)
         const task = this.task(this.state, run.sessionId)
+        const steerIds = new Set(task.pendingSteers)
+        const steers = steerIds.size ? task.messages.filter(message => steerIds.has(message.id)) : []
         const imageWindow = toolImageWindow(task.history)
         const messages: ModelMessage[] = await Promise.all(
           task.history.map(async (item, index) => {
@@ -2048,6 +2170,7 @@ class HarnessRuntime implements Bridge {
             }
           }),
         )
+        messages.push(...steers.map(steerHistory))
         if (task.pluginCreation) messages.unshift({ role: 'system', content: PLUGIN_CREATION_GUIDE })
         const skillMessage = task.skillContext ? { role: 'system' as const, content: task.skillContext } : undefined
         if (skillMessage) messages.unshift(skillMessage)
@@ -2059,7 +2182,7 @@ class HarnessRuntime implements Bridge {
         const calls: ToolCall[] = []
         let finished = false
         const sequence = (task.contextSteps?.at(-1)?.sequence ?? 0) + 1
-        const historyStart = messages.length - task.history.length
+        const historyStart = messages.length - task.history.length - steers.length
         const measured = measureInput(
           messages,
           availableTools,
@@ -2089,6 +2212,7 @@ class HarnessRuntime implements Bridge {
         this.notify(run.sessionId)
         run.authorizeConsultation?.()
         delete run.authorizeConsultation
+        sentSteers = steers
         const response = run.lease.provider.stream({
           messages,
           tools: [...availableTools],
@@ -2146,10 +2270,17 @@ class HarnessRuntime implements Bridge {
         const completedAt = this.now()
         const reasoningMs = live.reasoningTimer.end()
         this.output(run)
+        let continueForSteer = false
         await this.change(run.sessionId, current => {
           recordContextStep(current, context)
+          this.recordSteers(current, steers)
+          if (!calls.length) {
+            continueForSteer = !!current.pendingSteers?.length
+            if (!continueForSteer) run.acceptsSteers = false
+          }
           // Reasoning text is shown, never replayed; a provider's own signed copy rides on the calls.
-          current.history.push({ role: 'assistant', content: text, ...(calls.length ? { toolCalls: calls } : {}) })
+          if (text || calls.length || !continueForSteer)
+            current.history.push({ role: 'assistant', content: text, ...(calls.length ? { toolCalls: calls } : {}) })
           if (text || reasoning) {
             current.messages.push({
               id,
@@ -2179,8 +2310,12 @@ class HarnessRuntime implements Bridge {
             }
           }
         })
+        sentSteers = []
         this.live.delete(run.sessionId)
-        if (!calls.length) return
+        if (!calls.length) {
+          if (continueForSteer) continue
+          return
+        }
         for (const call of calls) await this.execute(run, call, tools.get(call.name))
         await this.change(run.sessionId, current => {
           delete current.batch
@@ -2193,6 +2328,7 @@ class HarnessRuntime implements Bridge {
       failure = signal.aborted ? undefined : capped(redactKnownSecrets(error instanceof Error ? error.message : String(error)))
       failureCode = signal.aborted ? undefined : errorCodeOf(error)
     } finally {
+      run.acceptsSteers = false
       // Present only while the step's output is uncommitted; the step commit removes it.
       const partial = this.live.get(run.sessionId)
       let outputMessageId: string | undefined
@@ -2213,6 +2349,7 @@ class HarnessRuntime implements Bridge {
           if (unknown.length || stopped) task.summary.runEnd = runEndRecord(this.closed ? 'host-stopped' : 'turn-ended', at, unknown)
           delete task.approval
           if (partial && (partial.text || partial.reasoning) && !task.messages.some(message => message.id === partial.id)) {
+            this.recordSteers(task, sentSteers)
             if (partial.text) task.history.push({ role: 'assistant', content: partial.text })
             task.messages.push({
               id: partial.id,
@@ -2225,6 +2362,7 @@ class HarnessRuntime implements Bridge {
               ...this.stepTimes(run, partial, at, reasoningMs),
             })
           }
+          const unreadSteers = this.closeSteers(task, at)
           if (partial?.usage) task.summary.usage = addUsage(task.summary.usage, partial.usage)
           task.summary.status = stopped ? 'interrupted' : signal.aborted ? 'cancelled' : status
           task.summary.runOutcome =
@@ -2256,7 +2394,9 @@ class HarnessRuntime implements Bridge {
                 task.messages.findIndex(message => message.id === run.userMessageId),
               ),
             )
-            const target = turn.findLast(message => message.role === 'assistant') ?? turn.at(-1)
+            const target =
+              turn.findLast(message => message.role === 'assistant')
+              ?? turn.findLast(message => !message.steered && message !== unreadSteers)
             if (target) {
               recordFileOutputs(target, result, true)
               outputMessageId = target.id

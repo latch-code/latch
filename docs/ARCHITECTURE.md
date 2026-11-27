@@ -1225,7 +1225,7 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。
 - **编辑。** `GET /tasks/:id/queue/:itemId` 返回原文、附件引用、内容修订号，以及该项已指定的 `model`（如有）。`PATCH` 同一路径，带 `{ text, attachmentIds, contentRevision }` 保存。附件列表按交付顺序给出，传空列表移除全部，省略则保留原附件。有附件时文字可空。Host 按修订号拒绝覆盖其他设备的新修改，成功后沿用原位置与入队回执，更新内容修订号与实际派发的 requestId。
 - **移除与继续。** `DELETE /tasks/:id/queue/:itemId` 移除该项，`POST …/send` 显式继续首项。任何仍有 `run` 的设备都可移除，审计失败也放行。
 - **调序。** 声明 `catalog.features.queueControl` 的 Host 接受 `PUT /tasks/:id/queue { baseRevision, baseOrder, order }`。两份列表包含同一组可见项的 ID。Host 核对当前顺序与修订，再把完整新顺序写进 `queues.json`，下次自动派发也按此顺序取首项。初始修订为 0。另一设备已经排成目标顺序时直接成功，已改成其他顺序时返回 409 `queue-order`。正在发送或结果未知时不能调序。
-- **从队列追加。** `POST /tasks/:id/queue/:itemId/steer { runId, contentRevision }` 可以把任意可追加的项交给指定轮次。另一台设备已改过该项文字或附件时，Host 拒绝旧版本，保留修改后的消息供人核对。Host 先写派发标识，复核原作者、编辑者和点击追加的设备，并由 Driver 在交付时核对轮次。Harness 确认接收后，该项移出队列，其他项保留顺序和暂停状态。轮次已结束或拒绝追加时，消息留在原位。结果未知时，只凭 Driver 已记录的消息确认送达，不能改走普通发送。已绑定特定模型或 Agent 上下文的消息仍等下一轮。
+- **从队列追加。** `POST /tasks/:id/queue/:itemId/steer { runId, contentRevision }` 可以把任意可追加的项交给指定轮次。另一台设备已改过该项文字或附件时，Host 拒绝旧版本，保留修改后的消息供人核对。Host 先写派发标识，复核原作者、编辑者和点击追加的设备，并由 Driver 在交付时核对轮次。Harness 确认接收后，该项移出队列，其他项保留顺序和暂停状态。轮次已结束或拒绝追加时，消息留在原位。结果未知时，只凭 Driver 已记录的消息确认送达，不能改走普通发送。已绑定特定模型或 Agent 上下文的消息仍等下一轮。内置 Harness 在下一次模型请求中交付引导文字，执行记录和文件改动继续归入原轮次。
 - **继续的条件。** 只有 Driver 明确报告 `runOutcome` 为 `completed`、runId 匹配且没有审批才继续；只报告 idle 不算完成。失败、停止、未知结束或 Host 重启都暂停。停止在交给 Driver 之前就暂停队列。
 - **派发前复查。** 原设备、最后编辑的设备及附件上传设备仍有效、有 `run`、数据范围未变，并核对会话、项目、Harness 指纹与模型。手动继续还复查当前设备。权限变化使该项 `dropped` 并暂停后续项。
 - **审计与未知。** 排队和派发先审计，只写会话与队列 ID。派发前落盘 `sending`；结果未知时保留派发标识，公开为 `parked`，不能编辑；重启时 `sending` 同样按未知处理，人工重试由 Driver 的回执去重。

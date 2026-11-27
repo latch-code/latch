@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { resolve } from 'node:path'
 import { chromium } from '@playwright/test'
 import { expect, test } from 'vitest'
 import type { TaskDetail } from '@latch/protocol'
@@ -55,7 +54,7 @@ test('keeps text written before a question arrived as the next message, until �
       ctx.registerProvider(provider)
     },
   }
-  const host = await startTestHost({ uiDir: resolve('dist/web'), plugins: [plugin], providerId: provider.id }),
+  const host = await startTestHost({ plugins: [plugin], providerId: provider.id }),
     browser = await chromium.launch(browserLaunchOptions())
   try {
     const owner = await host.enroll({ listener: 'unix' })
@@ -92,7 +91,11 @@ test('keeps text written before a question arrived as the next message, until �
     // 其他… says this text is the answer.
     await card.getByRole('button', { name: '其他…', exact: true }).click()
     await page.getByRole('button', { name: '发送', exact: true }).waitFor()
-    await input.press('Meta+Enter')
+    const [reply] = await Promise.all([
+      page.waitForResponse(response => response.request().method() === 'POST' && response.url().includes(`/tasks/${sessionId}/questions/`)),
+      input.press('Meta+Enter'),
+    ])
+    expect(reply.status()).toBe(200)
     await expect.poll(() => seen.length).toBe(1)
     expect(JSON.parse(seen[0]!)).toMatchObject({ answers: [{ other: '顺便看看手机端' }] })
     await context.close()
@@ -157,7 +160,7 @@ test('answers a multi-question wizard, keeps per-device drafts across sessions, 
       ctx.registerProvider(provider)
     },
   }
-  const host = await startTestHost({ uiDir: resolve('dist/web'), plugins: [plugin], providerId: provider.id }),
+  const host = await startTestHost({ plugins: [plugin], providerId: provider.id }),
     browser = await chromium.launch(browserLaunchOptions())
   try {
     const owner = await host.enroll({ listener: 'unix' })

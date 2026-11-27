@@ -510,7 +510,11 @@ export function useSessionController({
   const attachmentModel = selectedId === null ? choice.model : effectiveModel
   const connectionReported = harness.connection === 'offline' || harness.connection === 'reconnecting'
   const canSteerDraft = (draft: string, hasAttachments: boolean) =>
-    steer && !submission.override && !draft.includes('[conversation-ref:') && (!hasAttachments || current?.steerAttachments === true)
+    steer
+    && !current?.questions?.length
+    && !submission.override
+    && !draft.includes('[conversation-ref:')
+    && (!hasAttachments || current?.steerAttachments === true)
   const attachmentFollowUp = queueAttachments || canSteerDraft(submission.draft, true)
   const heldFileRefs = fileMentions.some(ref => hasFileMention(submission.draft, ref))
   const sessionAttachments = useAttachments({

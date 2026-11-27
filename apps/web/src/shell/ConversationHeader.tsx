@@ -725,7 +725,8 @@ export function ConversationHeader({
       : undefined
   // A dot while the newest turn changed files nobody has opened here yet.
   const seen = useRef<Map<string, string>>(new Map())
-  const latest = current?.messages.findLast(message => message.role === 'user')?.turnId
+  const turnStart = current?.messages.findLastIndex(message => message.role === 'user' && !message.steered) ?? -1
+  const latest = current?.messages[turnStart]?.turnId
   const showing = shell.panelVisible && shell.panelSelected === 'changes'
   if (showing && summary && latest) seen.current.set(summary.id, latest)
   const unread =
@@ -733,9 +734,7 @@ export function ConversationHeader({
     && latest !== undefined
     && !!summary
     && seen.current.get(summary.id) !== latest
-    && !!current?.messages
-      .slice(current.messages.findLastIndex(message => message.role === 'user'))
-      .some(message => message.outputs?.length)
+    && !!current?.messages.slice(turnStart).some(message => message.outputs?.length)
   if (starting) {
     const { harnessId, workspaceId, model } = starting.submission
     const harness = snapshot.catalog?.harnesses.find(item => item.id === harnessId)

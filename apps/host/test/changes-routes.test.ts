@@ -19,6 +19,7 @@ import {
   type TurnChanges,
 } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
+import type { HarnessPlugin } from '@latch/sdk'
 import { AuditLog } from '../src/audit.ts'
 import { startTestHost, type TestHost, type TestHostOptions } from './helpers/host.ts'
 
@@ -134,6 +135,67 @@ describe('changes routes', () => {
     const uncommitted = await owner.json<ChangeList>(`${path}?scope=uncommitted`)
     expect(uncommitted.files.map(item => item.path)).toEqual(['agent-edit.txt', 'command-edit.txt'])
     expect((await owner.request(`${path}?scope=nope`)).status).toBe(400)
+  })
+
+  it('attributes edits after steering to the user message that opened the turn', async () => {
+    let release!: () => void
+    const held = new Promise<void>(resolve => (release = resolve))
+    const plugin: HarnessPlugin = {
+      id: 'steer-model',
+      name: 'Steer fixture',
+      version: '1',
+      description: '',
+      activate(context) {
+        context.registerProvider({
+          id: 'steer-model',
+          name: 'Steer fixture',
+          model: 'fake',
+          async *stream({ messages }) {
+            const last = messages.at(-1)
+            if (last?.content === 'Edit now' && last.steered) {
+              yield { type: 'tool-call', call: { id: 'edit', name: 'write_file', arguments: { path: 'guided.txt', content: 'guided\n' } } }
+              yield { type: 'finish', reason: 'tool-calls' }
+              return
+            }
+            if (last?.role !== 'tool') await held
+            yield { type: 'text', text: 'Ready' }
+            yield { type: 'finish', reason: 'stop' }
+          },
+        })
+      },
+    }
+    const host = await startTestHost({ plugins: [plugin], providerId: 'steer-model' })
+    hosts.push(host)
+    const owner = await host.enroll({ listener: 'unix' })
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      body: { prompt: 'Wait for directions', requestId: randomUUID(), mode: 'agent', workspaceId: 'default' },
+    })
+    const path = `tasks/${sessionId}`
+    const detail = () => owner.json<TaskDetail>(path)
+    try {
+      await expect.poll(async () => (await detail()).steer, SLOW).toBe(true)
+      const runId = (await detail()).summary.runId
+      const { queued } = await owner.json<{ queued: { id: string } }>(`${path}/prompt`, {
+        body: { prompt: 'Edit now', requestId: randomUUID(), queue: true },
+      })
+      expect((await detail()).queue).toMatchObject([{ id: queued.id, canSteer: true }])
+      expect(await owner.json(`${path}/queue/${queued.id}/steer`, { body: { runId, contentRevision: 0 } })).toEqual({ steered: true })
+    } finally {
+      release()
+    }
+    const approval = async () => (await detail()).approvals[0]?.id
+    await expect.poll(approval, SLOW).toBeTypeOf('string')
+    await owner.json(`approvals/${await approval()}`, { body: { decision: 'allow' } })
+    const turns = async () => (await owner.json<{ turns: TurnChanges[] }>(`${path}/changes/turns`)).turns
+    await expect.poll(async () => (await turns())[0]?.state, SLOW).toBe('settled')
+    const [turn] = await turns()
+    expect(await turns()).toHaveLength(1)
+    expect((await detail()).messages.filter(message => message.role === 'user')).toMatchObject([
+      { text: 'Wait for directions', turnId: turn!.turnId },
+      { text: 'Edit now', steered: true },
+    ])
+    const changes = await owner.json<ChangeList>(`${path}/changes?scope=turn&turn=${turn!.turnId}`)
+    expect(changes.files).toEqual([{ root: 'default', path: 'guided.txt', status: 'A', add: 1, del: 0 }])
   })
 
   it('refuses a device without the rights, before the session is looked at', async () => {

@@ -76,6 +76,14 @@ describe('handoff materials', () => {
     expect(turnAround(messages, 'nope')).toEqual([])
   })
 
+  it('keeps guidance inside the turn when collecting handoff files', () => {
+    const withGuidance = messages.toSpliced(2, 0, { id: 'guidance', role: 'user', text: '先核对 ECB', steered: true })
+    for (const id of ['a1', 'guidance', 't1']) {
+      expect(turnAround(withGuidance, id).map(message => message.id)).toEqual(['u1', 'a1', 'guidance', 't1'])
+    }
+    expect(initialChips(withGuidance, ['guidance'], undefined, true).map(chip => chip.key)).toContain('file:default\u0000notes/brief.md')
+  })
+
   it('starts with the selected text, the chosen messages and their turns’ files', () => {
     const chips = initialChips(messages, ['a1'], '  用 ECB  ', true)
     expect(chips.map(chip => chip.key)).toEqual(['text:0', 'message:a1', 'file:default\u0000notes/brief.md', 'file:default\u0000rates.md'])

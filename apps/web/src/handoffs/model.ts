@@ -543,8 +543,8 @@ export function sessionTargets(tasks: readonly TaskSummary[], source: TaskSummar
 export function turnAround(messages: readonly Message[], messageId: string): Message[] {
   const index = messages.findIndex(message => message.id === messageId)
   if (index < 0) return []
-  const start = messages.findLastIndex((message, at) => at <= index && message.role === 'user')
-  const next = messages.findIndex((message, at) => at > index && message.role === 'user')
+  const start = messages.findLastIndex((message, at) => at <= index && message.role === 'user' && !message.steered)
+  const next = messages.findIndex((message, at) => at > index && message.role === 'user' && !message.steered)
   return messages.slice(Math.max(0, start), next < 0 ? messages.length : next)
 }
 

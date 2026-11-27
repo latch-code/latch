@@ -531,7 +531,7 @@ Harness 的进程级换档在空闲时结束旧进程并恢复同一外部会话
 
 ### 追加到运行中的一轮
 
-`TaskDetail.steer` 为真时，正在运行的这一轮还能接收文字，提交带 `steer: true`。它只来自本轮进程的协商（ACP Agent 在 `initialize` 的 `_meta.steering.supported` 声明），轮次被要求停止后即消失。
+`TaskDetail.steer` 为真时，正在运行的这一轮还能接收文字，提交带 `steer: true`。能力由本轮 Harness 报告，要求停止后即消失。内置 Harness 按执行循环剩余的模型步数接受文字，ACP Agent 在 `initialize` 的 `_meta.steering.supported` 声明能力。
 
 - **接收。** Host 经 `Bridge.steer` 转给 Harness；Agent 接收则回答 `{ steered: true }`，消息作为带 `steered` 的用户消息进入这一轮，不开新的一轮，客户端也不按它分轮。
 - **退回排队。** Harness 不支持、轮次已结束或 Agent 回答 `promptRequired` 时，同一请求按排队处理：有轮次在跑就排队，没有就直接作为新一轮发送。

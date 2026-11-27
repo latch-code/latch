@@ -95,6 +95,202 @@ async function waitStatus(bridge: Bridge, id: string, status: string) {
 }
 
 describe('independent harness runtime', () => {
+  it('delivers steering after the current tool batch, preserves the run, and replays the receipts after a restart', async () => {
+    const dataDir = await directory()
+    const seen: ModelMessage[][] = []
+    const provider: ModelProvider = {
+      ...textProvider(),
+      async *stream({ messages }) {
+        seen.push(structuredClone(messages))
+        if (seen.length === 1) {
+          for (const id of ['first', 'second']) yield { type: 'tool-call', call: { id, name: 'write_note', arguments: { text: id } } }
+          yield { type: 'finish', reason: 'tool-calls' }
+        } else {
+          yield { type: 'text', text: '完成' }
+          yield { type: 'finish', reason: 'stop' }
+        }
+      },
+    }
+    const write = vi.fn(async () => ({ text: 'tool result' }))
+    const backend = registry(provider, [tool(write)])
+    const open = () => own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: backend, providerId: provider.id }))
+    const bridge = open()
+    const { sessionId } = await bridge.createTask({ prompt: 'original', requestId: 'original' })
+    await waitStatus(bridge, sessionId, 'waiting-approval')
+    const start = await bridge.detail(sessionId)
+    expect(start.steer).toBe(true)
+    const authorize = vi.fn(async () => {})
+    const finishAuthority = vi.fn()
+    const beforeSteer = vi.fn(() => finishAuthority)
+    const queuedAt = '2026-01-01T00:00:00.000Z'
+    const queued = { runId: start.summary.runId!, queuedAt, authorize, beforeSteer }
+    await expect(bridge.steerQueued!(sessionId, 'wrong turn', 'wrong-turn', { ...queued, runId: 'other' })).resolves.toBe('prompt-required')
+    await expect(bridge.steerQueued!(sessionId, 'queued steer', 'queued-steer', queued)).resolves.toBe('injected')
+    await expect(bridge.steer!(sessionId, 'direct steer', 'direct-steer')).resolves.toBe('injected')
+    expect(authorize).toHaveBeenCalledTimes(1)
+    expect(beforeSteer).toHaveBeenCalledExactlyOnceWith(start.summary.runId)
+    expect(finishAuthority).toHaveBeenCalledExactlyOnceWith(true)
+    expect(write).not.toHaveBeenCalled()
+    await bridge.decide(start.approvals[0]!.id, 'allow')
+    await vi.waitFor(() => expect(bridge.approvals()[0]?.toolCallId).toBe('second'), { timeout: 5000 })
+    await bridge.decide(bridge.approvals()[0]!.id, 'allow')
+    await waitStatus(bridge, sessionId, 'idle')
+    expect(seen).toHaveLength(2)
+    expect(seen[1]!.slice(-5)).toMatchObject([
+      { role: 'assistant', toolCalls: [{ id: 'first' }, { id: 'second' }] },
+      { role: 'tool', toolCallId: 'first' },
+      { role: 'tool', toolCallId: 'second' },
+      { role: 'user', content: 'queued steer', steered: true },
+      { role: 'user', content: 'direct steer', steered: true },
+    ])
+    const detail = await bridge.detail(sessionId)
+    expect(detail.summary).toMatchObject({ runId: start.summary.runId, runOutcome: 'completed' })
+    expect(detail.steer).toBeUndefined()
+    expect(detail.messages.filter(message => message.role === 'tool').map(message => message.state)).toEqual(['completed', 'completed'])
+    expect(detail.messages.filter(message => message.steered)).toMatchObject([
+      { role: 'user', text: 'queued steer', queuedAt, requestId: 'queued-steer' },
+      { role: 'user', text: 'direct steer', requestId: 'direct-steer' },
+    ])
+    await bridge.close()
+    const restored = open()
+    await expect(restored.steerQueued!(sessionId, 'queued steer', 'queued-steer', queued)).resolves.toBe('injected')
+    await expect(restored.steer!(sessionId, 'direct steer', 'direct-steer')).resolves.toBe('injected')
+    await expect(restored.steer!(sessionId, 'changed steer', 'direct-steer')).rejects.toMatchObject({ code: 'request-conflict' })
+    await expect(restored.prompt(sessionId, 'direct steer', 'direct-steer')).rejects.toMatchObject({ code: 'request-conflict' })
+    expect(authorize).toHaveBeenCalledTimes(1)
+    expect((await restored.detail(sessionId)).messages).toEqual(detail.messages)
+  })
+
+  it('takes a second model step for a steer during streamed text and closes steering at the step limit', async () => {
+    const dataDir = await directory()
+    const entered = deferred()
+    const finalStep = deferred()
+    const advance = deferred()
+    const finish = deferred()
+    const seen: ModelMessage[][] = []
+    const provider: ModelProvider = {
+      ...textProvider(),
+      async *stream({ messages, signal }) {
+        seen.push(structuredClone(messages))
+        const first = seen.length === 1
+        const next = first ? advance : finish
+        const ready = first ? entered : finalStep
+        signal.addEventListener('abort', () => next.resolve(), { once: true })
+        ready.resolve()
+        await next.promise
+        signal.throwIfAborted()
+        yield { type: 'text', text: first ? 'initial answer' : 'revised answer' }
+        yield { type: 'finish', reason: 'stop' }
+      },
+    }
+    const bridge = own(
+      createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(provider), providerId: provider.id, maxSteps: 2 }),
+    )
+    const { sessionId } = await bridge.createTask({ prompt: 'hello', requestId: 'hello' })
+    await entered.promise
+    const runId = (await bridge.detail(sessionId)).summary.runId
+    await expect(bridge.steer!(sessionId, 'clarification', 'clarification')).resolves.toBe('injected')
+    advance.resolve()
+    await finalStep.promise
+    expect((await bridge.detail(sessionId)).steer).toBeUndefined()
+    await expect(bridge.steer!(sessionId, 'too late', 'too-late')).resolves.toBe('prompt-required')
+    finish.resolve()
+    await waitStatus(bridge, sessionId, 'idle')
+    expect(seen).toHaveLength(2)
+    expect(seen[0]!.at(-1)).toMatchObject({ role: 'user', content: 'hello' })
+    expect(seen[1]!.slice(-2)).toMatchObject([
+      { role: 'assistant', content: 'initial answer' },
+      { role: 'user', content: 'clarification', steered: true },
+    ])
+    expect((await bridge.detail(sessionId)).summary).toMatchObject({ runId, runOutcome: 'completed' })
+  })
+
+  it('does not accept a queued steer if the run stops during its final authorization check', async () => {
+    const dataDir = await directory()
+    const started = deferred()
+    const stopped = deferred()
+    const checking = deferred()
+    const allow = deferred()
+    const provider: ModelProvider = {
+      ...textProvider(),
+      async *stream({ signal }) {
+        started.resolve()
+        await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+        stopped.resolve()
+        signal.throwIfAborted()
+      },
+    }
+    const bridge = own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(provider), providerId: provider.id }))
+    const { sessionId } = await bridge.createTask({ prompt: 'original', requestId: 'original' })
+    await started.promise
+    const { summary } = await bridge.detail(sessionId)
+    const beforeSteer = vi.fn()
+    const steered = bridge.steerQueued!(sessionId, 'late steer', 'late-steer', {
+      runId: summary.runId!,
+      queuedAt: '2026-01-01T00:00:00.000Z',
+      authorize: async () => {
+        checking.resolve()
+        await allow.promise
+      },
+      beforeSteer,
+    })
+    await checking.promise
+    const cancelled = bridge.cancel(sessionId)
+    await stopped.promise
+    allow.resolve()
+    await expect(steered).resolves.toBe('prompt-required')
+    await expect(cancelled).resolves.toBe(true)
+    expect(beforeSteer).not.toHaveBeenCalled()
+    const detail = await bridge.detail(sessionId)
+    expect(detail.summary.runOutcome).toBe('cancelled')
+    expect(detail.messages.some(message => message.steered)).toBe(false)
+  })
+
+  it('keeps an accepted steer visible after interruption without delivering it as a later prompt', async () => {
+    const dataDir = await directory()
+    const entered = deferred()
+    const seen: ModelMessage[][] = []
+    const provider: ModelProvider = {
+      ...textProvider(),
+      async *stream({ messages, signal }) {
+        seen.push(structuredClone(messages))
+        if (seen.length === 1) {
+          entered.resolve()
+          await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+          signal.throwIfAborted()
+        }
+        yield { type: 'text', text: '完成' }
+        yield { type: 'finish', reason: 'stop' }
+      },
+    }
+    const open = () => own(createRuntime({ dataDir, workspaceRoot: dataDir, registry: registry(provider), providerId: provider.id }))
+    const bridge = open()
+    const { sessionId } = await bridge.createTask({ prompt: 'original', requestId: 'original' })
+    await entered.promise
+    await expect(bridge.steer!(sessionId, 'interrupted steer', 'interrupted-steer')).resolves.toBe('injected')
+    const crashImage = JSON.parse(await readFile(join(dataDir, 'runtime.json'), 'utf8')) as RuntimeState
+    await bridge.cancel(sessionId)
+    expect((await bridge.detail(sessionId)).messages.at(-1)?.text).toContain('可能还没读到')
+    await bridge.close()
+    const writer = createSnapshotStore(dataDir)
+    await writer.load()
+    await writer.commit(crashImage)
+    await writer.close()
+    const recovered = open()
+    const interrupted = await recovered.detail(sessionId)
+    expect(interrupted.summary.status).toBe('interrupted')
+    expect(interrupted.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: 'user', steered: true, text: 'interrupted steer' }),
+        expect.objectContaining({ role: 'system', text: expect.stringContaining('可能还没读到') }),
+      ]),
+    )
+    await expect(recovered.steer!(sessionId, 'interrupted steer', 'interrupted-steer')).resolves.toBe('injected')
+    await recovered.prompt(sessionId, 'next turn', 'next-turn')
+    await waitStatus(recovered, sessionId, 'idle')
+    expect(seen[1]!.filter(message => message.role === 'user').map(message => message.content)).toEqual(['original', 'next turn'])
+  })
+
   it('keeps a missing-image warning in the file-free presentation without changing model history', async () => {
     const dataDir = await directory(),
       seen: ModelMessage[][] = []

@@ -363,7 +363,7 @@ struct QueueChips: View {
             if canAct {
                 if canSend, control, running, !model.stoppingCurrent, model.detail["steer"].bool, item["canSteer"].bool,
                    attachments == 0 || model.detail["steerAttachments"].bool, delivery == nil, let run {
-                    Button("立即发送") {
+                    Button("引导") {
                         submit { try PhoneQueueControl.steer(session: sessionId, item: id, run: run, contentRevision: item["contentRevision"].integer ?? 0) }
                     }.accessibilityHint("追加到正在运行的这一轮")
                 } else if canSend, !running, id == base.first, state == "parked", delivery == nil || delivery == "uncertain" {

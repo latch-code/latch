@@ -14,7 +14,7 @@ export interface ToolCall {
    * Opaque text the provider keeps with the call, such as a thought signature or the signed reasoning of the
    * response that made it, and `by`, who made it: protocol, service and model. The session's history keeps it, at most
    * 1 MiB, out of what clients see; a provider sends it back only where `by` names itself. `scope: 'turn'` says the
-   * provider sends it back only within the turn that made it, so the history drops it once the next user message comes.
+   * provider sends it back only within the turn that made it, so the history drops it when a new turn begins.
    */
   signature?: { by: string; value: string; scope?: 'turn' }
 }
@@ -25,6 +25,8 @@ export interface ModelMessage {
   attachments?: AttachmentContent[]
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
+  /** User input added to the active turn, so the provider can retain the turn's tool state. */
+  steered?: true
   toolCalls?: ToolCall[]
   toolCallId?: string
   isError?: boolean

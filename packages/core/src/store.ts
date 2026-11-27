@@ -43,6 +43,8 @@ export interface StoredTask {
   approval?: Approval
   /** Written before dispatch; an interrupted started call has an unknown outcome. */
   batch?: { calls: ToolCall[]; started: string[]; completed: string[] }
+  /** Accepted user message IDs that a model step has not yet completed with. */
+  pendingSteers?: string[]
   /** Tools the user allowed for the rest of this session. */
   allowedTools?: string[]
   /** The session's level (`BuiltinMode`); absent or unreadable: 先问你. */
@@ -59,6 +61,7 @@ export interface StoredTask {
 export interface RequestReceipt {
   taskId: string
   payloadHash: string
+  steer?: 'injected' | 'prompt-required'
 }
 export interface RuntimeState {
   version: 1
@@ -208,6 +211,7 @@ const messageSchema = z.object({
   text: z.string(),
   requestId: z.string().optional(),
   queuedAt: z.string().optional(),
+  steered: z.literal(true).optional(),
   freshContext: z.literal(true).optional(),
   toolName: z.string().optional(),
   contextToolId: z.uuid().optional(),
@@ -232,6 +236,7 @@ const historySchema = z.object({
   contextToolSource: contextToolSource.extend({ afterSequence: count }).optional(),
   role: z.enum(['system', 'user', 'assistant', 'tool']),
   content: z.string(),
+  steered: z.literal(true).optional(),
   toolCalls: z.array(callSchema).optional(),
   toolCallId: z.string().optional(),
   isError: z.boolean().optional(),
@@ -300,6 +305,7 @@ const stateSchema = z.object({
         })
         .optional(),
       batch: z.object({ calls: z.array(callSchema), started: z.array(z.string()), completed: z.array(z.string()) }).optional(),
+      pendingSteers: z.array(z.string()).optional(),
       allowedTools: z.array(z.string()).optional(),
       permissionMode: z.string().max(16).optional(),
       outsideRead: z.literal(true).optional(),
@@ -308,7 +314,10 @@ const stateSchema = z.object({
       pluginCreation: z.literal(true).optional(),
     }),
   ),
-  receipts: z.record(z.string(), z.object({ taskId: z.string(), payloadHash: z.string() })),
+  receipts: z.record(
+    z.string(),
+    z.object({ taskId: z.string(), payloadHash: z.string(), steer: z.enum(['injected', 'prompt-required']).optional() }),
+  ),
   tombstones: z.record(z.string(), z.object({ deletedAt: z.string() })).optional(),
 })
 

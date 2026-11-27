@@ -13,7 +13,7 @@ Cordis 插件注册表（`src/registry.ts`）、Standard 执行循环（`src/run
 - 会话的文件夹在创建时固定：`createTask` 核对 `cwd` 是 `workspaceId` 所指项目的主文件夹、其他文件夹都属于该项目，输入与审批决定之前再核对，否则 409 `workspace-changed`（`tests/runtime.test.ts#freezes the folders when the session starts, and stops input once one of them leaves the project`）。
 - 新增秘密格式时补充 `redactSecrets`：凭据本身的格式也决定文件是否可能含密钥（`containsSecret`），只携带凭据的 Cookie、请求头、URL 参数与 userinfo 写法只用于日志（`tests/redact.test.ts#leaves ordinary text alone`）；改 `canonicalJson` 前读根 `AGENTS.md`「共享安全编码」。
 
-测试在根项目 `tests/`（`pnpm test --project latch`）；改动后运行 `pnpm lint`、`pnpm test` 与 `pnpm test:e2e`。插件生命周期见 [docs/PLUGIN-DEVELOPMENT.md](../../docs/PLUGIN-DEVELOPMENT.md)，消息与取消见 [docs/STREAMING.md](../../docs/STREAMING.md)。
+根 `tests/`（`pnpm test --project latch`）。改后跑 `pnpm lint`、`pnpm test` 与 `pnpm test:e2e`。引导在工具批次结算后随下一步交给模型，沿用原轮次和步数上限。见 [STREAMING](../../docs/STREAMING.md)、[插件生命周期](../../docs/PLUGIN-DEVELOPMENT.md)。
 
 - 附件历史只持久化引用；每轮经注入的 `readAttachment` 读取并核对字节，图片必须由所选模型明确声明 vision，绝不把 base64 写入快照。
 - 工具结果按最终请求计量，限量保存字节数、纳入状态和来源引用。引用不发给模型。

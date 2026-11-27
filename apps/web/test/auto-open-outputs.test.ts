@@ -48,6 +48,23 @@ describe('optional document opening after an observed run', () => {
     expect(opened?.first.reference).toBe('a.pptx')
     expect(opened?.offered.map(target => target.reference)).toEqual(['b.xlsx'])
   })
+  it('opens a new document created before guidance in the same turn', () => {
+    const tracker = new AutoOpenOutputs()
+    tracker.observe(active, options)
+    const opened = tracker.observe(
+      {
+        ...result,
+        messages: [
+          { id: 'prompt', role: 'user', text: 'Create the deck' },
+          ...result.messages,
+          { id: 'guidance', role: 'user', text: 'Use the revised title', steered: true },
+          { id: 'reply', role: 'assistant', text: 'Updated the title' },
+        ],
+      },
+      options,
+    )
+    expect(opened?.first.reference).toBe('deck.pptx')
+  })
   it.each([
     { ...options, enabled: false },
     { ...options, available: false },

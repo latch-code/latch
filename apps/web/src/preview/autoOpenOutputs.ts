@@ -41,7 +41,7 @@ export class AutoOpenOutputs {
     const messages = detail.messages.slice(
       Math.max(
         0,
-        detail.messages.findLastIndex(message => message.role === 'user'),
+        detail.messages.findLastIndex(message => message.role === 'user' && !message.steered),
       ),
     )
     const output = messages.findLast(message => message.outputs !== undefined || message.outputsPending || message.outputsUnavailable)

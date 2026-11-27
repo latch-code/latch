@@ -243,7 +243,14 @@ export type ConfigChangeClass = 'neutral' | 'stricter' | 'wider'
  */
 export type SteerOutcome = 'injected' | 'prompt-required'
 
-export interface QueuedSteerOptions {
+export interface SteerOptions {
+  /** Recheck the device and session immediately before accepting the message. */
+  authorize?(): Promise<void>
+  /** Pause input authority before a new message can reach the run. Settle only for an attempted delivery. */
+  beforeSteer?(runId: string): ((couldBeInjected: boolean) => void) | undefined
+}
+
+export interface QueuedSteerOptions extends SteerOptions {
   runId: string
   queuedAt: string
   /** Recheck the queue's writers and the device requesting delivery immediately before sending. */
@@ -384,7 +391,7 @@ export interface Bridge {
    * Optional, with `TaskDetail.steer`. Adds text to the session's running turn. `requestId` names it as a prompt's does: a
    * retry answers what the first request got, and one whose answer was lost is never sent again (409 `steer-unknown`).
    */
-  steer?(sessionId: string, prompt: string, requestId: string): Promise<SteerOutcome>
+  steer?(sessionId: string, prompt: string, requestId: string, options?: SteerOptions): Promise<SteerOutcome>
   /** As steer, targeting only the named run. A run that ended or stopped taking input leaves the item queued. */
   steerQueued?(sessionId: string, prompt: string, requestId: string, options: QueuedSteerOptions): Promise<SteerOutcome>
   /**
@@ -397,7 +404,7 @@ export interface Bridge {
     prompt: string,
     requestId: string,
     attachments: AttachmentRef[],
-    options?: QueuedSteerOptions | Pick<QueuedSteerOptions, 'authorize'>,
+    options?: QueuedSteerOptions | SteerOptions,
   ): Promise<SteerOutcome>
   /**
    * Optional. Delete a settled session's data; reject with 409 `task-running` while it runs. `original`: the person chose

@@ -134,11 +134,11 @@ export function toolImageLabel(toolCallId: string): string {
 }
 
 /**
- * Where the turn in progress starts: after the last user message. Reasoning goes back only inside it, the tool loop
+ * Where the turn in progress starts: after its opening user message. Reasoning goes back only inside it, the tool loop
  * the vendors require it for, so a system text or tool list that changed since an earlier turn never invalidates it.
  */
 export function turnStart(messages: readonly ModelMessage[]): number {
-  return messages.findLastIndex(message => message.role === 'user') + 1
+  return messages.findLastIndex(message => message.role === 'user' && !message.steered) + 1
 }
 
 /**

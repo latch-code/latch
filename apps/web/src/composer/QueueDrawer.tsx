@@ -19,7 +19,10 @@ const COPY = defineCopy(
     changed: '权限或会话已变化',
     send: '发送',
     steerHint: '追加到正在运行的这一轮',
-    sendNow: '立即发送',
+    steer: '引导',
+    steerUnavailable: '本轮暂不能从队列引导',
+    steerAttachmentsUnavailable: '本轮不能接收附件',
+    steerItemUnavailable: '本轮不能接收这条消息',
     order: '调整顺序',
     up: '上移',
     down: '下移',
@@ -38,7 +41,10 @@ const COPY = defineCopy(
     changed: 'Permissions or session changed',
     send: 'Send',
     steerHint: 'Add to the running turn',
-    sendNow: 'Send now',
+    steer: 'Steer',
+    steerUnavailable: 'Queue steering unavailable for this turn',
+    steerAttachmentsUnavailable: 'This turn cannot receive attachments',
+    steerItemUnavailable: 'This turn cannot receive this message',
     order: 'Reorder',
     up: 'Move up',
     down: 'Move down',
@@ -163,6 +169,8 @@ export function QueueDrawer({
     if (items.length) setOpening(current => current + 1)
   }
   const paused = items.some(item => item.state !== 'waiting')
+  const canSteerRun = running && queueControl && !!steerRunId
+  const showSteerUnavailable = canSend && running && !canSteerRun && items.some(item => item.state === 'waiting' && !item.delivery)
   const heading = items.some(item => item.delivery === 'steer-unknown' || item.delivery === 'uncertain')
     ? COPY.deliveryUnknown
     : items.some(item => item.state === 'parked')
@@ -207,19 +215,15 @@ export function QueueDrawer({
       <Drawer className="prompt-queue" label={COPY.queue} data-paused={paused ? '' : undefined}>
         <p className="prompt-queue-title" role="status">
           {heading}
+          {showSteerUnavailable && <span className="prompt-queue-steer-hint">{COPY.steerUnavailable}</span>}
         </p>
         <QueueRows
           items={items}
           arrive={opening > 0}
           render={(item, index) => {
             const itemPath = `${queuePath}/${encodeURIComponent(item.id)}`
-            const canSteer =
-              queueControl
-              && !!steerRunId
-              && item.canSteer
-              && (!item.attachmentCount || steerAttachments)
-              && !item.delivery
-              && item.state !== 'dropped'
+            const steerAttachmentsBlocked = !!item.attachmentCount && !steerAttachments
+            const canSteer = canSteerRun && item.canSteer && !steerAttachmentsBlocked && !item.delivery && item.state !== 'dropped'
             const canResume = !running && index === 0 && item.state === 'parked' && item.delivery !== 'steer-unknown'
             const neighbors = [
               { target: items[index - 1], label: COPY.up, icon: ArrowUp },
@@ -291,6 +295,11 @@ export function QueueDrawer({
                       <VisibleText text={item.reason} />
                     </span>
                   )}
+                  {canSend && canSteerRun && !canSteer && item.state === 'waiting' && !item.delivery && (
+                    <span className="prompt-queue-reason">
+                      {steerAttachmentsBlocked ? COPY.steerAttachmentsUnavailable : COPY.steerItemUnavailable}
+                    </span>
+                  )}
                 </span>
                 <span className="prompt-queue-actions">
                   {(canSteer || canResume) && canSend && (
@@ -311,7 +320,7 @@ export function QueueDrawer({
                             : api(itemPath + '/send', { method: 'POST' }),
                         )
                       }}>
-                      {canSteer ? COPY.sendNow : COPY.send}
+                      {canSteer ? COPY.steer : COPY.send}
                     </Button>
                   )}
                   {canSend && onEdit && item.state !== 'dropped' && !item.delivery && (

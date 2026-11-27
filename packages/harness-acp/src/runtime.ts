@@ -51,7 +51,7 @@ import { realpathSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { CommandCache, commandDirectory, commandDirectoryNow, commandScope, type CommandCacheEntry } from './command-cache.ts'
-import { beginHarnessSteer, harnessPromptSource } from './prompt-source.ts'
+import { harnessPromptSource } from './prompt-source.ts'
 import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
@@ -117,6 +117,7 @@ import {
   type QueuedSteerOptions,
   type ServiceDeclaration,
   type SetConfigOptions,
+  type SteerOptions,
   type SteerOutcome,
 } from '@latch/sdk'
 import {
@@ -3434,8 +3435,8 @@ export class AgentRuntime implements Bridge {
     return this.steerWithAttachments(sessionId, prompt, requestId, [], options)
   }
 
-  steer(sessionId: string, prompt: string, requestId: string): Promise<SteerOutcome> {
-    return this.steerWithAttachments(sessionId, prompt, requestId, [])
+  steer(sessionId: string, prompt: string, requestId: string, options?: SteerOptions): Promise<SteerOutcome> {
+    return this.steerWithAttachments(sessionId, prompt, requestId, [], options)
   }
 
   async steerWithAttachments(
@@ -3443,7 +3444,7 @@ export class AgentRuntime implements Bridge {
     prompt: string,
     requestId: string,
     refs: AttachmentRef[],
-    options?: QueuedSteerOptions | Pick<QueuedSteerOptions, 'authorize'>,
+    options?: QueuedSteerOptions | SteerOptions,
   ): Promise<SteerOutcome> {
     await this.ready()
     const attachments = checkedAttachments(refs)
@@ -3520,7 +3521,7 @@ export class AgentRuntime implements Bridge {
     requestId: string,
     attachments: AttachmentRef[],
     userText?: string,
-    options?: QueuedSteerOptions | Pick<QueuedSteerOptions, 'authorize'>,
+    options?: QueuedSteerOptions | SteerOptions,
   ): Promise<SteerOutcome> {
     const live = run.live!
     const queued = options && 'runId' in options ? options : undefined
@@ -3530,7 +3531,7 @@ export class AgentRuntime implements Bridge {
     let blocks: unknown[]
     try {
       blocks = await this.inputBlocks(run.taskId, live, prompt, attachments)
-      if (options) await options.authorize()
+      await options?.authorize?.()
     } catch (error) {
       delete this.state.receipts[key]
       this.mark()
@@ -3548,7 +3549,7 @@ export class AgentRuntime implements Bridge {
     let added = false
     run.steers = (run.steers ?? 0) + 1
     run.steeredAt = this.clock()
-    const finishAuthority = beginHarnessSteer(run.taskId, requestId, run.id)
+    const finishAuthority = options?.beforeSteer?.(run.id)
     // The agent may stream its reply to the text right behind its answer, in the same read: the turn splits before it.
     const add = (result: unknown): void => {
       if (added || steerResult.safeParse(result).data?.outcome !== 'injected') return

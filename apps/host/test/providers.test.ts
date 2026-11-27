@@ -690,8 +690,18 @@ describe('Anthropic Messages streaming provider', () => {
       return (requests.at(-1)!.messages as Array<{ role: string; content: unknown }>)[1]?.content
     }
     expect(await sent(loop)).toEqual(returned)
+    const steered = [...loop, { role: 'user', content: '检查格式', steered: true }] satisfies ModelMessage[]
+    expect(await sent(steered)).toEqual(returned)
+    expect((requests.at(-1)!.messages as unknown[])[2]).toEqual({
+      role: 'user',
+      content: [
+        { type: 'tool_result', tool_use_id: 'toolu_a', content: '写好了' },
+        { type: 'tool_result', tool_use_id: 'toolu_b', content: '完成' },
+        { type: 'text', text: '检查格式' },
+      ],
+    })
     // A new turn, another model, or a history that no longer matches what the model sent: none of it goes back.
-    expect(await sent([...loop, { role: 'assistant', content: '好了' }, { role: 'user', content: '再来' }])).toEqual(plain)
+    expect(await sent([...steered, { role: 'assistant', content: '好了' }, { role: 'user', content: '再来' }])).toEqual(plain)
     expect(await sent(loop, 'claude-other')).toEqual(plain)
     expect(await sent([message, { role: 'assistant', content: '我读', toolCalls: calls }, ...loop.slice(2)])).toEqual([
       { type: 'text', text: '我读' },

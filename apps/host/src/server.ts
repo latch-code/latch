@@ -3578,8 +3578,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             sessionId,
             input.text,
             input.requestId,
-            beforeSteer,
-            { runId: input.runId, queuedAt: input.queuedAt, authorize },
+            { runId: input.runId, queuedAt: input.queuedAt, authorize, beforeSteer },
             attachments,
           )
         } catch (error) {
@@ -11617,14 +11616,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             [caller.device.id, ...coauthors],
             withoutPrivateContext || caller.device.dataScope !== 'all' || writers.narrower === true,
           )
-          const steered = await hub!.steer(
-            id,
-            input.prompt,
-            input.requestId,
-            beforeSteer,
-            attachments ? { authorize } : undefined,
-            attachments,
-          )
+          const steered = await hub!.steer(id, input.prompt, input.requestId, { authorize, beforeSteer }, attachments)
           if (steered === 'injected') {
             turnReceipts.set(turnKey, turnBodyHash(input))
             await recordAgentPrompt(caller, id, input, 'steered')

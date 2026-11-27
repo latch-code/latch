@@ -250,7 +250,7 @@ export function SessionPanels({
   const terminalStarted = useStarted(showing('terminal'))
   const treeStarted = useStarted(showing('files'))
   const histories = detail ? fileHistories(detail) : []
-  const turnStart = Math.max(0, detail?.messages.findLastIndex(message => message.role === 'user') ?? 0)
+  const turnStart = Math.max(0, detail?.messages.findLastIndex(message => message.role === 'user' && !message.steered) ?? 0)
   const observedFiles = detail?.fileChanges?.files ?? detail?.messages.slice(turnStart).flatMap(message => message.outputs ?? []) ?? []
   const treeRevision = JSON.stringify([
     fileRevision,

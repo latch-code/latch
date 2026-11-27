@@ -41,6 +41,7 @@ import {
   type QueuedSteerOptions,
   type ServiceDeclaration,
   type SetConfigOptions,
+  type SteerOptions,
   type SteerOutcome,
 } from '@latch/sdk'
 import { notSentConfig } from './config-requests.ts'
@@ -1314,8 +1315,7 @@ export class HarnessHub implements Bridge {
     sessionId: string,
     prompt: string,
     requestId: string,
-    beforeSteer?: (runId: string) => ((couldBeInjected: boolean) => void) | undefined,
-    options?: QueuedSteerOptions | Pick<QueuedSteerOptions, 'authorize'>,
+    options?: QueuedSteerOptions | SteerOptions,
     attachments?: AttachmentRef[],
   ): Promise<SteerOutcome> {
     const member = await this.route(sessionId)
@@ -1325,10 +1325,10 @@ export class HarnessHub implements Bridge {
       ? bridge.steerWithAttachments?.bind(bridge, sessionId, prompt, requestId, attachments, options)
       : queued
         ? bridge.steerQueued?.bind(bridge, sessionId, prompt, requestId, queued)
-        : bridge.steer?.bind(bridge, sessionId, prompt, requestId)
+        : bridge.steer?.bind(bridge, sessionId, prompt, requestId, options)
     if (!send) return 'prompt-required'
     const outcome = await this.accept(member, () =>
-      withHarnessPromptSource({ method: 'steer', sessionId, requestId, text: prompt, ...(beforeSteer ? { beforeSteer } : {}) }, () => {
+      withHarnessPromptSource({ method: 'steer', sessionId, requestId, text: prompt }, () => {
         this.options.assertAgentWorksHere?.(this.agentOf(sessionId)?.customAgentId)
         return send()
       }),

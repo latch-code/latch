@@ -244,6 +244,7 @@ describe('OpenAI Responses provider', () => {
       user,
       { role: 'assistant', content: '读一下', toolCalls: calls },
       { role: 'tool', content: 'A', toolCallId: 'call_1' },
+      { role: 'user', content: '检查格式', steered: true },
     ]
     await collect(provider.stream({ messages: loop, tools: [tool], signal: signal(), effort: 'high' }))
     expect(service.seen[1]?.body?.input).toEqual([
@@ -252,6 +253,7 @@ describe('OpenAI Responses provider', () => {
       said,
       { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'read_file', arguments: '{"path":"a.ts"}' },
       { type: 'function_call_output', call_id: 'call_1', output: 'A' },
+      { role: 'user', content: '检查格式' },
     ])
     const plain = [
       { role: 'assistant', content: '读一下' },
@@ -263,10 +265,16 @@ describe('OpenAI Responses provider', () => {
       { role: 'user', content: '你好' },
       ...plain,
       expect.anything(),
+      { role: 'user', content: '检查格式' },
       { role: 'user', content: '再来' },
     ])
     await collect(provider.stream({ messages: loop, tools: [tool], signal: signal(), model: 'model-b' }))
-    expect(service.seen[3]!.body!.input).toEqual([{ role: 'user', content: '你好' }, ...plain, expect.anything()])
+    expect(service.seen[3]!.body!.input).toEqual([
+      { role: 'user', content: '你好' },
+      ...plain,
+      expect.anything(),
+      { role: 'user', content: '检查格式' },
+    ])
     // Encrypted reasoning that only the finished response carried is kept; without any, nothing goes back.
     const backfilled = (await collect(provider.stream({ messages: [user], tools: [tool], signal: signal() }))).find(
       delta => delta.type === 'tool-call',

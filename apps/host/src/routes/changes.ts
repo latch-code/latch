@@ -72,7 +72,7 @@ function runEdits(messages: readonly Message[], opener: string | undefined): Fil
   const start = opener === undefined ? -1 : messages.findIndex(message => message.id === opener)
   if (start < 0) return undefined
   const after = messages.slice(start + 1)
-  const end = after.findIndex(message => message.role === 'user')
+  const end = after.findIndex(message => message.role === 'user' && !message.steered)
   return (end < 0 ? after : after.slice(0, end)).flatMap(message => message.tool?.diffs ?? [])
 }
 
@@ -180,7 +180,9 @@ export function createChangeRoutes(context: RouteContext): ChangeRoutes {
     open.set(sessionId, run)
     run.begun = (async () => {
       await previous
-      run.opener = (await hub.detail(sessionId).catch(() => undefined))?.messages.findLast(message => message.role === 'user')?.id
+      run.opener = (await hub.detail(sessionId).catch(() => undefined))?.messages.findLast(
+        message => message.role === 'user' && !message.steered,
+      )?.id
       await (await engine()).beginTurn({ session, turnId: runId })
       refresh(sessionId)
     })()

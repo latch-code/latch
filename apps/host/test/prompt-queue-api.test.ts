@@ -121,6 +121,30 @@ describe('queue HTTP boundaries', () => {
     expect(delivered).toEqual([])
     expect((await detail()).queue?.map(item => item.text)).toEqual(['Follow-up'])
   })
+  it('rechecks run before an in-flight direct steer reaches the driver', async () => {
+    let enter!: () => void
+    let resume!: () => void
+    const entered = new Promise<void>(resolve => (enter = resolve))
+    const held = new Promise<void>(resolve => (resume = resolve))
+    const delivered: string[] = []
+    const { host, phone, path, detail } = await fixture(undefined, undefined, async (_id, text, _requestId, options) => {
+      enter()
+      await held
+      await options?.authorize?.()
+      delivered.push(text)
+      return 'injected'
+    })
+    const response = phone.request(`${path}/prompt`, { body: { prompt: 'During the turn', requestId: randomUUID(), steer: true } })
+    try {
+      await entered
+      await host.host.security.devices.setScopes(phone.id, { scopes: ['view'] }, { listener: 'host' }, 'none')
+    } finally {
+      resume()
+    }
+    expect((await response).status).toBe(403)
+    expect(delivered).toEqual([])
+    expect((await detail()).queue).toEqual([])
+  })
   it('retains an unknown JS driver acknowledgment without delivering the queued text a second time', async () => {
     const delivered: string[] = []
     // @ts-expect-error A JavaScript driver can deliver the message and omit its return value.

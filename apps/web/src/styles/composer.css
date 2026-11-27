@@ -1294,6 +1294,9 @@
   line-height: var(--lh-ui-para);
 }
 .prompt-queue-title {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--sp-12);
   margin: 0 0 var(--sp-4);
   color: var(--muted);
   font-size: var(--fs-caption);
@@ -1302,6 +1305,10 @@
 }
 .prompt-queue[data-paused] .prompt-queue-title {
   color: var(--amber);
+}
+.prompt-queue-steer-hint {
+  color: var(--muted);
+  font-weight: 400;
 }
 .prompt-queue ol {
   margin: 0;

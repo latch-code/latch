@@ -960,7 +960,9 @@ Harness 先给出计划、等人同意再动手时，profile 的 `readPlan` 认�
 
 ## 运行中追加
 
-Agent 在 `initialize` 的 `_meta.steering = { supported: true }` 声明后，运行中的输入经 `_session/steering` 加入当前一轮，始终带 `_meta.steering.idleBehavior: "promptRequired"`：Agent 在没有轮次时不自己开新一轮，完成、用量与失败都留在原来的 `session/prompt` 上。
+内置 `standard` 可以在当前轮次接收文字。已发给模型的请求继续执行，已提出的工具调用照常审批、结算。下一次模型请求会带上补充。即使上一步只有文字回答，这一轮也会继续，并沿用原步数上限。附件可以排队留到下一轮。
+
+ACP Agent 在 `initialize` 的 `_meta.steering = { supported: true }` 声明后，运行中的输入经 `_session/steering` 加入当前一轮，始终带 `_meta.steering.idleBehavior: "promptRequired"`：Agent 在没有轮次时不自己开新一轮，完成、用量与失败都留在原来的 `session/prompt` 上。
 
 | 回答 | 处理 |
 | --- | --- |

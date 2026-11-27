@@ -177,14 +177,20 @@ describe('queued follow-up presentation', () => {
       { ...item, id: 'with-image', canSteer: true as const, attachmentCount: 1 },
     ]
     const live = { running: true, steerRunId: 'run' }
-    expect(tray(items, true, live).match(/>立即发送</g)).toHaveLength(1)
-    expect(tray(items, true, { ...live, steerAttachments: true }).match(/>立即发送</g)).toHaveLength(2)
-    expect(tray(items, true, live)).toContain('aria-label="调整顺序"')
-    expect(tray(items, true, { ...live, queueControl: false })).not.toMatch(/立即发送|调整顺序/)
-    expect(tray(items, true, { running: true })).not.toContain('立即发送')
-    expect(tray(items, false, live)).not.toMatch(/立即发送|调整顺序/)
+    const active = tray(items, true, live)
+    expect(active.match(/>引导</g)).toHaveLength(1)
+    expect(active).toContain('本轮不能接收附件')
+    expect(active).toContain('本轮不能接收这条消息')
+    expect(active).toContain('aria-label="调整顺序"')
+    expect(tray(items, true, { ...live, steerAttachments: true }).match(/>引导</g)).toHaveLength(2)
+    expect(tray(items, true, { ...live, queueControl: false })).not.toMatch(/>引导<|调整顺序/)
+    const unsupported = tray(items, true, { running: true })
+    expect(unsupported).not.toContain('>引导<')
+    expect(unsupported.match(/本轮暂不能从队列引导/g)).toHaveLength(1)
+    expect(tray(items, true, { ...live, running: false })).not.toMatch(/引导/)
+    expect(tray(items, false, live)).not.toMatch(/引导|调整顺序/)
     const unknown = tray([{ ...item, state: 'parked', delivery: 'steer-unknown' }, items[1]!], true)
-    expect(unknown).not.toMatch(/>发送<|调整顺序/)
+    expect(unknown).not.toMatch(/>发送<|>引导<|调整顺序/)
     expect(unknown.match(/aria-label="编辑"/g)).toHaveLength(1)
   })
   it('renders a dropped intent honestly and escapes queued text', () => {

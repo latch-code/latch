@@ -9,7 +9,7 @@
 - `./plugins`、`./harness` 由根包再导出为 `latch/plugin-sdk`、`latch/harness-sdk`；它们引到的文件之间只用 `import type`，外部项目不开启 `allowImportingTsExtensions` 也能检查（`tests/plugin-sdk.test.ts#type-check in an outside TypeScript project that does not allow .ts import extensions`）。
 - 插件可组合 Host 模块、技能、工具、界面、Harness 和连接载体，统一归属和清理；只经 `PluginContext` 注册能力。连接通道用平台无关 AsyncIterable/write/close，不向 driver 交设备身份。客户端 props 类型由 `@latch/ui` 提供。
 - `TaskSummary.runId` 在每次运行开始时换新并持久化；`Bridge.cancel` 带 `runId` 时只在它仍是当前运行时取消，并在开始取消的同一步核对，迟到的取消不会停止之后开始的运行（`tests/runtime.test.ts#names each run on the session, keeps the name across a restart, and leaves a run alone when a cancel names another`）。
-- `Bridge.steerQueued` 和带排队项的 `steerWithAttachments` 在交付前复核授权和目标轮次，保存排队时间，重试不重复投递。
+- `Bridge.steer` 等追加入口在实际交付前复核授权并调用 `beforeSteer`，重放回执不触发。队列追加核对目标轮次，保存排队时间。
 - 改接口时同步 [docs/PLUGIN-DEVELOPMENT.md](../../docs/PLUGIN-DEVELOPMENT.md) 的签名。
 
 测试在根项目 `tests/`（`pnpm test --project latch`）；改接口后运行 `pnpm typecheck`、`pnpm test` 与 `pnpm test:e2e`。

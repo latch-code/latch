@@ -481,9 +481,27 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
                     expect(positions['重试这次提交']).toHaveLength(0)
                     return
                   }
-                  if (scene === 'prompt-queue' || scene === 'steer') {
-                    const positions = JSON.parse((await run(textReader, [shot, '--settled', '立即发送'])).stdout) as { 立即发送: number[] }
-                    expect(positions.立即发送).toHaveLength(scene === 'prompt-queue' ? 3 : 1)
+                  if (scene === 'prompt-queue') {
+                    const queueRows = async (...options: string[]): Promise<number[]> => {
+                      const positions = JSON.parse(
+                        (await run(textReader, [shot, '--settled', '--vertical', ...options, '引导'])).stdout,
+                      ) as Record<string, number[]>
+                      return positions['引导']!
+                    }
+                    const whole = await queueRows()
+                    const rows = whole.length < 3 && device.name !== 'ipad' ? await queueRows('--queue-actions') : whole
+                    expect(rows).toHaveLength(3)
+                    const [first, second, third] = rows.toSorted((a, b) => a - b)
+                    expect(second! - first!).toBeGreaterThan(0.015)
+                    expect(third! - second!).toBeGreaterThan(0.015)
+                    return
+                  }
+                  if (scene === 'steer') {
+                    const positions = JSON.parse((await run(textReader, [shot, '--settled', '立即发送'])).stdout) as Record<
+                      string,
+                      number[]
+                    >
+                    expect(positions['立即发送']).toHaveLength(1)
                     return
                   }
                   // The last word of the empty message starts to the right of centre when the sheet shrinks to fit it.
