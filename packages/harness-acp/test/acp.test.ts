@@ -6658,17 +6658,28 @@ describe('ACP steering', () => {
     expect(systemText(next)).not.toContain('How should I approach this?')
   })
 
-  it.each(['direct', 'queued'])('keeps an unrecognized %s steer reply unknown on retry', async mode => {
+  it.each([
+    ['direct', 'unrecognized'],
+    ['queued', 'unrecognized'],
+    ['direct', 'unknown'],
+    ['queued', 'unknown'],
+  ])('keeps the %s steer receipt when the reply is %s', async (mode, outcome) => {
     const bridge = await (await setup({ FAKE_ACP_CAPS: 'steer' })).open()
     const { sessionId } = await bridge.createTask({ prompt: 'steerable', requestId: rid() })
     const detail = await until(bridge, sessionId, state => state.steer === true)
-    const request = vi.spyOn(AcpWire.prototype, 'request').mockResolvedValueOnce({ outcome: 'unrecognized' })
+    const request = vi.spyOn(AcpWire.prototype, 'request').mockResolvedValueOnce({ outcome })
     try {
       const requestId = rid()
-      const options = { runId: detail.summary.runId!, queuedAt: new Date().toISOString(), authorize: async () => {} }
+      const finishAuthority = vi.fn()
+      const beforeSteer = () => finishAuthority
+      const options = { runId: detail.summary.runId!, queuedAt: new Date().toISOString(), authorize: async () => {}, beforeSteer }
       const steer = () =>
-        mode === 'queued' ? bridge.steerQueued!(sessionId, 'more', requestId, options) : bridge.steer!(sessionId, 'more', requestId)
+        mode === 'queued'
+          ? bridge.steerQueued!(sessionId, 'more', requestId, options)
+          : bridge.steer!(sessionId, 'more', requestId, { beforeSteer })
       for (let attempt = 0; attempt < 2; attempt++) await expect(steer()).rejects.toMatchObject({ code: 'steer-unknown' })
+      await expect(bridge.prompt(sessionId, 'more', requestId)).rejects.toMatchObject({ code: 'steer-unknown' })
+      expect(finishAuthority.mock.calls).toEqual([[true]])
       expect(request).toHaveBeenCalledTimes(1)
     } finally {
       request.mockRestore()

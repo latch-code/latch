@@ -141,6 +141,8 @@ async function startFake(options: { version?: string; wrongPid?: boolean; noApi?
         if (rest === '/interrupt') return reply(200, { interrupted: true })
         if (rest === '/model' || rest === '/agent' || rest === '/command' || rest.endsWith('/reply')) return reply(204)
         if (rest === '/message') return reply(200, { data: [], cursor: {} })
+        if (request.method === 'GET' && rest.startsWith('/message/'))
+          return reply(404, { _tag: 'MessageNotFoundError', sessionID: session.id, messageID: rest.slice('/message/'.length) })
         if (request.method === 'DELETE') return reply(204)
         return reply(204)
       }
@@ -241,6 +243,17 @@ async function started(answer?: (method: string, params: unknown) => Promise<unk
 }
 
 const promptOf = (fake: Fake) => fake.seen.findLast(item => item.path.endsWith('/prompt'))!
+const syntheticIdOf = (fake: Fake) => (fake.seen.findLast(item => item.path.endsWith('/synthetic'))!.body as { id: string }).id
+
+async function beginSteerableTurn(fake: Fake, wire: AgentWire, sessionID: string, text: string) {
+  fake.routes.set('GET /api/session/active', () => ({ body: { data: { [sessionID]: { status: 'running' } } } }))
+  const turn = wire.request('session/prompt', { sessionId: sessionID, prompt: [{ type: 'text', text }] })
+  turn.catch(() => {})
+  await vi.waitFor(() => expect(promptOf(fake).body).toMatchObject({ text }))
+  fake.emit('session.execution.started', { sessionID })
+  fake.emit('session.inbox.delivered', { sessionID, inboxID: (promptOf(fake).body as { id: string }).id })
+  return { turn }
+}
 
 describe('OpenCode server wire', () => {
   it('starts the server on a loopback port it picks, with the password only in its environment', async () => {
@@ -960,15 +973,7 @@ describe('OpenCode server wire', () => {
     const { fake, wire, created, updates } = await started()
     const sessionID = created.sessionId
     const path = `/api/session/${sessionID}`
-    fake.routes.set('GET /api/session/active', () => ({ body: { data: { [sessionID]: { status: 'running' } } } }))
-    const begin = async (text: string) => {
-      const turn = wire.request('session/prompt', { sessionId: sessionID, prompt: [{ type: 'text', text }] })
-      turn.catch(() => {})
-      await vi.waitFor(() => expect(promptOf(fake).body).toMatchObject({ text }))
-      fake.emit('session.execution.started', { sessionID })
-      fake.emit('session.inbox.delivered', { sessionID, inboxID: (promptOf(fake).body as { id: string }).id })
-      return { turn }
-    }
+    const begin = (text: string) => beginSteerableTurn(fake, wire, sessionID, text)
     const steer = async (prompt: unknown[]) => {
       expect(await wire.request('_session/steering', { sessionId: sessionID, prompt }, 5_000)).toEqual({ outcome: 'injected' })
       return (promptOf(fake).body as { id: string }).id
@@ -993,20 +998,77 @@ describe('OpenCode server wire', () => {
     expect(withdrawn(taken)).toBe(false)
     expect(notices()).toHaveLength(1)
 
+    // DELETE also succeeds for an input already in history, even if its delivery event was missed.
+    const { turn: missed } = await begin('missed delivery')
+    const inHistory = await steer([{ type: 'text', text: 'taken without an event' }])
+    fake.routes.set(`GET ${path}/message/${inHistory}`, () => ({ body: { data: { id: inHistory, type: 'user' } } }))
+    fake.emit('session.execution.succeeded', { sessionID })
+    await missed
+    expect(withdrawn(inHistory)).toBe(true)
+    expect(fake.seen.some(item => item.path === `${path}/message/${inHistory}`)).toBe(true)
+    expect(notices()).toHaveLength(1)
+
     // A stop withdraws the addition and its context before it interrupts; the runtime says the stop may have beaten it.
     const { turn: third } = await begin('third')
     const stopped = await steer([
       { type: 'text', text: 'context', annotations: { audience: ['assistant'] } },
       { type: 'text', text: 'stopped' },
     ])
+    const contextId = syntheticIdOf(fake)
     wire.notify('session/cancel', { sessionId: sessionID })
     await vi.waitFor(() => expect(fake.seen.some(item => item.path === `${path}/interrupt`)).toBe(true))
     const order = fake.seen.map(item => `${item.method} ${item.path}`)
     expect(order.indexOf(`DELETE ${path}/inbox/${stopped}`)).toBeGreaterThan(-1)
-    expect(order.indexOf(`DELETE ${path}/inbox/msg_x`)).toBeGreaterThan(-1)
+    expect(order.indexOf(`DELETE ${path}/inbox/${contextId}`)).toBeGreaterThan(-1)
     expect(order.indexOf(`DELETE ${path}/inbox/${stopped}`)).toBeLessThan(order.indexOf(`POST ${path}/interrupt`))
     fake.emit('session.execution.interrupted', { sessionID, reason: 'user' })
     await expect(third).resolves.toMatchObject({ stopReason: 'cancelled' })
     expect(notices()).toHaveLength(1)
+  })
+
+  it.each([
+    ['delete failed', 'unknown'],
+    ['message missing', 'promptRequired'],
+    ['message delivered', 'injected'],
+    ['session missing', 'unknown'],
+  ])('settles a steer stopped during submission when %s', async (evidence, outcome) => {
+    const { fake, wire, created } = await started()
+    const sessionId = created.sessionId
+    const path = `/api/session/${sessionId}`
+    const { turn } = await beginSteerableTurn(fake, wire, sessionId, 'first')
+    fake.routes.set(`POST ${path}/prompt`, body => {
+      const { id } = body as { id: string }
+      if (evidence === 'delete failed') fake.routes.set(`DELETE ${path}/inbox/${id}`, () => ({ status: 503 }))
+      if (evidence === 'message delivered') fake.routes.set(`GET ${path}/message/${id}`, () => ({ body: { data: { id, type: 'user' } } }))
+      if (evidence === 'session missing')
+        fake.routes.set(`GET ${path}/message/${id}`, () => ({ status: 404, body: { _tag: 'SessionNotFoundError' } }))
+      wire.notify('session/cancel', { sessionId })
+      return { body: { data: { id, sessionID: sessionId, type: 'user' } } }
+    })
+    const result = wire.request('_session/steering', { sessionId, prompt: [{ type: 'text', text: 'addition' }] }, 5_000)
+    await expect(result).resolves.toEqual({ outcome })
+    await vi.waitFor(() => expect(fake.seen.some(item => item.path === `${path}/interrupt`)).toBe(true))
+    fake.emit('session.execution.interrupted', { sessionID: sessionId, reason: 'user' })
+    await expect(turn).resolves.toMatchObject({ stopReason: 'cancelled' })
+  })
+
+  it('warns when the run ends and withdrawing an accepted addition’s context fails', async () => {
+    const { fake, wire, created, updates } = await started()
+    const sessionId = created.sessionId
+    const path = `/api/session/${sessionId}`
+    const { turn } = await beginSteerableTurn(fake, wire, sessionId, 'first')
+    const prompt = [
+      { type: 'text', text: 'context', annotations: { audience: ['assistant'] } },
+      { type: 'text', text: 'addition' },
+    ]
+    await expect(wire.request('_session/steering', { sessionId, prompt }, 5_000)).resolves.toEqual({ outcome: 'injected' })
+    fake.routes.set(`DELETE ${path}/inbox/${syntheticIdOf(fake)}`, () => ({ status: 503 }))
+    fake.emit('session.execution.succeeded', { sessionID: sessionId })
+    await expect(turn).resolves.toMatchObject({ stopReason: 'end_turn' })
+    const notices = updates.filter(item => item.update.sessionUpdate === 'notice').map(item => item.update)
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toMatchObject({ severity: 'warning', title: expect.stringContaining('无法确认') })
+    expect(notices[0]!.title).toContain('撤回')
+    expect(notices[0]!.title).not.toContain('请重新发送')
   })
 })
