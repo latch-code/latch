@@ -338,13 +338,17 @@ test.each([false, true])(
     const input = body()
     f.lost()
     await expect(service.send(caller, source, input)).rejects.toMatchObject({ code: 'agent-mention-unknown' })
-    const first = await service.firstMentionIn(target, 'target')
     if (empty) {
-      expect(first).toBe((await service.byRequest(caller, source, input.requestId)).id)
-      await service.forget('session', 'unrelated', await service.firstMentionIn(source, 'unrelated'))
-      await expect(service.byRequest(caller, source, input.requestId)).resolves.toMatchObject({ requestId: input.requestId })
+      f.detail.mockResolvedValueOnce({ summary: { ...f.summary, id: 'unrelated' }, cursor: 0, liveText: '', approvals: [], messages: [] })
+      await service.recordFirstMention(target, 'unrelated')
+      await service.forget('session', 'unrelated')
+      await expect(service.byRequest(caller, source, input.requestId)).resolves.toMatchObject({
+        requestId: input.requestId,
+        canRetry: true,
+      })
     }
-    await service.forget('session', 'target', empty ? first : undefined)
+    await service.recordFirstMention(target, 'target')
+    await service.forget('session', 'target')
     await service.close()
     const reopened = await f.open()
     expect(await reopened.list(caller, source)).toEqual([])
@@ -352,6 +356,25 @@ test.each([false, true])(
     expect(f.delivered.size).toBe(1)
   },
 )
+
+test('deletion cannot lose the only delivery evidence of an unconfirmed first mention', async () => {
+  const f = await fixture(true)
+  const service = await f.open()
+  const input = body()
+  f.lost()
+  await expect(service.send(caller, source, input)).rejects.toMatchObject({ code: 'agent-mention-unknown' })
+  await service.recordFirstMention(target, 'target')
+  f.messages.length = 0
+  await service.close()
+
+  // The Driver deleted the chat just before the Host stopped, so the original first message is no longer readable.
+  const reopened = await f.open()
+  await expect(reopened.send(caller, source, input)).resolves.toMatchObject({ status: 'unknown' })
+  expect((await reopened.byRequest(caller, source, input.requestId)).canRetry).toBeUndefined()
+  expect(f.labels).toHaveLength(1)
+  await reopened.forget('session', 'target')
+  await expect(reopened.send(caller, source, input)).rejects.toMatchObject({ code: 'agent-mention-expired' })
+})
 
 test('reserves space for deleting a live exchange when the seven-day receipt budget is full', async () => {
   const f = await fixture()

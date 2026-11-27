@@ -3302,9 +3302,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     async function removeSessionRecords(id: string, options: { original?: boolean } = {}): Promise<void> {
       memoryRefusals.delete(id)
       await keepWorktreePrivacy(id)
-      const first = await agentMentions.firstMentionIn(sessionOwner(id), id)
+      const owner = sessionOwner(id)
+      if (owner && harnessHub.mayHaveStartedAgentChat(id)) await agentMentions.recordFirstMention(owner, id)
       await harnessHub.remove(id, options)
-      await agentMentions.forget('session', id, first)
+      await agentMentions.forget('session', id)
       await conversationRefs.forget(id)
       await promptQueues.forgetSession(id)
       await questions.forgetSession(id)

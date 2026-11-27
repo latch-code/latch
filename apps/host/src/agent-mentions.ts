@@ -508,25 +508,32 @@ export class AgentMentions {
     return retired
   }
 
-  /** An unconfirmed first turn may have reached a chat before its session ID was recorded. Read its first input before deletion. */
-  async firstMentionIn(owner: string | undefined, sessionId: string): Promise<string | undefined> {
-    if (!owner) return undefined
+  /** Save an unconfirmed first turn's session ID before deletion takes away the evidence that it was delivered. */
+  async recordFirstMention(owner: string, sessionId: string): Promise<void> {
     await this.journal.recover()
     const firsts = this.journal
       .read()
       .records.filter(row => !row.refusal && !row.destination && !row.targetSessionId && row.targetAgentId === owner)
-    if (!firsts.length) return undefined
+    if (!firsts.length) return
     const detail = await this.deps.detail(sessionId)
-    if (detail.summary.id !== sessionId || detail.summary.automationId || detail.summary.forkOf) return undefined
+    if (detail.summary.id !== sessionId || detail.summary.automationId || detail.summary.forkOf) return
     const requestId = detail.messages.find(row => row.role === 'user')?.requestId
-    return firsts.find(row => row.dispatchId === requestId)?.id
+    const first = firsts.find(row => row.dispatchId === requestId)
+    if (!first) return
+    const key = randomUUID()
+    await this.journal.change(key, key, draft => {
+      const stored = draft.records.find(row => row.id === first.id)
+      if (!stored || stored.refusal || stored.targetSessionId) return { value: undefined, changed: false }
+      stored.targetSessionId = sessionId
+      return { value: undefined }
+    })
   }
 
-  forget(kind: 'agent' | 'session', id: string, firstMentionId?: string): Promise<void> {
+  forget(kind: 'agent' | 'session', id: string): Promise<void> {
     return this.removeWhere(row =>
       kind === 'agent'
         ? row.sourceAgentId === id || row.targetAgentId === id
-        : row.sourceSessionId === id || row.targetSessionId === id || row.destination === id || row.id === firstMentionId,
+        : row.sourceSessionId === id || row.targetSessionId === id || row.destination === id,
     )
   }
 

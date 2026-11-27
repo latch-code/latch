@@ -940,6 +940,12 @@ export class HarnessHub implements Bridge {
   automationOf(sessionId: string): string | undefined {
     return this.meta.get(sessionId)?.automationId
   }
+
+  /** A fork or a scheduled run cannot be the chat opened by a first mention. */
+  mayHaveStartedAgentChat(sessionId: string): boolean {
+    const meta = this.meta.get(sessionId)
+    return !meta?.automationId && !meta?.forkOf
+  }
   /**
    * Whether the session runs with nobody watching: an automation's run (我的 Agent's schedules are automations), also
    * while it is still being created, before its record is written.
