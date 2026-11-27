@@ -293,6 +293,8 @@ interface Turn {
   steerItems?: Map<string, SteerItem>
   /** Each accepted addition includes its synthetic context. In-flight writes settle their own receipt. */
   injectedSteers?: SteerItem[][]
+  sendingSteers?: Set<Promise<unknown>>
+  ending?: boolean
   withdrawal?: Promise<void>
   started: boolean
   cancelled: boolean
@@ -623,7 +625,7 @@ export class OpencodeWire implements AgentWire {
         case 'session/prompt':
           return this.prompt(p)
         case STEER_METHOD:
-          return this.steer(p, onResult)
+          return this.steer(p, onResult, timeoutMs)
         default:
           throw new RpcError(RPC.methodNotFound, `Method not found: ${clip(method, 200)}`)
       }
@@ -1358,7 +1360,7 @@ export class OpencodeWire implements AgentWire {
    * Adds input to a running turn (`delivery: 'steer', resume: false`), as `opencode acp` does: when the server reports no
    * active run, or every submitted item was confirmed withdrawn, the caller can queue the input (`promptRequired`).
    */
-  private async steer(params: Json, onResult?: (result: unknown) => void): Promise<unknown> {
+  private async steer(params: Json, onResult?: (result: unknown) => void, timeoutMs = 30_000): Promise<unknown> {
     const attached = this.require(params.sessionId)
     const idleBehavior = rec(rec(params._meta).steering).idleBehavior
     if (idleBehavior !== undefined && idleBehavior !== 'promptRequired')
@@ -1368,21 +1370,48 @@ export class OpencodeWire implements AgentWire {
     if (blocks.some(block => block.type === 'image' && !block.data && !block.uri))
       throw new RpcError(RPC.invalidParams, 'image content has no data or uri')
     const turn = this.turns.get(attached.id)
-    if (!turn || turn.cancelled) return { outcome: 'promptRequired' }
+    if (!turn || turn.cancelled || turn.ending) return { outcome: 'promptRequired' }
     const active = rec(rec(await this.get('/api/session/active')).data)
-    if (this.turns.get(attached.id) !== turn || turn.cancelled || !Object.hasOwn(active, attached.id)) return { outcome: 'promptRequired' }
-    const prepared = preparePrompt(blocks)
-    const path = `/api/session/${encodeURIComponent(attached.id)}`
+    if (this.turns.get(attached.id) !== turn || turn.cancelled || turn.ending || !Object.hasOwn(active, attached.id))
+      return { outcome: 'promptRequired' }
+    const sending = (turn.sendingSteers ??= new Set())
+    const operation = this.submitSteer(turn, preparePrompt(blocks), AbortSignal.timeout(timeoutMs), onResult)
+    sending.add(operation)
+    try {
+      return await operation
+    } finally {
+      sending.delete(operation)
+    }
+  }
+
+  private async submitSteer(
+    turn: Turn,
+    prepared: ReturnType<typeof preparePrompt>,
+    signal: AbortSignal,
+    onResult?: (result: unknown) => void,
+  ): Promise<unknown> {
+    const path = `/api/session/${encodeURIComponent(turn.sessionId)}`
+    const ended = () => turn.ending || turn.cancelled || this.turns.get(turn.sessionId) !== turn
     const items: SteerItem[] = []
     const postItem = async (type: SteerItem['type'], body: Json) => {
       const item: SteerItem = { type, id: messageId(), delivered: false }
       items.push(item)
       ;(turn.steerItems ??= new Map()).set(item.id, item)
-      await this.post(`${path}/${type === 'user' ? 'prompt' : 'synthetic'}`, { ...body, id: item.id, delivery: 'steer', resume: false })
+      await this.call(
+        'POST',
+        `${path}/${type === 'user' ? 'prompt' : 'synthetic'}`,
+        { ...body, id: item.id, delivery: 'steer', resume: false },
+        signal,
+      )
     }
     try {
-      if (prepared.synthetic.length)
+      if (prepared.synthetic.length) {
         await postItem('synthetic', { text: prepared.synthetic.join('\n\n'), description: 'ACP embedded context' })
+        if (ended()) {
+          const context = await this.withdrawSteer(path, items)
+          return { outcome: context === 'withdrawn' ? 'promptRequired' : 'unknown' }
+        }
+      }
       await postItem('user', { text: prepared.text, files: prepared.files })
     } catch (error) {
       if (items.length === 1 && error instanceof ServerAnswer && error.status >= 400 && error.status < 500 && error.status !== 408)
@@ -1391,7 +1420,7 @@ export class OpencodeWire implements AgentWire {
       await this.withdrawSteer(path, items)
       return { outcome: 'unknown' }
     }
-    if (this.turns.get(attached.id) !== turn || turn.cancelled) {
+    if (ended()) {
       const outcome = await this.withdrawSteer(path, items)
       if (outcome !== 'delivered') return { outcome: outcome === 'withdrawn' ? 'promptRequired' : 'unknown' }
     } else {
@@ -1404,8 +1433,8 @@ export class OpencodeWire implements AgentWire {
 
   private async awaitCommand(turn: Turn): Promise<void> {
     await sleep(COMMAND_QUEUE_MS)
-    if (turn.startId === undefined && this.turns.get(turn.sessionId) === turn) {
-      this.turns.delete(turn.sessionId)
+    if (turn.startId === undefined && this.turns.get(turn.sessionId) === turn && !turn.ending) {
+      await this.finishSteers(turn)
       turn.resolve({ stopReason: turn.cancelled ? 'cancelled' : 'end_turn', _meta: {} })
     }
   }
@@ -1416,7 +1445,7 @@ export class OpencodeWire implements AgentWire {
    */
   private async cancel(sessionId: string): Promise<void> {
     const turn = this.turns.get(sessionId)
-    if (!turn || turn.cancelled) return
+    if (!turn || turn.cancelled || turn.ending) return
     turn.cancelled = true
     for (const [id, ask] of this.asks)
       if (ask.root === sessionId && !ask.settled) {
@@ -1430,12 +1459,19 @@ export class OpencodeWire implements AgentWire {
     if (!turn.started && turn.startId) await this.call('DELETE', `${path}/inbox/${encodeURIComponent(turn.startId)}`).catch(() => {})
     // Additions not yet taken would otherwise run in the next turn; the runtime tells the person the stop may have beaten them.
     await this.withdrawSteers(turn)
+    if (turn.ending || this.turns.get(sessionId) !== turn) return
     await this.interrupt(turn)
     if (turn.started || this.turns.get(sessionId) !== turn) return
     // Nothing of this turn started: ended once the server says the session runs nothing.
     const active = rec(rec(await this.get('/api/session/active').catch(() => undefined)).data)
-    if (!turn.started && this.turns.get(sessionId) === turn && !Object.hasOwn(active, sessionId) && !this.running.has(sessionId)) {
-      this.turns.delete(sessionId)
+    if (
+      !turn.started
+      && !turn.ending
+      && this.turns.get(sessionId) === turn
+      && !Object.hasOwn(active, sessionId)
+      && !this.running.has(sessionId)
+    ) {
+      await this.finishSteers(turn)
       turn.resolve({ stopReason: 'cancelled', _meta: {} })
     }
   }
@@ -1490,10 +1526,17 @@ export class OpencodeWire implements AgentWire {
     await this.post(`/api/session/${encodeURIComponent(turn.sessionId)}/interrupt`).catch(() => {})
   }
 
-  private async settle(turn: Turn, terminal: Terminal): Promise<void> {
-    if (this.turns.get(turn.sessionId) === turn) this.turns.delete(turn.sessionId)
-    // Report what happened to pending additions before the caller sees the terminal result.
+  /** Keep the session occupied until its pending writes have answered or timed out and their cleanup has settled. */
+  private async finishSteers(turn: Turn): Promise<void> {
+    turn.ending = true
+    await Promise.allSettled(turn.sendingSteers ?? [])
     await this.withdrawSteers(turn)
+    if (this.turns.get(turn.sessionId) === turn) this.turns.delete(turn.sessionId)
+  }
+
+  private async settle(turn: Turn, terminal: Terminal): Promise<void> {
+    if (turn.ending) return
+    await this.finishSteers(turn)
     const error = turn.stepError ?? turn.executionError
     const type = str(error?.type)
     if (terminal !== 'interrupted' && type === 'provider.auth')
@@ -1626,16 +1669,17 @@ export class OpencodeWire implements AgentWire {
     if (!owner) return
     const turn = this.turns.get(owner.root)
     if (!turn) return
-    if (!owner.child && type === 'session.inbox.enqueued' && turn.startId === undefined && rec(data.item).type === 'user') {
-      turn.startId = str(data.inboxID)
-      return
-    }
     if (!owner.child && type === 'session.inbox.delivered' && typeof data.inboxID === 'string') {
       const item = turn.steerItems?.get(data.inboxID)
       if (item) {
         item.delivered = true
         return
       }
+    }
+    if (turn.ending) return
+    if (!owner.child && type === 'session.inbox.enqueued' && turn.startId === undefined && rec(data.item).type === 'user') {
+      turn.startId = str(data.inboxID)
+      return
     }
     if (!owner.child && type === 'session.inbox.delivered' && turn.startId !== undefined && data.inboxID === turn.startId) {
       turn.started = true

@@ -49,7 +49,7 @@ interface Registered {
   config?: string
 }
 
-type Route = (body: unknown, path: string) => { status?: number; body?: unknown } | undefined
+type Route = (body: unknown, path: string) => { status?: number; body?: unknown; replyAfter?: Promise<void> } | undefined
 
 const MODELS = [
   {
@@ -106,7 +106,7 @@ async function startFake(options: { version?: string; wrongPid?: boolean; noApi?
         return reply(401, { _tag: 'UnauthorizedError', message: 'Unauthorized' })
       const key = `${request.method} ${url.pathname}`
       const custom = routes.get(key)?.(body, url.pathname)
-      if (custom) return reply(custom.status ?? 200, custom.body)
+      if (custom) return void Promise.resolve(custom.replyAfter).then(() => reply(custom.status ?? 200, custom.body))
       if (key === 'GET /api/event') {
         response.writeHead(200, { 'content-type': 'text/event-stream' })
         response.write(`data: ${JSON.stringify({ id: 'evt_0', type: 'server.connected', data: {} })}\n\n`)
@@ -1024,6 +1024,49 @@ describe('OpenCode server wire', () => {
     fake.emit('session.execution.interrupted', { sessionID, reason: 'user' })
     await expect(third).resolves.toMatchObject({ stopReason: 'cancelled' })
     expect(notices()).toHaveLength(1)
+  })
+
+  it('holds the turn open to withdraw in-flight context without posting user input after the run ended', async () => {
+    const { fake, wire, created, updates } = await started()
+    const sessionID = created.sessionId
+    const path = `/api/session/${sessionID}`
+    const { turn } = await beginSteerableTurn(fake, wire, sessionID, 'first')
+    let ended = false
+    void turn.then(() => (ended = true))
+    let release!: () => void
+    const replyAfter = new Promise<void>(resolve => {
+      release = resolve
+    })
+    fake.routes.set(`POST ${path}/synthetic`, body => {
+      fake.emit('session.execution.succeeded', { sessionID })
+      // This later event acknowledges that the wire has read the terminal event before we release the HTTP reply.
+      fake.emit('session.agent.selected', { sessionID, agent: 'plan' })
+      return { body: { data: { id: (body as { id: string }).id, type: 'synthetic' } }, replyAfter }
+    })
+    const prompt = [
+      { type: 'text', text: 'context', annotations: { audience: ['assistant'] } },
+      { type: 'text', text: 'addition' },
+    ]
+    const steer = wire.request('_session/steering', { sessionId: sessionID, prompt }, 5_000)
+    try {
+      await vi.waitFor(() =>
+        expect(updates).toContainEqual({
+          sessionId: sessionID,
+          update: {
+            sessionUpdate: 'config_option_update',
+            configOptions: expect.arrayContaining([expect.objectContaining({ id: 'mode', currentValue: 'plan' })]),
+          },
+        }),
+      )
+      expect(ended).toBe(false)
+    } finally {
+      release()
+    }
+    await expect(steer).resolves.toEqual({ outcome: 'promptRequired' })
+    await expect(turn).resolves.toMatchObject({ stopReason: 'end_turn' })
+    const id = syntheticIdOf(fake)
+    expect(fake.seen.some(item => item.method === 'DELETE' && item.path === `${path}/inbox/${id}`)).toBe(true)
+    expect(fake.seen.filter(item => item.path === `${path}/prompt`)).toHaveLength(1)
   })
 
   it.each([
