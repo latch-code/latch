@@ -466,9 +466,15 @@ export async function connectRelay(options: {
         else callback(null, address, family)
       }
     : undefined
-  const timeoutMs = options.timeoutMs ?? 10_000
+  const deadline = performance.now() + (options.timeoutMs ?? 5000)
+  const remainingMs = () => {
+    const remaining = Math.ceil(deadline - performance.now())
+    if (remaining <= 0) throw new Error('Relay upgrade timed out')
+    return remaining
+  }
   const dialOnce = (ca?: string | Buffer): Promise<RelaySocket> =>
     new Promise((resolve, reject) => {
+      const timeoutMs = remainingMs()
       const key = randomBytes(16).toString('base64')
       const req = request(url, {
         agent: false,
@@ -558,7 +564,7 @@ export async function connectRelay(options: {
       spki: options.spki!,
       lookup,
       signal,
-      timeoutMs,
+      timeoutMs: remainingMs(),
       permitted,
       lease,
     })
