@@ -246,6 +246,21 @@ describe('sidebar rows', () => {
   it('keeps long names within the narrowest tree while preserving the full model in its accessible name', async () => {
     const page = await open(1440, 900, 'light')
     try {
+      // With room for all three icons, hovering a row shows 置顶, 归档 and ⋯, and 置顶 toggles in place.
+      const real = row(page, realId)
+      await real.hover()
+      const pin = real.getByRole('button', { name: '置顶：选中的会话', exact: true })
+      await expect.poll(() => pin.isVisible()).toBe(true)
+      await expect.poll(() => real.getByRole('button', { name: '归档：选中的会话', exact: true }).isVisible()).toBe(true)
+      await expect.poll(() => real.getByRole('button', { name: '更多操作：选中的会话', exact: true }).isVisible()).toBe(true)
+      await pin.click()
+      const pinnedShelf = page.locator('.session-group[data-shelf="pinned"]')
+      const unpin = pinnedShelf.getByRole('button', { name: '取消置顶：选中的会话', exact: true })
+      await unpin.waitFor()
+      await pinnedShelf.locator('.session-item').hover()
+      await unpin.click()
+      await pinnedShelf.waitFor({ state: 'detached' })
+
       await page.getByRole('separator', { name: '调整侧栏宽度', exact: true }).focus()
       await page.keyboard.press('Home')
       await expect
@@ -275,7 +290,16 @@ describe('sidebar rows', () => {
       expect(before.titleRight).toBeLessThanOrEqual(before.actionLeft)
       await long.hover()
       await expect.poll(() => actions.evaluate(item => getComputedStyle(item).opacity)).toBe('1')
+      // Narrow row: only 置顶 and 归档 stay visible; ⋯ gives way while right-click still opens the same menu.
+      expect(await long.locator('.session-item-pin').isVisible()).toBe(true)
+      expect(await long.locator('.session-item-archive').isVisible()).toBe(true)
+      expect(await long.locator('.session-item-more').isVisible()).toBe(false)
       expect(await measure()).toEqual(before)
+      await long.click({ button: 'right' })
+      const contextMenu = page.getByRole('menu', { name: /^会话操作：模型名很长的会话/u })
+      await contextMenu.waitFor()
+      await page.keyboard.press('Escape')
+      await contextMenu.waitFor({ state: 'hidden' })
       await page.mouse.move(0, 0)
       await long.locator('.session-item-main').focus()
       await page.keyboard.press('Tab')

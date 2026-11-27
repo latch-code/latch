@@ -449,10 +449,11 @@
 
 /*
  * A session row, always two lines (52): the title in ink-2 with the time or what the run is doing, then the Harness's
- * 12px mark and the model in mono, in muted. The selected row is the neutral selection; hover swaps the status for 归档
- * and ⋯ in a reserved row-end area.
+ * 12px mark and the model in mono, in muted. The selected row is the neutral selection; hover swaps the status for 置顶,
+ * 归档 and ⋯ in a reserved row-end area, dropping ⋯ where the row is too narrow for all three (the context menu stays).
  */
 .session-item {
+  container: session-row / inline-size;
   position: relative;
   display: flex;
   min-width: 0;
@@ -611,7 +612,7 @@
   min-width: 0;
   min-height: 0;
 }
-/* Hover, keyboard focus or an open menu shows 归档 and ⋯ in place of the status; a click leaves the status in view. */
+/* Hover, keyboard focus or an open menu shows 置顶, 归档 and ⋯ in place of the status; a click leaves the status in view. */
 .session-item:hover .session-actions,
 .session-item:has(:focus-visible) .session-actions,
 .session-actions:has([aria-expanded='true']) {
@@ -619,6 +620,18 @@
 }
 .session-item:is(:hover, :has(:focus-visible), :has([aria-expanded='true'])) .session-status {
   opacity: 0;
+}
+@media (hover: hover) and (pointer: fine) {
+  @container session-row (max-width: 215.98px) {
+    .session-item-pin ~ .session-item-archive ~ .session-item-more:not([aria-expanded='true']) {
+      display: none;
+    }
+  }
+  @container session-row (max-width: 245.98px) {
+    .session-item:has(> .team-fold) .session-item-pin ~ .session-item-archive ~ .session-item-more:not([aria-expanded='true']) {
+      display: none;
+    }
+  }
 }
 @media (hover: none), (pointer: coarse) {
   .archived-row,
@@ -641,6 +654,7 @@
     margin-inline-end: 0;
     opacity: 1;
   }
+  .session-item-pin,
   .session-item-archive {
     display: none;
   }

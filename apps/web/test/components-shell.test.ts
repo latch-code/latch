@@ -12,6 +12,7 @@ import { reservedLabel } from '../src/settings/devices/ReservedAttachments.tsx'
 import { ComputerChip } from '../src/components/Computers.tsx'
 import { Sidebar } from '../src/components/Sidebar.tsx'
 import { PhoneSessionList } from '../src/components/PhoneSessionList.tsx'
+import { sessionMenuSections } from '../src/sessionMenu.ts'
 import { settingsSections } from '../src/settings/SettingsPage.tsx'
 import type { ComputersView } from '../src/core/shell.ts'
 
@@ -423,6 +424,50 @@ describe('the sidebar foot and the computer name', () => {
     expect(projectSection).toContain('data-task-id="t-pinned"')
     expect(projectSection).toContain('session-pin')
     expect(projectSection.indexOf('data-task-id="t-pinned"')).toBeLessThan(projectSection.indexOf('data-task-id="t-unpinned"'))
+  })
+
+  it('offers 置顶, 归档 and ⋯ on active rows, 取消置顶 once pinned, and only ⋯ on archived rows', () => {
+    const base = snapshotOf('unix')
+    const menu = (task: TaskSummary) =>
+      sessionMenuSections(task, { rename: noop, pin: noop, archive: noop, export: noop, remove: noop }, true)
+    const renderWith = (tasks: TaskSummary[], filter: 'all' | 'archived' = 'all') =>
+      renderToStaticMarkup(
+        createElement(Sidebar, {
+          snapshot: { ...base, tasks },
+          selectedId: null,
+          isUnread: () => false,
+          cancelling: new Set<string>(),
+          filter,
+          onFilter: noop,
+          onSelect: noop,
+          onNew: noop,
+          onSearch: noop,
+          drawer: false,
+          onClose: noop,
+          connection: 'connected',
+          onRefresh: noop,
+          sessionMenu: menu,
+          now: 0,
+          onSettings: noop,
+          hostProblem: null,
+        }),
+      )
+    const active = renderWith([session({ id: 's-open', title: '待整理会话' })])
+    const pinAt = active.indexOf('aria-label="置顶：待整理会话"')
+    const archiveAt = active.indexOf('aria-label="归档：待整理会话"')
+    const moreAt = active.indexOf('aria-label="更多操作：待整理会话"')
+    expect(pinAt).toBeGreaterThan(-1)
+    expect(pinAt).toBeLessThan(archiveAt)
+    expect(archiveAt).toBeLessThan(moreAt)
+
+    const pinned = renderWith([session({ id: 's-pinned', title: '重点会话', pinned: true })])
+    expect(pinned).toContain('aria-label="取消置顶：重点会话"')
+    expect(pinned).toContain('aria-label="归档：重点会话"')
+
+    const archived = renderWith([session({ id: 's-archived', title: '旧会话', archived: true })], 'archived')
+    expect(archived).not.toContain('session-item-pin')
+    expect(archived).not.toContain('session-item-archive')
+    expect(archived).toContain('aria-label="更多操作：旧会话"')
   })
 })
 

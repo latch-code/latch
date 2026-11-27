@@ -431,7 +431,7 @@ describe('session panel', () => {
     await row('read').waitFor()
   })
 
-  it('reveals 归档 and ⋯ on hover without clipping status text', async () => {
+  it('reveals 置顶, 归档 and ⋯ on hover without clipping status text', async () => {
     await row('read').hover()
     await expect
       .poll(() =>
@@ -447,6 +447,7 @@ describe('session panel', () => {
           .evaluate(item => getComputedStyle(item).opacity),
       )
       .toBe('0')
+    await row('read').getByRole('button', { name: '置顶：已读会话', exact: true }).waitFor()
     await row('read').getByRole('button', { name: '归档：已读会话', exact: true }).waitFor()
     await row('read').getByRole('button', { name: '更多操作：已读会话', exact: true }).waitFor()
     await page.locator('.workbench-home').hover()

@@ -37,7 +37,19 @@ import { MarkTile } from './BrandTile.tsx'
 import { TeamFold, useFoldedShelves } from './TeamFold.tsx'
 import { Menu, rowOf, type MenuSection } from './overlays.tsx'
 import { SessionRowGlyph, SessionStatus, statusLabel, useLastConfirmed, WaitWords } from './SessionStatus.tsx'
-import { Collapse, ICON_STROKE, Icon, IconButton, Tooltip, ArchiveGlyph, ChevronLeftGlyph, MoreGlyph, PinGlyph, PlusGlyph } from '@latch/ui'
+import {
+  Collapse,
+  ICON_STROKE,
+  Icon,
+  IconButton,
+  Tooltip,
+  ArchiveGlyph,
+  ChevronLeftGlyph,
+  MoreGlyph,
+  PinGlyph,
+  PlusGlyph,
+  UnpinGlyph,
+} from '@latch/ui'
 import { originTitle } from '../plugin-pages/model.ts'
 import { connectionTrouble, NavFoot, NavTop, NewSessionRow, type SpacesProps } from '../shell/SpaceNav.tsx'
 import { SESSION_LIST_COPY as COPY } from './sessionList.copy.ts'
@@ -139,7 +151,9 @@ const SessionItem = memo(function SessionItem({
     || showsUnread(status)
     || (status.kind === 'frozen' && waitsOnYou(task))
   const sections = menu(task)
-  const archive = task.archived ? undefined : sections.flatMap(section => section.items).find(item => item.id === 'archive')?.onSelect
+  const items = sections.flatMap(section => section.items)
+  const pin = task.archived ? undefined : items.find(item => item.id === 'pin')?.onSelect
+  const archive = task.archived ? undefined : items.find(item => item.id === 'archive')?.onSelect
   const said = statusLabel(status, task.live)
   const worktree = task.worktree
     ? `${task.worktree.removed ? COPY.worktreeRemoved : COPY.worktree} · ${escapeSecurityText(task.branch ?? task.worktree.branch)}`
@@ -226,6 +240,16 @@ const SessionItem = memo(function SessionItem({
         </Tooltip>
         {members && <TeamFold count={members.count} folded={members.folded} onToggle={members.onToggle} />}
         <span className="session-actions">
+          {pin && (
+            <IconButton
+              className="session-item-pin"
+              size="xs"
+              label={task.pinned ? COPY.unpinSession(title) : COPY.pinSession(title)}
+              tooltip={task.pinned ? COPY.unpin : COPY.pin}
+              icon={task.pinned ? UnpinGlyph : PinGlyph}
+              onClick={pin}
+            />
+          )}
           {archive && (
             <IconButton
               className="session-item-archive"
