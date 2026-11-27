@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { latchEnv } from '@latch/host/env'
 import type { ProviderSettings } from '@latch/protocol'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
+import { recordClipboardWrites } from './helpers/clipboard.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSection, openSettings, tooltipText } from './helpers/layout.ts'
 
@@ -51,6 +52,7 @@ describe('settings pages', () => {
     const { port } = service.address() as AddressInfo
     testHost = await startTestHost({
       uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
+      detectPreset: () => ({ found: false }),
       egressAllow: [`127.0.0.1:${port}`],
     })
     const local = await testHost.enroll({ listener: 'unix', name: '本机桌面端' })
@@ -148,15 +150,21 @@ describe('settings pages', () => {
         await openSection(settings, 'Harness')
         await settings.getByRole('heading', { name: '已安装', exact: true }).waitFor()
         await settings.getByRole('heading', { name: '可以安装', exact: true }).waitFor()
-        // 「怎么装」 installs nothing: it opens the command, copying it, looking again and the way to the start form.
-        const how = settings.getByRole('button', { name: /^怎么装 / }).first()
+        const how = settings.getByRole('button', { name: '怎么装 Antigravity', exact: true })
         await how.click()
+        const install = 'curl -fsSL https://antigravity.google/cli/install.sh | bash'
+        await settings.getByText(install, { exact: true }).waitFor()
+        const copy = settings.getByRole('button', { name: '复制 Antigravity 的安装命令', exact: true })
+        await copy.scrollIntoViewIfNeeded()
         await settings.getByRole('button', { name: '自定义启动方式…', exact: true }).waitFor()
         await settings.getByRole('button', { name: '重新检测', exact: true }).waitFor()
         expect(await how.getAttribute('aria-expanded')).toBe('true')
         await noHorizontalOverflow(page, settings)
         await settle(page)
         await shot('engines')
+        const copied = await recordClipboardWrites(page)
+        await copy.click()
+        expect(await copied()).toEqual([install])
 
         await openSection(settings, '项目')
         await settings.getByRole('heading', { name: '项目', exact: true }).waitFor()

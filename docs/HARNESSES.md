@@ -111,7 +111,7 @@ OpenCode 的后备规则（适配器与预设是同一个程序，按参数区�
 | goose | `goose acp` | Apache-2.0 | `brew install block-goose-cli` | `goose configure` |
 | Claude Agent | `claude`，参数全由线与 SDK 给出；只有适配器时 `claude-agent-acp` | Claude Code 专有，SDK 按 Anthropic 商业条款；适配器 Apache-2.0 | `curl -fsSL https://claude.ai/install.sh \| bash`（或 `brew install --cask claude-code`），2.1.322 起；适配器 `npm i -g @agentclientprotocol/claude-agent-acp`，0.99 起的 0.x | 不提供（`signIn`，见「登录」） |
 | Cursor | `cursor-agent acp` | 专有（Cursor 服务条款） | 官方安装脚本 | `cursor-agent login` |
-| Antigravity | `agy acp --disable-telemetry --process-per-session` | 专有（Google Antigravity 条款） | 1.5.8 起 | `agy acp --login` |
+| Antigravity | `agy acp --disable-telemetry --process-per-session` | 专有（Google Antigravity 条款） | `curl -fsSL https://antigravity.google/cli/install.sh \| bash`，1.5.8 起 | `agy acp --login` |
 | Grok Build | `grok --no-auto-update --permission-mode default agent stdio` | 发布版条款；源码 Apache-2.0 | `npm i -g @xai-official/grok`，1.0.77 起 | `grok login` |
 
 - Cursor 的安装脚本同时建 `agent` 与 `cursor-agent` 两个链接，预设用后者：`agent` 这个名字可能属于别的程序。

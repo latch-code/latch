@@ -266,6 +266,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     license: '专有（Google Antigravity 条款）',
     homepage: 'https://antigravity.google/docs/ide/extensions/acp/',
     description: '使用本机 Antigravity CLI 的模型与登录。',
+    install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
     installNote: '需要 Antigravity CLI 1.5.8 或更高版本',
     login: { command: 'agy', args: ['acp', '--login'] },
     helperCard: {
