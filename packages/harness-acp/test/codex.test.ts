@@ -1701,6 +1701,37 @@ describe('Codex over its app-server', () => {
       expect(said(detail, 'system')).toContain('已强制结束 Codex 进程')
       expect(row(detail)?.text).not.toContain('TOOL_NOT_STARTED')
     })
+
+    describe('when Codex reports the command the forced end killed before it exits itself', () => {
+      // A forced end kills the command before Codex; a Codex that takes a moment to exit says the command ended.
+      const lingering = { FAKE_CODEX_TERMINALS: 'none', FAKE_CODEX_TERM_MS: '300' }
+      /** Interrupted by the forced end, its command's result unknown, though Codex said the command ended. */
+      async function forced(t: Awaited<ReturnType<typeof computer>>, detail: DriverTaskDetail, pid: number) {
+        expect(alive(pid)).toBe(false)
+        const log = await t.log()
+        expect(log.some(entry => entry.event === 'sigterm')).toBe(true)
+        expect(log.some(entry => entry.event === 'command-ended')).toBe(true)
+        expect(detail.summary.status).toBe('interrupted')
+        expect(detail.summary.runEnd).toMatchObject({
+          reason: 'forced-stop',
+          unknownResults: [expect.objectContaining({ messageId: row(detail)?.id })],
+        })
+        expect(row(detail)).toMatchObject({ state: 'failed', text: expect.stringContaining('TOOL_OUTCOME_UNKNOWN') })
+      }
+
+      it('keeps the stop the cancel limit forced interrupted', async () => {
+        const { t, bridge, id, pid } = await holding('hold on', lingering, { cancelGraceMs: 800 })
+        const { detail } = await stop(bridge, id)
+        await forced(t, detail, pid)
+        expect(said(detail, 'system')).toContain('已强制结束 Codex 进程')
+      })
+
+      it('keeps the turn Codex interrupted by itself interrupted once its bound ends Codex', async () => {
+        quick({ commandMs: 200, unaskedMs: 800 })
+        const { t, bridge, id, pid } = await startedCommand('hold self', lingering)
+        await forced(t, await settled(bridge, id), pid)
+      })
+    })
   })
 
   it('adds text to the running turn with turn/steer', async () => {

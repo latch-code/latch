@@ -1790,7 +1790,8 @@ export class CodexWire implements AgentWire {
   }
 
   private finish(turn: Turn, answer: () => void): void {
-    if (this.turn !== turn) return
+    // A turn Latch is ending by force ends with the process (`onClosed`), interrupted, whatever settled meanwhile.
+    if (this.turn !== turn || this.process.killing) return
     clearTimeout(turn.systemError)
     if (!turn.commands.size && turn.memberInterruptions)
       for (const [child, childTurnId] of turn.memberInterruptions) this.team?.finish(child, childTurnId, 'interrupted')
@@ -2293,6 +2294,9 @@ export class CodexWire implements AgentWire {
   }
 
   private onNotification(method: string, params: Record<string, unknown>): void {
+    // Once Latch is ending the process by force, a command it reports ended may be one the kill ended: its result stays
+    // unknown, as for every call the forced end leaves.
+    if (this.process.killing) return
     if (method === 'skills/changed') {
       void this.readSkills()
       return

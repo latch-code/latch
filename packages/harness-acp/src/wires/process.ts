@@ -148,6 +148,7 @@ export class AgentProcess {
   private exitSignal: NodeJS.Signals | null = null
   private leaderExited = false
   private reason?: ExitInfo['reason']
+  private forced = false
   private cause?: string
   private spawnError?: string
   private info?: ExitInfo
@@ -197,6 +198,13 @@ export class AgentProcess {
   get stopping(): boolean {
     return this.info !== undefined || this.reason !== undefined || this.child.stdin.destroyed || this.child.stdin.writableEnded
   }
+  /**
+   * A forced end is under way (`stop('kill')`, also after a gentler stop): what the agent still says may answer for
+   * what the kill did, such as a command `killStrays` ended, and is no report of its own.
+   */
+  get killing(): boolean {
+    return this.forced
+  }
   get pid(): number | undefined {
     return this.child.pid
   }
@@ -231,6 +239,7 @@ export class AgentProcess {
       this.reason = reason
       this.cause = cause
     }
+    if (reason === 'kill') this.forced = true
     if (reason === 'stop' && !this.leaderExited) {
       this.child.stdin.end()
       if (this.endsWithStdin && (await this.waitFor(graceMs))) return this.exited
