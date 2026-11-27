@@ -538,15 +538,17 @@ function MarkdownFileLink({
 
 interface HastNode {
   type: string
+  value?: string
   tagName?: string
   properties?: Record<string, unknown>
   children?: HastNode[]
 }
 
 const INLINE_MEDIA_WRAPPER = new Set(['strong', 'em', 'del', 's', 'mark', 'span', 'sub', 'sup'])
-const MEDIA_SEP_ONLY = /^[\s,，、;；·•/|。.]+$/u
-const MEDIA_SEP_LEAD = /^(?:[,，、;；·•/|。]+|\.(?=\s|$))\s*/u
-const MEDIA_SEP_TRAIL = /^([\s\S]*\S)([,，、;；·•/|]+\s*)$/u
+// Bilateral separators connect peer items on either side; post-only punctuation (:：.。!！?？…) attaches only to what precedes it.
+const MEDIA_SEP_BILATERAL_ONLY = /^(?:[,，、;；·•・/|—–―\s]+|[ \t]+-+[ \t]+)$/u
+const MEDIA_SEP_LEAD = /^\s*(?:[,，、;；:：·•・/|—–―。！？…]+|[.!?]+(?=\s|$))\s*|^\s+-+(?:\s+|$)/u
+const MEDIA_SEP_TRAIL = /(?:[ \t]*[,，、;；·•・/|—–―]+\s*|[ \t]+-+[ \t]+)$/u
 
 function isPotentialMediaNode(child: HastNode | undefined): boolean {
   if (!child || child.type !== 'element') return false
@@ -572,21 +574,32 @@ function hasPotentialMedia(nodes: HastNode[] | undefined): boolean {
   )
 }
 
+function wrapperBlocksMediaEdge(child: HastNode | undefined, edge: 'start' | 'end'): boolean {
+  if (!child || child.type !== 'element' || !INLINE_MEDIA_WRAPPER.has(child.tagName ?? '')) return false
+  const items = child.children?.filter(item => !(item.type === 'text' && !item.value)) ?? []
+  const boundary = edge === 'start' ? items[0] : items.at(-1)
+  if (!boundary || boundary.type === 'text') return true
+  if (INLINE_MEDIA_WRAPPER.has(boundary.tagName ?? '')) return wrapperBlocksMediaEdge(boundary, edge)
+  return !isPotentialMediaNode(boundary)
+}
+
 /**
  * Wraps punctuation separators sitting next to links that may turn into block media (`InlineMedia`), keeping them
  * visible while chips stay inline and letting CSS hide them once block media would strand them on a line of their own.
  */
 function mediaFlowChildren(node: HastNode | undefined, children: ReactNode): ReactNode {
   if (!Array.isArray(children) || !hasPotentialMedia(node?.children)) return children
+  const hast = node?.children?.length === children.length ? node.children : undefined
   const out: ReactNode[] = []
   children.forEach((child, index) => {
     if (typeof child !== 'string') {
       out.push(child)
       return
     }
-    const prevIsElement = index > 0 && typeof children[index - 1] !== 'string'
-    const nextIsElement = index < children.length - 1 && typeof children[index + 1] !== 'string'
-    if (/\S/u.test(child) && MEDIA_SEP_ONLY.test(child) && (prevIsElement || nextIsElement)) {
+    const prevIsElement = index > 0 && typeof children[index - 1] !== 'string' && !wrapperBlocksMediaEdge(hast?.[index - 1], 'end')
+    const nextIsElement =
+      index < children.length - 1 && typeof children[index + 1] !== 'string' && !wrapperBlocksMediaEdge(hast?.[index + 1], 'start')
+    if (/\S/u.test(child) && MEDIA_SEP_BILATERAL_ONLY.test(child) && (prevIsElement || nextIsElement)) {
       const side = prevIsElement && nextIsElement ? 'between' : prevIsElement ? 'after' : 'before'
       out.push(
         <span key={`media-sep-${index}`} className="media-sep" data-sep={side}>
@@ -598,22 +611,24 @@ function mediaFlowChildren(node: HastNode | undefined, children: ReactNode): Rea
     let rest = child
     if (prevIsElement) {
       const lead = MEDIA_SEP_LEAD.exec(rest)
-      if (lead && lead[0].length < rest.length) {
+      if (lead) {
         out.push(
           <span key={`media-sep-lead-${index}`} className="media-sep" data-sep="after">
             {lead[0]}
           </span>,
         )
         rest = rest.slice(lead[0].length)
+        if (!rest) return
       }
     }
     if (nextIsElement) {
       const trail = MEDIA_SEP_TRAIL.exec(rest)
-      if (trail) {
-        out.push(trail[1])
+      const head = trail ? rest.slice(0, trail.index) : ''
+      if (trail && /\S/u.test(head)) {
+        out.push(head)
         out.push(
           <span key={`media-sep-trail-${index}`} className="media-sep" data-sep="before">
-            {trail[2]}
+            {trail[0]}
           </span>,
         )
         return
@@ -638,6 +653,15 @@ const components: Components = {
   },
   th({ node, children, ...props }) {
     return <th {...props}>{mediaFlowChildren(node as HastNode | undefined, children)}</th>
+  },
+  strong({ node, children, ...props }) {
+    return <strong {...props}>{mediaFlowChildren(node as HastNode | undefined, children)}</strong>
+  },
+  em({ node, children, ...props }) {
+    return <em {...props}>{mediaFlowChildren(node as HastNode | undefined, children)}</em>
+  },
+  del({ node, children, ...props }) {
+    return <del {...props}>{mediaFlowChildren(node as HastNode | undefined, children)}</del>
   },
   code({ node: _node, ...props }) {
     if (props.className?.includes('math-inline')) return <MathFormula tex={String(props.children)} />

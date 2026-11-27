@@ -308,15 +308,15 @@ describe('media in replies', () => {
       await writeFile(join(host.workspaceRoot, 'out', 'shot-a.png'), png)
       await writeFile(join(host.workspaceRoot, 'out', 'shot-b.png'), png)
       reply = [
-        '- 已核对真实截图：[shot-a.png](out/shot-a.png)、[shot-b.png](out/shot-b.png)。',
-        '- 无法展示的路径：[missing-a.png](/nonexistent/a.png)、[missing-b.png](/nonexistent/b.png)。',
+        '- 更新 [shot-a.png](out/shot-a.png)、[shot-b.png](out/shot-b.png)：展示最新左上角切换器与多目录分支计数。',
+        '- 无法展示的路径：[missing-a.png](/nonexistent/a.png)、[missing-b.png](/nonexistent/b.png)：保留行内文件标签与冒号。',
       ].join('\n')
       await home.getByRole('textbox', { name: '新会话消息', exact: true }).fill('看多张截图')
       await home.getByRole('button', { name: '发送', exact: true }).click()
       const answer = page.locator('.message-assistant').last()
       await expect.poll(() => answer.locator('img.inline-media-image').count(), SLOW).toBe(2)
       const items = answer.locator('li')
-      // Resolved block images hide the stranded 、 and trailing 。 between/after them.
+      // Resolved block images hide the stranded 、 and leading ： between/after them.
       await expect
         .poll(() =>
           items
@@ -325,7 +325,7 @@ describe('media in replies', () => {
             .evaluateAll(nodes => nodes.map(node => getComputedStyle(node).display)),
         )
         .toEqual(['none', 'none'])
-      // Unresolved links stay inline chips, so their 、 and 。 stay visible.
+      // Unresolved links stay inline chips, so their 、 and ： stay visible.
       await expect
         .poll(() =>
           items
