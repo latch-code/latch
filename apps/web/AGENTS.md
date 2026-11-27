@@ -26,7 +26,7 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 - 仅链 http(s)、mailto，行内代码继承链接。路径无 href，正文与 @ 共用文件图标，目录开树。网址输入可改、发出可点；闭合围栏保留原文。
 - 确认走 `withConfirmation`；未知留原请求，确认后解锁设置。草稿只存文字，按设备与会话存浏览器，14 天过期；像凭据的只存内存，摘录要 `all`；删会话、撤权或退出即清。项目失效保留草稿供显式继续（`composer/WorkspaceRecovery.tsx`）。
 - 用 `@latch/ui` 令牌、层、原语。对话/看板同底，分列滚动。
-- 图标在 `src/assets/brands/`，许可在 `public/licenses/brands/`，用 `?no-inline`，缺图用中性图形。模型面板按账号 Harness ID 读缺失选项，旧会话固定账号。
+- 图标在 `src/assets/brands/`，许可在 `public/licenses/brands/`，用 `?no-inline`，缺图用中性图形。草稿与模型面板按账号 Harness ID 预取和补读缺失选项，旧会话固定账号。
 - 读 `HarnessInfo.capabilities` 与 `level`，不判 Driver；共享编码与 Host、测试向量一致。
 - 会话按项目分组，普通归「无项目」，仅旧会话回退主目录（`test/client-sessions.test.ts`）。
 - 项目菜单仅新会话、编辑。摘要列目录和已知分支，悬停看路径；会话冻结目录；可见时每 30 秒按 Host 的 `checkedOut` 分类（GIT-REVIEW）。

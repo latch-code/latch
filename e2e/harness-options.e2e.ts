@@ -126,7 +126,7 @@ describe("choosing a Harness's own options before the first message", () => {
     }
   })
 
-  const open = async (width: number, theme: 'light' | 'dark'): Promise<Page> => {
+  const open = async (width: number, theme: 'light' | 'dark', beforeEnroll?: (page: Page) => Promise<void>): Promise<Page> => {
     const context = await browser.newContext({
       viewport: { width, height: 900 },
       colorScheme: theme,
@@ -135,6 +135,7 @@ describe("choosing a Harness's own options before the first message", () => {
     })
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
+    await beforeEnroll?.(page)
     await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
     await connected(page)
     return page
@@ -198,10 +199,18 @@ describe("choosing a Harness's own options before the first message", () => {
       .filter({ visible: true })
       .first()
 
-  it("reads Codex's own list when its menu first opens, then lists what a session offered, and starts on the picks", async () => {
-    const page = await open(1440, 'light')
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('默认模型')
-    await expect.poll(() => chip(page, '思考').locator('.model-level').innerText()).toBe('默认')
+  it("prefetches Codex's own list in the draft composer while keeping an earlier choice, and starts on the picks", async () => {
+    let releaseRead!: () => void
+    const holdRead = new Promise<void>(resolve => {
+      releaseRead = resolve
+    })
+    const page = await open(1440, 'light', async created => {
+      await created.route('**/link/api/agents/codex/catalogue', async route => {
+        await holdRead
+        await route.continue().catch(() => {})
+      })
+    })
+    await expect.poll(() => chip(page, '模型').innerText()).toContain('正在读取…')
     // The three controls carry their names for the keys that open them, in a draft as in a session.
     await expect
       .poll(() =>
@@ -212,8 +221,7 @@ describe("choosing a Harness's own options before the first message", () => {
       )
       .toEqual(['harness', 'permission', 'model'])
     const agent = async () => (await readFile(log, 'utf8').catch(() => '')).split('\n').filter(Boolean)
-    expect(await agent()).toEqual([])
-    // The known ladder is available before a read, even though Codex's model/list reports no modes.
+    // The known ladder is available before the prefetch settles, even though Codex's model/list reports no modes.
     await openEntry(page)
     await row(page, /先问你/u).waitFor()
     await row(page, /由模型判断/u).waitFor()
@@ -223,8 +231,9 @@ describe("choosing a Harness's own options before the first message", () => {
     await expect.poll(() => permissionWords(page)).toContain('按规则放行')
     await shot(page, 'permission-before-read-1440-light')
     await page.keyboard.press('Escape')
-    expect(await agent()).toEqual([])
-    // Opening the menu of a Harness nothing is known of reads its list: Codex's own model list, with no session.
+    releaseRead()
+    await expect.poll(() => chip(page, '模型').innerText(), { timeout: 20_000 }).toContain('Small')
+    await expect.poll(() => chip(page, '思考').innerText()).toContain('Low')
     await chip(page, '模型').click()
     await refreshModels(page).waitFor()
     await row(page, /Large/u).waitFor()
@@ -605,7 +614,7 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
   })
 
   const generic = async () => (await owner.json<AppSnapshot>('snapshot')).catalog?.harnesses.find(item => item.id === 'generic')
-  const open = async (width: number, theme: 'light' | 'dark'): Promise<Page> => {
+  const open = async (width: number, theme: 'light' | 'dark', beforeEnroll?: (page: Page) => Promise<void>): Promise<Page> => {
     const context = await browser.newContext({
       viewport: { width, height: 900 },
       colorScheme: theme,
@@ -614,6 +623,7 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
     })
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
+    await beforeEnroll?.(page)
     await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
     await connected(page)
     return page
@@ -627,20 +637,21 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
       .or(page.getByRole('radio', { name, exact: true }))
       .first()
 
-  it('reads its modes on a phone and offers them before the first message', async () => {
+  it('prefetches its modes on a phone when the new-session screen opens and offers them before the first message', async () => {
     const page = await open(390, 'dark')
     try {
+      // On the phone session list, before opening 新建会话, nothing is prefetched yet.
+      expect((await generic())?.catalogue).toBeUndefined()
       await openNew(page)
       const sheet = page.locator('.workbench-home form.composer')
       await sheet.waitFor()
       expect(await sheet.getByRole('button', { name: /^Harness：/u }).getAttribute('aria-label')).toBe('Harness：Generic')
       const permission = phonePermission(page)
-      await expect.poll(() => permissionWords(page)).toBe('权限：默认')
+      await expect.poll(async () => (await generic())?.catalogue, { timeout: 20_000 }).toMatchObject({ source: 'check' })
+      await expect.poll(() => permissionWords(page)).toBe('权限：ask')
       expect(await page.getByText('开始后才知道', { exact: false }).count()).toBe(0)
       await shot(page, 'permission-before-read-390-dark')
-      // Only 权限 is opened: the model row never is.
       await permission.click()
-      await expect.poll(async () => (await generic())?.catalogue, { timeout: 20_000 }).toMatchObject({ source: 'check' })
       await mode(page, 'auto')
         .waitFor()
         .catch(async (error: unknown) => {
@@ -656,7 +667,7 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
     }
   })
 
-  it('reads its modes on a desktop when 权限 opens first', async () => {
+  it('prefetches its modes on a desktop before 权限 opens', async () => {
     const page = await open(1280, 'light')
     try {
       expect(
@@ -666,11 +677,10 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
           .getAttribute('aria-label'),
       ).toBe('Harness：Generic')
       const chip = permissionControl(page)
-      await expect.poll(() => permissionWords(page)).toBe('权限：默认')
-      await chip.click()
       await expect.poll(async () => (await generic())?.catalogue, { timeout: 20_000 }).toMatchObject({ source: 'check' })
-      await mode(page, 'auto').waitFor()
       await expect.poll(() => permissionWords(page)).toBe('权限：ask')
+      await chip.click()
+      await mode(page, 'auto').waitFor()
       await shot(page, 'permission-read-1280-light')
     } finally {
       await page.context().close()
@@ -678,8 +688,8 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
   })
 })
 
-/** A Harness Latch has a profile for, whose read opens a session and so reports its modes too. */
-describe('opening 权限 first on a Harness whose lists are read only on request', () => {
+/** A Harness Latch has a profile for, whose read opens a session and so reports its modes and per-model thinking too. */
+describe('prefetching composer options and keeping a choice made while reading', () => {
   let directory: string
   let log: string
   let host: TestHost
@@ -720,8 +730,7 @@ describe('opening 权限 first on a Harness whose lists are read only on request
     })
     expect(saved.status).toBe(201)
     const qwen = (await owner.json<AppSnapshot>('snapshot')).catalog!.harnesses.find(harness => harness.id === 'qwen')
-    // Its sessions start the person's MCP servers and hooks, so nothing reads its lists unasked.
-    expect(qwen?.catalogueRead).toEqual({ when: 'request', modes: true })
+    expect(qwen?.catalogueRead).toEqual({ when: 'select', modes: true })
     browser = await chromium.launch(browserLaunchOptions())
     await mkdir(OUTPUT, { recursive: true })
   })
@@ -731,7 +740,7 @@ describe('opening 权限 first on a Harness whose lists are read only on request
     await rm(directory, { recursive: true, force: true })
   })
 
-  it('offers the known modes without reading, and keeps a choice made before the person reads the list', async () => {
+  it('prefetches models and thinking on mount while keeping a choice made before the read finishes', async () => {
     const context = await browser.newContext({
       viewport: { width: 1280, height: 900 },
       colorScheme: 'dark',
@@ -741,6 +750,25 @@ describe('opening 权限 first on a Harness whose lists are read only on request
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
     try {
+      let releaseInitial!: () => void
+      const initialGate = new Promise<void>(resolve => {
+        releaseInitial = resolve
+      })
+      let release!: () => void,
+        modelReads = 0
+      const gate = new Promise<void>(resolve => {
+        release = resolve
+      })
+      await page.route('**/link/api/agents/qwen/catalogue', async route => {
+        const body = route.request().postDataJSON() as { model?: string } | null
+        if (body?.model === 'large') {
+          modelReads++
+          await gate
+        } else {
+          await initialGate
+        }
+        return route.continue()
+      })
       await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
       await connected(page)
       const shot = (name: string) => page.screenshot({ path: `${OUTPUT}/${name}.png`, animations: 'disabled' })
@@ -761,10 +789,9 @@ describe('opening 权限 first on a Harness whose lists are read only on request
       await rule.waitFor({ timeout: 20_000 })
       await rule.click()
       await expect.poll(() => permissionWords(page)).toBe('权限：由模型判断')
-      // Opening 权限 started nothing.
-      expect(await sent()).toEqual([])
       await shot('permission-request-1280-dark')
-      // The person reads the list from the model menu; the choice made before it stays.
+      releaseInitial()
+      await expect.poll(sent).toHaveLength(1)
       await page
         .getByRole('button', { name: /^模型：/u })
         .filter({ visible: true })
@@ -772,20 +799,6 @@ describe('opening 权限 first on a Harness whose lists are read only on request
         .click()
       const menu = page.locator('[role=menu], [role=listbox]').filter({ visible: true }).first()
       await menu.getByText('刷新模型列表', { exact: true }).waitFor()
-      await expect.poll(sent).toHaveLength(1)
-      // A model with unknown levels is read while the panel stays open. Its late answer still belongs to that model.
-      let release!: () => void,
-        modelReads = 0
-      const gate = new Promise<void>(resolve => {
-        release = resolve
-      })
-      await page.route('**/link/api/agents/qwen/catalogue', async route => {
-        if (route.request().postDataJSON().model === 'large') {
-          modelReads++
-          await gate
-        }
-        return route.continue()
-      })
       const large = menu.getByRole('menuitemradio', { name: /^Large/u })
       const small = menu.getByRole('menuitemradio', { name: /^Small/u })
       const max = page.locator('.ui-board').filter({ visible: true }).getByRole('menuitemradio', { name: /^Max/u })

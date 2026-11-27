@@ -206,6 +206,14 @@ public enum PhoneStart {
         }
         return result
     }
+    public static func commandCatalogueFields(_ catalog: NativeJSON, choice: PhoneStartChoice) -> [String: NativeJSON] {
+        let start = newSessionFields(catalog, choice: choice, prompt: "")
+        var result: [String: NativeJSON] = [:]
+        for key in ["workspaceId", "mode", "model", "config"] {
+            if let value = start[key] { result[key] = value }
+        }
+        return result
+    }
     /** A fork can forward a service named by its own plan. */
     public static func fields(_ catalog: NativeJSON, choice: PhoneStartChoice, prompt: String, forwarded: PhoneModelChoice? = nil) -> [String: NativeJSON] {
         var choice = choice

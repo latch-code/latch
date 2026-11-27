@@ -95,7 +95,12 @@ describe('pi over its own RPC mode', () => {
     }
   })
 
-  const open = async (width: number, theme: 'light' | 'dark', testHost = host): Promise<Page> => {
+  const open = async (
+    width: number,
+    theme: 'light' | 'dark',
+    testHost = host,
+    beforeEnroll?: (page: Page) => Promise<void>,
+  ): Promise<Page> => {
     const context = await browser.newContext({
       viewport: { width, height: 900 },
       colorScheme: theme,
@@ -104,6 +109,7 @@ describe('pi over its own RPC mode', () => {
     })
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
+    await beforeEnroll?.(page)
     await enrollBrowser(page, testHost, { scopes: ['view', 'run', 'admin'] })
     await connected(page)
     return page
@@ -170,24 +176,23 @@ describe('pi over its own RPC mode', () => {
     await expect.poll(executed).toBe(before + 1)
   }
 
-  it('reads pi on the first model-panel opening, then runs, stops and keeps the session after a reload', async () => {
-    const page = await open(1440, 'light')
-    await expect.poll(() => chip(page, 'Harness').innerText()).toContain('pi')
-    await expect.poll(() => chip(page, '模型').innerText()).toContain('默认模型')
-    await expect.poll(() => permissionWords(page)).toContain('先问你')
-    // Choosing pi alone starts nothing. Hold only the first catalogue request to check the in-flight and reopened panel.
-    expect(await received()).toEqual([])
+  it('prefetches pi in the draft composer, then runs, stops and keeps the session after a reload', async () => {
     let reads = 0
     let release!: () => void
     const gate = new Promise<void>(resolve => {
       release = resolve
     })
-    await page.route('**/link/api/agents/pi/catalogue', async route => {
-      reads++
-      if (reads === 1) await gate
-      if (reads === 2) return route.fulfill({ status: 503, json: { error: 'fixture-unavailable' } })
-      return route.continue()
+    const page = await open(1440, 'light', host, async created => {
+      await created.route('**/link/api/agents/pi/catalogue', async route => {
+        reads++
+        if (reads === 1) await gate
+        if (reads === 2) return route.fulfill({ status: 503, json: { error: 'fixture-unavailable' } })
+        return route.continue()
+      })
     })
+    await expect.poll(() => chip(page, 'Harness').innerText()).toContain('pi')
+    await expect.poll(() => permissionWords(page)).toContain('先问你')
+    await expect.poll(() => reads).toBe(1)
     await chip(page, '模型').click()
     const loading = page.getByText('正在读取 pi 的模型列表…', { exact: true })
     try {

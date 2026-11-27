@@ -4993,6 +4993,96 @@ describe('command cache from real sessions', () => {
     await vi.waitFor(async () => expect((await bridge.commandCatalogue?.(context))?.catalogue.commands).toEqual(revised.slice(0, 200)))
   })
 
+  it('clips oversized command descriptions and hints while still ignoring malformed command names', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-long-command-'))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const file = join(root, 'commands.json')
+    const longDescription = `${'技'.repeat(999)}🙂extra`
+    const longHint = `${'参'.repeat(499)}🙂tail`
+    await writeFile(
+      file,
+      JSON.stringify([
+        { name: 'bytedcli', description: longDescription, input: { hint: longHint } },
+        { name: 'plain', description: null, input: { hint: '' } },
+      ]),
+    )
+    const fixture = await setup({ FAKE_ACP_SETUP_COMMANDS: '1', FAKE_ACP_COMMANDS_FILE: file })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ cwd: fixture.workspace, prompt: 'echo hello', requestId: rid() })
+    const commands = (await settled(bridge, sessionId)).commands
+    expect(commands).toEqual([
+      { name: 'bytedcli', description: `${'技'.repeat(999)}…`, inputHint: `${'参'.repeat(499)}…` },
+      { name: 'plain' },
+    ])
+    await writeFile(file, JSON.stringify([{ name: 'invalid name', description: 'bad' }]))
+    await bridge.prompt(sessionId, 'plan', rid())
+    expect((await settled(bridge, sessionId)).commands).toEqual(commands)
+  })
+
+  it.each(['delayed', 'response'] as const)(
+    'captures Harness-own commands during a catalogue read (%s) and keeps project session reports isolated',
+    async mode => {
+      const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-own-commands-')))
+      cleanups.push(() => rm(root, { recursive: true, force: true }))
+      const projectA = join(root, 'project-a')
+      const projectB = join(root, 'project-b')
+      await mkdir(projectA)
+      await mkdir(projectB)
+      const projectFile = join(root, 'project-commands.json')
+      await writeFile(projectFile, JSON.stringify([{ name: 'project-only', description: 'Only in project A' }]))
+      const ownCommands = [
+        { name: 'compact', description: 'Compact context' },
+        { name: 'review', input: { hint: '[branch]' } },
+      ]
+      const fixture = await setup({
+        FAKE_ACP_CONFIG: 'options',
+        FAKE_ACP_SETUP_COMMANDS: mode,
+        FAKE_ACP_COMMANDS_FILE: projectFile,
+        FAKE_ACP_COMMANDS_CWD: projectA,
+        FAKE_ACP_COMMANDS: JSON.stringify(ownCommands),
+      })
+      const bridge = await fixture.open(() => [fixture.workspace, projectA, projectB])
+      expect(bridge.commandCatalogueState?.()).toBeUndefined()
+      expect(await bridge.commandCatalogue?.({ cwd: projectA })).toBeUndefined()
+
+      expect(await bridge.readCatalogue!({ auto: false })).toEqual({ ran: true })
+      const state = bridge.commandCatalogueState?.()
+      expect(state).toMatchObject({ checked: true, reportedAt: expect.any(String) })
+      const expectedOwn = [
+        { name: 'compact', description: 'Compact context' },
+        { name: 'review', inputHint: '[branch]' },
+      ]
+      expect(await bridge.commandCatalogue?.({ ownOnly: true })).toEqual({
+        catalogue: { commands: expectedOwn, reportedAt: state!.reportedAt!, source: 'harness' },
+      })
+      expect(await bridge.commandCatalogue?.({ cwd: projectB })).toEqual({
+        catalogue: { commands: expectedOwn, reportedAt: state!.reportedAt!, source: 'harness' },
+      })
+
+      const { sessionId } = await bridge.createTask({ cwd: projectA, prompt: 'echo hello', requestId: rid() })
+      await settled(bridge, sessionId)
+      await vi.waitFor(async () =>
+        expect((await bridge.detail(sessionId)).commands).toEqual([{ name: 'project-only', description: 'Only in project A' }]),
+      )
+      await vi.waitFor(async () =>
+        expect(await bridge.commandCatalogue?.({ cwd: projectA })).toMatchObject({
+          sourceSessionId: sessionId,
+          catalogue: { source: 'previous-session', commands: [{ name: 'project-only', description: 'Only in project A' }] },
+        }),
+      )
+      expect(await bridge.commandCatalogue?.({ cwd: projectB })).toEqual({
+        catalogue: { commands: expectedOwn, reportedAt: state!.reportedAt!, source: 'harness' },
+      })
+
+      await bridge.close()
+      const restored = await fixture.open(() => [fixture.workspace, projectA, projectB])
+      expect(restored.commandCatalogueState?.()).toEqual(state)
+      expect(await restored.commandCatalogue?.({ cwd: projectB })).toEqual({
+        catalogue: { commands: expectedOwn, reportedAt: state!.reportedAt!, source: 'harness' },
+      })
+    },
+  )
+
   it('publishes a durable command-report version after cache validation, without changing it for ordinary messages', async () => {
     const fixture = await setup()
     const bridge = await fixture.open()

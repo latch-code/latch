@@ -11,20 +11,6 @@ import { startTestHost } from './helpers/host.ts'
 import { permissionControl, permissionWords, tooltipText } from './helpers/layout.ts'
 import { promptValue } from './helpers/prompt.ts'
 
-/** Opening the model menu reads a request-only Harness, including its modes. */
-async function readListsFromMenu(page: Page): Promise<void> {
-  await page
-    .getByRole('button', { name: /^模型：/u })
-    .filter({ visible: true })
-    .first()
-    .click()
-  const menu = page.locator('[role=menu], [role=listbox]').filter({ visible: true }).first()
-  await menu.getByText('刷新模型列表', { exact: true }).waitFor()
-  await page.keyboard.press('Escape')
-  // Away from the chip, so its own tooltip is not the one a later check reads.
-  await page.mouse.move(0, 0)
-}
-
 describe('conversation forks', () => {
   it('opens a selectable new session, folds authoritative context and returns to its source at desktop, tablet and phone widths', async () => {
     const host = await startTestHost()
@@ -313,9 +299,7 @@ describe('conversation forks', () => {
         }).observe(document.body, { subtree: true, childList: true, characterData: true })
       })
       await pick(page, 'goose').click()
-      // Read only when someone asks, as goose's sessions start the person's extensions.
-      await page.locator('.fork-missed').first().waitFor()
-      await readListsFromMenu(page)
+      // Choosing goose in the fork draft prefetches its options automatically while keeping the transitional notice first.
       const mapped = ['没有沿用来源会话的模型「Large」：goose 在这里不能选。', '权限「按规则放行」→ 更严的「先问你」']
       await expect.poll(() => notice.locator('.fork-missed').allInnerTexts(), { timeout: 20_000 }).toEqual(mapped)
       const shown = new Set(await page.evaluate(() => (window as unknown as { forkLines: string[] }).forkLines))

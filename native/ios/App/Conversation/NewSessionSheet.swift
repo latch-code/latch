@@ -30,10 +30,22 @@ struct NewSessionSheet: View {
     @State private var openedHost: UUID?
     @State private var openedContent: UUID?
     @State private var delivered = false
+    @State private var draftCatalogue: NativeJSON?
+    @State private var draftCommandsLoaded = false
+    @State private var readingDraftCommands = false
+    @State private var askedCommandCatalogue: Set<String> = []
+    @State private var askedDraftCatalogue: Set<String> = []
+    @State private var askedThinkingModels: Set<String> = []
     private var draftKey: String { fork.map { "fork-" + $0.id } ?? PhoneModel.newSessionTray }
+    private var draftCommands: [NativeJSON]? {
+        guard fork == nil, let draftCatalogue, case let .array(items) = draftCatalogue["commands"] else { return nil }
+        return items
+    }
     private var slashContext: PhoneSlashContext {
         var value = PhoneSlashContext(bodyOpen: model.connected && model.verifiedUntil.map { $0 > Date() } == true, canRun: model.canRun, harness: harness)
         value.pending = starting || model.busy || !model.pending.isEmpty; value.firstTurn = fork != nil
+        value.commandSource = fork == nil ? draftCatalogue?["source"].string : nil
+        value.readingCommands = fork == nil && draftCommands == nil && (readingDraftCommands || harness["catalogueRead"]["running"].bool)
         value.harnessId = choice.harnessId; value.projectId = choice.workspaceId
         if canPickModel { value.actions.insert(.model) }
         value.actionReasons[.new] = "已经在新会话里"
@@ -45,8 +57,43 @@ struct NewSessionSheet: View {
             context: MentionContext(model, scope: scope, owner: draftKey),
             enabled: focused && slashSpace >= 44 && slashContext.bodyOpen && !slashContext.pending)
     }
-    private var slashMenu: PhoneSlashMenu? { slashSpace < 44 ? nil : slash.menu(prompt, commands: nil, context: slashContext, focused: focused) }
+    private var slashMenu: PhoneSlashMenu? { slashSpace < 44 ? nil : slash.menu(prompt, commands: draftCommands, context: slashContext, focused: focused) }
     private var slashRead: SlashReadKey { SlashReadKey(model: model, enabled: focused && slashContext.bodyOpen, retry: slash.retry) }
+    private var draftCommandsKey: String {
+        guard fork == nil, focused, slashContext.bodyOpen, let id = choice.harnessId,
+              harness["status"].string == "ready", harness["commandCatalogue"] != .null else { return "" }
+        let fields = PhoneStart.commandCatalogueFields(catalog, choice: choice)
+        let encoded = (try? NativeJSON.object(fields).encoded()).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        let cat = (try? harness["commandCatalogue"].encoded()).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        return "\(model.generation)|\(model.privateSnapshot.epoch)|\(id)|\(cat)|\(encoded)"
+    }
+    private var draftCataloguePrefetchKey: String {
+        guard model.canRun, model.hasContentWindow, let id = choice.harnessId,
+              harness["status"].string == "ready", harness["offer"] == .null,
+              harness["catalogueRead"]["when"].string == "select", !harness["catalogueRead"]["running"].bool,
+              harness["catalogue"] == .null, harness["catalogueRead"]["last"] == .null else { return "" }
+        let generation = harness["commandCatalogue"]["generation"].string ?? ""
+        return "\(model.generation)|\(id)|\(generation)"
+    }
+    private var unreadThinkingPrefetchKey: String {
+        let native = !PhoneStart.usesServices(harness) && choice.model == nil && plan?.forwarded == nil
+        guard native, model.canRun, model.hasContentWindow, let id = choice.harnessId,
+              harness["status"].string == "ready", harness["offer"] == .null,
+              harness["catalogueRead"]["when"].string == "select", !harness["catalogueRead"]["running"].bool,
+              let value = PhoneStart.unreadThinkingModel(harness, model: nativeModel) else { return "" }
+        let reportedAt = harness["catalogue"]["reportedAt"].string ?? ""
+        return "\(model.generation)|\(id)|\(reportedAt)|\(value)"
+    }
+    private var slashCatalogueKey: String {
+        guard fork == nil, slashMenu != nil, draftCommandsLoaded, draftCommands == nil,
+              model.canRun, model.hasContentWindow, let id = choice.harnessId,
+              harness["status"].string == "ready", harness["offer"] == .null, slashContext.supportsCommands,
+              harness["commandCatalogue"]["checked"] != .bool(true),
+              harness["catalogueRead"] != .null, !harness["catalogueRead"]["running"].bool,
+              harness["catalogueRead"]["last"]["ok"] != .bool(false) else { return "" }
+        let generation = harness["commandCatalogue"]["generation"].string ?? ""
+        return "\(model.generation)|\(id)|\(generation)"
+    }
     private var slashReason: String? { if case let .unavailable(reason) = PhoneSlash.action(prompt, context: slashContext) { reason } else { nil } }
     private let attachKey = PhoneModel.newSessionTray
     /** A fork carries its source's conversation; attachments go with a plain new session only. */
@@ -106,13 +153,13 @@ struct NewSessionSheet: View {
                 if let slashReason { Text(slashReason).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .leading) }
                 MentionSuggestions(input: mentions, maximumHeight: slashSpace)
                 if let menu = slashMenu {
-                    SlashSuggestions(menu: menu, active: slash.active(menu, text: prompt), engine: PhoneStart.engineName(harness), mark: PhoneStart.mark(harness),
+                    SlashSuggestions(menu: menu, active: slash.active(menu, text: prompt), engine: PhoneStart.engineName(harness) + (draftCatalogue?["source"].string == "previous-session" ? "（上次会话）" : ""), mark: PhoneStart.mark(harness),
                         loading: slash.loading, failure: slash.failure, maximumHeight: slashSpace, retry: { slash.retry += 1 },
                         choose: { slash.complete(menu, option: $0, text: $prompt, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending) })
                 }
                 LocalTextEditor(text: $prompt, placeholder: "要做什么？", maximumLines: slashMenu == nil && !mentions.isOpen ? 6 : 3, focused: $focused,
                     selection: $slash.selection, composing: $slash.composing, selectionRequest: $slash.selectionRequest,
-                    mentionMarkers: mentions.markers, commandKeys: slashKeys, onCommand: slashKey, suffixHint: slash.hint(prompt, commands: [], enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending))
+                    mentionMarkers: mentions.markers, commandKeys: slashKeys, onCommand: slashKey, suffixHint: slash.hint(prompt, commands: draftCommands ?? [], enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending))
                     .overlay(alignment: .topLeading) { if prompt.isEmpty { Text("要做什么？").font(PhoneTheme.body).foregroundStyle(PhoneTheme.faint).allowsHitTesting(false).accessibilityHidden(true) } }
                     .padding(14).padding(.bottom, 40).frame(minHeight: 110, alignment: .topLeading)
                     .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 16))
@@ -171,11 +218,42 @@ struct NewSessionSheet: View {
         }
         .onChange(of: prompt) { _, value in slash.changed(value) }
         .onChange(of: model.privateSnapshot.epoch) { _, _ in
-            slash.clear()
+            slash.clear(); draftCatalogue = nil; draftCommandsLoaded = false
+            askedCommandCatalogue = []; askedDraftCatalogue = []; askedThinkingModels = []
             if !model.hasContentWindow || model.generation != openedHost { modelPicker = false }
         }
         .onChange(of: mentions.context) { _, _ in mentionState.clear() }
         .task(id: slashRead) { await slash.load(model, key: slashRead) }
+        .task(id: draftCataloguePrefetchKey) {
+            let key = draftCataloguePrefetchKey
+            guard !key.isEmpty, !askedDraftCatalogue.contains(key), let id = choice.harnessId else { return }
+            askedDraftCatalogue.insert(key)
+            try? await model.refreshHarnessModels(id, automatic: true)
+        }
+        .task(id: unreadThinkingPrefetchKey) {
+            let key = unreadThinkingPrefetchKey
+            guard !key.isEmpty, !askedThinkingModels.contains(key), let id = choice.harnessId,
+                  let value = PhoneStart.unreadThinkingModel(harness, model: nativeModel) else { return }
+            askedThinkingModels.insert(key)
+            try? await model.refreshHarnessModels(id, automatic: true, selectedModel: value)
+        }
+        .task(id: draftCommandsKey) {
+            let key = draftCommandsKey
+            draftCatalogue = nil; draftCommandsLoaded = false
+            guard !key.isEmpty, let id = choice.harnessId else { return }
+            let fields = PhoneStart.commandCatalogueFields(catalog, choice: choice)
+            let loaded = await model.readHarnessCommands(id, fields: fields)
+            guard !Task.isCancelled, draftCommandsKey == key else { return }
+            draftCatalogue = loaded; draftCommandsLoaded = true
+        }
+        .task(id: slashCatalogueKey) {
+            let key = slashCatalogueKey
+            guard !key.isEmpty, !askedCommandCatalogue.contains(key), let id = choice.harnessId else { return }
+            askedCommandCatalogue.insert(key)
+            readingDraftCommands = true
+            defer { readingDraftCommands = false }
+            try? await model.refreshHarnessModels(id, automatic: false)
+        }
         // The sheet goes once the cover has; the session opens once both have (InboxView's onDismiss).
         .fullScreenCover(item: $importing, onDismiss: { if model.openAfterDismiss != nil { dismiss() } }) { scope in
             HistoryImportView(project: scope.project, sources: scope.sources) { taskId in
@@ -188,7 +266,7 @@ struct NewSessionSheet: View {
         // Closing the sheet lets go of what was attached here; the Host's drafts go too.
         // Only a real dismiss lets go: not while starting or opening the window for it, an unconfirmed start, or 接入已有会话 over it.
         .onDisappear {
-            slash.clear(); mentionState.clear()
+            slash.clear(); mentionState.clear(); draftCatalogue = nil; draftCommandsLoaded = false; readingDraftCommands = false
             if !delivered, model.generation == openedHost, model.privateSnapshot.epoch == openedContent,
                model.verifiedUntil.map({ $0 > Date() }) == true { model.holdDraft(prompt, for: draftKey) }
             if PhoneAttachments.dropsOnClose(key: attachKey, pending: model.pending, starting: starting, verifying: model.verifying, covered: importing != nil) {

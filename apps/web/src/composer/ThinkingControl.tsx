@@ -16,10 +16,18 @@ const COPY = defineCopy(
 )
 
 /** Reads what the model a draft picked offers, once, as soon as it is picked. Draws nothing. */
-export function ReadPickedModel({ harness, model }: { harness: HarnessInfo; model: string }) {
+export function ReadPickedModel({
+  harness,
+  model,
+  onRead,
+}: {
+  harness: HarnessInfo
+  model: string
+  onRead?: (() => void | Promise<void>) | undefined
+}) {
   useEffect(() => {
-    readModelOnSelect(harness, model)
-  }, [harness, model])
+    readModelOnSelect(harness, model, onRead)
+  }, [harness, model, onRead])
   return null
 }
 

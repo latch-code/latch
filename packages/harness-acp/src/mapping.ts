@@ -42,6 +42,16 @@ export function clip(text: string, limit: number): string {
   return text.length <= limit ? text : `${text.slice(0, limit)}${TRUNCATED}`
 }
 
+/** Keeps a bounded protocol field within `limit` UTF-16 code units without splitting a surrogate pair. */
+export function truncateUnits(text: string, limit: number): string {
+  if (text.length <= limit) return text
+  if (limit <= 1) return limit === 1 ? '…' : ''
+  let end = limit - 1
+  const code = text.charCodeAt(end - 1)
+  if (code >= 0xd800 && code <= 0xdbff) end--
+  return `${text.slice(0, end)}…`
+}
+
 /** Appends streamed text; once the limit is reached the marker is added once and further text is dropped. */
 export function append(current: string, piece: string, limit = TEXT_LIMIT): string {
   if (current.length >= limit) return current

@@ -1302,4 +1302,41 @@ describe('Claude’s own store, read only where the Host lets the wire', () => {
     expect(routeWarnings({ ...settings, ownEndpoint: true }, undefined)).toEqual([expect.stringMatching(/ANTHROPIC_BASE_URL/u)])
     expect(routeWarnings(undefined, route)).toEqual([])
   })
+
+  it('reports per-model effort options up front and truncates oversized command descriptions within protocol bounds', async () => {
+    const h = harness()
+    const proto = FakeQuery.prototype as unknown as { initializationResult: () => Promise<unknown> }
+    const original = proto.initializationResult
+    proto.initializationResult = async () => ({
+      models: [...MODELS, { value: 'haiku', displayName: 'Haiku', resolvedModel: 'claude-haiku-5', supportsEffort: false }],
+      commands: [{ name: '/bytedcli', description: `${'命'.repeat(999)}🙂tail`, argumentHint: `${'参'.repeat(499)}🙂tail` }],
+      account: { email: 'someone@example.com', organization: 'Org', subscriptionType: 'max', apiProvider: 'firstParty' },
+    })
+    try {
+      const opened = (await h.wire.request('session/new', { cwd: '/work', mcpServers: [] }, 5_000)) as {
+        _meta?: {
+          latch?: { perModel?: Array<{ model: string; options: Array<{ category?: string; options?: Array<{ value: string }> }> }> }
+        }
+      }
+      expect(opened._meta?.latch?.perModel).toEqual([
+        expect.objectContaining({
+          model: 'default',
+          options: [expect.objectContaining({ category: 'thought_level' })],
+        }),
+        expect.objectContaining({
+          model: 'sonnet',
+          options: [expect.objectContaining({ category: 'thought_level' })],
+        }),
+        { model: 'haiku', options: [] },
+      ])
+      const reported = updates(h, 'available_commands_update').at(-1)?.availableCommands as Array<{
+        name: string
+        description?: string
+        input?: { hint?: string }
+      }>
+      expect(reported).toEqual([{ name: 'bytedcli', description: `${'命'.repeat(999)}…`, input: { hint: `${'参'.repeat(499)}…` } }])
+    } finally {
+      proto.initializationResult = original
+    }
+  })
 })

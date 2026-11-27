@@ -544,7 +544,8 @@ ACP 的 `ToolGatewayCallContext.runId` 由 Driver 在收到工具调用时取自
 | `readConfig?` | 从 Agent 本身读一项的当前值，不用 Driver 记下的值，只在会话空闲时读，不改任何设置；读取期间拒绝这个会话的发送、追加与修改，并先结束收到未回答修改的进程。`source: 'launch'` 的选项是 Host 管理的启动设置，不能拿持久化值当读回 |
 | `readCatalogue?` | 不发提示读取开始前的选项，同时只有一次读取。是否自动读取由 `catalogueRead()` 决定，不在需人请求的 Harness 上自动运行 |
 | `classifyConfigChange?` | 修改相对会话预期权限模式是 `neutral`、`stricter` 还是 `wider`；Host 只用它决定是否写放宽模式的审计 |
-| `commandCatalogue?` | 只读上次真实会话报告的命令，不启动或探测程序。`sourceSessionId` 只供 Host 复查来源与草稿授权，不交给设备；目录不授予能力或执行权限（[HARNESSES.md](HARNESSES.md#会话命令)） |
+| `commandCatalogue?` | 只读上次真实会话报告的项目命令（附仅供 Host 复查的 `sourceSessionId`）或该定义自身的命令目录（`source: 'harness'`），不启动或探测程序；目录不授予能力或执行权限（[HARNESSES.md](HARNESSES.md#会话命令)） |
+| `commandCatalogueState?` | 与 `commandCatalogue` 配套，返回当前定义是否已核对过自身命令（`checked`）及报告时间（`reportedAt`），供快照的 `HarnessInfo.commandCatalogue` 标记 |
 | `latestCommandReport?(accept?, verifySource?)` | 从普通会话缓存选最新有效报告，附 `workspaceId`。`accept` 同步核对来源，`verifySource` 异步核对项目。项目不可用时继续查下一份。只有 `current()` 能在发送前同步确认报告、定义和真实目录，Host 才发布该 Harness 的报告。声明 `extensionSupport.plugins: 'command-sources'` 时可附 `plugins`（短名和可选截断标记），供「设置 › 扩展」显示。见 [HARNESSES.md](HARNESSES.md#扩展) |
 | `launchPreview?` | L3 Driver：描述新建会话将启动什么，用于启动指纹与审计；环境变量只给名字 |
 | `promptCapabilities?` | 能力要启动后才知道的 Driver 返回最近一次为当前定义启动时报告的 `{ images, text }`；返回了就以它为准，之前返回 `undefined` 时用声明 |

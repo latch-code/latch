@@ -81,7 +81,14 @@ const waiting = new Map<string, Map<string | undefined, Promise<CatalogueRead | 
 const failures = new Map<string, { observation: string; offered: boolean; cause: unknown }>()
 const failureKey = (harness: HarnessInfo, model?: string) => JSON.stringify([harness.id, model])
 const observation = (harness: HarnessInfo) =>
-  JSON.stringify([harness.commandCatalogue?.generation, harness.bound?.id, harness.catalogue?.reportedAt, harness.catalogueRead?.last?.at])
+  JSON.stringify([
+    harness.commandCatalogue?.generation,
+    harness.commandCatalogue?.checked,
+    harness.commandCatalogue?.reportedAt,
+    harness.bound?.id,
+    harness.catalogue?.reportedAt,
+    harness.catalogueRead?.last?.at,
+  ])
 function failedRead(harness: HarnessInfo, model?: string) {
   const failed = failures.get(failureKey(harness, model))
   if (failed && (failed.observation === observation(harness) || (failed.offered && !harness.catalogue && !harness.catalogueRead?.last)))
@@ -188,6 +195,24 @@ export function readOnSelect(harness: HarnessInfo, onDone?: () => void | Promise
       selected.delete(harness.id)
       void onDone?.()
     })
+}
+
+/** Opening a draft's slash menu asks for the Harness's own commands once when no cached or definition-level report exists yet. */
+export function slashCatalogueTarget(
+  harness: HarnessInfo | undefined,
+  access: Pick<DeviceAccess, 'scopes' | 'local' | 'admin'>,
+): harness is HarnessInfo {
+  const read = harness?.catalogueRead
+  if (!harness || !access.scopes.has('run') || harness.status !== 'ready' || read?.running || waiting.has(harness.id)) return false
+  if (
+    harness.capabilities.permission.enforcement === 'latch'
+    || harness.extensionSupport?.reports.includes('commands') === false
+    || harness.commandCatalogue?.checked
+  )
+    return false
+  if (harness.offer) return Boolean(access.local && access.admin && !failedRead(harness))
+  if (!read) return false
+  return read.last?.ok !== false && !failedRead(harness)
 }
 
 /** A deliberate visit to a draft's model panel asks for missing choices for this definition, never a timed refresh. */
@@ -453,9 +478,13 @@ export function readsModel(harness: HarnessInfo | undefined, access: Pick<Device
 }
 
 /** The read a draft's model pick starts on a `select` Harness, once per model. */
-export function readModelOnSelect(harness: HarnessInfo, model: string): void {
+export function readModelOnSelect(harness: HarnessInfo, model: string, onDone?: () => void | Promise<void>): void {
   const key = modelReadKey(harness, model)
   if (modelsAsked.has(key)) return
   noteModelRead(key, 'asked')
-  void readHarnessCatalogue(harness, true, model).catch(() => {})
+  void readHarnessCatalogue(harness, true, model)
+    .catch(() => {})
+    .finally(() => {
+      void onDone?.()
+    })
 }

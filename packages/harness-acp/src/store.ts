@@ -219,6 +219,18 @@ export interface AcpCatalogueRead {
 }
 
 /**
+ * What a catalogue read in a private empty folder learned of the definition's own commands and skills, without any
+ * project configuration or session context. `commands: null` records that the read completed with no command report.
+ */
+export interface AcpOwnCommands {
+  definitionHash: string
+  reportedAt: string
+  commands: SessionCommand[] | null
+  skills?: SessionSkill[]
+  skillsTruncated?: true
+}
+
+/**
  * What a session on a model of a service through the gateway reported of the options that follow the model, kept for
  * drafts on the same pair: only under the definition it ran and the service's declaration it ran with
  * (`declarationHash`, see `serviceDeclarationHash`), so a change to either leaves it unused.
@@ -240,6 +252,7 @@ export interface AcpState {
   /** Newest first, bounded (`MAX_SERVICE_OPTIONS`). */
   serviceOptions?: AcpServiceOptions[]
   catalogueRead?: AcpCatalogueRead
+  ownCommands?: AcpOwnCommands
   promptCapabilities?: AcpPromptCapabilities
   /** Model IDs a person typed, for every definition of this harness. */
   customModels?: string[]
@@ -474,6 +487,19 @@ const storedRoute = z.object({
     )
     .optional(),
 })
+const sessionCommand = z.object({
+  name: z.string().min(1).max(100),
+  description: z.string().max(1000).optional(),
+  inputHint: z.string().max(500).optional(),
+  idleOnly: z.literal(true).optional(),
+})
+const ownCommands = z.object({
+  definitionHash: hash,
+  reportedAt: z.string(),
+  commands: z.array(sessionCommand).max(200).nullable(),
+  skills: z.custom<SessionSkill[]>(value => readSessionSkills(value) !== undefined).optional(),
+  skillsTruncated: z.literal(true).optional(),
+})
 const stateSchema = z.object({
   version: z.literal(1),
   tasks: z.record(
@@ -524,17 +550,7 @@ const stateSchema = z.object({
       config: z.array(configOption).optional(),
       skills: z.custom<SessionSkill[]>(value => readSessionSkills(value) !== undefined).optional(),
       skillsTruncated: z.literal(true).optional(),
-      commands: z
-        .array(
-          z.object({
-            name: z.string().min(1).max(100),
-            description: z.string().max(1000).optional(),
-            inputHint: z.string().max(500).optional(),
-            idleOnly: z.literal(true).optional(),
-          }),
-        )
-        .max(200)
-        .optional(),
+      commands: z.array(sessionCommand).max(200).optional(),
       usageReport: z
         .object({
           contextUsed: z.number().nonnegative().optional(),
@@ -651,6 +667,7 @@ const stateSchema = z.object({
   catalogue: catalogue.optional().catch(undefined),
   serviceOptions: z.array(serviceOptions).optional().catch(undefined),
   catalogueRead: catalogueRead.optional().catch(undefined),
+  ownCommands: ownCommands.optional().catch(undefined),
   promptCapabilities: promptCapabilities.optional().catch(undefined),
   customModels: z.array(z.string()).optional(),
   quota: z.object({ definitionHash: hash, value: harnessQuota }).optional().catch(undefined),

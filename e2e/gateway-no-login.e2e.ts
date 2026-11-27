@@ -183,18 +183,18 @@ it('shows a Harness that cannot be asked about its login the same login row once
     await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
     await connected(page)
 
-    // Nothing is known yet, and nothing is asked: no row before the first read.
+    // Prefetching the draft composer asks Qwen Code once; its empty session is refused for want of a login.
     const notice = page.getByRole('status', { name: '登录' })
-    expect(await notice.count()).toBe(0)
+    expect((await qwen()).catalogueRead).toMatchObject({ when: 'select' })
+    await expect.poll(async () => (await qwen()).catalogueRead?.last, { timeout: 20_000 }).toMatchObject({ ok: false, loginRequired: true })
+    expect(reads).toBe(1)
+    await notice.getByText('Qwen Code 还没登录', { exact: true }).waitFor()
     const chip = page
       .getByRole('button', { name: /^模型：/u })
       .filter({ visible: true })
       .first()
     const menu = page.locator('[role=menu], [role=listbox]').filter({ visible: true }).first()
-    // Opening the model panel asks Qwen Code for its lists; its empty session is refused for want of a login.
     await chip.click()
-    expect((await qwen()).catalogueRead).toMatchObject({ when: 'request' })
-    await expect.poll(async () => (await qwen()).catalogueRead?.last, { timeout: 20_000 }).toMatchObject({ ok: false, loginRequired: true })
     await menu.getByText('重新读取', { exact: true }).waitFor()
     expect(reads).toBe(1)
     await page.screenshot({ path: `${OUTPUT}/unasked-menu-1440.png`, animations: 'disabled' })

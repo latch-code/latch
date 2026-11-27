@@ -674,7 +674,7 @@ const publicCommandCatalogue = z
       )
       .max(200),
     reportedAt: z.string().datetime(),
-    source: z.literal('previous-session'),
+    source: z.enum(['previous-session', 'harness']),
   })
   .refine(value => !value.skillsTruncated || value.skills !== undefined, 'A truncated catalogue must include its public skills')
 const configSchema = z.strictObject({
@@ -13098,17 +13098,37 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         authorize()
         const id = safeDecode(commandsMatch[1]!)
         const workspaceId = input.workspaceId ?? 'default'
-        const context = async () => {
+        const harnessAllowed = () => {
           const harness = hub!.info(id)
-          if (!harness || !hub!.has(id) || harness.status !== 'ready') return undefined
+          if (!harness || !hub!.has(id) || harness.status !== 'ready' || input.customAgentId) return undefined
           const mode = input.mode ?? (harness.modes.includes('agent') ? 'agent' : harness.modes[0])
           if (mode && !harness.modes.includes(mode)) return undefined
-          if (workspaceId === 'default' && hub!.levelOf(id) !== 'L1' && defaultAcpDataOverlap) return undefined
-          // A new own folder/worktree has no actual directory yet. A cache read may never allocate one or a helper home.
-          if (input.worktree || input.customAgentId || (workspaceId === 'default' && makeOwnFolders && mode === 'agent')) return undefined
+          return { harness, mode }
+        }
+        const ownFallback = async () => {
+          const allowed = harnessAllowed()
+          if (!allowed || allowed.harness.commandCatalogue?.reportedAt === undefined) return null
+          const revision = JSON.stringify(allowed.harness)
+          const own = await hub!.commandCatalogueOf(id, { ownOnly: true }).catch(() => undefined)
+          authorize()
+          const current =
+            own?.current()
+            && own.sourceSessionId === undefined
+            && own.catalogue.source === 'harness'
+            && JSON.stringify(hub!.info(id)) === revision
+          const parsed = publicCommandCatalogue.safeParse(current && own ? own.catalogue : undefined)
+          return parsed.success ? parsed.data : null
+        }
+        const context = async () => {
+          const allowed = harnessAllowed()
+          if (!allowed) return undefined
+          const { harness, mode } = allowed
           const chosen = workspaceId === 'default' ? undefined : savedProject(workspaceId)
           if (workspaceId !== 'default' && !chosen) return undefined
           if (chosen) await assertWorkspaceUsable(chosen)
+          if (workspaceId === 'default' && hub!.levelOf(id) !== 'L1' && defaultAcpDataOverlap) return { ownOnly: true as const }
+          // A new own folder/worktree has no actual directory yet. A cache read may never allocate one or a helper home.
+          if (input.worktree || (workspaceId === 'default' && makeOwnFolders && mode === 'agent')) return { ownOnly: true as const }
           const folders = chosen?.folders.map(({ id, path }) => ({ id, path })) ?? [{ id: 'default', path: workspaceRoot }]
           const identities = []
           for (const folder of folders) {
@@ -13134,6 +13154,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             }
           }
           return {
+            ownOnly: false as const,
             cwd: identities[0]![1]!,
             folders,
             modelRoute,
@@ -13147,6 +13168,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           json(res, { catalogue: null })
           return true
         }
+        if (before.ownOnly) {
+          const catalogue = await ownFallback()
+          authorize()
+          json(res, { catalogue })
+          return true
+        }
         const lookup = () =>
           hub!.commandCatalogueOf(id, {
             cwd: before.cwd,
@@ -13157,13 +13184,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           })
         const cached = await lookup()
         authorize()
-        const source = cached?.current() ? await sessionTask(cached.sourceSessionId) : undefined
+        if (cached && cached.sourceSessionId === undefined) {
+          const current = cached.current() && cached.catalogue.source === 'harness' && before.stillConfigured()
+          const publicResult = publicCommandCatalogue.safeParse(current ? cached.catalogue : undefined)
+          json(res, { catalogue: publicResult.success ? publicResult.data : null })
+          return true
+        }
+        const source = cached?.sourceSessionId !== undefined && cached.current() ? await sessionTask(cached.sourceSessionId) : undefined
         const canReadSource = () =>
           !!source
           && privateVisible(caller, source)
           && (!hub!.agentPrivate(source.id) || devices.get(caller.device.id)?.dataScope === 'all')
         const sourceAvailable =
-          source && cached && canReadSource()
+          source && cached?.sourceSessionId !== undefined && canReadSource()
             ? await assertSessionWorkspace(cached.sourceSessionId).then(
                 () => true,
                 () => false,
@@ -13171,14 +13204,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             : false
         const after = await context()
         authorize()
-        const visible = cached?.current() && sourceAvailable && canReadSource() && after?.key === before.key
+        const visible = cached?.current() && sourceAvailable && canReadSource() && after && !after.ownOnly && after.key === before.key
         // Source checks also yield: repeat the driver's full launch/configuration check, without probing a program.
         const verified = visible ? await lookup().catch(() => undefined) : undefined
         authorize()
         const current =
-          verified?.current() && verified.sourceSessionId === cached?.sourceSessionId && before.stillConfigured() && canReadSource()
-        const publicResult = publicCommandCatalogue.safeParse(current && verified ? verified.catalogue : undefined)
-        json(res, { catalogue: publicResult.success ? publicResult.data : null })
+          verified?.current()
+          && verified.sourceSessionId !== undefined
+          && verified.sourceSessionId === cached?.sourceSessionId
+          && before.stillConfigured()
+          && canReadSource()
+        if (current && verified) {
+          const publicResult = publicCommandCatalogue.safeParse(verified.catalogue)
+          json(res, { catalogue: publicResult.success ? publicResult.data : null })
+          return true
+        }
+        const fallback = after && !after.ownOnly && after.key === before.key ? await ownFallback() : null
+        authorize()
+        json(res, { catalogue: before.stillConfigured() ? fallback : null })
         return true
       }
       // 设置 › 扩展: the newest report from an ordinary session of each external Harness's current definition.
@@ -13229,7 +13272,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             const projectCurrent = verified.get(found.sourceSessionId)
             if (!projectCurrent) return empty
             const report = publicCommandCatalogue.safeParse(found.catalogue)
-            if (!report.success) return empty
+            if (!report.success || report.data.source !== 'previous-session') return empty
             const plugins = harness.extensionSupport?.plugins === 'command-sources' ? readHarnessPluginReport(found.plugins) : undefined
             const names = plugins?.names.filter(name => redactKnownSecrets(name) === name)
             return (): HarnessExtensionReport => {

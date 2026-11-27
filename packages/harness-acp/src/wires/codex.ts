@@ -30,7 +30,7 @@ import {
   tierValue,
   type CodexModels,
 } from '../codex-models.ts'
-import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
+import { clip, TOOL_TEXT_LIMIT, truncateUnits } from '../mapping.ts'
 import { GENERATED_IMAGES_PER_TURN, generatedImage, generatedImageNote, savedImagePath } from './codex-images.ts'
 import { codexHooks, hooksReport, type CodexHooks } from './codex-hooks.ts'
 import { CODEX_GATEWAY_PROVIDER, CODEX_MODES, type CodexMode } from '../profiles/codex.ts'
@@ -1180,7 +1180,7 @@ export class CodexWire implements AgentWire {
               name: row.name,
               invocation: `$${row.name}`,
               scope,
-              ...(typeof row.description === 'string' && row.description.length <= 1000 ? { description: row.description } : {}),
+              ...(typeof row.description === 'string' && row.description ? { description: truncateUnits(row.description, 1000) } : {}),
             },
           ])
           candidates.push({ name: row.name, path: row.path, ...(parsed?.[0] ? { skill: parsed[0] } : {}) })

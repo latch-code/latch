@@ -426,7 +426,7 @@ describe('pi over its own RPC', () => {
     expect(await readdir(marks)).toEqual([])
   })
 
-  it('reads its lists only when a person asks, in an empty private folder, and sends no prompt', async () => {
+  it('prefetches its lists once per definition in an empty private folder and sends no prompt', async () => {
     const path = await transcript('catalogue', [], opened)
     const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-pi-')))
     cleanups.push(() => rm(root, { recursive: true, force: true }))
@@ -448,12 +448,9 @@ describe('pi over its own RPC', () => {
     const driver = await activate(createAcpAgentPlugin(record, { stopGraceMs: 300, requestTimeoutMs: 5_000, log: () => {} }), cleanups)
     const bridge = await openBridge(driver, { dataDir: join(root, 'data'), workspace: root, tmpRoot: join(root, 'tmp') }, cleanups)
 
-    // A draft selecting pi starts nothing: pi loads the person's extensions when it starts.
-    expect(bridge.catalogueRead!()).toMatchObject({ when: 'request' })
+    expect(bridge.catalogueRead!()).toMatchObject({ when: 'select' })
+    expect(await bridge.readCatalogue!({ auto: true })).toEqual({ ran: true })
     expect(await bridge.readCatalogue!({ auto: true })).toEqual({ ran: false })
-    expect(readReplayStatus(status)).toBeUndefined()
-
-    expect(await bridge.readCatalogue!({ auto: false })).toEqual({ ran: true })
     const played = readReplayStatus(status)!
     expect(played.failure).toBeUndefined()
     expect(played.cursor).toBe(played.total)

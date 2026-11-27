@@ -428,17 +428,20 @@ export interface Bridge {
   /** Optional. How a config change relates to the session's expected permission mode. */
   classifyConfigChange?(sessionId: string, configId: string, value: string): Promise<ConfigChangeClass>
   /**
-   * Optional. Only a cached real-session command report for this exact draft context; never starts a process or probes.
-   * The source session ID is private to the Host, which must recheck source visibility and draft authorization after
-   * awaiting this read. The catalogue is a previous-session suggestion, not present capabilities or execution authority.
+   * Optional. Draft command suggestions: a cached real-session report for this exact project context when available, or
+   * else the Harness's own definition-level commands; never starts a process or probes. When `sourceSessionId` is
+   * returned, it is private to the Host, which must recheck source visibility and draft authorization after awaiting.
    */
   commandCatalogue?(input: {
-    cwd: string
+    cwd?: string
+    ownOnly?: boolean
     workspaceId?: string
     folders?: ReadonlyArray<ProjectFolder>
     modelRoute?: ModelRoute
     config?: ReadonlyArray<{ configId: string; value: string }>
-  }): Promise<{ sourceSessionId: string; catalogue: HarnessCommandCatalogue } | undefined>
+  }): Promise<{ sourceSessionId?: string; catalogue: HarnessCommandCatalogue } | undefined>
+  /** Optional, with `commandCatalogue`. Whether definition-level commands for the current definition have been checked. */
+  commandCatalogueState?(): { checked?: true; reportedAt?: string } | undefined
   /**
    * Optional, with `commandCatalogue`. The newest cached real-session report of the current definition from any folder,
    * whose source session passes synchronous `accept` and asynchronous `verifySource` if supplied. Never starts a

@@ -323,6 +323,8 @@ const skillsOf = (presetId: string | undefined): Pick<HarnessDriver, 'skills'> =
 export function presetOffer(preset: AgentPreset): HarnessInfo {
   const record = presetRoute(preset.id)!
   const { profile } = selectProfile(record)
+  const wire = profile?.wire
+  const { reports, plugins } = extensionProfile(wire ?? (preset.id === 'dsh' ? 'dsh' : undefined))
   const login = harnessLogin(record)
   const folders = folderDeclaration(profile)
   const outdated = outdatedLine(record, resolveCommand(record.command))
@@ -342,6 +344,7 @@ export function presetOffer(preset: AgentPreset): HarnessInfo {
     pluginCreation: true,
     level: 'L3',
     ...skillsOf(preset.id),
+    extensionSupport: { reports: wire === 'cursor' ? [] : reports, ...(plugins ? { plugins } : {}) },
     ...(folders.folderAccess ? { projectFolders: folders.folderAccess as NonNullable<HarnessInfo['projectFolders']> } : {}),
     ...permissionDeclaration(profile),
     ...(login ? { login } : {}),

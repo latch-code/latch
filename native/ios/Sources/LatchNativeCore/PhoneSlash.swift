@@ -43,10 +43,13 @@ public struct PhoneSlashContext: Sendable {
     public var running = false
     public var firstTurn = false
     public var session = false
+    public var readingCommands = false
+    public var commandSource: String?
     public var projectId: String?
     public var harnessId: String?
     public var actions: Set<PhoneSlashAction> = []
     public var actionReasons: [PhoneSlashAction: String] = [:]
+    public var supportsCommands: Bool { !unsupportedCommands }
     fileprivate let unsupportedCommands: Bool
     public init(bodyOpen: Bool, canRun: Bool, harness: NativeJSON = .null) {
         self.bodyOpen = bodyOpen; self.canRun = canRun
@@ -256,7 +259,13 @@ public enum PhoneSlash {
         }.map(\.element)
         let notice: String?
         if !token.initial || !token.query.isEmpty || sorted.contains(where: { $0.kind == .command }) { notice = nil }
-        else if let report { notice = report.isEmpty ? "当前会话没有可用的 Harness 命令" : "没有可单独列出的 Harness 命令" }
+        else if context.readingCommands, (report?.isEmpty ?? true) { notice = "正在读取命令列表…" }
+        else if let report {
+            if !report.isEmpty { notice = "没有可单独列出的 Harness 命令" }
+            else if context.commandSource == "previous-session" { notice = "上次会话没有列出命令" }
+            else if context.commandSource == "harness" { notice = "当前 Harness 没有列出命令" }
+            else { notice = "当前会话没有可用的 Harness 命令" }
+        }
         else if context.unsupportedCommands { notice = "当前接入方式不提供 Harness 命令" }
         else if !context.session || context.firstTurn { notice = "发送第一条消息后，可查看 Harness 返回的命令" }
         else { notice = "当前连接尚未提供命令列表" }

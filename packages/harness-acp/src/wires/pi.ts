@@ -10,7 +10,7 @@ import { z } from 'zod'
 import { redactKnownSecrets } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
 import { readSessionSkills, boundSessionSkills, type HarnessPluginReport, type SessionSkill } from '@latch/protocol'
-import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
+import { clip, TOOL_TEXT_LIMIT, truncateUnits } from '../mapping.ts'
 import {
   availableCommand,
   type AvailableCommand,
@@ -586,6 +586,12 @@ export class PiWire implements AgentWire {
     await this.readLevels(timeoutMs, signal)
     await this.readGate(timeoutMs, signal)
     this.update({ sessionUpdate: 'available_commands_update', availableCommands: this.commands })
+    this.update({
+      sessionUpdate: SESSION_SKILLS_UPDATE,
+      skills: this.skills ?? null,
+      ...(this.skillsTruncated ? { skillsTruncated: true } : {}),
+      ...(this.pluginReport ? { plugins: this.pluginReport } : {}),
+    })
     return { sessionId: this.sessionId, configOptions: this.options() }
   }
 
@@ -611,7 +617,7 @@ export class PiWire implements AgentWire {
       if (!isRecord(item) || !['extension', 'prompt', 'skill'].includes(String(item.source))) continue
       const parsed = availableCommand.safeParse({
         name: item.name,
-        ...(typeof item.description === 'string' ? { description: clip(item.description, 1000) } : {}),
+        ...(typeof item.description === 'string' ? { description: truncateUnits(item.description, 1000) } : {}),
       })
       if (!parsed.success) continue
       const name = parsed.data.name

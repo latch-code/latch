@@ -108,7 +108,7 @@ export const gooseProfile: HarnessProfile = {
   // for each (1.57.0 `prepare_acp_session_agent`; a real run waited 20 s on one that never answered).
   // No gate of its own: read only to tell a person a newer formula is out.
   releases: { args: ['--version'], read: readGooseVersion, source: GOOSE_SOURCE },
-  catalogueRead: { when: 'request' },
+  catalogueRead: { when: 'select' },
   permission: {
     approvals: 'prompts',
     defaultEnv: { GOOSE_MODE: 'approve' },

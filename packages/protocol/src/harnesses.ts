@@ -153,13 +153,13 @@ export interface HarnessCapabilities {
  */
 export const LADDER_MODE = '~mode'
 
-/** Public suggestions reported by an earlier real session; never current capability or permission evidence. */
+/** Public suggestions from an earlier real session in the same project or the Harness's own definition-level catalogue. */
 export interface HarnessCommandCatalogue {
   commands: SessionCommand[]
   skills?: SessionSkill[]
   skillsTruncated?: true
   reportedAt: string
-  source: 'previous-session'
+  source: 'previous-session' | 'harness'
 }
 
 /**
@@ -284,8 +284,8 @@ export interface HarnessInfo {
   serviceOptions?: ServiceModelOptions[]
   /** Absent: what it offers is known only once a session starts. */
   catalogueRead?: CatalogueRead
-  /** A read-only previous-session command cache exists. Generation changes when its Host driver is replaced. */
-  commandCatalogue?: { generation: string }
+  /** Read-only draft command catalogue metadata. Generation changes when its Host driver is replaced. */
+  commandCatalogue?: { generation: string; checked?: true; reportedAt?: string }
   /** Extension reports available from this mounted adapter, including when a plugin list is unavailable. */
   extensionSupport?: HarnessExtensionSupport
   /** Model IDs a person typed for this harness, offered with its own models; a session sends one even when not listed. */

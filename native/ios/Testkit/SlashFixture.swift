@@ -70,7 +70,13 @@ func phoneSlashFixture(_ input: Data) throws -> [String: Any] {
     var unsupported = PhoneSlashContext(bodyOpen: true, canRun: true, harness: .object(["extensionSupport": .object(["reports": .array([])])]))
     unsupported.session = true
     let draftContext = PhoneSlashContext(bodyOpen: true, canRun: true)
+    var readingDraft = draftContext; readingDraft.readingCommands = true
+    var previousDraft = draftContext; previousDraft.commandSource = "previous-session"
+    var harnessDraft = draftContext; harnessDraft.commandSource = "harness"
     guard PhoneSlash.menu("/", commands: nil, templates: [], context: draftContext)?.commandNotice == "发送第一条消息后，可查看 Harness 返回的命令",
+          PhoneSlash.menu("/", commands: nil, templates: [], context: readingDraft)?.commandNotice == "正在读取命令列表…",
+          PhoneSlash.menu("/", commands: [], templates: [], context: previousDraft)?.commandNotice == "上次会话没有列出命令",
+          PhoneSlash.menu("/", commands: [], templates: [], context: harnessDraft)?.commandNotice == "当前 Harness 没有列出命令",
           PhoneSlash.menu("/", commands: nil, templates: [], context: context)?.commandNotice == "当前连接尚未提供命令列表",
           PhoneSlash.menu("/", commands: [], templates: [], context: context)?.commandNotice == "当前会话没有可用的 Harness 命令",
           PhoneSlash.menu("/", commands: nil, templates: [], context: unsupported)?.commandNotice == "当前接入方式不提供 Harness 命令",

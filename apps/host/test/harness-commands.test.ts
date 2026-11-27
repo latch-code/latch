@@ -343,3 +343,80 @@ it.each([
     spy.mockRestore()
   }
 })
+
+it('serves definition-level Harness commands before any session, across projects and worktrees, and when a project session becomes private', async () => {
+  const f = await fixture()
+  const ownCommands = [
+    { name: 'init', description: `${'初'.repeat(999)}🙂extra` },
+    { name: 'review', description: 'Code review', input: { hint: '[scope]' } },
+  ]
+  await f.owner().confirmedJson('agents/fake', {
+    method: 'PUT',
+    body: {
+      env: {
+        FAKE_ACP_LOG: join(f.root, 'agent.jsonl'),
+        FAKE_ACP_CONFIG: 'options',
+        FAKE_ACP_SETUP_COMMANDS: 'delayed',
+        FAKE_ACP_COMMANDS_FILE: join(f.root, 'commands.json'),
+        FAKE_ACP_COMMANDS_CWD: f.paths[0]!,
+        FAKE_ACP_COMMANDS: JSON.stringify(ownCommands),
+      },
+    },
+  })
+  expect(await f.read()).toEqual({ catalogue: null })
+  expect(await f.starts()).toBe(0)
+
+  await f.work().json('agents/fake/catalogue', { method: 'POST', body: { auto: false } })
+  const afterCatalogue = await f.starts()
+  expect(afterCatalogue).toBe(1)
+
+  const expectedOwn = [
+    { name: 'init', description: `${'初'.repeat(999)}…` },
+    { name: 'review', description: 'Code review', inputHint: '[scope]' },
+  ]
+  const snapshotHarness = (await f.work().json<AppSnapshot>('snapshot')).catalog?.harnesses.find(item => item.id === 'fake')
+  expect(snapshotHarness?.commandCatalogue).toMatchObject({
+    generation: expect.any(String),
+    checked: true,
+    reportedAt: expect.any(String),
+  })
+  for (const project of f.projects) {
+    expect(await f.read(project)).toMatchObject({
+      catalogue: { source: 'harness', commands: expectedOwn },
+    })
+  }
+  expect(
+    await f.work().json<{ catalogue: HarnessCommandCatalogue | null }>('agents/fake/commands', {
+      method: 'POST',
+      body: { workspaceId: f.projects[0]!.id, worktree: true },
+    }),
+  ).toMatchObject({
+    catalogue: { source: 'harness', commands: expectedOwn },
+  })
+  expect(await f.starts()).toBe(afterCatalogue)
+
+  await f.restart()
+  expect(await f.read(f.projects[1]!)).toMatchObject({
+    catalogue: { source: 'harness', commands: expectedOwn },
+  })
+  expect(await f.starts()).toBe(afterCatalogue)
+
+  // A real session in project A overrides project A with its project-specific commands, leaving project B on Harness commands.
+  const id = await f.create()
+  await vi.waitFor(async () =>
+    expect(await f.read(f.projects[0]!)).toMatchObject({
+      catalogue: { source: 'previous-session', commands: [{ name: 'public-plan', description: 'Project command' }] },
+    }),
+  )
+  expect(await f.read(f.projects[1]!)).toMatchObject({
+    catalogue: { source: 'harness', commands: expectedOwn },
+  })
+
+  // Once project A's session becomes private, a work-scoped device falls back to public Harness commands without leaking project A's session.
+  await makePrivate(f, id)
+  const fallback = await f.read(f.projects[0]!)
+  expect(fallback).toMatchObject({
+    catalogue: { source: 'harness', commands: expectedOwn },
+  })
+  expect(JSON.stringify(fallback)).not.toContain('public-plan')
+})
