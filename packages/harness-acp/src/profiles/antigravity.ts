@@ -55,6 +55,8 @@ export const antigravityProfile: HarnessProfile = {
   projectConfigPaths: CUSTOMIZATIONS,
   // 1.5.8 answers session/resume with its default model and thinking level (recorded 2026-11-15).
   resumeResetsOptions: true,
+  // Sending session/prompt during an active turn steers that turn and supersedes the prior session/prompt (1.5.8 docs, 1.5.17 binary).
+  promptSteer: true,
   // agy sums step usage since the turn's start and clears it when session/prompt ends; TotalTokens = input + cachedRead + cachedWrite + output (1.5.8 fixture, 1.5.17 binary).
   usageScope: 'turn',
   inputExcludesCache: true,

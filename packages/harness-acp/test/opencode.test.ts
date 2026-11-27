@@ -880,4 +880,79 @@ describe('OpenCode server wire', () => {
     const created = (await opened.wire.request('session/new', { cwd: opened.cwd, mcpServers: [] }, 10_000)) as Record<string, unknown>
     expect(created._meta).toEqual({ [PERMISSION_FACTS]: ['不经 Latch 的模型服务 · compaction 用 anthropic/pinned-x'] })
   })
+
+  it('advertises attachment steering, injects steered prompts into an active session, and requires a prompt when idle', async () => {
+    const { fake, init, wire, created } = await started()
+    expect((init as Record<string, unknown>)._meta).toEqual({ steering: { supported: true, attachments: true } })
+
+    // Idle session: returns promptRequired without posting to `/prompt`.
+    expect(
+      await wire.request(
+        '_session/steering',
+        {
+          sessionId: created.sessionId,
+          prompt: [{ type: 'text', text: 'idle steer' }],
+          _meta: { steering: { idleBehavior: 'promptRequired' } },
+        },
+        5_000,
+      ),
+    ).toEqual({ outcome: 'promptRequired' })
+
+    fake.routes.set('GET /api/session/active', () => ({ body: { data: { [created.sessionId]: { status: 'running' } } } }))
+    const turn = wire.request('session/prompt', {
+      sessionId: created.sessionId,
+      prompt: [{ type: 'text', text: 'first turn' }],
+    })
+    turn.catch(() => {})
+    await vi.waitFor(() => expect(fake.seen.some(item => item.path === `/api/session/${created.sessionId}/prompt`)).toBe(true))
+    const initialBody = fake.seen.find(item => item.path === `/api/session/${created.sessionId}/prompt`)!.body as { id: string }
+    fake.emit('session.execution.started', { sessionID: created.sessionId })
+    fake.emit('session.inbox.delivered', { sessionID: created.sessionId, inboxID: initialBody.id })
+    fake.emit('session.step.ended', {
+      sessionID: created.sessionId,
+      finish: 'tool-calls',
+      tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 10, write: 0 } },
+    })
+
+    expect(
+      await wire.request(
+        '_session/steering',
+        {
+          sessionId: created.sessionId,
+          prompt: [
+            { type: 'text', text: 'extra context', annotations: { audience: ['assistant'] } },
+            { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' },
+            { type: 'text', text: 'steer now' },
+          ],
+          _meta: { steering: { idleBehavior: 'promptRequired' } },
+        },
+        5_000,
+      ),
+    ).toEqual({ outcome: 'injected' })
+
+    const syntheticCall = fake.seen.find(item => item.path === `/api/session/${created.sessionId}/synthetic`)
+    expect(syntheticCall?.body).toMatchObject({ text: 'extra context', delivery: 'steer', resume: false })
+    const promptCalls = fake.seen.filter(item => item.path === `/api/session/${created.sessionId}/prompt`)
+    expect(promptCalls).toHaveLength(2)
+    const steeredBody = promptCalls[1]!.body as { id: string; text: string; files: unknown[]; delivery: string; resume: boolean }
+    expect(steeredBody).toMatchObject({
+      text: 'steer now',
+      files: [{ uri: 'data:image/png;base64,aGVsbG8=', name: 'image' }],
+      delivery: 'steer',
+      resume: false,
+    })
+
+    fake.emit('session.inbox.delivered', { sessionID: created.sessionId, inboxID: steeredBody.id })
+    fake.emit('session.step.ended', {
+      sessionID: created.sessionId,
+      finish: 'stop',
+      tokens: { input: 150, output: 30, reasoning: 10, cache: { read: 20, write: 0 } },
+    })
+    fake.emit('session.execution.succeeded', { sessionID: created.sessionId })
+
+    await expect(turn).resolves.toMatchObject({
+      stopReason: 'end_turn',
+      usage: { inputTokens: 250, outputTokens: 50, thoughtTokens: 15, cachedReadTokens: 30, cachedWriteTokens: 0 },
+    })
+  })
 })

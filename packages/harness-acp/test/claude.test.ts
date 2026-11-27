@@ -1346,4 +1346,109 @@ describe('Claude’s own store, read only where the Host lets the wire', () => {
       proto.initializationResult = original
     }
   })
+
+  it('steers a running turn with text and attachments, queues behind open asks, and sums tokens across cycles', async () => {
+    const h = harness()
+    const init = (await h.wire.request('initialize', { clientCapabilities: { elicitation: { form: {} } } })) as Record<string, unknown>
+    expect(init._meta).toEqual({ steering: { supported: true, attachments: true } })
+
+    const { sessionId } = (await h.wire.request('session/new', { cwd: '/work', mcpServers: [] })) as { sessionId: string }
+    expect(
+      await h.wire.request('_session/steering', {
+        sessionId,
+        prompt: [{ type: 'text', text: 'while idle' }],
+        _meta: { steering: { idleBehavior: 'promptRequired' } },
+      }),
+    ).toEqual({ outcome: 'promptRequired' })
+
+    const q = h.queries[0]!
+    const firstTurn = h.wire.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'initial' }] })
+    await vi.waitFor(() => expect(q.prompts).toHaveLength(1))
+    const firstUuid = q.prompts[0]!.uuid as string
+
+    // Priority `now` while no permission or question waits: interrupts Cycle 1, then settles on Cycle 2's stamped result.
+    expect(
+      await h.wire.request('_session/steering', {
+        sessionId,
+        prompt: [
+          { type: 'text', text: 'add this' },
+          { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' },
+        ],
+        _meta: { steering: { idleBehavior: 'promptRequired' } },
+      }),
+    ).toEqual({ outcome: 'injected' })
+    await vi.waitFor(() => expect(q.prompts).toHaveLength(2))
+    const steeredUuid = q.prompts[1]!.uuid as string
+    expect(q.prompts[1]).toMatchObject({
+      type: 'user',
+      priority: 'now',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'add this' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aGVsbG8=' } },
+        ],
+      },
+    })
+
+    // Interrupted pre-steer cycle emits an error-shaped diagnostic naming only `firstUuid`; the turn stays open.
+    q.out.push({
+      type: 'result',
+      subtype: 'error_during_execution',
+      is_error: true,
+      user_message_uuid: firstUuid,
+      errors: ['Interrupted for steering'],
+      usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 30, cache_creation_input_tokens: 5 },
+    })
+    q.out.push({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      stop_reason: 'end_turn',
+      user_message_uuid: steeredUuid,
+      usage: { input_tokens: 200, output_tokens: 40, cache_read_input_tokens: 50, cache_creation_input_tokens: 10 },
+    })
+    await expect(firstTurn).resolves.toEqual({
+      stopReason: 'end_turn',
+      usage: { inputTokens: 300, outputTokens: 60, cachedReadTokens: 80, cachedWriteTokens: 15 },
+    })
+
+    // Priority `later` while a permission callback waits on the person, so the open callback is not aborted.
+    let allowTool!: () => void
+    h.answer = () =>
+      new Promise(resolve => {
+        allowTool = () => resolve({ outcome: { outcome: 'selected', optionId: 'allow-once' } })
+      })
+    const secondTurn = h.wire.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'with tool' }] })
+    await vi.waitFor(() => expect(q.prompts).toHaveLength(3))
+    const secondUuid = q.prompts[2]!.uuid as string
+    const asking = q.canUseTool('Bash', { command: 'ls' }, 'call-ask')
+    await vi.waitFor(() => expect(h.asked).toHaveLength(1))
+
+    expect(
+      await h.wire.request('_session/steering', {
+        sessionId,
+        prompt: [{ type: 'text', text: 'after tool' }],
+        _meta: { steering: { idleBehavior: 'promptRequired' } },
+      }),
+    ).toEqual({ outcome: 'injected' })
+    await vi.waitFor(() => expect(q.prompts).toHaveLength(4))
+    const laterUuid = q.prompts[3]!.uuid as string
+    expect(q.prompts[3]!.priority).toBe('later')
+
+    allowTool()
+    await asking
+    q.out.push({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      stop_reason: 'end_turn',
+      user_message_uuids: [secondUuid, laterUuid],
+      usage: { input_tokens: 50, output_tokens: 10 },
+    })
+    await expect(secondTurn).resolves.toEqual({
+      stopReason: 'end_turn',
+      usage: { inputTokens: 50, outputTokens: 10 },
+    })
+  })
 })

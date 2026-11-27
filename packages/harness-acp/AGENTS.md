@@ -26,7 +26,7 @@
 
 测试：`pnpm test --project @latch/harness-acp` 与 `e2e/permissions-ui.e2e.ts`。先读 [docs/HARNESSES.md](../../docs/HARNESSES.md)。
 
-- 附件按协商能力发内容或路径；本轮追加须声明 `_meta.steering.attachments`。Agent 图片存 Host 私有目录，只传引用；字节不进消息、快照或 stderr。
+- 附件按协商能力发内容或路径；追加附件须有 `_meta.steering.attachments` 或 `promptSteer`。Agent 图片存 Host 私有目录，只传引用；字节不进消息、快照或 stderr。
 - 文件产物只表示运行时间窗口中的观察；旧运行晚到的结算只更新原消息。范围与预算见 ARCHITECTURE。
 - 改配置在准备前和发 RPC 前调用 Host `authorize`。超时结果未知，核对时拒写。换档从准备到结算拒绝新输入。
 

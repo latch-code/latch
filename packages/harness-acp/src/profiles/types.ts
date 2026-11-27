@@ -602,6 +602,12 @@ export interface HarnessProfile {
    */
   readonly resumeResetsOptions?: true
   /**
+   * Its ACP server steers a running turn when given another `session/prompt` (text or attachments), answering the
+   * superseded `session/prompt` with `end_turn` and the turn's usage so far while the new request owns the rest of the
+   * turn; it refuses while a permission or question waits (Antigravity 1.5.8+). Changes nothing at launch, so `version` stays.
+   */
+  readonly promptSteer?: true
+  /**
    * The replies its CLI sends, ending the turn as `end_turn`, for a turn it terminated without saying why over ACP. A
    * turn whose whole reply is one of them ends as failed; a reply that only contains the text stays a reply.
    */
