@@ -955,4 +955,58 @@ describe('OpenCode server wire', () => {
       usage: { inputTokens: 250, outputTokens: 50, thoughtTokens: 15, cachedReadTokens: 30, cachedWriteTokens: 0 },
     })
   })
+
+  it('withdraws additions the run never took: at its end, saying so, and at a stop, with their context', async () => {
+    const { fake, wire, created, updates } = await started()
+    const sessionID = created.sessionId
+    const path = `/api/session/${sessionID}`
+    fake.routes.set('GET /api/session/active', () => ({ body: { data: { [sessionID]: { status: 'running' } } } }))
+    const begin = async (text: string) => {
+      const turn = wire.request('session/prompt', { sessionId: sessionID, prompt: [{ type: 'text', text }] })
+      turn.catch(() => {})
+      await vi.waitFor(() => expect(promptOf(fake).body).toMatchObject({ text }))
+      fake.emit('session.execution.started', { sessionID })
+      fake.emit('session.inbox.delivered', { sessionID, inboxID: (promptOf(fake).body as { id: string }).id })
+      return { turn }
+    }
+    const steer = async (prompt: unknown[]) => {
+      expect(await wire.request('_session/steering', { sessionId: sessionID, prompt }, 5_000)).toEqual({ outcome: 'injected' })
+      return (promptOf(fake).body as { id: string }).id
+    }
+    const withdrawn = (id: string) => fake.seen.some(item => item.method === 'DELETE' && item.path === `${path}/inbox/${id}`)
+    const notices = () => updates.filter(item => item.update.sessionUpdate === 'notice').map(item => item.update.title)
+
+    // The run ended before it took the addition: withdrawn before the turn ends, so the next prompt cannot run it.
+    const { turn: first } = await begin('first')
+    const late = await steer([{ type: 'text', text: 'too late' }])
+    fake.emit('session.execution.succeeded', { sessionID })
+    await expect(first).resolves.toMatchObject({ stopReason: 'end_turn' })
+    expect(withdrawn(late)).toBe(true)
+    expect(notices()).toEqual(['本轮结束前 OpenCode 没有读到最后追加的内容，已撤回；需要的话请重新发送'])
+
+    // One it took stays.
+    const { turn: second } = await begin('second')
+    const taken = await steer([{ type: 'text', text: 'taken' }])
+    fake.emit('session.inbox.delivered', { sessionID, inboxID: taken })
+    fake.emit('session.execution.succeeded', { sessionID })
+    await second
+    expect(withdrawn(taken)).toBe(false)
+    expect(notices()).toHaveLength(1)
+
+    // A stop withdraws the addition and its context before it interrupts; the runtime says the stop may have beaten it.
+    const { turn: third } = await begin('third')
+    const stopped = await steer([
+      { type: 'text', text: 'context', annotations: { audience: ['assistant'] } },
+      { type: 'text', text: 'stopped' },
+    ])
+    wire.notify('session/cancel', { sessionId: sessionID })
+    await vi.waitFor(() => expect(fake.seen.some(item => item.path === `${path}/interrupt`)).toBe(true))
+    const order = fake.seen.map(item => `${item.method} ${item.path}`)
+    expect(order.indexOf(`DELETE ${path}/inbox/${stopped}`)).toBeGreaterThan(-1)
+    expect(order.indexOf(`DELETE ${path}/inbox/msg_x`)).toBeGreaterThan(-1)
+    expect(order.indexOf(`DELETE ${path}/inbox/${stopped}`)).toBeLessThan(order.indexOf(`POST ${path}/interrupt`))
+    fake.emit('session.execution.interrupted', { sessionID, reason: 'user' })
+    await expect(third).resolves.toMatchObject({ stopReason: 'cancelled' })
+    expect(notices()).toHaveLength(1)
+  })
 })

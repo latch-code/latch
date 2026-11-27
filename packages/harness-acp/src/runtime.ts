@@ -232,6 +232,7 @@ import {
   permissionRequest,
   planUpdate,
   promptResult,
+  addTurnTokens,
   TOKENS_UPDATE,
   tokensUpdate,
   type TurnTokens,
@@ -520,28 +521,22 @@ interface Permission {
   fail(error: Error): void
 }
 
+/**
+ * A turn of a harness whose concurrent `session/prompt` steers it (`promptSteer`): the request that owns the rest of the
+ * turn, and the handoff to the next one while it is pending.
+ */
 interface PromptTurn {
   current: Promise<unknown>
+  /** Called by the wire with an owning request's answer, before it handles anything the agent wrote after it. */
+  answered?: (request: Promise<unknown>, result: unknown) => void
+  /** Settles once a pending handoff decided which request owns the turn; a later addition waits for it. */
   handoff?: Promise<void>
-  lock?: Promise<void>
+  /** What the superseded requests reported, counted with the turn's own answer. */
   usage?: TurnTokens
   settled?: boolean
 }
 
-function sumTurnTokens(first: TurnTokens | undefined, second: TurnTokens | undefined): TurnTokens | undefined {
-  if (!first) return second
-  if (!second) return first
-  const cachedReadTokens = (first.cachedReadTokens ?? 0) + (second.cachedReadTokens ?? 0)
-  const cachedWriteTokens = (first.cachedWriteTokens ?? 0) + (second.cachedWriteTokens ?? 0)
-  const thoughtTokens = (first.thoughtTokens ?? 0) + (second.thoughtTokens ?? 0)
-  return {
-    inputTokens: first.inputTokens + second.inputTokens,
-    outputTokens: first.outputTokens + second.outputTokens,
-    ...(first.cachedReadTokens !== undefined || second.cachedReadTokens !== undefined ? { cachedReadTokens } : {}),
-    ...(first.cachedWriteTokens !== undefined || second.cachedWriteTokens !== undefined ? { cachedWriteTokens } : {}),
-    ...(first.thoughtTokens !== undefined || second.thoughtTokens !== undefined ? { thoughtTokens } : {}),
-  }
-}
+type Settled = { ok: true; value: unknown } | { ok: false; error: unknown }
 
 interface Binding {
   live: Live
@@ -3709,6 +3704,14 @@ export class AgentRuntime implements Bridge {
       this.touch(task)
       this.mark()
     }
+    // A refusal known only after the answer timed out: nothing reached the turn, so the same request may send it again.
+    const refused = (): void => {
+      if (added || this.state.receipts[key]?.steer !== 'sending') return
+      delete this.state.receipts[key]
+      if (run.steers) run.steers--
+      this.mark()
+      void this.flush().catch(() => {})
+    }
     try {
       if (attachments.length) {
         run.sensitiveOutput = true
@@ -3716,7 +3719,7 @@ export class AgentRuntime implements Bridge {
       }
       const timeoutMs = Math.min(this.limits.requestTimeoutMs, STEER_TIMEOUT_MS)
       const result = this.selection.profile?.promptSteer
-        ? await this.steerPromptTurn(run, live, blocks, timeoutMs, add, userText)
+        ? await this.steerPromptTurn(run, live, blocks, timeoutMs, add, refused, userText)
         : await live.wire.request(
             STEER_METHOD,
             {
@@ -6146,18 +6149,22 @@ export class AgentRuntime implements Bridge {
       }
       this.phase(run, 'model')
       this.notify(run.taskId)
-      const answer = binding.live.wire.request(
+      const promptTurn = this.selection.profile?.promptSteer ? ({} as PromptTurn) : undefined
+      const answer: Promise<unknown> = binding.live.wire.request(
         'session/prompt',
         { sessionId: binding.acpSessionId, prompt: blocks },
         undefined,
         undefined,
-        undefined,
+        promptTurn && (result => promptTurn.answered?.(answer, result)),
         {
           ...(run.userText === undefined ? {} : { userText: run.userText }),
           ...(run.userMessageId ? { messageId: run.userMessageId } : {}),
         },
       )
-      if (this.selection.profile?.promptSteer) run.promptTurn = { current: answer }
+      if (promptTurn) {
+        promptTurn.current = answer
+        run.promptTurn = promptTurn
+      }
       if (brief) this.briefSent(run, brief)
       if (note) this.noteSent(run, note)
       const result = run.promptTurn ? await this.awaitPromptTurn(run.promptTurn) : await answer
@@ -6223,7 +6230,7 @@ export class AgentRuntime implements Bridge {
   private async awaitPromptTurn(state: PromptTurn): Promise<unknown> {
     for (;;) {
       const active = state.current
-      let settled: { ok: true; value: unknown } | { ok: false; error: unknown }
+      let settled: Settled
       try {
         settled = { ok: true, value: await active }
       } catch (error) {
@@ -6238,9 +6245,14 @@ export class AgentRuntime implements Bridge {
   }
 
   /**
-   * Sends a concurrent `session/prompt` to steer an `agy acp` turn. When accepted, the server answers the prior
-   * `session/prompt` with `end_turn` and the turn's usage so far while the new `session/prompt` owns the rest of the turn;
-   * when refused (e.g. while an interaction waits), the new `session/prompt` rejects first and the prior one runs on.
+   * Sends a concurrent `session/prompt` to steer an `agy acp` turn. When agy takes it, it answers the prior request with
+   * `end_turn` and the turn's usage so far, then streams the reply to the addition for the new request, which owns the
+   * rest of the turn. When it refuses (an interaction waits), the new request fails first and the prior one runs on.
+   *
+   * The turn splits on the wire's callback for the prior answer: the reply may follow it in the same read. A prior
+   * request that ended on its own at that moment cannot be told apart; agy then runs the addition as a new turn of its
+   * own, which still answers it within this Latch turn. After the steer timeout the handoff goes on, and what it shows
+   * settles the receipt: `add` records the addition late, `refused` withdraws it.
    */
   private async steerPromptTurn(
     run: Run,
@@ -6248,80 +6260,74 @@ export class AgentRuntime implements Bridge {
     blocks: unknown[],
     timeoutMs: number,
     add: (result: unknown) => void,
+    refused: () => void,
     userText?: string,
   ): Promise<unknown> {
     const state = run.promptTurn
     if (!state) return { outcome: 'promptRequired' }
-    while (state.lock) await state.lock
+    while (state.handoff) await state.handoff
     if (this.runs.get(run.taskId) !== run || !this.steerable(run) || state.settled) return { outcome: 'promptRequired' }
-    let releaseLock!: () => void
-    state.lock = new Promise<void>(resolve => {
-      releaseLock = () => {
-        state.lock = undefined
-        resolve()
-      }
-    })
-    let releaseHandoff!: () => void
+    let release!: () => void
     const handoff = new Promise<void>(resolve => {
-      releaseHandoff = () => {
-        if (state.handoff === handoff) state.handoff = undefined
-        resolve()
-      }
+      release = resolve
     })
     state.handoff = handoff
     const previous = state.current
-    const next = live.wire.request(
+    const injected = { outcome: 'injected' as const }
+    let late = false
+    let taken = false
+    const take = (prior: Settled): void => {
+      if (taken) return
+      taken = true
+      this.supersededEnd(run, prior)
+      add(injected)
+      if (!late) return
+      void this.flush().catch(() => {})
+      this.notify(run.taskId)
+    }
+    state.answered = (request, value) => {
+      if (request !== previous) return
+      state.answered = undefined
+      take({ ok: true, value })
+    }
+    const next: Promise<unknown> = live.wire.request(
       'session/prompt',
       { sessionId: run.acpSessionId, prompt: blocks },
       undefined,
       undefined,
-      undefined,
+      result => state.answered?.(next, result),
       userText === undefined ? undefined : { userText },
     )
-    let nextFailure: { error: unknown } | undefined
-    next.then(
-      () => {},
-      (error: unknown) => {
-        nextFailure = { error }
-      },
-    )
-    let timedOut = false
+    const settle = (request: Promise<unknown>): Promise<Settled> =>
+      request.then(
+        value => ({ ok: true, value }),
+        (error: unknown) => ({ ok: false, error }),
+      )
     const transition = (async (): Promise<unknown> => {
-      type Settled = { which: 'previous' | 'next'; ok: true; value: unknown } | { which: 'previous' | 'next'; ok: false; error: unknown }
       try {
-        const first = await Promise.race<Settled>([
-          previous.then(
-            value => ({ which: 'previous', ok: true, value }),
-            (error: unknown) => ({ which: 'previous', ok: false, error }),
-          ),
-          next.then(
-            value => ({ which: 'next', ok: true, value }),
-            (error: unknown) => ({ which: 'next', ok: false, error }),
-          ),
+        const first = await Promise.race([
+          settle(previous).then(result => ({ ...result, next: false })),
+          settle(next).then(result => ({ ...result, next: true })),
         ])
-        if (first.which === 'next') {
-          if (!first.ok) throw first.error
-          const prior = await previous.then(
-            value => ({ ok: true as const, value }),
-            (error: unknown) => ({ ok: false as const, error }),
-          )
-          state.usage = sumTurnTokens(state.usage, prior.ok ? this.promptAnswerTokens(prior.value) : this.promptErrorTokens(prior.error))
-          const injected = { outcome: 'injected' as const }
-          if (!timedOut) add(injected)
-          state.current = next
-          return injected
+        if (first.next && !first.ok) {
+          state.answered = undefined
+          if (late) refused()
+          // agy ended the prior request in the same read as it refused the addition, which it does not do: say so.
+          if (taken) run.notes.push(`${this.agent.name} 没有接受最后一条追加，它没有读到这条内容；需要的话请重新发送。`)
+          throw first.error
         }
-        await Promise.resolve()
-        if (nextFailure) throw nextFailure.error
-        state.usage = sumTurnTokens(state.usage, first.ok ? this.promptAnswerTokens(first.value) : this.promptErrorTokens(first.error))
-        const injected = { outcome: 'injected' as const }
-        if (!timedOut) add(injected)
+        const prior = first.next ? await settle(previous) : first
+        state.answered = undefined
+        // The process went away: whether agy took the addition, nobody can say.
+        if (!prior.ok && (prior.error instanceof ConnectionClosed || prior.error instanceof ConnectionStopping)) throw prior.error
+        state.usage = addTurnTokens(state.usage, prior.ok ? this.promptAnswerTokens(prior.value) : this.promptErrorTokens(prior.error))
+        take(prior)
         state.current = next
         if (run.cancelRequested && run.acpSessionId) live.wire.notify('session/cancel', { sessionId: run.acpSessionId })
         return injected
       } finally {
-        releaseHandoff()
-        releaseLock()
+        if (state.handoff === handoff) state.handoff = undefined
+        release()
       }
     })()
     transition.catch(() => {})
@@ -6332,7 +6338,7 @@ export class AgentRuntime implements Bridge {
         transition,
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
-            timedOut = true
+            late = true
             reject(new RequestTimeout(STEER_METHOD))
           }, timeoutMs)
           timer.unref()
@@ -6343,10 +6349,29 @@ export class AgentRuntime implements Bridge {
     }
   }
 
+  /**
+   * The request a steer superseded ended otherwise than by handing off (`end_turn`): it failed, or stopped for its own
+   * reason. agy runs the addition all the same, so the turn goes on; the part that ended is marked failed and said why.
+   */
+  private supersededEnd(run: Run, prior: Settled): void {
+    if (run.cancelRequested) return
+    const stopReason = prior.ok ? promptResult.safeParse(prior.value).data?.stopReason : undefined
+    if (stopReason === 'end_turn') return
+    const task = this.state.tasks[run.taskId]
+    if (task && this.runs.get(run.taskId) === run && run.segment) this.settleSegment(run, task, 'failed')
+    const hideOutput = run.sensitiveOutput || run.attachments?.length
+    const said = (reason: string): string => `${this.agent.name} 接上追加之前的那段回复${reason}。`
+    if (!prior.ok)
+      run.notes.push(said(hideOutput ? '出错了，含附件的错误输出未显示' : `出错：${clip(this.redact(message(prior.error)), 300)}`))
+    else if (stopReason === 'max_tokens') run.notes.push(said('达到模型输出长度上限，可能不完整'))
+    else if (stopReason === 'refusal') run.notes.push(said('被模型拒绝继续处理'))
+    else run.notes.push(said(`以 ${clip(this.redact(stopReason ?? '无效响应'), 64)} 结束`))
+  }
+
   private outcome(run: Run, result: unknown, notes: string[]): TaskStatus {
     this.askQuota(run.live, true)
     const parsed = promptResult.safeParse(result)
-    this.recordReportedTokens(run, sumTurnTokens(run.promptTurn?.usage, this.promptAnswerTokens(result)))
+    this.recordReportedTokens(run, addTurnTokens(run.promptTurn?.usage, this.promptAnswerTokens(result)))
     const stopReason = parsed.success ? parsed.data.stopReason : undefined
     // The Host's own stop is no cancel by anyone: the turn was interrupted, whatever the agent answered.
     if (run.cancelRequested && this.closed && run.sent) {
@@ -6405,7 +6430,7 @@ export class AgentRuntime implements Bridge {
 
   private failure(run: Run, error: unknown, notes: string[]): TaskStatus {
     if (run.sent) {
-      this.recordReportedTokens(run, sumTurnTokens(run.promptTurn?.usage, this.promptErrorTokens(error)))
+      this.recordReportedTokens(run, addTurnTokens(run.promptTurn?.usage, this.promptErrorTokens(error)))
     }
     const hideOutput = run.sensitiveOutput || run.attachments?.length
     if (error instanceof ConnectionClosed) {

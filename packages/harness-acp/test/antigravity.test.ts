@@ -150,27 +150,38 @@ rl.on('line', line => {
       }
       const prev = active
       active = { id: msg.id, step: prev.step + 1 }
-      send({
-        jsonrpc: '2.0',
-        id: prev.id,
-        result: {
-          stopReason: 'end_turn',
-          usage: { inputTokens: 1000, cachedReadTokens: 400, cachedWriteTokens: 0, outputTokens: 30, thoughtTokens: 5 },
-        },
-      })
-      send({
-        jsonrpc: '2.0',
-        method: 'session/update',
-        params: {
-          sessionId: msg.params.sessionId,
-          update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Steered: ' + text } },
-        },
-      })
-      if (text.includes('finish-now')) {
-        setTimeout(() => {
-          finishActive('end_turn', { inputTokens: 1500, cachedReadTokens: 600, cachedWriteTokens: 0, outputTokens: 50, thoughtTokens: 10 })
-        }, 20)
+      const hand = () => {
+        // The superseded answer and the first words of the reply in one write, so they reach Latch in the same read.
+        process.stdout.write(
+          [
+            {
+              jsonrpc: '2.0',
+              id: prev.id,
+              result: {
+                stopReason: text.includes('prior-max') ? 'max_tokens' : 'end_turn',
+                usage: { inputTokens: 1000, cachedReadTokens: 400, cachedWriteTokens: 0, outputTokens: 30, thoughtTokens: 5 },
+              },
+            },
+            {
+              jsonrpc: '2.0',
+              method: 'session/update',
+              params: {
+                sessionId: msg.params.sessionId,
+                update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Steered: ' + text } },
+              },
+            },
+          ]
+            .map(message => JSON.stringify(message) + '\\n')
+            .join(''),
+        )
+        if (text.includes('finish-now')) {
+          setTimeout(() => {
+            finishActive('end_turn', { inputTokens: 1500, cachedReadTokens: 600, cachedWriteTokens: 0, outputTokens: 50, thoughtTokens: 10 })
+          }, 20)
+        }
       }
+      if (text.includes('slow-handoff')) setTimeout(hand, Number(process.env.FAKE_AGY_HANDOFF_MS))
+      else hand()
       return
     }
     active = { id: msg.id, step: 1 }
@@ -237,7 +248,7 @@ async function activateDriver(plugin: HarnessPlugin): Promise<HarnessDriver> {
   return driver
 }
 
-async function openFakeAntigravity(): Promise<{ bridge: Bridge }> {
+async function openFakeAntigravity(options: { requestTimeoutMs?: number; env?: Record<string, string> } = {}): Promise<{ bridge: Bridge }> {
   const root = await mkdtemp(join(tmpdir(), 'latch-agy-'))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const binDir = join(root, 'bin')
@@ -254,8 +265,16 @@ async function openFakeAntigravity(): Promise<{ bridge: Bridge }> {
   forgetCommandLookups()
   const driver = await activateDriver(
     createAcpAgentPlugin(
-      { id: 'antigravity', presetId: 'antigravity', name: 'Antigravity', command: 'agy', args: ['acp'], env: {}, enabled: true },
-      { cancelGraceMs: 300, stopGraceMs: 200, restartDelayMs: 0, requestTimeoutMs: 5_000 },
+      {
+        id: 'antigravity',
+        presetId: 'antigravity',
+        name: 'Antigravity',
+        command: 'agy',
+        args: ['acp'],
+        env: options.env ?? {},
+        enabled: true,
+      },
+      { cancelGraceMs: 300, stopGraceMs: 200, restartDelayMs: 0, requestTimeoutMs: options.requestTimeoutMs ?? 5_000 },
     ),
   )
   const bridge = driver.create({
@@ -373,4 +392,35 @@ it('hides Antigravity steering while a permission waits and keeps the turn runni
   expect(await bridge.steer!(sessionId, 'finish-now', 'perm-finish')).toBe('injected')
   const done = await waitForDetail(bridge, sessionId, detail => detail.summary.status === 'idle')
   expect(done.messages.filter(m => m.steered).map(m => m.text)).toEqual(['finish-now'])
+})
+
+it('marks the reply a steer superseded failed when agy ended it otherwise than end_turn, and goes on with the turn', async () => {
+  const { bridge } = await openFakeAntigravity()
+  const { sessionId } = await bridge.createTask({ prompt: 'start work', requestId: 'max-1' })
+  await waitForDetail(bridge, sessionId, detail => detail.steer === true && detail.liveText.includes('Working.'))
+  expect(await bridge.steer!(sessionId, 'prior-max finish-now', 'max-2')).toBe('injected')
+  const done = await waitForDetail(bridge, sessionId, detail => detail.summary.status === 'idle')
+  expect(done.messages.map(m => [m.role, m.text, m.state])).toEqual([
+    ['user', 'start work', undefined],
+    ['assistant', 'Working.', 'failed'],
+    ['user', 'prior-max finish-now', undefined],
+    ['assistant', 'Steered: prior-max finish-now', 'completed'],
+    ['system', 'Antigravity 接上追加之前的那段回复达到模型输出长度上限，可能不完整。', undefined],
+  ])
+})
+
+it('records an addition agy took after the steer timed out, so the same request then reads injected', async () => {
+  const { bridge } = await openFakeAntigravity({ requestTimeoutMs: 1_000, env: { FAKE_AGY_HANDOFF_MS: '1500' } })
+  const { sessionId } = await bridge.createTask({ prompt: 'start work', requestId: 'late-1' })
+  await waitForDetail(bridge, sessionId, detail => detail.steer === true && detail.liveText.includes('Working.'))
+  await expect(bridge.steer!(sessionId, 'slow-handoff finish-now', 'late-2')).rejects.toMatchObject({ code: 'steer-unknown' })
+  // The handoff agy answered late is the Host's evidence: the addition is recorded where the turn split.
+  const done = await waitForDetail(bridge, sessionId, detail => detail.summary.status === 'idle')
+  expect(done.messages.map(m => [m.role, m.text, m.steered])).toEqual([
+    ['user', 'start work', undefined],
+    ['assistant', 'Working.', undefined],
+    ['user', 'slow-handoff finish-now', true],
+    ['assistant', 'Steered: slow-handoff finish-now', undefined],
+  ])
+  expect(await bridge.steer!(sessionId, 'slow-handoff finish-now', 'late-2')).toBe('injected')
 })

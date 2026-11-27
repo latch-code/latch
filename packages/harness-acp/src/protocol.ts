@@ -298,6 +298,21 @@ const turnTokens = z.object({
   thoughtTokens: tokenCount.nullish().catch(undefined),
 })
 export type TurnTokens = z.infer<typeof turnTokens>
+
+/** Two parts of one turn counted as one: a count either part reports stays reported. */
+export function addTurnTokens(first: TurnTokens | undefined, second: TurnTokens | undefined): TurnTokens | undefined {
+  if (!first) return second
+  if (!second) return first
+  const sum = (key: 'cachedReadTokens' | 'cachedWriteTokens' | 'thoughtTokens') =>
+    first[key] == null && second[key] == null ? {} : { [key]: (first[key] ?? 0) + (second[key] ?? 0) }
+  return {
+    inputTokens: first.inputTokens + second.inputTokens,
+    outputTokens: first.outputTokens + second.outputTokens,
+    ...sum('cachedReadTokens'),
+    ...sum('cachedWriteTokens'),
+    ...sum('thoughtTokens'),
+  }
+}
 /**
  * The session update a wire that reads token counts itself sends while a turn runs (Codex's app-server): `TurnTokens`
  * beside `sessionUpdate`, with `scope` saying whether it counts the whole session or this turn.

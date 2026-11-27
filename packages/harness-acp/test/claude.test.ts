@@ -1451,4 +1451,43 @@ describe('Claude’s own store, read only where the Host lets the wire', () => {
       usage: { inputTokens: 50, outputTokens: 10 },
     })
   })
+
+  it('settles a steered turn whose results name no message at idle, and fails it when that cycle failed', async () => {
+    const h = harness()
+    await h.wire.request('initialize', {})
+    const { sessionId } = (await h.wire.request('session/new', { cwd: '/work', mcpServers: [] })) as { sessionId: string }
+    const q = h.queries[0]!
+    const answered = h.wire.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] })
+    await vi.waitFor(() => expect(q.prompts).toHaveLength(1))
+    expect(await h.wire.request('_session/steering', { sessionId, prompt: [{ type: 'text', text: 'and this' }] })).toEqual({
+      outcome: 'injected',
+    })
+    await vi.waitFor(() => expect(q.prompts).toHaveLength(2))
+    // One cycle took both messages and hit the limit; its result names neither.
+    q.out.push({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      error: 'rate_limit',
+      message: { id: 'm8', content: [{ type: 'text', text: 'You hit your limit' }] },
+    })
+    q.out.push({
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      result: 'You hit your limit',
+      usage: { input_tokens: 3, output_tokens: 1 },
+    })
+    let settled = false
+    void answered.then(
+      () => (settled = true),
+      () => (settled = true),
+    )
+    await tick()
+    expect(settled).toBe(false)
+    q.out.push({ type: 'system', subtype: 'session_state_changed', state: 'idle' })
+    const error = (await answered.catch((caught: unknown) => caught)) as RpcError
+    expect(error).toBeInstanceOf(RpcError)
+    expect(error.message).toBe('You hit your limit')
+    expect(error.data).toMatchObject({ errorKind: 'rate_limit' })
+  })
 })

@@ -32,6 +32,7 @@ import {
   RPC,
   RpcError,
   STEER_METHOD,
+  addTurnTokens,
   type TurnTokens,
 } from '../protocol.ts'
 import { ELICITATION_METHOD } from '../questions.ts'
@@ -353,6 +354,8 @@ interface Turn {
   interrupted?: boolean
   /** The turn's result, held until an interrupt sent for it was acknowledged, or until an unstamped steered turn goes idle. */
   ended?: Record<string, unknown>
+  /** The error Claude reported for the cycle `ended` came from, on an unstamped steered turn. */
+  endedErrorKind?: string
   /** A choice that stops the turn (keep planning) was made: it ends as cancelled, as on the adapter. */
   stopped?: boolean
   /** What the last reply said went wrong (`SDKAssistantMessageError`). */
@@ -382,19 +385,6 @@ function readTurnTokens(raw: unknown): TurnTokens | undefined {
     outputTokens: read.data.output_tokens,
     ...(read.data.cache_read_input_tokens != null ? { cachedReadTokens: read.data.cache_read_input_tokens } : {}),
     ...(read.data.cache_creation_input_tokens != null ? { cachedWriteTokens: read.data.cache_creation_input_tokens } : {}),
-  }
-}
-
-function addClaudeTokens(first: TurnTokens | undefined, second: TurnTokens | undefined): TurnTokens | undefined {
-  if (!first) return second
-  if (!second) return first
-  const cachedReadTokens = (first.cachedReadTokens ?? 0) + (second.cachedReadTokens ?? 0)
-  const cachedWriteTokens = (first.cachedWriteTokens ?? 0) + (second.cachedWriteTokens ?? 0)
-  return {
-    inputTokens: first.inputTokens + second.inputTokens,
-    outputTokens: first.outputTokens + second.outputTokens,
-    ...(first.cachedReadTokens !== undefined || second.cachedReadTokens !== undefined ? { cachedReadTokens } : {}),
-    ...(first.cachedWriteTokens !== undefined || second.cachedWriteTokens !== undefined ? { cachedWriteTokens } : {}),
   }
 }
 
@@ -1133,7 +1123,7 @@ export class ClaudeWire implements AgentWire {
     const session = this.assertSession(parsed.data.sessionId)
     const content = promptContent(parsed.data.prompt)
     const turn = this.turn
-    if (!turn || turn.cancelled) return Promise.resolve({ outcome: 'promptRequired' })
+    if (!turn || turn.cancelled || turn.stopped) return Promise.resolve({ outcome: 'promptRequired' })
     const uuid = randomUUID()
     remember(session.sent, uuid, true)
     turn.uuids.add(uuid)
@@ -1451,6 +1441,7 @@ export class ClaudeWire implements AgentWire {
   private onState(session: Session, state: unknown): void {
     const turn = this.turn
     if (!turn || this.session !== session || state !== 'idle' || !turn.ended) return
+    if (turn.errorKind !== 'authentication_failed' && !turn.cancelled) turn.errorKind = turn.endedErrorKind
     turn.interrupted = true
     void this.settle(turn, turn.ended)
   }
@@ -1469,25 +1460,27 @@ export class ClaudeWire implements AgentWire {
       void this.reportUsage(session, message)
       return
     }
-    turn.usage = addClaudeTokens(turn.usage, readTurnTokens(message.usage))
+    turn.usage = addTurnTokens(turn.usage, readTurnTokens(message.usage))
     if (turn.cancelled && !turn.interrupted) {
       turn.ended = message
       return
     }
     if (!turn.cancelled && turn.pendingSteers?.size) {
+      if (!owner) {
+        // A result that names no message: which cycle it ends is unknown, so the turn settles at `idle` on the latest one,
+        // with that cycle's error. Nothing is rewritten: a cycle that really failed still fails the turn.
+        turn.ended = message
+        turn.endedErrorKind = turn.errorKind
+        if (turn.errorKind !== 'authentication_failed') turn.errorKind = undefined
+        return
+      }
       let answeredSteer = false
       for (const id of consumed) {
         if (turn.pendingSteers.delete(id)) answeredSteer = true
       }
-      if (owner ? turn.pendingSteers.size > 0 || !answeredSteer : true) {
-        // An interrupted pre-steer cycle's diagnostic error does not fail the steered cycle ahead; unstamped CLIs settle at `idle`.
+      if (turn.pendingSteers.size > 0 || !answeredSteer) {
+        // A cycle before the latest addition (interrupted to take it): the turn goes on, and its error is not the turn's.
         if (turn.errorKind !== 'authentication_failed') turn.errorKind = undefined
-        if (!owner) {
-          turn.ended =
-            message.is_error === true && !turn.ended
-              ? { ...message, subtype: 'success', is_error: false, stop_reason: 'end_turn' }
-              : message
-        }
         return
       }
       turn.ended = undefined
