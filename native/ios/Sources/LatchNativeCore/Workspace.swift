@@ -82,6 +82,7 @@ struct QualifiedNativePath: Sendable {
     let ticket: UUID
     let reopen: (@Sendable () async throws -> NativeHTTPConnection)?
     var kind: NativePathCandidate.Kind? = nil
+    var candidateId: String? = nil
     var upgrade = false
 }
 
@@ -171,6 +172,7 @@ public actor NativeWorkspace {
     private let directoryResolver: NativeDirectoryResolver
     private var reopen: (@Sendable () async throws -> NativeHTTPConnection)?
     private var installedKind: NativePathCandidate.Kind?
+    private var installedCandidateId: String?
     private let prefetchChallenge: @Sendable () -> Bool
     private var bulk: (connection: NativeHTTPConnection, handle: String, etag: String, size: Int, until: Date)?
     private var bulkBusy = false
@@ -226,7 +228,7 @@ public actor NativeWorkspace {
      * a revoked device never parses the snapshot. A held window or recovery proof is rechecked before the snapshot is read,
      * so the snapshot sees the window the Host confirmed.
      */
-    func qualify(_ next: NativeHTTPConnection, ticket id: UUID, kind: NativePathCandidate.Kind? = nil, upgrade: Bool = false,
+    func qualify(_ next: NativeHTTPConnection, ticket id: UUID, kind: NativePathCandidate.Kind? = nil, candidateId: String? = nil, upgrade: Bool = false,
         reopen: (@Sendable () async throws -> NativeHTTPConnection)? = nil) async throws -> QualifiedNativePath {
         guard revocation == nil else { await next.close(); throw NativeFailure.revoked }
         guard closingOpening == nil else { await next.close(); throw NativeFailure.unavailable }
@@ -250,7 +252,7 @@ public actor NativeWorkspace {
             }
             guard attempt == id, !Task.isCancelled else { throw NativeFailure.unavailable }
             var path = QualifiedNativePath(connection: next, snapshot: try parseCheckpoint(response), snapshotRead: read, window: window, ticket: id, reopen: reopen)
-            path.kind = kind; path.upgrade = upgrade
+            path.kind = kind; path.candidateId = candidateId; path.upgrade = upgrade
             return path
         } catch { await next.close(); throw error }
     }
@@ -289,7 +291,7 @@ public actor NativeWorkspace {
             let old = connection, transport = NativeTransportEpoch()
             installedTransport?.withdraw()
             installedTransport = transport
-            connection = path.connection; reopen = path.reopen; epoch = transport.id; installedKind = path.kind
+            connection = path.connection; reopen = path.reopen; epoch = transport.id; installedKind = path.kind; installedCandidateId = path.candidateId
             bodyState?.authority.replaceConnection(); bodyState?.resetStream(); bodyState?.offers.removeAll()
             if let old { Task { await old.close() } }
             if lease == nil, prefetchChallenge(), metadata["device"]["scopes"].array.contains(.string("view")) {
@@ -304,7 +306,7 @@ public actor NativeWorkspace {
         } catch {
             if connection === path.connection {
                 installedTransport?.withdraw(); installedTransport = nil
-                connection = nil; reopen = nil; epoch = UUID(); installedKind = nil
+                connection = nil; reopen = nil; epoch = UUID(); installedKind = nil; installedCandidateId = nil
                 bodyAttempt = UUID(); bodyState?.withdraw(); bodyState = nil
             }
             await path.connection.close(); throw error
@@ -319,6 +321,8 @@ public actor NativeWorkspace {
     public func lease() async -> BodyLease? { await verification.currentLease() }
     /** The kind of the installed path, as the dial round that installed it named it. */
     public func installedPathKind() -> NativePathCandidate.Kind? { connection == nil ? nil : installedKind }
+    /** The candidate ID of the installed path (for example the hex relayId of an installed relay). */
+    public func installedPathId() -> String? { connection == nil ? nil : installedCandidateId }
     /** Nothing is in flight on the installed path but its event streams, so moving paths loses no answer. */
     public func quiet() async -> Bool {
         guard idle() else { return false }
@@ -358,6 +362,12 @@ public actor NativeWorkspace {
         return try NativeDiscoveryWire.epoch(key: key)
     }
     public func directoryEpoch() throws -> String { try currentBook().directory?.epoch ?? NativeDirectorySource.absentEpoch }
+    public func relayEpoch() throws -> String {
+        let items = try currentBook().relays.map {
+            LinkBytes.hex($0.relayId) + ":" + LinkBytes.hex($0.edge?.relayKey ?? $0.spkiHash)
+        }.joined(separator: ",")
+        return LinkBytes.hex(LinkBytes.hash(Data(("latch-relay-epoch-v1:" + items).utf8)))
+    }
     private func currentBook() throws -> NativeAddressBook {
         try AddressBookCodec.verify(bookDevice.signedAddressBook, rootSpki: device.rootSpki, deviceId: device.deviceId,
             nowMs: UInt64(max(0, Date().timeIntervalSince1970 * 1000)), priorGeneration: bookDevice.bookGeneration, priorHash: bookDevice.bookHash)

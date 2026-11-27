@@ -2,11 +2,18 @@
 description: 手机在其他网络连回 Mac：先直连，否则经自己的中继（Linux 服务器或自己的 Cloudflare 账户），部署、验收、在 Mac 上核对与测试、两种类型的身份与谁能看到什么、按状态排查。
 sources:
   - apps/relay/gateway/main.go
+  - apps/relay/src/acme.ts
+  - apps/relay/src/self-tls.ts
   - apps/relay/src/cli.ts
   - apps/relay/src/config.ts
   - apps/relay/deploy/compose.yaml
+  - apps/relay/deploy/compose.standalone.yaml
   - apps/relay/deploy/install.sh
   - apps/relay/deploy/upgrade.sh
+  - apps/relay/scripts/bundle-linux.ts
+  - apps/relay/scripts/accept-linux.ts
+  - apps/relay/scripts/setup-linux-core.ts
+  - apps/relay/scripts/setup-linux.ts
   - apps/relay-edge/src/node.ts
   - apps/relay-edge/src/buffers.ts
   - apps/relay-edge/src/edge.ts
@@ -64,50 +71,71 @@ sources:
 
 ## 中继协议的身份
 
-| | `self`（Linux 服务器） | `edge`（Cloudflare Workers） |
+| | 旧版固定证书（v1 配置文件） | 中继独立密钥（v2 配置文件：Linux 新部署与 Cloudflare Workers） |
 | --- | --- | --- |
-| 外层 TLS | 运营者自己的证书，在自己的机器终止 | Cloudflare 的证书，在 Cloudflare 终止 |
+| 外层 TLS | 运营者自己的证书，在自己的机器终止 | WebPKI 证书（内置 ACME 自动签发、同机 Caddy/Nginx 反代或 Cloudflare 终止） |
 | 节点身份 | 固定证书公钥（SPKI SHA-256） | 中继自己的 Ed25519 密钥：每条连接先发随机数，节点用私钥签名后才继续 |
 | 准入证明 | v1，不绑定这条连接 | v2，绑定节点在这条连接上的随机数，只能用一次 |
 | 地址 | 一个 | 一到四个，手机与 Mac 竞速，先通过签名检查的胜出 |
 
 签名文本、证明文本与消息格式写在 [relay-identity.ts](../packages/link-wire/src/relay-identity.ts) 与 [pass.ts](../packages/link-wire/src/pass.ts)，共享向量在 `packages/testkit/vectors/link-v1.json`（`edgeRelay`、`addressBookV4`）。
 
-- 一个 edge 节点可以有多个地址（`workers.dev` 与自定义域名），因为绑定连接与节点的是签名，不是主机名：一个地址答出别的密钥，只会在竞速中输掉。
+- 一个 v2 节点可以有多个地址（例如 `workers.dev` 与自定义域名），且外层 TLS 证书自动续期换私钥不会使客户端配置失效，因为绑定连接与节点的是中继自己的 Ed25519 密钥签名。
 - iOS 拨中继时，从外层连接到验证 Mac 的根证明最多 24 秒。每个握手步骤最多等 8 秒，只有完成一个步骤才给下一步计时。
 - iOS 的路径轮次取消时，每个来源停止拨号或准入，并等待 NIOTS 通道结束。换网或替换轮次等待上一轮退出。
 - iPhone 上同一节点的几个地址同时只有一个发送准入证明。它 4 秒内没有接合就关闭连接、放弃这次准入，其间被拒的地址再拨一次，所以一个卡住的地址不会拖到整轮超时。
-- edge 的签名不绑定 TLS 会话：能为这个域名终止 TLS 的一方可以把它实时转发。它保证节点的密钥参与了这条连接，并让每个准入证明只能用一次；再在 WebSocket 里加一层对节点密钥的加密尚未实现。
-- self 保持 v1 证明：已部署的自建节点与旧手机只认 v1，客户端也分不出升级过的节点，绑定需要一次不存在的协商。
+- 中继密钥的签名不绑定外层 TLS 会话：能为这个域名终止 TLS 的一方可以把它实时转发。它保证节点的密钥参与了这条连接，并让每个准入证明只能用一次；再在 WebSocket 里加一层对节点密钥的加密尚未实现。
+- Linux 节点同时保留 `/v1/{h,d,c}` 的旧版 v1（固定证书 SPKI）支持，已部署的旧配置继续可用。
 
 ## 自己的中继
 
-### 方式 A：Linux 服务器（self）
+### 方式 A：Linux 服务器
 
-「添加转发服务」› 自己的服务器是三步：登录（`ssh` 到你的服务器）、配置（填域名、端口、证书链与私钥的路径，页面据此给出下面的命令，在服务器上的 Latch 源码目录运行）、连接（用 `scp` 把中继文件取回这台 Mac 的 `~/.latch/relays`，它随即出现在页面里）。安装版尚未附带服务器程序，这一项标「尚未实现」，仍可添加已有的配置文件。在公网 Linux 上运行 Latch Relay：
+需要一台可 SSH 登录的 Linux 服务器（`x86_64` 或 `arm64`，运行 `systemd`）。**不需要购买域名**，服务器也无需拉取 Latch 源码或安装 Node、pnpm、Go。
 
-**准备服务器。** 需要一台可直达的 Linux 服务器、指向它的域名与证书。
+在 Latch 的源码目录运行一条命令（「设置 › 连接转发 › 添加转发服务 › 自己的服务器」会根据所填项自动生成命令）：
 
-- **证书。** 证书链须受 Mac 与手机的系统信任，名称与中继地址一致。用同一把证书密钥续期时公钥指纹不变；公钥变了要重新导出并导入配置。
-- **TLS 由 Latch 的 Go 网关直接处理**（`latch-relay-tls`）。域名指向这台服务器的服务端口（`init` 写出的是 8443），也可以由操作者核对后在同机配置 TCP 转发。公网连接或私有 Unix socket 任一端断开，网关关闭另一端，等待两个转发方向结束后释放连接槽。
-- **运行身份。** 单独的系统用户，绝对路径的私有数据目录：目录 0700、文件 0600，由服务用户持有。下面用 `/srv/latch-relay`。
-- **源码方式**需要 `.node-version` 与 `.go-version` 的工具链和锁定的依赖。
+1. **只有公网 IP、没有域名（最常用，默认优先用安全组已放行的 443 端口，若被占用自动回退 8443）**：
+   ```sh
+   pnpm latch relay setup linux --server root@203.0.113.10
+   ```
+   命令自动识别服务器公网 IP（若用 SSH 别名或处于云 NAT 后，也可显式加 `--ip <公网IP>`），探测 `443` 空闲时直接监听 `443`（免去云控制台改安全组；若 `443` 已被其他服务占用则自动切到 `8443`），在服务器上生成包含该 IP SAN 的 P-256 证书，并在后台到期前 30 天**复用同一把私钥**自动重签热加载（`spkiHash` 永久不变）。Mac 与 iPhone 均凭 256 位证书公钥哈希强绑定直连，不依赖外部公共 CA。
+2. **有域名且服务器 443 端口空闲（自动申请并续期公共 CA 证书）**：
+   ```sh
+   pnpm latch relay setup linux --server root@203.0.113.10 --domain relay.example.com
+   ```
+   服务通过内置 ACME（`TLS-ALPN-01`，无需开放 80 端口）自动申请 Let's Encrypt 证书并在到期前 30 天自动续期热加载，节点以持久 Ed25519 `relayKey` 证明身份。
+3. **有域名且复用服务器已有的 Caddy 或 Nginx 反向代理（443 已被占用时）**：
+   ```sh
+   pnpm latch relay setup linux --server root@203.0.113.10 --domain relay.example.com --behind-proxy
+   ```
+   服务只绑定服务器回环 `127.0.0.1:18443`（可用 `--port` 修改），由你现有的 Caddy 或 Nginx 在 `:443` 终止 TLS 并转发 `/v1/*` 与 `/healthz`；命令会给出对应的反向代理配置片段。反代尚未重载前可加 `--skip-accept` 先导出连接文件。
+4. **使用服务器上已有的证书文件**：
+   ```sh
+   pnpm latch relay setup linux --server root@203.0.113.10 --domain relay.example.com --port 8443 --cert /etc/ssl/relay/fullchain.pem --key /etc/ssl/relay/key.pem
+   ```
+5. **添加与后续运维**：打开这台 Mac 的「设置 › 连接转发」，找到刚生成的服务器配置，点「核对并连接」。日常升级与查看状态同样在 Mac 上一条命令完成：
+   ```sh
+   pnpm latch relay setup linux --server root@203.0.113.10 --upgrade   # 平滑升级程序，保留节点身份与已配对手机
+   pnpm latch relay status linux --server root@203.0.113.10            # 查看就绪状态、路由连接数、证书余量与月度流量
+   pnpm latch relay uninstall linux --server root@203.0.113.10         # 停止并卸载系统服务（加 --purge-data 一并删除密钥目录）
+   ```
+
+**手动或容器方式部署。** 也可先用 `pnpm exec tsx apps/relay/scripts/bundle-linux.ts --arch amd64 --out /绝对路径/relay.tar.gz` 打出独立包，或使用容器方式：
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm build:relay
-pnpm relay init --data-dir /srv/latch-relay --domain relay.example.com --port 8443 --cert /etc/ssl/relay/fullchain.pem --key /etc/ssl/relay/key.pem
+pnpm relay init --data-dir /srv/latch-relay --domain relay.example.com
+# 或反代回环模式：pnpm relay init --data-dir /srv/latch-relay --domain relay.example.com --behind-proxy
+# 或自有证书模式：pnpm relay init --data-dir /srv/latch-relay --domain relay.example.com --port 8443 --cert /etc/ssl/relay/fullchain.pem --key /etc/ssl/relay/key.pem
 ```
 
-`init` 生成随机节点 ID 与 32 字节的注册令牌，不打印它。带 `--domain` 时写出完整的公网配置 `relay.json`：监听 `0.0.0.0` 与给定端口，证书链与私钥用给定的绝对路径（文件须 0600，`check` 时才读），其余字段按一台小服务器、自己和少数手机使用取保守值，并在输出的 `assumed` 里列出替你假定的几项。域名须是连接簿接受的写法（小写、无下划线），否则什么都不创建。`--iface` 指定计量流量的公网网卡（Linux 上默认取默认路由的网卡），`--gateway` 指定 `latch-relay-tls` 的位置（默认用构建产物）。不带 `--domain` 时只写出绑定 `127.0.0.1` 的起始配置。
-
-`init` 假定的值，按机器实测后在 `relay.json` 里改：
+`init` 生成随机节点 ID、32 字节注册令牌与 32 字节 Ed25519 中继签名种子，不打印任何秘密。默认只计量中继自身转发字节（`quotaSource: 'relay'`，每月 500 GiB、用到 90% 停发新流量，创建时即完成 0 字节基准校准，同机其他服务的流量不会计入）；显式传入 `--iface <网卡>` 时改为计量整块 Linux 网卡字节（默认每月 100 GiB，需运行 `quota set-used` 校准当前计费周期已用字节）。
 
 | 设置 | `init` 写入 |
 | --- | --- |
-| `quota` | 每月 100 GiB、每月 1 日重置、UTC、收发都计；用到 90% 停发新流量。按套餐改 `monthlyBytes`、`resetDay`、`timezone`。转发按当天剩余额度除以剩余秒数的速率补充，空闲时攒下的最多 `burstBytes`（64 MiB，收发都计时约 32 MiB 有效负载），一次传输可以按线速用完它；每帧仍按实际字节计，日度与月度的停止阈值不变 |
+| `quota` | 默认中继自身字节每月 500 GiB（加 `--iface` 时网卡字节每月 100 GiB）、每月 1 日重置、UTC、收发都计；用到 90% 停发新流量。空闲时攒下的最多 `burstBytes`（64 MiB） |
 | `maxConnections`、`maxRoutes`、`maxPerPrefix`、`maxStateBytes` | 256、64、64、1 MiB |
-| `gateway` | 握手并发 64、每秒 20、突发 32、每前缀 25% |
+| `gateway` | 握手并发 64、每秒 20、突发 32、每前缀 25%（`--behind-proxy` 不使用） |
 | `memory`、`registrationWork` | 缓冲 16 MiB、预算 256 MiB；一个计算槽，难度 0–16 位 |
 | `fairness` | 每前缀每日至多用掉配额的一半 |
 
@@ -116,26 +144,19 @@ pnpm relay init --data-dir /srv/latch-relay --domain relay.example.com --port 84
 ```sh
 pnpm relay check --data-dir /srv/latch-relay
 pnpm relay start --data-dir /srv/latch-relay
-pnpm relay quota set-used USED_BYTES --data-dir /srv/latch-relay   # 用运营商报告的本周期已用字节校准
 pnpm relay status --data-dir /srv/latch-relay
 pnpm relay health --data-dir /srv/latch-relay
 ```
 
-其他子命令：`drain`（不再接新连接，排空现有连接）、`reload-tls`（续期后重读证书）；`pnpm relay --help` 列出全部。每个命令都要显式的绝对 `--data-dir`。容器方式用 [Dockerfile](../apps/relay/deploy/Dockerfile)、[Compose](../apps/relay/deploy/compose.yaml)、[install.sh](../apps/relay/deploy/install.sh) 与 [upgrade.sh](../apps/relay/deploy/upgrade.sh)：映射的状态目录归容器的 UID/GID 65532，Compose 要求的环境变量必须给出，换镜像用 upgrade.sh（排空与回退）。
+其他子命令：`drain`（不再接新连接，排空现有连接）、`reload-tls`（续期后重读证书）、`quota set-used <字节>`（校准已用额度）；`pnpm relay --help` 列出全部。个人或小团队容器方式可直接用带默认值的 [compose.standalone.yaml](../apps/relay/deploy/compose.standalone.yaml)；严格生产容器编排用 [Dockerfile](../apps/relay/deploy/Dockerfile)、[compose.yaml](../apps/relay/deploy/compose.yaml)、[install.sh](../apps/relay/deploy/install.sh) 与 [upgrade.sh](../apps/relay/deploy/upgrade.sh)。
 
-**中继文件。** 从已检查的配置导出：
-
-```sh
-pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8443 --output /srv/latch-relay/latch-connection.json
-```
-
-`--url` 是 https origin（小写域名或 IPv6、可选端口，不带路径、`?`、`#` 或下划线：手机连接簿只认这种地址），证书须与主机名相符；`--output` 是新文件的绝对路径，以 0600 写出，命令只打印写入结果与密钥短哈希，供在 Mac 的确认窗口里对照。文件（版本 1）含地址、节点 ID、证书公钥指纹，没有开放登记时还含注册令牌。`--output` 没有默认值：这个命令以服务用户身份读私有数据目录，那个用户的主目录不是你的。
-
-取回到这台 Mac 的 `~/.latch/relays`（名称用域名，点换成连字符）：
+**中继文件。** 手动部署时从已检查的配置导出（默认导出 v2 `relayKey` 格式；加 `--legacy-spki` 导出旧版 v1 固定证书格式）：
 
 ```sh
-(umask 077 && mkdir -p ~/.latch/relays) && scp user@server:/srv/latch-relay/latch-connection.json ~/.latch/relays/relay-example-com.json
+pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com --output /srv/latch-relay/latch-connection.json
 ```
+
+`--url` 是 https origin（小写域名或 IPv6、可选端口，不带路径、`?`、`#` 或下划线），`--output` 是新文件的绝对路径，以 0600 写出，命令只打印写入结果与 8 位密钥短哈希，供在 Mac 的确认窗口里对照。
 
 ### 方式 B：自己的 Cloudflare 账户（edge）
 
@@ -186,9 +207,9 @@ mv -n ~/.latch-relay/latch-relay-ne ~/.latch/relays/ne/deploy && rmdir ~/.latch-
 - 手选文件或连接旧位置的文件，Host 在身份核验和登记通过后默认归档一份 0600 的连接配置。旧文件优先用原名称，手选文件按节点 ID 命名；同名冲突时按节点 ID 保存，同内容的私有文件可复用，已有文件不会被覆盖。归档和 Host 登记是两次写入：归档成功后如果 Host 的保存结果待确认，可继续原请求；如果只失败在归档，页面会报告已连接及归档失败。
 - 「从这台 Mac 移除」从本 Host 收回中继连接并隐藏首页的本机文件。导出的配置仍可重新添加。云端 Worker 及其他 Mac 的连接不受影响。启停和移除都不用 Cloudflare 账户权限。
 - 只有这台 Mac 上有 `admin` 的设备能添加、停用、移除；其他有 `admin` 的设备只看得到列表与状态。
-- 每个节点只能添加一次，至多四个自己的中继。
+- 每个节点只能添加一次，至多四个自己的中继；存在多个中继时手机按列表从上到下的顺序依次尝试连接，本机管理员可在「设置 › 连接转发」中直接拖动（或经菜单上移、下移）调整优先顺序并重新签发连接簿，已建立的控制连接不断开。
 - 中继文件使用完整、规范化的 HTTPS 来源地址，例如 `https://relay.example.com/` 或 `https://relay.example.com:8443/`，保留末尾的 `/`。域名小写，IPv6 用方括号。设置、`latch relay add` 与 Host 都核对地址（[relay-endpoint.ts](../packages/protocol/src/relay-endpoint.ts)）。
-- Host 停止时可用 `latch relay add --data-dir <目录>`（读 `~/.latch/relays` 里唯一的中继文件；`--name <名称>` 选其中一个，`--file <中继文件>` 指定其他位置）、`relay list` 和 `relay remove <节点标识>`。源码运行使用 `pnpm latch`。添加时终端列出每个地址与密钥短哈希，核对后输入 y，非交互用 `--expect-key <密钥短哈希>`。先写审计再保存为待核对，Host 启动后节点证明密钥并接受登记，才可进入签名连接簿。离线 `relay list` 会标出「已停用」与「待核对」。Host 运行时可用 `relay test <节点标识>` 检查连通性、身份与登记，并查看 Host 签发状态。`relay setup linux` 显示服务器发布物尚未提供，Linux 源码部署流程见上文。
+- Host 停止时可用 `latch relay add --data-dir <目录>`（读 `~/.latch/relays` 里唯一的中继文件；`--name <名称>` 选其中一个，`--file <中继文件>` 指定其他位置）、`relay list` 和 `relay remove <节点标识>`。源码运行使用 `pnpm latch`。添加时终端列出每个地址与密钥短哈希，核对后输入 y，非交互用 `--expect-key <密钥短哈希>`。先写审计再保存为待核对，Host 启动后节点证明密钥并接受登记，才可进入签名连接簿。离线 `relay list` 会标出「已停用」与「待核对」。Host 运行时可用 `relay test <节点标识>` 检查连通性、身份与登记，并查看 Host 签发状态。源码目录运行 `pnpm latch relay setup linux` 可经 SSH 一键把自包含中继部署到 Linux 服务器、完成端到端验收并写出 `~/.latch/relays/<名称>.json`。
 
 **Host 做什么。**
 
@@ -201,7 +222,7 @@ mv -n ~/.latch-relay/latch-relay-ne ~/.latch/relays/ne/deploy && rmdir ~/.latch-
 
 ### 手机怎样得到新中继
 
-手机不需要做任何事。Mac 每次发连接簿都按当前设置重新签名；已配对的手机下次连上 Mac（同一网络，或经仍可用的中继）时取得新连接簿，之后在其他网络就会用到新中继。移除的中继不再出现在之后的连接簿里。只在其他网络、而且旧连接簿里没有可用中继的手机，要先回到同一网络连一次。Workers 中继需要包含这一版本的 App：之前的版本跳过连接簿里的 Workers 地址。
+手机不需要做任何事。Mac 每次发连接簿都按当前设置重新签名；只要手机连着 Mac，Mac 在中继新增、停用、移除或拖动调整顺序时会通过快照与事件流的 `relayEpoch` 提示手机立即在后台拉取新连接簿，若手机当前正走次优中继，还会在连接空闲时后台静默切到新的第 1 顺位中继（不断会话）；当时不在线的手机下次连上 Mac（同一网络，或经仍可用的中继）时同样会自动取得新连接簿。移除的中继不再出现在之后的连接簿里。只在其他网络、而且旧连接簿里没有可用中继的手机，要先回到同一网络连一次。Workers 中继需要包含这一版本的 App：之前的版本跳过连接簿里的 Workers 地址。
 
 ## Workers 的界限与验收
 

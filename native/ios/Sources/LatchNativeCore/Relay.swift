@@ -347,7 +347,7 @@ extension NativeHTTPConnection {
         let security = outer.securityProtocolOptions
         sec_protocol_options_set_min_tls_protocol_version(security, .TLSv13)
         sec_protocol_options_set_max_tls_protocol_version(security, .TLSv13)
-        sec_protocol_options_set_tls_server_name(security, host)
+        if !AddressBookCodec.isIP(host) { sec_protocol_options_set_tls_server_name(security, host) }
         sec_protocol_options_add_tls_application_protocol(security, "http/1.1")
         sec_protocol_options_set_tls_tickets_enabled(security, false)
         sec_protocol_options_set_tls_resumption_enabled(security, false)
@@ -361,8 +361,19 @@ extension NativeHTTPConnection {
                       SecTrustSetAnchorCertificates(actual, [certificate] as CFArray) == errSecSuccess,
                       SecTrustSetAnchorCertificatesOnly(actual, true) == errSecSuccess else { complete(false); return }
             }
-            // Edge: ordinary WebPKI; the node's identity is checked by its relay-key signature after the upgrade.
-            guard SecTrustEvaluateWithError(actual, nil), let chain = SecTrustCopyCertificateChain(actual) as? [SecCertificate],
+            var trusted = SecTrustEvaluateWithError(actual, nil)
+            // Self-hosted SPKI-pinned servers without a public CA (e.g. bare IP): anchor at the sole presented
+            // certificate only when its 256-bit SPKI already matches `endpoint.spkiHash`, then re-run full SSL policy
+            // evaluation (self-signature, validity window and IP/DNS SAN). Edge nodes always require WebPKI.
+            if !trusted, trustAnchor == nil, endpoint.edge == nil,
+               let candidates = SecTrustCopyCertificateChain(actual) as? [SecCertificate],
+               candidates.count == 1, let selfSigned = candidates.first,
+               (try? certificateSPKI(SecCertificateCopyData(selfSigned) as Data)).map({ LinkBytes.equal(LinkBytes.hash($0), endpoint.spkiHash) }) == true,
+               SecTrustSetAnchorCertificates(actual, [selfSigned] as CFArray) == errSecSuccess,
+               SecTrustSetAnchorCertificatesOnly(actual, true) == errSecSuccess {
+                trusted = SecTrustEvaluateWithError(actual, nil)
+            }
+            guard trusted, let chain = SecTrustCopyCertificateChain(actual) as? [SecCertificate],
                   let leaf = chain.first,
                   endpoint.edge != nil || (try? certificateSPKI(SecCertificateCopyData(leaf) as Data)).map({ LinkBytes.equal(LinkBytes.hash($0), endpoint.spkiHash) }) == true,
                   sec_protocol_metadata_get_negotiated_tls_protocol_version(metadata) == .TLSv13,

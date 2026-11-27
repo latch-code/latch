@@ -15,6 +15,7 @@ export interface GatewayOptions extends GatewayCapacity {
 }
 const event = z.discriminatedUnion('event', [
   z.object({ event: z.literal('tls-reloaded'), generation: z.number().int().min(1).max(0xffffffff), accepted: z.boolean() }).strict(),
+  z.object({ event: z.literal('acme-tls-updated'), generation: z.number().int().min(1).max(0xffffffff), accepted: z.boolean() }).strict(),
   z.object({ event: z.literal('ready'), port: z.number().int().min(1).max(65535), protocol: z.literal(2) }).strict(),
   z
     .object({
@@ -49,6 +50,7 @@ export async function startGateway(
     port: number
     cert: string | Buffer
     key: string | Buffer
+    allowKeyRotation?: boolean
     maxConnections: number
   },
 ): Promise<{
@@ -56,6 +58,7 @@ export async function startGateway(
   healthy(): boolean
   drain(): void
   reloadTls(cert: string | Buffer, key: string | Buffer): Promise<void>
+  setAcmeTls(cert: string | Buffer | null, key: string | Buffer | null): Promise<void>
   close(): Promise<void>
   stats(): { connections: number; handshakes: number; rejected: number; forwardedBytes: number }
 }> {
@@ -66,6 +69,7 @@ export async function startGateway(
     backend: input.backend,
     certificate: input.cert.toString(),
     key: input.key.toString(),
+    ...(input.allowKeyRotation ? { allowKeyRotation: true } : {}),
     maxConnections: input.maxConnections,
     maxHandshakes: input.maxHandshakes,
     handshakesPerSecond: input.handshakesPerSecond,
@@ -80,7 +84,15 @@ export async function startGateway(
     readyPort = 0
   let status = { connections: 0, handshakes: 0, rejected: 0, forwardedBytes: 0 }
   let generation = 0
-  let reloading: { generation: number; resolve(): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> } | undefined
+  let reloading:
+    | {
+        kind: 'tls-reloaded' | 'acme-tls-updated'
+        generation: number
+        resolve(): void
+        reject(error: Error): void
+        timer: ReturnType<typeof setTimeout>
+      }
+    | undefined
   const exit = new Promise<void>(resolve => {
     child.once('exit', () => {
       exited = true
@@ -127,8 +139,9 @@ export async function startGateway(
             readyPort = parsed.port
             clearTimeout(timer)
             resolve(parsed.port)
-          } else if (parsed.event === 'tls-reloaded') {
-            if (!reloading || parsed.generation !== reloading.generation) throw new Error('Unexpected TLS receipt')
+          } else if (parsed.event === 'tls-reloaded' || parsed.event === 'acme-tls-updated') {
+            if (!reloading || parsed.event !== reloading.kind || parsed.generation !== reloading.generation)
+              throw new Error('Unexpected TLS receipt')
             const current = reloading
             reloading = undefined
             clearTimeout(current.timer)
@@ -171,7 +184,26 @@ export async function startGateway(
           reject(new Error('TLS reload result unknown'))
           child.kill('SIGKILL')
         }, 3000)
-        reloading = { generation, resolve, reject, timer }
+        reloading = { kind: 'tls-reloaded', generation, resolve, reject, timer }
+        child.stdin.write(`${request}\n`)
+      })
+    },
+    setAcmeTls(cert, key) {
+      if (exited || reloading) return Promise.reject(new Error('ACME TLS update unavailable'))
+      const request = JSON.stringify({
+        command: 'acme-tls',
+        generation: ++generation,
+        certificate: cert ? cert.toString() : '',
+        key: key ? key.toString() : '',
+      })
+      if (Buffer.byteLength(request) >= 64 * 1024 || generation > 0xffffffff) return Promise.reject(new Error('ACME TLS limit'))
+      return new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          reloading = undefined
+          reject(new Error('ACME TLS result unknown'))
+          child.kill('SIGKILL')
+        }, 3000)
+        reloading = { kind: 'acme-tls-updated', generation, resolve, reject, timer }
         child.stdin.write(`${request}\n`)
       })
     },

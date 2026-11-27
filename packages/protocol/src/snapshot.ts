@@ -28,7 +28,14 @@ export interface HostView {
     reason?: Extract<PresenceAvailability, { status: 'unavailable' }>['reason']
   }
   tls: { origin: string } | null
-  native?: { enabled: boolean; attentionPush?: true; attentionPreview?: true; discoveryEpoch?: string; directoryEpoch?: string }
+  native?: {
+    enabled: boolean
+    attentionPush?: true
+    attentionPreview?: true
+    discoveryEpoch?: string
+    directoryEpoch?: string
+    relayEpoch?: string
+  }
 }
 
 /** What a device may choose when it starts a session. */
@@ -112,6 +119,8 @@ export interface ChangeEvent {
   /** Optional SHA-256 discovery-key cache hint; does not unlock content or advance body cursors. */
   discoveryEpoch?: string
   directoryEpoch?: string
+  /** Optional SHA-256 ordered-relay cache hint so connected phones refresh relay changes immediately. */
+  relayEpoch?: string
   type: 'refresh' | 'tasks-invalidated'
   instanceId: string
   revision: number

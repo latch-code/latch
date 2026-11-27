@@ -1140,9 +1140,62 @@ describe('latch CLI', () => {
       ['relay-edge/scripts/setup.ts', '--name', 'home', '--location', 'apac', '--out', out, '--check'],
       ['relay-edge/scripts/setup.ts', '--name', 'home', '--check'],
     ])
-    const linux = cli({ cwd: directory })
-    expect(await linux.latch('relay', 'setup', 'linux', '--data-dir', dataDir)).toBe(1)
-    expect(linux.output.stderr).toContain('尚未提供 Linux 中继发布物')
+    const linuxMissing = cloudflare()
+    expect(await linuxMissing.latch('relay', 'setup', 'linux', '--data-dir', dataDir)).toBe(1)
+    expect(
+      await linuxMissing.latch(
+        'relay',
+        'setup',
+        'linux',
+        '--server',
+        'root@example.com',
+        '--domain',
+        'relay.example.com',
+        '--name',
+        'Bad_Name',
+        '--data-dir',
+        dataDir,
+      ),
+    ).toBe(1)
+    expect(runs).toHaveLength(2)
+    const linuxAuto = cloudflare()
+    expect(
+      await linuxAuto.latch(
+        'relay',
+        'setup',
+        'linux',
+        '--server',
+        'root@203.0.113.10',
+        '--domain',
+        'relay.example.com',
+        '--behind-proxy',
+        '--out',
+        out,
+        '--data-dir',
+        dataDir,
+      ),
+    ).toBe(0)
+    expect(runs.at(-1)).toEqual([
+      'relay/scripts/setup-linux.ts',
+      '--server',
+      'root@203.0.113.10',
+      '--domain',
+      'relay.example.com',
+      '--behind-proxy',
+      '--out',
+      out,
+    ])
+    const linuxBareIp = cloudflare()
+    expect(await linuxBareIp.latch('relay', 'setup', 'linux', '--server', 'root@203.0.113.10', '--upgrade', '--data-dir', dataDir)).toBe(0)
+    expect(runs.at(-1)).toEqual(['relay/scripts/setup-linux.ts', '--server', 'root@203.0.113.10', '--upgrade'])
+    const linuxStatus = cloudflare()
+    expect(await linuxStatus.latch('relay', 'status', 'linux', '--server', 'root@203.0.113.10', '--data-dir', dataDir)).toBe(0)
+    expect(runs.at(-1)).toEqual(['relay/scripts/setup-linux.ts', '--action', 'status', '--server', 'root@203.0.113.10'])
+    const linuxUninstall = cloudflare()
+    expect(
+      await linuxUninstall.latch('relay', 'uninstall', 'linux', '--server', 'root@203.0.113.10', '--purge-data', '--data-dir', dataDir),
+    ).toBe(0)
+    expect(runs.at(-1)).toEqual(['relay/scripts/setup-linux.ts', '--action', 'uninstall', '--server', 'root@203.0.113.10', '--purge-data'])
     await expect(stat(dataDir)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(stat(out)).rejects.toMatchObject({ code: 'ENOENT' })
   })

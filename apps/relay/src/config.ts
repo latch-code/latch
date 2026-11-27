@@ -14,8 +14,24 @@ const configSchema = z
     port: z.number().int().min(0).max(65535),
     adminPort: z.number().int().min(0).max(65535),
     relayId: z.string().regex(/^[a-f0-9]{32}$/u),
-    certificateFile: z.string().min(1),
-    keyFile: z.string().min(1),
+    certificateFile: z.string().min(1).optional(),
+    keyFile: z.string().min(1).optional(),
+    relaySigningSeedFile: z.string().min(1).optional(),
+    behindProxy: z.boolean().default(false),
+    acme: z
+      .object({
+        domain: z.string().min(1).max(253),
+        directoryUrl: z.string().url().max(512).optional(),
+        email: z.string().min(3).max(254).optional(),
+      })
+      .strict()
+      .optional(),
+    selfSignedTls: z
+      .object({
+        target: z.string().min(1).max(253),
+      })
+      .strict()
+      .optional(),
     registrationTokenFile: z.string().min(1).optional(),
     openRegistration: z.boolean().default(false),
     maxConnections: z.number().int().min(1).max(20_000).default(1024),
@@ -34,14 +50,17 @@ const configSchema = z
         resetDay: z.number().int().min(1).max(31),
         timezone: z.string().min(1).max(100),
         count: z.enum(['in+out', 'out']),
+        source: z.enum(['iface', 'relay']).optional(),
         iface: z
           .string()
           .regex(/^[a-zA-Z0-9_.:-]{1,15}$/u)
-          .refine(value => !['lo', '.', '..'].includes(value)),
+          .refine(value => !['lo', '.', '..', 'relay'].includes(value))
+          .optional(),
         burstBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
         stopRatio: z.union([z.literal(0.85), z.literal(0.9)]),
       })
       .strict()
+      .refine(value => (value.source === 'relay' ? value.iface === undefined : value.iface !== undefined))
       .optional(),
     fairness: z
       .object({ prefixDailyShare: z.number().gt(0).max(1).default(0.01), overageFactor: z.number().gt(0).lt(1) })
@@ -68,13 +87,22 @@ const configSchema = z
   })
   .strict()
   .superRefine((value, context) => {
+    const loopback = ['127.0.0.1', '::1'].includes(value.host)
+    const production = !loopback || value.behindProxy
     if (!value.openRegistration && !value.registrationTokenFile)
       context.addIssue({ code: 'custom', message: 'Registration token required' })
-    if (!['127.0.0.1', '::1'].includes(value.host) && !value.gateway)
-      context.addIssue({ code: 'custom', message: 'Public relay requires ticket-free gateway' })
-    if (!['127.0.0.1', '::1'].includes(value.host) && (!value.quota || !value.fairness || !value.memory || !value.maxStateBytes))
+    if (value.behindProxy && (!loopback || value.gateway || value.acme || value.selfSignedTls || !value.relaySigningSeedFile))
+      context.addIssue({ code: 'custom', message: 'Behind-proxy relay must bind loopback with a relay signing seed and no TLS gateway' })
+    if (!value.behindProxy && (!value.certificateFile || !value.keyFile))
+      context.addIssue({ code: 'custom', message: 'TLS certificate and key files required unless behindProxy is enabled' })
+    if (value.acme && (!value.gateway || !value.relaySigningSeedFile || value.behindProxy || value.selfSignedTls))
+      context.addIssue({ code: 'custom', message: 'ACME requires the TLS gateway and a relay signing seed' })
+    if (value.selfSignedTls && (value.behindProxy || value.acme || value.relaySigningSeedFile))
+      context.addIssue({ code: 'custom', message: 'Self-signed TLS pins SPKI and cannot be combined with behindProxy, ACME or edge seed' })
+    if (!loopback && !value.gateway) context.addIssue({ code: 'custom', message: 'Public relay requires ticket-free gateway' })
+    if (production && (!value.quota || !value.fairness || !value.memory || !value.maxStateBytes))
       context.addIssue({ code: 'custom', message: 'Public relay requires quota, fairness and measured memory/state capacity' })
-    if (!['127.0.0.1', '::1'].includes(value.host) && !value.registrationWork)
+    if (production && !value.registrationWork)
       context.addIssue({ code: 'custom', message: 'Public relay requires measured registration work capacity' })
     if (value.registrationWork) {
       const hardRoutes = Math.floor(value.maxRoutes * (value.gateway?.prefixFraction ?? 1))
@@ -117,11 +145,22 @@ export async function readRelayTls(certificateFile: string, keyFile: string): Pr
 }
 export async function loadRelayConfig(path: string) {
   const config = configSchema.parse(JSON.parse((await privateFile(path)).toString('utf8')) as unknown)
-  const { cert, key } = await readRelayTls(config.certificateFile, config.keyFile)
-  // Registration tokens are arbitrary bytes, unlike PEM/config text.
+  const tls =
+    config.behindProxy || !config.certificateFile || !config.keyFile
+      ? undefined
+      : await readRelayTls(config.certificateFile, config.keyFile)
+  // Registration tokens and relay signing seeds are arbitrary 32-byte secrets, unlike PEM/config text.
   const registrationToken = config.registrationTokenFile ? await privateBinary(config.registrationTokenFile) : undefined
+  const relaySigningSeed = config.relaySigningSeedFile ? await privateBinary(config.relaySigningSeedFile) : undefined
   if (config.gateway) await checkGateway(config.gateway.binary)
-  return { ...config, relayId: unhex(config.relayId, 16), cert, key, registrationToken }
+  return {
+    ...config,
+    relayId: unhex(config.relayId, 16),
+    cert: tls?.cert,
+    key: tls?.key,
+    registrationToken,
+    relaySigningSeed,
+  }
 }
 async function privateBinary(path: string): Promise<Buffer> {
   const { constants } = await import('node:fs'),

@@ -29,7 +29,17 @@ export const RELAY_USAGE = `  relay list [--json]                      列出自
                                            在你自己的 Cloudflare 账户部署一个中继并验收（需要已登录的 wrangler）；
                                            写出 ~/.latch/relays/<名称>.json，不打印任何秘密。位置不给时由 Cloudflare 就近放置。
                                            安装版尚未附带 Workers 部署包：尚未实现，在 Latch 源码目录运行
-  relay setup linux                       尚未提供 Linux 中继发布物；可在服务器源码目录部署后导入
+  relay setup linux --server <user@host> [--domain <域名> | --ip <公网IP>] [--name <名称>] [--port <端口>]
+                    [--behind-proxy [--public-port <端口>] | --cert <证书路径> --key <私钥路径> | --acme-email <邮箱>]
+                    [--ssh-port <SSH端口>] [--bundle <本地Linux包>] [--out <绝对路径>] [--skip-accept] [--upgrade]
+                                           从这台电脑经 SSH 一键把自包含中继部署到你的 Linux 服务器（无需域名，也无需服务器拉源码）：
+                                           不传 --domain 时默认直接按服务器公网 IP（优先 443，占用时自动回退 8443）生成公钥绑定证书并自动续期；
+                                           传入 --domain 时默认自动申请 443 证书（或加 --behind-proxy 复用已有 Caddy/Nginx）；
+                                           运行端到端验收后写出 ~/.latch/relays/<名称>.json（加 --upgrade 可平滑升级不换密钥）
+  relay status linux --server <user@host> [--ssh-port <SSH端口>]
+                                           查看远端 Linux 中继服务的运行状态、活跃路由数、证书剩余天数与月度流量
+  relay uninstall linux --server <user@host> [--ssh-port <SSH端口>] [--purge-data]
+                                           停止并卸载远端 Linux 中继系统服务（默认保留 /srv/latch-relay 密钥数据）
 `
 type Out = (text: string) => void
 interface RelayCliIO {
@@ -125,8 +135,78 @@ export async function runRelayCommand(input: {
       const args = ['--name', name, ...(location ? ['--location', location] : []), ...(target ? ['--out', target] : []), '--check']
       return io.runEntry ? io.runEntry(entry, args) : runEntry(entry, args, input.codeRoot!)
     }
-    if (rest[0] === 'linux') throw new RelayCliError('尚未提供 Linux 中继发布物。请在服务器上的 Latch 源码目录部署，再导入中继文件。')
+    if (rest[0] === 'linux') {
+      const server = flags.get('--server'),
+        domain = flags.get('--domain'),
+        ip = flags.get('--ip'),
+        name = flags.get('--name'),
+        target = flags.get('--out'),
+        port = flags.get('--port'),
+        publicPort = flags.get('--public-port'),
+        sshPort = flags.get('--ssh-port'),
+        cert = flags.get('--cert'),
+        key = flags.get('--key'),
+        acmeEmail = flags.get('--acme-email'),
+        bundle = flags.get('--bundle'),
+        behindProxy = flags.has('--behind-proxy'),
+        skipAccept = flags.has('--skip-accept'),
+        upgrade = flags.has('--upgrade')
+      if (typeof server !== 'string' || !server.trim())
+        throw new RelayCliError(
+          '用法：relay setup linux --server <user@host> [--domain <域名> | --ip <公网IP>] [--name <名称>] [--behind-proxy | --cert <证书路径> --key <私钥路径>] [--upgrade]',
+        )
+      if (name !== undefined && (typeof name !== 'string' || !RELAY_NAME.test(name) || name.length > 40))
+        throw new RelayCliError('名称只能用小写字母、数字与连字符，至多 40 个字符')
+      if (target !== undefined && (typeof target !== 'string' || !isAbsolute(target)))
+        throw new RelayCliError('--out 应为一个新文件的绝对路径')
+      const entry = join(input.codeRoot ?? '', 'apps/relay/scripts/setup-linux.ts')
+      const present =
+        input.codeRoot !== undefined
+        && (await stat(entry).then(
+          info => info.isFile(),
+          () => false,
+        ))
+      if (!present)
+        throw new RelayCliError(
+          '尚未实现：安装版尚未内嵌 Linux 中继部署包。请在 Latch 源码目录运行 pnpm latch relay setup linux，或导入已导出的中继配置文件。',
+        )
+      const args: string[] = ['--server', server]
+      if (typeof domain === 'string') args.push('--domain', domain)
+      if (typeof ip === 'string') args.push('--ip', ip)
+      if (typeof name === 'string') args.push('--name', name)
+      if (typeof port === 'string') args.push('--port', port)
+      if (typeof publicPort === 'string') args.push('--public-port', publicPort)
+      if (typeof sshPort === 'string') args.push('--ssh-port', sshPort)
+      if (behindProxy) args.push('--behind-proxy')
+      if (typeof cert === 'string') args.push('--cert', cert)
+      if (typeof key === 'string') args.push('--key', key)
+      if (typeof acmeEmail === 'string') args.push('--acme-email', acmeEmail)
+      if (typeof bundle === 'string') args.push('--bundle', resolve(io.cwd, bundle))
+      if (typeof target === 'string') args.push('--out', target)
+      if (skipAccept) args.push('--skip-accept')
+      if (upgrade) args.push('--upgrade')
+      return io.runEntry ? io.runEntry(entry, args) : runEntry(entry, args, input.codeRoot!)
+    }
     throw new RelayCliError('用法：relay setup cloudflare|linux')
+  }
+  if (command === 'status' || command === 'uninstall') {
+    if (rest[0] !== 'linux') throw new RelayCliError(`用法：relay ${command} linux --server <user@host>`)
+    const server = flags.get('--server'),
+      sshPort = flags.get('--ssh-port'),
+      purgeData = flags.has('--purge-data')
+    if (typeof server !== 'string' || !server.trim()) throw new RelayCliError(`用法：relay ${command} linux --server <user@host>`)
+    const entry = join(input.codeRoot ?? '', 'apps/relay/scripts/setup-linux.ts')
+    const present =
+      input.codeRoot !== undefined
+      && (await stat(entry).then(
+        info => info.isFile(),
+        () => false,
+      ))
+    if (!present) throw new RelayCliError('尚未实现：请在 Latch 源码目录运行该远端运维命令。')
+    const args: string[] = ['--action', command, '--server', server]
+    if (typeof sshPort === 'string') args.push('--ssh-port', sshPort)
+    if (command === 'uninstall' && purgeData) args.push('--purge-data')
+    return io.runEntry ? io.runEntry(entry, args) : runEntry(entry, args, input.codeRoot!)
   }
   if (command === 'test') {
     const relayId = rest[0]

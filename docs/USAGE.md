@@ -238,6 +238,7 @@ pnpm desktop -- --tailnet \
 | `device invite --loopback [--scopes …] [--code-file <路径>]` | 运行中 | 生成这台电脑上浏览器用的一次性链接；不给 `--scopes` 时可以申请「管理此 Host」 |
 | `device enroll --offline [--code-file <路径>]` | 已停止 | 生成桌面端用的一次性离线连接码（15 分钟） |
 | `relay list [--json]`、`relay add --file <中继文件>`、`relay remove <节点标识>` | 已停止 | 查看或修改保存的中继配置。Host 运行时在桌面端操作 |
+| `relay setup linux --server <user@host> [--domain <域名> \| --ip <IP>] [--upgrade] …`、`relay status\|uninstall linux --server <user@host>`、`relay setup cloudflare --name <名称> …` | 任意（源码目录） | 在自己的 Linux 服务器（支持无域名裸 IP 直连、自动证书与反向代理）或 Cloudflare 账户一键部署、查询状态、平滑升级或卸载中继，验收后写出 `~/.latch/relays/<名称>.json` |
 | `relay test <节点标识>` | 运行中 | 从 Mac 核对节点密钥、测试登记，并显示连接簿签发情况 |
 | `provider set-key <服务 ID> [--expect-url <服务地址>]` | 已停止 | 保存模型服务密钥；地址未确认时先列出它并一并确认 |
 | `provider confirm <服务 ID> [--expect-url <服务地址>]` | 已停止 | 列出并确认模型服务的地址，本机或局域网地址同时加入出站白名单。在终端输入 `y`；非交互环境用 `--expect-url` 写出要确认的地址，不一致就不修改 |

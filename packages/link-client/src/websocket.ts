@@ -1,7 +1,7 @@
-import { createHash, randomBytes, X509Certificate } from 'node:crypto'
+import { constants, createHash, randomBytes, X509Certificate } from 'node:crypto'
 import { request } from 'node:https'
 import type { Duplex } from 'node:stream'
-import { checkServerIdentity } from 'node:tls'
+import { checkServerIdentity, connect as tlsConnect } from 'node:tls'
 import { isIP, type LookupFunction } from 'node:net'
 import {
   decodeMessage,
@@ -347,6 +347,81 @@ export interface RelayDialLease {
 }
 
 /**
+ * Bounded cache of verified self-signed PEM anchors indexed by their pinned 256-bit SPKI SHA-256 hex.
+ * Used only for `self` relays (`spki` pinned, `edge` absent) so subsequent connections establish in 1 RTT
+ * while OpenSSL (`rejectUnauthorized: true`) still enforces full X.509 signature, SAN and validity checks.
+ */
+const pinnedSelfSignedAnchors = new Map<string, string>()
+
+function probePinnedSelfSignedAnchor(options: {
+  url: URL
+  hostname: string
+  spki: Uint8Array
+  lookup?: LookupFunction
+  signal?: AbortSignal
+  timeoutMs: number
+  permitted(): boolean
+  lease?: RelayDialLease
+}): Promise<string> {
+  return new Promise((resolve, reject) => {
+    options.signal?.throwIfAborted()
+    if (!options.permitted()) {
+      reject(new Error('Relay egress unavailable'))
+      return
+    }
+    const port = Number(options.url.port || 443)
+    const socket = tlsConnect({
+      host: options.hostname,
+      port,
+      ...(options.lookup ? { lookup: options.lookup } : {}),
+      ...(isIP(options.hostname) ? {} : { servername: options.hostname }),
+      minVersion: 'TLSv1.3',
+      maxVersion: 'TLSv1.3',
+      ALPNProtocols: ['http/1.1'],
+      secureOptions: constants.SSL_OP_NO_TICKET,
+      // Zero-payload certificate fetch only; socket is destroyed immediately before any HTTP/WebSocket bytes flow.
+      rejectUnauthorized: false,
+    })
+    const cleanupAbort = () => socket.destroy(new Error('Relay upgrade cancelled'))
+    options.signal?.addEventListener('abort', cleanupAbort, { once: true })
+    options.lease?.revoked.addEventListener('abort', cleanupAbort, { once: true })
+    const timer = setTimeout(() => socket.destroy(new Error('Relay upgrade timed out')), options.timeoutMs)
+    timer.unref()
+    const finish = () => {
+      clearTimeout(timer)
+      options.signal?.removeEventListener('abort', cleanupAbort)
+      options.lease?.revoked.removeEventListener('abort', cleanupAbort)
+    }
+    socket.once('error', error => {
+      finish()
+      reject(error)
+    })
+    socket.once('secureConnect', () => {
+      try {
+        if (options.signal?.aborted || !options.permitted()) throw new Error('Relay egress unavailable')
+        const peer = socket.getPeerCertificate(true)
+        socket.destroy()
+        finish()
+        if (!peer?.raw || peer.raw.length === 0 || peer.raw.length > 16_384) throw new Error('Relay certificate identity mismatch')
+        const cert = new X509Certificate(peer.raw)
+        const spki = cert.publicKey.export({ type: 'spki', format: 'der' })
+        if (!equal(createHash('sha256').update(spki).digest(), options.spki)) throw new Error('Relay certificate identity mismatch')
+        if (!cert.verify(cert.publicKey)) throw new Error('Relay certificate identity mismatch')
+        const idFailure = checkServerIdentity(options.hostname, peer)
+        if (idFailure) throw idFailure
+        const now = Date.now()
+        if (now < Date.parse(cert.validFrom) || now > Date.parse(cert.validTo)) throw new Error('Relay certificate expired')
+        resolve(cert.toString())
+      } catch (error) {
+        socket.destroy()
+        finish()
+        reject(error instanceof Error ? error : new Error('Relay certificate identity mismatch'))
+      }
+    })
+  })
+}
+
+/**
  * A self-hosted node is reached on `/v1/{h,d,c}` with its TLS key pinned. An edge node is reached on
  * `/v1/{h,d,c}/<shard>` with ordinary WebPKI TLS; its identity is the relay-key signature checked after the upgrade.
  */
@@ -379,7 +454,6 @@ export async function connectRelay(options: {
       : !['/v1/h', '/v1/d', '/v1/c'].includes(url.pathname) || options.spki?.length !== 32)
   )
     throw new RangeError('Invalid relay endpoint')
-  const key = randomBytes(16).toString('base64')
   const address = lease?.address ?? options.address
   if (address !== undefined && !isIP(address)) throw new RangeError('Invalid relay dial address')
   const hostname = url.hostname.replace(/^\[|\]$/gu, '')
@@ -391,72 +465,106 @@ export async function connectRelay(options: {
         else callback(null, address, family)
       }
     : undefined
-  return new Promise((resolve, reject) => {
-    const req = request(url, {
-      agent: false,
+  const timeoutMs = options.timeoutMs ?? 10_000
+  const dialOnce = (ca?: string | Buffer): Promise<RelaySocket> =>
+    new Promise((resolve, reject) => {
+      const key = randomBytes(16).toString('base64')
+      const req = request(url, {
+        agent: false,
+        signal,
+        ca,
+        ...(lookup ? { lookup } : {}),
+        servername: isIP(hostname) ? undefined : hostname,
+        minVersion: 'TLSv1.3',
+        maxVersion: 'TLSv1.3',
+        ...{ ALPNProtocols: ['http/1.1'] },
+        checkServerIdentity(peerHost, certificate) {
+          const failure = checkServerIdentity(peerHost, certificate)
+          if (failure) return failure
+          if (options.edge) return undefined
+          const spki = new X509Certificate(certificate.raw).publicKey.export({ type: 'spki', format: 'der' })
+          if (!equal(createHash('sha256').update(spki).digest(), options.spki!)) return new Error('Relay certificate identity mismatch')
+          return undefined
+        },
+        headers: {
+          Connection: 'Upgrade',
+          Upgrade: 'websocket',
+          'Sec-WebSocket-Key': key,
+          'Sec-WebSocket-Version': '13',
+          'Sec-WebSocket-Protocol': protocol,
+        },
+      })
+      const timer = setTimeout(() => req.destroy(new Error('Relay upgrade timed out')), timeoutMs)
+      timer.unref()
+      req.once('error', error => {
+        clearTimeout(timer)
+        reject(error)
+      })
+      req.once('response', response => {
+        clearTimeout(timer)
+        response.destroy()
+        reject(new Error('Relay upgrade rejected'))
+      })
+      req.once('upgrade', (response, socket, head) => {
+        clearTimeout(timer)
+        if (
+          signal?.aborted
+          || !permitted()
+          || response.statusCode !== 101
+          || response.headers['sec-websocket-accept'] !== acceptKey(key)
+          || response.headers['sec-websocket-protocol'] !== protocol
+          || response.headers['sec-websocket-extensions']
+        ) {
+          socket.destroy()
+          reject(new Error('Invalid relay upgrade'))
+          return
+        }
+        if (lease) {
+          const revoke = () => socket.destroy()
+          lease.revoked.addEventListener('abort', revoke, { once: true })
+          socket.once('close', () => lease.revoked.removeEventListener('abort', revoke))
+        }
+        resolve(
+          new RelaySocket(socket, true, head, {
+            ...(lease ? { permitted } : {}),
+            pingIntervalMs: options.edge ? EDGE_RELAY.pingIntervalMs : 25_000,
+            deadAfterMs: options.edge ? EDGE_RELAY.clientDeadAfterMs : 60_000,
+            applicationPing: Boolean(options.edge),
+            version,
+            outerPadding: version === 2 && !url.pathname.startsWith('/v1/h'),
+          }),
+        )
+      })
+      req.end()
+    })
+
+  const spkiKey = !options.edge && !options.ca && options.spki ? Buffer.from(options.spki).toString('hex') : undefined
+  const rememberedAnchor = spkiKey ? pinnedSelfSignedAnchors.get(spkiKey) : undefined
+  try {
+    return await dialOnce(options.ca ?? rememberedAnchor)
+  } catch (error) {
+    const code = (error as { code?: string } | undefined)?.code
+    const canProbeSelfSigned =
+      spkiKey !== undefined
+      && (code === 'DEPTH_ZERO_SELF_SIGNED_CERT'
+        || code === 'SELF_SIGNED_CERT_IN_CHAIN'
+        || (rememberedAnchor !== undefined && code === 'CERT_HAS_EXPIRED'))
+    if (!canProbeSelfSigned) throw error
+    pinnedSelfSignedAnchors.delete(spkiKey)
+    const verifiedAnchor = await probePinnedSelfSignedAnchor({
+      url,
+      hostname,
+      spki: options.spki!,
+      lookup,
       signal,
-      ca: options.ca,
-      ...(lookup ? { lookup } : {}),
-      minVersion: 'TLSv1.3',
-      maxVersion: 'TLSv1.3',
-      ...{ ALPNProtocols: ['http/1.1'] },
-      checkServerIdentity(hostname, certificate) {
-        const failure = checkServerIdentity(hostname, certificate)
-        if (failure) return failure
-        if (options.edge) return undefined
-        const spki = new X509Certificate(certificate.raw).publicKey.export({ type: 'spki', format: 'der' })
-        if (!equal(createHash('sha256').update(spki).digest(), options.spki!)) return new Error('Relay certificate identity mismatch')
-        return undefined
-      },
-      headers: {
-        Connection: 'Upgrade',
-        Upgrade: 'websocket',
-        'Sec-WebSocket-Key': key,
-        'Sec-WebSocket-Version': '13',
-        'Sec-WebSocket-Protocol': protocol,
-      },
+      timeoutMs,
+      permitted,
+      lease,
     })
-    const timer = setTimeout(() => req.destroy(new Error('Relay upgrade timed out')), options.timeoutMs ?? 5000)
-    timer.unref()
-    req.once('error', error => {
-      clearTimeout(timer)
-      reject(error)
-    })
-    req.once('response', response => {
-      clearTimeout(timer)
-      response.destroy()
-      reject(new Error('Relay upgrade rejected'))
-    })
-    req.once('upgrade', (response, socket, head) => {
-      clearTimeout(timer)
-      if (
-        signal?.aborted
-        || !permitted()
-        || response.statusCode !== 101
-        || response.headers['sec-websocket-accept'] !== acceptKey(key)
-        || response.headers['sec-websocket-protocol'] !== protocol
-        || response.headers['sec-websocket-extensions']
-      ) {
-        socket.destroy()
-        reject(new Error('Invalid relay upgrade'))
-        return
-      }
-      if (lease) {
-        const revoke = () => socket.destroy()
-        lease.revoked.addEventListener('abort', revoke, { once: true })
-        socket.once('close', () => lease.revoked.removeEventListener('abort', revoke))
-      }
-      resolve(
-        new RelaySocket(socket, true, head, {
-          ...(lease ? { permitted } : {}),
-          pingIntervalMs: options.edge ? EDGE_RELAY.pingIntervalMs : 25_000,
-          deadAfterMs: options.edge ? EDGE_RELAY.clientDeadAfterMs : 60_000,
-          applicationPing: Boolean(options.edge),
-          version,
-          outerPadding: version === 2 && !url.pathname.startsWith('/v1/h'),
-        }),
-      )
-    })
-    req.end()
-  })
+    if (pinnedSelfSignedAnchors.size >= 64 && !pinnedSelfSignedAnchors.has(spkiKey)) {
+      pinnedSelfSignedAnchors.delete(pinnedSelfSignedAnchors.keys().next().value!)
+    }
+    pinnedSelfSignedAnchors.set(spkiKey, verifiedAnchor)
+    return dialOnce(verifiedAnchor)
+  }
 }

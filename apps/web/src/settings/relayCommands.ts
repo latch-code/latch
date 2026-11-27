@@ -1,34 +1,67 @@
 import { isRelayEndpoint, isRelayLocation, type RelayLocation } from '@latch/protocol'
 
 /**
- * The commands the 添加转发服务 steps show and type into a Latch terminal, in one place. The programs are named here and
- * nowhere else: `latch` (as the caller spells it for this Mac) deploys a Workers relay, and the relay's own program runs
- * on the person's server, today from a source checkout.
+ * The commands the 添加转发服务 steps show and type into a Latch terminal, in one place. Both Cloudflare Workers and a
+ * Linux server run one `latch relay setup …` command on this Mac, which deploys, runs acceptance checks and writes
+ * `~/.latch/relays/<name>.json` (0600) without putting secrets on the command line or terminal.
  */
 export interface RelayStepCommands {
   login: string[]
   deploy: string[]
-  /** Commands that bring the relay file to this Mac's ~/.latch/relays, before it is chosen. */
+  /** Legacy fetch commands; empty when `latch relay setup` writes `~/.latch/relays/<name>.json` directly. */
   fetch: string[]
 }
 
+export type ServerTlsMode = 'acme' | 'proxy' | 'custom'
+
 /** Where the person's own relay files live on this Mac (0700 at both levels; see link-client's relay-files.ts). */
 export const RELAYS_DIR = '~/.latch/relays'
-/** The relay's program on a server. No release exists yet, so it runs from the source checkout there. */
-const RELAY_PROGRAM = 'pnpm relay'
-const RELAY_DATA = '/srv/latch-relay'
 
-const SERVER = /^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9.-]+$/u
+const SERVER = /^(?:[A-Za-z0-9._-]+@)?(?:[A-Za-z0-9.-]+|\[[a-fA-F0-9:]+\])$/u
 const NAME = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/u
 /** An absolute path that needs no quoting in a shell. */
 const PLAIN_PATH = /^\/[A-Za-z0-9._/-]{1,200}$/u
 
 export const validRelayName = (value: string) => NAME.test(value)
 export const validRelayPath = (value: string) => PLAIN_PATH.test(value)
-/** The origin a phone would dial, when the form's domain and port make one the address book accepts. */
+
+const IPV4 = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/u
+const IPV6_BRACKETED = /^\[[a-fA-F0-9:]{2,45}\]$/u
+
+function isIpLiteral(value: string): boolean {
+  const clean = value.trim()
+  if (IPV4.test(clean)) return true
+  if (IPV6_BRACKETED.test(clean)) return true
+  return clean.includes(':') && /^[a-fA-F0-9:]{2,45}$/u.test(clean)
+}
+
+function sshServerHost(server: string | undefined): string | undefined {
+  if (!server) return undefined
+  const at = server.indexOf('@')
+  return (at >= 0 ? server.slice(at + 1) : server).trim()
+}
+
+export function serverRelayStem(domainOrServer: string | undefined): string {
+  if (!domainOrServer) return 'linux'
+  const host = sshServerHost(domainOrServer) ?? domainOrServer
+  const clean = host.replace(/^\[|\]$/gu, '').toLowerCase()
+  const raw = isIpLiteral(host) ? `ip-${clean.replace(/[^a-f0-9]/gu, '-')}` : clean.replaceAll('.', '-')
+  const stem = raw
+    .replace(/[^a-z0-9-]/gu, '')
+    .replace(/-+/gu, '-')
+    .replace(/^-+|-+$/gu, '')
+    .slice(0, 40)
+    .replace(/-+$/gu, '')
+  return stem && NAME.test(stem) ? stem : 'linux'
+}
+
+/** The origin a phone would dial, when the form's domain/IP and port make one the address book accepts. */
 export function relayOrigin(domain: string, port: string): string | undefined {
-  if (!/^[a-z0-9.-]{1,253}$/u.test(domain) || !/^[0-9]{1,5}$/u.test(port) || Number(port) < 1 || Number(port) > 65_535) return undefined
-  const origin = `https://${domain}${port === '443' ? '' : `:${port}`}`
+  if (!/^[0-9]{1,5}$/u.test(port) || Number(port) < 1 || Number(port) > 65_535) return undefined
+  const clean = domain.trim()
+  const host = clean.includes(':') && !clean.startsWith('[') ? `[${clean}]` : clean
+  if (!/^(?:[a-z0-9.-]{1,253}|\[[a-f0-9:]{2,45}\])$/u.test(host)) return undefined
+  const origin = `https://${host}${port === '443' ? '' : `:${port}`}`
   return isRelayEndpoint(`${origin}/`) ? origin : undefined
 }
 
@@ -39,6 +72,7 @@ export function relaySetupCommands(
     latch?: string
     name?: string
     location?: RelayLocation | undefined
+    tlsMode?: ServerTlsMode
     server?: string
     domain?: string
     port?: string
@@ -46,39 +80,93 @@ export function relaySetupCommands(
     key?: string
   } = {},
 ): RelayStepCommands {
+  const program = options.latch ?? 'latch'
   if (kind === 'edge') {
     const name = options.name && NAME.test(options.name) ? options.name : undefined
     const location = isRelayLocation(options.location) ? ` --location ${options.location}` : ''
     return {
       login: ['wrangler login'],
       // One command deploys, runs the acceptance checks against the fresh node and writes ~/.latch/relays/<name>.json.
-      deploy: name ? [`${options.latch ?? 'latch'} relay setup cloudflare --name ${name}${location}`] : [],
+      deploy: name ? [`${program} relay setup cloudflare --name ${name}${location}`] : [],
       fetch: [],
     }
   }
-  const server = options.server && SERVER.test(options.server) ? options.server : undefined
-  const origin = relayOrigin(options.domain ?? '', options.port ?? '8443')
+  const server = options.server && !options.server.startsWith('-') && SERVER.test(options.server) ? options.server : undefined
+  const tlsMode = options.tlsMode ?? 'acme'
+  const domain = (options.domain ?? '').trim()
+  const explicitName = options.name && NAME.test(options.name) ? ` --name ${options.name}` : ''
+
+  if (!server) return { login: [], deploy: [], fetch: [] }
+
+  if (tlsMode === 'acme') {
+    if (!domain) {
+      const port = options.port ?? '8443'
+      if (!/^[0-9]{1,5}$/u.test(port) || Number(port) < 1 || Number(port) > 65_535) return { login: [], deploy: [], fetch: [] }
+      const portArg = port === '8443' || port === '443' ? '' : ` --port ${port}`
+      return {
+        login: [],
+        deploy: [`${program} relay setup linux --server ${server}${portArg}${explicitName}`],
+        fetch: [],
+      }
+    }
+    if (isIpLiteral(domain)) {
+      const port = options.port ?? '8443'
+      const origin = relayOrigin(domain, port)
+      if (!origin) return { login: [], deploy: [], fetch: [] }
+      const cleanIp = domain.replace(/^\[|\]$/gu, '').toLowerCase()
+      const sshHost = sshServerHost(server)
+        ?.replace(/^\[|\]$/gu, '')
+        .toLowerCase()
+      const ipArg = sshHost === cleanIp ? '' : ` --ip ${cleanIp}`
+      const portArg = port === '8443' || port === '443' ? '' : ` --port ${port}`
+      return {
+        login: [],
+        deploy: [`${program} relay setup linux --server ${server}${ipArg}${portArg}${explicitName}`],
+        fetch: [],
+      }
+    }
+    const port = options.port ?? '443'
+    const origin = relayOrigin(domain, port)
+    if (!origin || !domain.includes('.')) return { login: [], deploy: [], fetch: [] }
+    const portArg = port === '443' ? '' : ` --port ${port}`
+    return {
+      login: [],
+      deploy: [`${program} relay setup linux --server ${server} --domain ${domain}${portArg}${explicitName}`],
+      fetch: [],
+    }
+  }
+
+  if (tlsMode === 'proxy') {
+    const listenPort = options.port ?? '18443'
+    const origin = relayOrigin(domain, '443')
+    if (
+      !origin
+      || isIpLiteral(domain)
+      || !domain.includes('.')
+      || !/^[0-9]{1,5}$/u.test(listenPort)
+      || Number(listenPort) < 1
+      || Number(listenPort) > 65_535
+    )
+      return { login: [], deploy: [], fetch: [] }
+    const portArg = listenPort === '18443' ? '' : ` --port ${listenPort}`
+    return {
+      login: [],
+      deploy: [`${program} relay setup linux --server ${server} --domain ${domain} --behind-proxy${portArg}${explicitName}`],
+      fetch: [],
+    }
+  }
+
+  const port = options.port ?? '8443'
+  const effectiveTarget = domain || sshServerHost(server) || ''
+  const origin = relayOrigin(effectiveTarget, port)
   const cert = options.cert && PLAIN_PATH.test(options.cert) ? options.cert : undefined
   const key = options.key && PLAIN_PATH.test(options.key) ? options.key : undefined
-  // The file's name on this Mac: the domain with hyphens for dots, as relay names allow, else `server`.
-  const stem = options.domain?.replaceAll('.', '-')
-  const name = stem && NAME.test(stem) ? stem : 'server'
-  const data = `--data-dir ${RELAY_DATA}`
+  if (!origin || !cert || !key) return { login: [], deploy: [], fetch: [] }
+  const domainArg = domain ? (isIpLiteral(domain) ? ` --ip ${domain.replace(/^\[|\]$/gu, '').toLowerCase()}` : ` --domain ${domain}`) : ''
+  const portArg = port === '8443' ? '' : ` --port ${port}`
   return {
-    login: server ? [`ssh ${server}`] : [],
-    deploy:
-      origin && cert && key
-        ? [
-            'pnpm install --frozen-lockfile && pnpm build:relay',
-            // The form's answers become the whole configuration; nobody edits relay.json to start.
-            `${RELAY_PROGRAM} init ${data} --domain ${options.domain} --port ${options.port ?? '8443'} --cert ${cert} --key ${key}`,
-            `${RELAY_PROGRAM} check ${data} && ${RELAY_PROGRAM} profile ${data} --url ${origin} --output ${RELAY_DATA}/latch-connection.json`,
-            `${RELAY_PROGRAM} start ${data}`,
-          ]
-        : [],
-    // umask 077 makes both new levels 0700; a wider ~/.latch is refused when the file is read.
-    fetch: server
-      ? [`(umask 077 && mkdir -p ${RELAYS_DIR}) && scp ${server}:${RELAY_DATA}/latch-connection.json ${RELAYS_DIR}/${name}.json`]
-      : [],
+    login: [],
+    deploy: [`${program} relay setup linux --server ${server}${domainArg}${portArg} --cert ${cert} --key ${key}${explicitName}`],
+    fetch: [],
   }
 }

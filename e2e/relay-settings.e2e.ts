@@ -75,9 +75,13 @@ async function scripted(page: Page, local: boolean, relays: Relay[], listening =
     files,
     fileReads: 0,
     dropAddResponse: false,
+    failAddCode: undefined as string | undefined,
+    pendingRelay: undefined as NativeLinkInfo['pendingRelay'],
     posted: [] as unknown[],
     patched: [] as unknown[],
+    reordered: [] as string[][],
     deleted: [] as string[],
+    abandoned: [] as string[],
   }
   const receipts = new Map<string, string>()
   // This Mac's desktop app: the page is local only inside the shell, on host.sock.
@@ -94,6 +98,7 @@ async function scripted(page: Page, local: boolean, relays: Relay[], listening =
     sourceCheckout: true,
     edgeRelayAvailable: true,
     ...(localNetwork ? { localNetwork } : {}),
+    ...(state.pendingRelay ? { pendingRelay: state.pendingRelay } : {}),
     relays: state.relays,
   })
   await page.route('**/link/api/snapshot', async route => {
@@ -114,6 +119,12 @@ async function scripted(page: Page, local: boolean, relays: Relay[], listening =
   await page.route('**/link/api/native/relays', route => {
     const body = route.request().postDataJSON()
     state.posted.push(body)
+    if (state.failAddCode) {
+      return route.fulfill({
+        status: 503,
+        json: { error: state.failAddCode, message: '连不上这个中继。请核对地址与网络，再重试或放弃。' },
+      })
+    }
     const receipt = receipts.get(body.requestId)
     if (receipt) return route.fulfill({ json: { ...info(), addedRelayId: receipt } })
     const node = body.file || body.profile?.relayId === edge.relayId ? edge : self
@@ -123,14 +134,29 @@ async function scripted(page: Page, local: boolean, relays: Relay[], listening =
       keyHash: node === edge ? edgeHash : keyHash,
       latencyMs: 41,
     })
+    state.pendingRelay = undefined
     // The new row can be anywhere in a response containing other concurrent registrations.
     state.relays = [added, ...state.relays]
     receipts.set(body.requestId, added.relayId)
     if (state.dropAddResponse) return route.abort()
     return route.fulfill({ status: 201, json: { ...info(), addedRelayId: added.relayId } })
   })
+  await page.route('**/link/api/native/relay-requests/*', route => {
+    const id = route.request().url().split('/').at(-1)!
+    state.abandoned.push(id)
+    if (state.pendingRelay?.requestId === id) state.pendingRelay = undefined
+    return route.fulfill({ json: info() })
+  })
+  await page.route('**/link/api/native/relays/order', route => {
+    const { order } = route.request().postDataJSON() as { order: string[] }
+    state.reordered.push(order)
+    const byId = new Map(state.relays.map(relay => [relay.relayId, relay]))
+    state.relays = order.map(id => byId.get(id)!)
+    return route.fulfill({ json: info() })
+  })
   await page.route('**/link/api/native/relays/*', route => {
     const id = route.request().url().split('/').at(-1)!
+    if (id === 'order') return route.fallback()
     if (route.request().method() === 'DELETE') {
       state.deleted.push(id)
       state.relays = state.relays.filter(relay => relay.relayId !== id)
@@ -232,14 +258,33 @@ describe('设置 › 连接转发', () => {
         expect(state.posted.at(-1)).toMatchObject({ file: 'home', fileSource: 'legacy', fileRelayId: edge.relayId, fileIdentity })
         expect(state.posted.at(-1)).not.toHaveProperty('profile')
         state.posted.length = 0
-        // 自己的服务器: the form's answers become the commands.
+        // 自己的服务器: one Mac setup command for automatic TLS, reverse-proxy or custom certificates.
         await page.getByRole('button', { name: '添加转发服务' }).click()
         await sheet.getByRole('button', { name: '自己的服务器' }).click()
         await sheet.getByLabel('服务器', { exact: true }).fill('me@relay.example.com')
+        await sheet.getByText('pnpm latch relay setup linux --server me@relay.example.com', { exact: true }).waitFor()
         await sheet.getByLabel('服务器地址').fill('relay.example.com')
+        await sheet
+          .getByText('pnpm latch relay setup linux --server me@relay.example.com --domain relay.example.com', { exact: true })
+          .waitFor()
+        await capture('relays-server-auto')
+        await sheet.getByRole('radio', { name: '反向代理' }).click()
+        await sheet.getByLabel('内部监听端口').waitFor()
+        await sheet
+          .getByText('pnpm latch relay setup linux --server me@relay.example.com --domain relay.example.com --behind-proxy', {
+            exact: true,
+          })
+          .waitFor()
+        await capture('relays-server-proxy')
+        await sheet.getByRole('radio', { name: '自有证书' }).click()
         await sheet.getByLabel('证书链').fill('/etc/ssl/relay/fullchain.pem')
         await sheet.getByLabel('私钥').fill('/etc/ssl/relay/key.pem')
-        await sheet.getByText(/pnpm relay init --data-dir \/srv\/latch-relay --domain relay\.example\.com --port 8443/u).waitFor()
+        await sheet
+          .getByText(
+            'pnpm latch relay setup linux --server me@relay.example.com --domain relay.example.com --cert /etc/ssl/relay/fullchain.pem --key /etc/ssl/relay/key.pem',
+            { exact: true },
+          )
+          .waitFor()
         await capture('relays-server')
         await sheet.getByRole('button', { name: '返回', exact: true }).click()
         await sheet.getByRole('button', { name: '已有配置文件' }).click()
@@ -391,6 +436,140 @@ describe('设置 › 连接转发', () => {
       expect(await localFile.count()).toBe(0)
     } finally {
       await context.close()
+    }
+  })
+
+  it('spaces a pending relay card above the add ways, shows its address on retry failure, and lets the user abandon it', async () => {
+    const requestId = '11111111-2222-4333-8444-555555555555'
+    for (const width of [390, 1440] as const) {
+      const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 900 } })
+      try {
+        const page = await context.newPage()
+        await enrollBrowser(page, host, { name: `待确认-${width}`, scopes: ['admin'] })
+        const state = await scripted(page, true, [])
+        state.pendingRelay = { requestId, url: 'https://203.0.113.10/', canRetry: true }
+        state.failAddCode = 'native-relay-unconfirmed'
+        await page.reload()
+        await connected(page)
+        await openEntry(page, '连接转发')
+
+        const pendingRow = page.getByTestId('relay-pending-row')
+        await pendingRow.getByText('203.0.113.10', { exact: true }).waitFor()
+        await pendingRow.getByText('添加结果待确认', { exact: true }).waitFor()
+
+        await page.getByRole('button', { name: '添加转发服务' }).click()
+        const sheet = page.locator('.relay-add-dialog')
+        const pendingCard = sheet.getByTestId('relay-pending-card')
+        const ways = sheet.getByTestId('relay-ways')
+        await pendingCard.getByText('上次的添加结果待确认', { exact: true }).waitFor()
+        await pendingCard.getByText('203.0.113.10', { exact: true }).waitFor()
+        const cardBox = await pendingCard.boundingBox()
+        const waysBox = await ways.boundingBox()
+        expect(cardBox).not.toBeNull()
+        expect(waysBox).not.toBeNull()
+        expect(waysBox!.y - (cardBox!.y + cardBox!.height)).toBeGreaterThanOrEqual(12)
+
+        for (const colorScheme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
+          await page.waitForTimeout(200)
+          await page.screenshot({ path: `${OUTPUT}/relays-pending-ways-${width}-${colorScheme}.png`, animations: 'disabled' })
+        }
+
+        await pendingCard.getByRole('button', { name: '重试', exact: true }).click()
+        const pendingProgress = sheet.getByTestId('relay-pending-progress')
+        await pendingProgress.getByText('203.0.113.10', { exact: true }).waitFor()
+        await pendingProgress.getByText('还无法确认中继可用。请核对地址、证书和注册令牌，然后继续验证。', { exact: true }).waitFor()
+        await sheet.getByRole('button', { name: '返回', exact: true }).waitFor()
+
+        for (const colorScheme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
+          await page.waitForTimeout(200)
+          await page.screenshot({ path: `${OUTPUT}/relays-pending-failed-${width}-${colorScheme}.png`, animations: 'disabled' })
+        }
+
+        await pendingProgress.getByRole('button', { name: '放弃', exact: true }).click()
+        await pendingCard.waitFor({ state: 'detached' })
+        await ways.waitFor()
+        expect(state.abandoned).toEqual([requestId])
+        await sheet.getByRole('button', { name: '关闭', exact: true }).click()
+        expect(await pendingRow.count()).toBe(0)
+        expect(await page.getByTestId('relay-local-file').getByRole('button', { name: '核对并连接' }).isEnabled()).toBe(true)
+      } finally {
+        await context.close()
+      }
+    }
+  })
+
+  it('shows the top-to-bottom priority hint and reorders relays by drag, keyboard and menu', async () => {
+    const first = row('a'.repeat(32), 'connected', {
+      url: 'https://latch-relay-ne.example.workers.dev/',
+      kind: 'edge',
+      latencyMs: 2840,
+    })
+    const second = row('b'.repeat(32), 'connected', {
+      url: 'https://203.0.113.10/',
+      kind: 'self',
+      latencyMs: 84,
+    })
+    for (const width of [390, 1440] as const) {
+      const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 900 } })
+      try {
+        const page = await context.newPage()
+        await enrollBrowser(page, host, { name: `排序-${width}`, scopes: ['admin'] })
+        const state = await scripted(page, true, [first, second])
+        state.files = []
+        await page.reload()
+        await connected(page)
+        await openEntry(page, '连接转发')
+
+        await page.getByText('始终先尝试直接连接；转发服务按从上到下的顺序优先连接，可拖动调整。', { exact: true }).waitFor()
+        const directRow = page.locator('.settings-card > .settings-row').first()
+        await expect.poll(() => directRow.innerText()).toContain('直接连接')
+        expect(await directRow.locator('.relay-row-grip').count()).toBe(0)
+        const rows = page.getByTestId('relay-own')
+        await expect.poll(() => rows.nth(0).innerText()).toContain('latch-relay-ne.example.workers.dev')
+        await expect.poll(() => rows.nth(1).innerText()).toContain('203.0.113.10')
+
+        // Drag the faster bare-IP server all the way toward 直接连接: it clamps below 直接连接 and lands at relay #1, never above 直接连接.
+        const directBox = await directRow.boundingBox()
+        const firstRelayBox = await rows.nth(0).boundingBox()
+        const gripBox = await page.getByRole('button', { name: '调整 203.0.113.10 的顺序' }).boundingBox()
+        expect(directBox).not.toBeNull()
+        expect(firstRelayBox).not.toBeNull()
+        expect(gripBox).not.toBeNull()
+        await page.mouse.move(gripBox!.x + gripBox!.width / 2, gripBox!.y + gripBox!.height / 2)
+        await page.mouse.down()
+        await page.mouse.move(gripBox!.x + gripBox!.width / 2, directBox!.y + directBox!.height / 2, { steps: 6 })
+        const draggedBox = await rows.nth(1).boundingBox()
+        expect(draggedBox).not.toBeNull()
+        expect(draggedBox!.y).toBeGreaterThanOrEqual(firstRelayBox!.y - 1)
+        await page.mouse.up()
+        await expect.poll(() => state.reordered).toEqual([[second.relayId, first.relayId]])
+        await expect.poll(() => rows.nth(0).innerText()).toContain('203.0.113.10')
+        await expect.poll(() => rows.nth(1).innerText()).toContain('latch-relay-ne.example.workers.dev')
+        const directAfter = await directRow.boundingBox()
+        const topRelayAfter = await rows.nth(0).boundingBox()
+        expect(directAfter!.y + directAfter!.height).toBeLessThanOrEqual(topRelayAfter!.y + 1)
+
+        for (const colorScheme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
+          await page.waitForTimeout(200)
+          await page.screenshot({ path: `${OUTPUT}/relays-reordered-${width}-${colorScheme}.png`, animations: 'disabled' })
+        }
+
+        // Keyboard ArrowDown on the top grip moves it down; ⋯ › 上移 moves it back to the top.
+        await page.getByRole('button', { name: '调整 203.0.113.10 的顺序' }).focus()
+        await page.keyboard.press('ArrowDown')
+        await expect.poll(() => state.reordered).toHaveLength(2)
+        expect(state.reordered[1]).toEqual([first.relayId, second.relayId])
+
+        await rows.nth(1).getByRole('button', { name: '更多' }).click()
+        await page.getByRole('menuitem', { name: '上移' }).click()
+        await expect.poll(() => state.reordered).toHaveLength(3)
+        expect(state.reordered[2]).toEqual([second.relayId, first.relayId])
+      } finally {
+        await context.close()
+      }
     }
   })
 

@@ -86,17 +86,27 @@ public actor NativePathOwner {
         } catch { if generation == current { round = nil }; throw error }
     }
     /**
-     * Moves an installed relay path to a direct one in the background. It never runs beside or pre-empts a dial round, and
-     * a failure is silent: the relay stays installed. True when a direct path was installed.
+     * Moves an installed relay path to a direct one (or to a newly preferred #1 relay when no direct candidate is
+     * available) in the background. It never runs beside or pre-empts a dial round, and a failure is silent: the
+     * existing relay stays installed. True when a preferred path was installed.
      */
-    public func upgrade(_ candidates: [NativePathCandidate], workspace: NativeWorkspace) async -> Bool {
+    public func upgrade(_ candidates: [NativePathCandidate], preferredRelay: NativePathCandidate? = nil, workspace: NativeWorkspace) async -> Bool {
         guard round == nil, upgrading == nil, candidates.count <= 12 else { return false }
+        guard await workspace.installedPathKind() == .relay else { return false }
         let directs = Array(candidates.filter { $0.kind == .direct && usable($0) }.prefix(2))
-        guard !directs.isEmpty, await workspace.installedPathKind() == .relay, await workspace.quiet() else { return false }
+        let targets: [NativePathCandidate]
+        if !directs.isEmpty {
+            targets = directs
+        } else if let relay = preferredRelay, relay.kind == .relay, usable(relay), await workspace.installedPathId() != relay.id {
+            targets = [relay]
+        } else {
+            return false
+        }
+        guard await workspace.quiet() else { return false }
         guard round == nil, upgrading == nil, !Task.isCancelled else { return false }
         self.workspace = workspace
         let current = generation
-        let task = Task { try await self.dial(directs, later: nil, relayDelay: .zero, upgrade: true, workspace: workspace, generation: current) }
+        let task = Task { try await self.dial(targets, later: nil, relayDelay: .zero, upgrade: true, workspace: workspace, generation: current) }
         upgrading = task
         let result = await withTaskCancellationHandler {
             await task.result
@@ -127,7 +137,7 @@ public actor NativePathOwner {
                         let connection = try await NativeHTTPConnection.$workspaceDirectDial.withValue(candidate.kind == .direct) { try await candidate.connect() }
                         guard !Task.isCancelled else { await connection.close(); return .path(candidate, nil) }
                         timeline?.record(.connect, path: candidate.kind, ordinal: ordinal)
-                        let path = try await workspace.qualify(connection, ticket: ticket, kind: candidate.kind, upgrade: upgrade, reopen: candidate.connect)
+                        let path = try await workspace.qualify(connection, ticket: ticket, kind: candidate.kind, candidateId: candidate.id, upgrade: upgrade, reopen: candidate.connect)
                         timeline?.record(.qualify, path: candidate.kind, ordinal: ordinal)
                         return .path(candidate, path)
                     } catch {
