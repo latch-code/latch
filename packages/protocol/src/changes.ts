@@ -1,5 +1,6 @@
 // The changes routes' answers: what 改动 draws, and what 撤销本轮, 恢复 and the discards report.
 import type { FileMention } from './file-refs.ts'
+import type { FileKind } from './files.ts'
 
 /**
  * `turn`: one turn's start against its end, or against now while it runs. `session`: the oldest retained turn's start
@@ -266,4 +267,51 @@ export function splitChangeNote(text: string): { note?: string; text: string } {
   if (!text.startsWith(CHANGE_NOTE_PREFIX)) return { text }
   const end = text.indexOf('\n\n')
   return end < 0 ? { note: text, text: '' } : { note: text.slice(0, end), text: text.slice(end + 2) }
+}
+
+/** A file created by one of a session's turns, with its current state on disk for the 生成文件 panel. */
+export interface SessionOutputFile {
+  root: string
+  path: string
+  kind?: FileKind
+  size?: number
+  /** Matched by `.gitignore` in a Git repository and not tracked by Git. */
+  gitIgnored?: true
+  /** Present as a regular file inside the folder right now. */
+  exists: boolean
+  /** Modified after the turn created it, so automatic cleanup leaves it alone. */
+  changedSince?: true
+  /** Verified unchanged since creation and safe to remove. */
+  removable: boolean
+  /** Assistant message ID that recorded this creation. */
+  messageId: string
+  /** 1-based user turn number in the session. */
+  turnIndex: number
+  /** Changes record turn ID when matched. */
+  turnId?: string
+}
+
+export interface SessionOutputsList {
+  files: SessionOutputFile[]
+}
+
+export interface OutputsCleanupSkipped extends FileMention {
+  reason: 'changed-since' | 'not-retained' | 'secret' | 'folder-missing'
+}
+
+export interface OutputsCleanupPreview {
+  remove: number
+  bytes: number
+  skipped: number
+  planHash: string
+  removes: FileMention[]
+  notRemoved: OutputsCleanupSkipped[]
+}
+
+export interface OutputsCleanupResult {
+  removed: number
+  bytes: number
+  skipped: number
+  notRemoved: OutputsCleanupSkipped[]
+  replay?: true
 }

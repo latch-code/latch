@@ -160,10 +160,10 @@ profile 的 `minimumVersion` 是它的命令支持的最低版本，用 `<命令
 
 ### 新版本提示
 
-设置里 Harness 的「检测」在版本够新、但有更新的发布时多一行「有新版本」：最新版本、当前版本，能看出安装方式时附更新命令（复制或填入终端）。Latch 从不运行它。
+设置里 Harness 的「检测」与管理设备的工作台「检查更新」在版本够新、但有更新的发布时提示「有新版本」：最新版本、当前版本，能看出安装方式时附更新命令（复制或填入终端），也可跳到该 Harness 的设置页。Latch 从不运行升级命令。
 
 - 范围：profile 的 `minimumVersion.source` 写了来源的预设，只看它自己的程序。npm 包：Claude 直连 `@anthropic-ai/claude-code`、Codex `@openai/codex`、OpenCode 直连 `@opencode/cli`、pi `@earendil-works/pi-coding-agent`、DeepSeek Harness `@deepseek-ai/dsh`；Homebrew：Claude cask `claude-code` 与 `claude-code@latest`、Codex cask `codex`、OpenCode formula `opencode`、goose formula `block-goose-cli`。goose 没有版本门槛，profile 的 `releases` 只为此读 `goose --version`（门槛 `0.0.0`，从不拒绝，启动不等它）。Grok Build、Antigravity、Qwen Code 与适配器没有。当前版本只用版本门槛（或 `releases`）已读出的那次结果。
-- 来源随安装方式：Homebrew 的 `Cellar/<formula>/` 或 `Caskroom/<cask>/` 下、且是 profile 列出的名称，问 `https://formulae.brew.sh/api/<formula|cask>/<名称>.json`（formula 取 `versions.stable`，cask 取 `version` 逗号前的部分）；Homebrew 的构建比 npm 晚几小时，不拿 npm 比。未列出的 Homebrew 安装不问。其他布局在 profile 写了 npm 包时问 `https://registry.npmjs.org/-/package/<包>/dist-tags`，否则不问（goose 自己的安装器没有来源）。见 [ARCHITECTURE](ARCHITECTURE.md#各功能的安全规则)。结果只在内存，每个包、formula 或 cask 6 小时；失败或形状不对不提示，10 分钟内不再问。只在读取 Agent 设置（含「重新检测」）时问，不定时。只有启动脚本传入 `startServer({ harnessUpdates })` 时开启，测试 Host 不发请求。
+- 来源随安装方式：Homebrew 的 `Cellar/<formula>/` 或 `Caskroom/<cask>/` 下、且是 profile 列出的名称，问 `https://formulae.brew.sh/api/<formula|cask>/<名称>.json`（formula 取 `versions.stable`，cask 取 `version` 逗号前的部分）；Homebrew 的构建比 npm 晚几小时，不拿 npm 比。未列出的 Homebrew 安装不问。其他布局在 profile 写了 npm 包时问 `https://registry.npmjs.org/-/package/<包>/dist-tags`，否则不问（goose 自己的安装器没有来源）。见 [ARCHITECTURE](ARCHITECTURE.md#各功能的安全规则)。结果只在内存，每个包、formula 或 cask 6 小时；失败或形状不对不提示，10 分钟内不再问。只在管理设备读取 Agent 设置（`GET /link/api/agents`；工作台首次加载有已启用外部 Harness 时用 `?recheck=0` 复用已读版本，点开「检查更新」或「重新检测」时重读命令版本）时问，不定时；已启用定义的 `update` 与 `outdated` 只投影给有 `admin` 的设备的 `catalog.harnesses`。只有启动脚本传入 `startServer({ harnessUpdates })` 时开启，测试 Host 不发请求。
 - Claude 的通道（只用于 npm 来源）：读 Claude 配置目录（`CLAUDE_CONFIG_DIR`，否则 `~/.claude`）里 `settings.json` 的 `autoUpdatesChannel` 这一个键（不跟随链接，最多 1 MiB）；`stable` 取 `stable` 标签，缺失或其他值取 `latest`；那个标签不存在就不提示。不读登录与凭据。
 - 比较：当前版本严格低于该标签才提示；比较不了、相同或本机预发布版更高都不提示。已有 `outdated` 时不另提示，那一行已带命令。
 - 命令只看路径（找到的路径与 `realpath`），不运行 `npm prefix`、`brew --prefix` 或版本管理器：
@@ -614,10 +614,9 @@ Cursor 预设的定义在这台 Mac 上带了 `CURSOR_API_KEY`，且 Host 找得
 | --- | --- | --- | --- |
 | Codex 直连 | `thread/tokenUsage/updated` 的 `total`，每次模型调用后经 `_latch_tokens` 推送，带只写了文字与推理（没有调用工具）的那些模型调用的输出 tokens 与这些条目自己的 `startedAtMs`–`completedAtMs` 之和（`stream`） | 会话 | `cachedInputTokens` 已含在输入里 |
 | pi | 每轮后 `get_session_stats` 的 `tokens` | 会话 | 输入不含 `cacheRead`/`cacheWrite`，加回 |
-| Claude Agent、OpenCode | `PromptResponse.usage` | 一轮 | 输入不含缓存，加回 |
+| Claude Agent、OpenCode、Antigravity | `PromptResponse.usage`（OpenCode 直连含子 Agent 步） | 一轮 | 输入不含缓存，加回 |
 | Grok Build | `PromptResponse._meta.usage`（`turnUsage`） | 一轮 | 已含 |
 | Qwen Code | 每次模型调用（含子 Agent 的）后一条空文字的 `agent_message_chunk` 的 `_meta.usage`（`callUsage`，0.26.8），只在已发出的一轮里收，相加；载入历史时重放的不收 | 一轮 | 已含；有一次没报缓存，这一轮就不记缓存 |
-| Antigravity | `PromptResponse.usage` | 未核实，按会话 | 报 0 |
 | Cursor 经 SDK | 运行结束时 `RunResult.usage`（没有时 `run.usage`）；花费是 `agent.getUsage()` 的 `cost.chargedCents`，经 `usage_update` | 一轮 | 未核实，按原样（`cacheReadTokens`、`cacheWriteTokens` 另列） |
 | DeepSeek Harness | 适配器不报告 tokens（`usage_update` 只有上下文）；自己登录的轮次由 Host 读它这一个会话的日志（见下） | 一轮，只进轮次记录 | 日志里输入不含缓存，加回 |
 | goose | `PromptResponse.usage` 是这个会话最后一次模型调用的上下文（1.57.0 `session.usage`），既不是这一轮也不是累计，不记（`usageScope: 'none'`）；Host 读它的 `usage_ledger`（见「CLI 自己的存储」） | 一轮，只进轮次记录 | 已含（goose 的 `Usage` 输入含缓存） |
@@ -667,7 +666,7 @@ Claude Agent 与 OpenCode 的预设原先保存的是适配器路线（`claude-a
 - **窗口历史。** 最近 32 轮保留各自那次窗口报告自带的分类与时间；后续报告缺少分类时，该次分类显示为未知。更早的轮次保留已用量和已报告的容量。
 - **压缩。** `compact_boundary` 是 Claude 确认压缩完成的事件。会话只记录手动或自动、压缩前后 token 数和耗时中 Claude 确实报告的值，省略压缩摘要和被保留的消息清单。上下文占用下降时不推断压缩。
 - **登录。** 开会话时把 `initializationResult().account` 照适配器的 `fromAccountInfo` 推送为 `_auth/status_update`（`account` 套餐、`api_key`、`external`、经网关时 `gateway`），不带邮箱与组织；变了才推送。
-- **斜杠命令。** 第一轮开始时把 `initializationResult()` 列出的命令报告给运行时。
+- **斜杠命令。** 创建或恢复会话时读取 `initializationResult().commands`。Claude 的 `system/commands_changed` 会替换本会话的目录，例如 MCP 连接后增加的提示。每轮 `system/init` 同步可用名称，保留已知说明与参数提示，从收到 `terminal_slash_commands` 时起隐藏只适用于终端的命令。
 
 **与适配器不同、尚未实现的。**
 
@@ -1195,14 +1194,15 @@ AGENTS.md「CLI 目录与配置」允许读 CLI 自己的目录，只是尽量�
 
 ## 会话命令
 
-Harness 报告的命令透传，是否报告与执行由 Harness 决定。
+命令由当前会话的 Harness 报告，也可以在会话中更新。发送 Harness 命令时，Latch 保留命令原文，ACP Harness 通过普通的 `session/prompt` 接收它。[ACP v1 会话命令规范](https://agentclientprotocol.com/protocol/v1/slash-commands)
 
 **当前会话。**
 
-- ACP `available_commands_update` 的当前列表作为 `TaskDetail.commands` 发给客户端并随会话持久化。每次更新替换之前的列表（空列表撤下命令）。
-- 上限：200 条，名称 100 字符、说明 1000 字符、输入提示 500 字符；畸形更新不接受。名称不能含空白或控制字符，允许冒号，按可见安全文本显示。
+- Harness 可以在创建或恢复会话时报告命令，也可以在运行中更新。Latch 在等待会话建立时暂存 `available_commands_update`，拿到会话标识后只采用这个会话最后一份有效报告。命令随 `TaskDetail.commands` 发给客户端并持久化，空列表撤下旧命令。恢复时重放的聊天内容仍由已有历史提供。
+- 每份 ACP 报告按顺序检查至多 400 项，取前 200 条可公开的命令。检查到畸形项时保留上一份报告。名称最多 100 字符，不能含空白或控制字符，允许冒号。说明最多 1000 字符，输入提示最多 500 字符。
 - Harness 把本机 MCP 提示报告为 `mcp:服务器:提示` 一类的命令时，列在它的普通命令组里，发送时保留名称（见 [MCP.md](MCP.md#提示)）。
 - 点按与 Tab 只把命令插入草稿；键盘 Enter 的条件见 [DESIGN.md](DESIGN.md)。
+- Codex、pi、OpenCode 与 Claude 的直连在打开或恢复会话时就提供已知命令。打开输入框里的菜单只读已有目录。公开命令取决于接入方式和项目，比如 Codex 直连提供 `/compact`，pi 还会列出本项目加载的扩展命令。
 - 带 `idleOnly` 的命令在运行中置灰；排队、把排队的消息改成它或追加时 Host 以 409 `command-queued` 拒绝。
 
 **上次会话的目录（新草稿）。**
@@ -1247,7 +1247,7 @@ Host 经 `HarnessInfo.extensionSupport` 给出当前适配器能报告的类别�
 | --- | --- |
 | Codex 直连 | 命令（`/compact`）、技能（`skills/list`）、MCP（`mcpServerStatus/list`）、钩子（`hooks/list`） |
 | pi | 命令、技能与注册过命令的扩展（`get_commands`） |
-| DeepSeek Harness | 此页没有已知的报告类别 |
+| DeepSeek Harness、Cursor SDK 直连 | 当前接入方式没有命令目录。Cursor 通过 `cursor-agent acp` 连接时可接收 ACP 命令报告 |
 | 其他 ACP Harness（含 Codex ACP） | 收到的命令（`available_commands_update`）。有些 Harness 把技能作为命令报告 |
 
 **pi 的插件一栏。** 按 `sourceInfo` 聚合扩展命令，显示包或扩展目录的最后一段，独立文件显示文件名去掉代码后缀。精确排除 Latch 的权限扩展，也略过 pi 内置扩展。不同来源同名时省略该名称并标出清单不完整。最多 200 个名称，每个最多 200 字符。完整路径和安装来源只参与线内归组。清理后的名称只进入普通会话的扩展报告。空报告表示没有扩展命令。

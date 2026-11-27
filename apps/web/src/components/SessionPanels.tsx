@@ -1,6 +1,6 @@
 import { FilePreview } from '../preview/FilePreview.tsx'
 import { FileHistoryPreview } from '../preview/FileHistoryPreview.tsx'
-import { fileHistories } from '../preview/fileHistory.ts'
+import { fileHistories, recordedFileHistory } from '../preview/fileHistory.ts'
 import type { FileTab } from '../preview/useFileTabs.ts'
 import type { FileContext, FileMetadata, FileMention } from '@latch/protocol'
 import { FileTree } from '../preview/FileTree.tsx'
@@ -68,6 +68,7 @@ export type PanelSurface =
   | { kind: 'overview' }
   | { kind: 'context' }
   | { kind: 'changes' }
+  | { kind: 'outputs' }
   | { kind: 'delivery' }
   | { kind: 'browser' }
   | { kind: 'device' }
@@ -134,6 +135,7 @@ export function SessionPanels({
   fileRevision,
   treeView,
   onTreeViewChange,
+  folderNavigation,
   onSurface,
   onSearchFiles,
   rootReveal,
@@ -144,6 +146,7 @@ export function SessionPanels({
   folders,
   cwd,
   changes,
+  outputs,
   changesTotals,
   delivery,
   browser,
@@ -169,6 +172,7 @@ export function SessionPanels({
   /** A phone's only home for the folders and facts held by the title row's popover elsewhere. */
   launcherNote?: ReactNode
   changes?: ReactNode
+  outputs?: ReactNode
   delivery?: ReactNode
   /** The desktop app's own window on this Mac: the browser; elsewhere a read-only list of its tabs. */
   browser?: ReactNode
@@ -196,6 +200,7 @@ export function SessionPanels({
   fileContext?: FileContext
   fileRevision?: string
   treeView?: FileTreeView
+  folderNavigation?: number
   onTreeViewChange?(view: FileTreeView): void
   onSearchFiles?(): void
   rootReveal?(rootId: string): (() => void) | undefined
@@ -221,21 +226,24 @@ export function SessionPanels({
         ? !!overview
         : key === 'changes'
           ? !!changes
-          : key === 'delivery'
-            ? !!delivery
-            : key === 'browser'
-              ? !!browser
-              : key === 'device'
-                ? !!device
-                : key === 'terminal'
-                  ? !!terminal
-                  : key === 'files'
-                    ? !!fileContext
-                    : offered.some(panel => `plugin:${panel.id}` === key)
+          : key === 'outputs'
+            ? !!outputs
+            : key === 'delivery'
+              ? !!delivery
+              : key === 'browser'
+                ? !!browser
+                : key === 'device'
+                  ? !!device
+                  : key === 'terminal'
+                    ? !!terminal
+                    : key === 'files'
+                      ? !!fileContext
+                      : offered.some(panel => `plugin:${panel.id}` === key)
   const tabsOpen = open.filter(content)
   const selected = activeFile ? undefined : active !== undefined && tabsOpen.includes(active) ? active : tabsOpen[0]
   const showing = (key: PanelKey) => selected === key
   const changesStarted = useStarted(showing('changes'))
+  const outputsStarted = useStarted(showing('outputs'))
   const deliveryStarted = useStarted(showing('delivery'))
   const browserStarted = useStarted(showing('browser'))
   const deviceStarted = useStarted(showing('device'))
@@ -253,7 +261,10 @@ export function SessionPanels({
     observedFiles.map(file => [file.root, file.path, file.change]),
   ])
   const history = activeFile
-    ? histories.find(item => item.path === activeFile.target.reference && item.root === activeFile.target.rootId)
+    ? (histories.find(item => item.path === activeFile.target.reference && item.root === activeFile.target.rootId)
+      ?? (detail && activeFile.diffFocus
+        ? recordedFileHistory(detail, activeFile.diffFocus.messageId, activeFile.diffFocus.diffIndex)?.history
+        : undefined))
     : undefined
   const plugin = showing('context')
     ? bundledContext
@@ -306,7 +317,13 @@ export function SessionPanels({
   const value = activeFile ? `file:${activeFile.id}` : (selected ?? '')
   const choose = (key: PanelKey) => onChoose?.(key)
   const inBody =
-    !showing('changes') && !showing('delivery') && !showing('browser') && !showing('device') && !showing('terminal') && !showing('files')
+    !showing('changes')
+    && !showing('outputs')
+    && !showing('delivery')
+    && !showing('browser')
+    && !showing('device')
+    && !showing('terminal')
+    && !showing('files')
   return (
     <div className="session-panels">
       <PanelTabs
@@ -333,6 +350,11 @@ export function SessionPanels({
           {changes}
         </div>
       )}
+      {outputs && outputsStarted && (
+        <div className="session-panel-changes" hidden={!showing('outputs')}>
+          {outputs}
+        </div>
+      )}
       {delivery && deliveryStarted && (
         <div className="session-panel-changes" hidden={!showing('delivery')}>
           {delivery}
@@ -356,7 +378,7 @@ export function SessionPanels({
       {fileContext && treeStarted && (
         <div className="session-file-tree" hidden={!showing('files')}>
           <FileTree
-            key={`${fileContextKey(fileContext)}:${fileRevision ?? ''}`}
+            key={`${fileContextKey(fileContext)}:${fileRevision ?? ''}:${folderNavigation ?? 0}`}
             context={fileContext}
             local={local}
             folders={summary?.folders ?? folders}
@@ -389,9 +411,11 @@ export function SessionPanels({
             history={history}
             histories={histories}
             expanded={expanded}
-            name={activeFile.target.reference.split('/').at(-1) ?? activeFile.target.reference}
-            onPreview={() => onFileView?.(activeFile.id, 'preview')}
+            name={activeFile.target.reference.split(/[\\/]/u).at(-1) ?? activeFile.target.reference}
+            {...(activeFile.diffFocus ? { focus: activeFile.diffFocus } : {})}
+            {...(activeFile.recordedOnly ? {} : { onPreview: () => onFileView?.(activeFile.id, 'preview') })}
             onExpand={() => onExpand?.()}
+            {...(onRevealTool ? { onRevealTool } : {})}
           />
         ) : activeFile ? (
           <FilePreview

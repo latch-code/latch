@@ -47,18 +47,36 @@ export function editsByFile(edits: readonly FileDiff[], folders: readonly Folder
  * What the turn's edits name that no snapshot records, so no undo reaches it: a path outside every folder, or inside
  * one under a name the snapshots ignore. Commands leave no such trace, so this cannot name what they wrote elsewhere.
  */
-export function uncoveredEdits(edits: readonly FileDiff[], folders: readonly FolderSpellings[]): string[] {
+export function uncoveredEdits(
+  edits: readonly FileDiff[],
+  folders: readonly FolderSpellings[],
+  isOmitted?: (folderId: string, path: string) => boolean,
+): string[] {
   const uncovered = new Set<string>()
   for (const edit of edits) {
     if (typeof edit.path !== 'string' || !edit.path) continue
-    const inside = isAbsolute(edit.path)
-      ? folders
-          .flatMap(folder => folder.paths)
-          .map(path => relative(path, edit.path))
-          .find(path => path && !path.startsWith('..') && !isAbsolute(path))
-      : posix.normalize(edit.path.replaceAll('\\', '/')).replace(/^\.\//u, '')
-    const path = inside?.split(sep).join('/')
-    if (path === undefined || path.startsWith('..') || isIgnoredPath(path)) uncovered.add(redactSecrets(edit.path).slice(0, 4096))
+    let matchedFolder: string | undefined
+    let relativePath: string | undefined
+    if (isAbsolute(edit.path)) {
+      for (const folder of folders) {
+        const inside = folder.paths.map(path => relative(path, edit.path)).find(path => path && !path.startsWith('..') && !isAbsolute(path))
+        if (inside !== undefined) {
+          matchedFolder = folder.id
+          relativePath = inside.split(sep).join('/')
+          break
+        }
+      }
+    } else {
+      matchedFolder = folders[0]?.id
+      relativePath = posix.normalize(edit.path.replaceAll('\\', '/')).replace(/^\.\//u, '').split(sep).join('/')
+    }
+    if (
+      relativePath === undefined
+      || relativePath.startsWith('..')
+      || isIgnoredPath(relativePath)
+      || (matchedFolder !== undefined && isOmitted?.(matchedFolder, relativePath) === true)
+    )
+      uncovered.add(redactSecrets(edit.path).slice(0, 4096))
   }
   return [...uncovered].slice(0, NAMED_FILE_LIMIT)
 }

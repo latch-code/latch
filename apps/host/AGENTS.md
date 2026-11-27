@@ -32,5 +32,5 @@
 - 创作绑 Host 目录。官方查 Git HTTPS；查源、暂存限本机 `admin`、`all`。市场随插件启停（PLUGIN-DEVELOPMENT）。
 - 准备及配置回执见 ARCHITECTURE。外观写入需基版与回执，替换前复核权限，目录同步未确认复用原请求（CUSTOMIZATION）。
 - 插件连接仅随原生入口启用；远程 review/正文窗口与真实关闭见 [STREAMING](../../docs/STREAMING.md#原生客户端的流)。
-- 家由分配器建并验身份，空时重建，经 `latch-home` 删；通用迁移见 ARCHITECTURE。默认项走 startConfig。后台核实际等级，手动不授后台权。
+- 家验身份，缺失可重建，删除经 `latch-home`。通用旧根缺失见 ARCHITECTURE。默认项走 startConfig。后台核实际等级，手动不授后台权。
 - 权限：ARCHITECTURE。基线与续办：GIT-REVIEW。推送：IOS-NOTIFICATIONS。

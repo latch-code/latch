@@ -1,12 +1,12 @@
 import { randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, mkdir, open, readdir, realpath, rmdir, stat } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join } from 'node:path'
+import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import { AppError } from '@latch/sdk'
 import { sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
 import { z } from 'zod'
 import { codeOf } from './http-util.ts'
-import { canonicalPath } from './paths.ts'
+import { canonicalPath, pathKey } from './paths.ts'
 
 /**
  * Folders of their own for Agent sessions outside a saved project, while the Host uses its default start directory:
@@ -64,7 +64,7 @@ type GeneralMove = z.infer<typeof generalMoveSchema>
 
 interface GeneralMigration {
   previous: SessionFolders
-  previousRoots: string[]
+  previousDefaults: { base: string; relative: string }[]
   paths(name: string): string[]
   moveSessions(name: string, from: string, to: string): Promise<void>
   beforeMove(needsNativeMove: boolean): Promise<void>
@@ -126,11 +126,12 @@ export interface RecordedHome {
   identity: HelperIdentity
 }
 
-/** The recorded root is pinned and the home is genuinely absent, without following a link at either directory entry. */
+/** The recorded home is absent in its verified root, or its entire former default root is missing. */
 interface AbsentHome extends RecordedHome {
   root: string
   path: string
   absent: true
+  rootAbsent?: true
 }
 
 /** A recorded home found where its record says, as it is now: the link-free start directory and each identity. */
@@ -140,6 +141,27 @@ export interface LocatedHome extends RecordedHome {
   path: string
   /** `dev:ino` of the start directory, `helpers` and the home, as just read. */
   ids: { root: string; helpers: string; home: string }
+}
+
+/** Only a former Host default may be recognized after its whole workspace is gone. Walk from its existing base
+ * so an inaccessible entry or a dangling link cannot be mistaken for a missing directory. */
+async function missingDefaultHome(home: RecordedHome, defaults: GeneralMigration['previousDefaults']): Promise<AbsentHome | 'unverified'> {
+  for (const { base, relative } of defaults) {
+    const canonicalBase = await canonicalPath(base).catch(() => undefined)
+    if (!canonicalBase || sha256Hex(join(canonicalBase, pathKey(relative))) !== home.rootHash) continue
+    let parent = base
+    for (const component of relative.split(sep)) {
+      const info = await lstat(parent).catch(() => undefined)
+      if (!info?.isDirectory() || info.mode & 0o022 || (process.getuid && info.uid !== process.getuid())) break
+      const child = join(parent, component)
+      if ((await entryState(child)) === 'absent') {
+        const root = join(base, relative)
+        return { ...home, root, path: join(root, 'helpers', home.name), absent: true, rootAbsent: true }
+      }
+      parent = child
+    }
+  }
+  return 'unverified'
 }
 
 /**
@@ -429,17 +451,27 @@ export class SessionFolders {
     if (!this.options.managedGeneral || !this.options.dataDir) throw helperUnavailable()
     await this.start()
     if (this.savedHelper('general')) return
-    const { previous, previousRoots, paths, moveSessions, beforeMove, moveDirectory } = options
+    const { previous, previousDefaults, paths, moveSessions, beforeMove, moveDirectory } = options
     const legacy = (await previous.recordedHomes()).filter(home => home.owner === 'general')
-    const located = (home: RecordedHome) =>
-      previous.locateHomeState(home, [...paths(`helpers/${home.name}`), ...previousRoots.map(root => join(root, 'helpers', home.name))])
+    const locate = async (home: RecordedHome, candidates: string[]) => {
+      const source = await previous.locateHomeState(home, candidates)
+      return source === 'unverified' ? missingDefaultHome(home, previousDefaults) : source
+    }
     if (!this.generalMove) {
       if (!legacy.length) return
-      const homes = (await Promise.all(legacy.map(located))).filter(home => typeof home !== 'string')
+      const located = await Promise.all(
+        legacy.map(home => {
+          const name = `helpers/${home.name}`
+          const defaults = previousDefaults.map(({ base, relative }) => join(base, relative, name))
+          return locate(home, [...paths(name), ...defaults])
+        }),
+      )
+      const homes = located.filter(home => typeof home !== 'string')
       const spellings = await Promise.all(
         homes.map(async home => {
           const candidates = paths(`helpers/${home.name}`)
           if ('absent' in home) {
+            if (home.rootAbsent) return candidates.filter(path => path === home.path)
             const canonical = await canonicalPath(home.root)
             const verified = await Promise.all(
               candidates.map(
@@ -477,7 +509,7 @@ export class SessionFolders {
       const target = join(parentPath, name)
       if ((await entryState(target)) !== 'absent') throw helperUnavailable()
       if (sourceAbsent) {
-        const current = await previous.locateHomeState(source, [source.path])
+        const current = await locate(source, [source.path])
         if (typeof current === 'string' || !('absent' in current) || current.root !== source.root) throw helperUnavailable()
       }
       const directory = sourceAbsent ? await makePrivateDirectory(target) : source.identity.directory
@@ -514,7 +546,7 @@ export class SessionFolders {
       throw helperUnavailable()
     if (plan.sourceAbsent) {
       if (!old) throw helperUnavailable()
-      const source = await previous.locateHomeState(old, [join(plan.sourceRoot, 'helpers', plan.sourceName)])
+      const source = await locate(old, [join(plan.sourceRoot, 'helpers', plan.sourceName)])
       if (typeof source === 'string' || !('absent' in source) || source.root !== plan.sourceRoot) throw helperUnavailable()
     } else if (!(await stillAtTarget())) {
       if (!old || (await entryState(target)) !== 'absent') throw helperUnavailable()

@@ -13,6 +13,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
+import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { redactKnownSecrets } from '@latch/core/node-kit'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
@@ -21,7 +22,9 @@ import { CAPTURE_BYTES } from '../history.ts'
 import { claudeCompactionMetrics, claudeContextBreakdown } from '../context-telemetry.ts'
 import {
   AUTH_STATUS_METHOD,
-  commandsUpdate,
+  availableCommand,
+  type AvailableCommand,
+  SESSION_COMMAND_LIMIT,
   FORK_METHOD,
   MCP_STATUS_METHOD,
   MCP_STATUS_UPDATE,
@@ -110,7 +113,6 @@ const MODE_IDS = new Set<string>(MODES.map(mode => mode.id))
 /** Read after each turn; a slow answer leaves the context use unknown rather than holding the turn open. */
 const CONTEXT_TIMEOUT_MS = 2_000
 const MAX_MODELS = 200
-const MAX_COMMANDS = 200
 /** Tool uses and subagents one session remembers; the oldest are forgotten past this. */
 const MAX_REMEMBERED = 2_000
 /** What the SDK adds to the environment it is given, kept on the child; anything else not in the runtime's is dropped. */
@@ -167,6 +169,7 @@ const initResult = z.object({
   account: z.unknown().optional(),
 })
 const slashCommand = z.object({ name: text, description: text.optional().catch(undefined), argumentHint: text.optional().catch(undefined) })
+type Commands = AvailableCommand[]
 const count = z.number().nonnegative().finite()
 const resultUsage = z.object({
   input_tokens: count.catch(0),
@@ -384,9 +387,10 @@ interface Session {
   /** The mode before Claude entered plan mode, which its plan offers to go back to. */
   prePlanMode?: string
   effort: string
-  commands: z.infer<typeof commandsUpdate>['availableCommands']
-  /** Commands were listed to the runtime once the session had a turn. */
-  listed: boolean
+  commands?: Commands
+  terminalCommands: Set<string>
+  probe?: Probe
+  prompted: boolean
   /** Message IDs whose text or thinking arrived in pieces, so the whole message adds nothing. */
   streamed: Map<string, { text: boolean; thinking: boolean }>
   /** The top-level message `claude` is streaming. */
@@ -802,8 +806,9 @@ export class ClaudeWire implements AgentWire {
       model: DEFAULT_MODEL,
       mode: 'default',
       effort: DEFAULT_EFFORT,
-      commands: [] as Session['commands'],
-      listed: false,
+      terminalCommands: new Set<string>(),
+      ...(probe ? { probe } : {}),
+      prompted: false,
       streamed: new Map<string, { text: boolean; thinking: boolean }>(),
       toolUses: new Map<string, ToolUse>(),
       children: new Map<string, Child>(),
@@ -836,7 +841,8 @@ export class ClaudeWire implements AgentWire {
         return read.success ? [read.data] : []
       })
       .slice(0, MAX_MODELS)
-    session.commands = this.readCommands(init.commands)
+    // A push from the SDK stream can arrive before its older initialize response.
+    if (session.commands === undefined) this.reportCommands(session, init.commands)
     this.reportLogin(this.route ? { kind: 'gateway', label: 'Custom model gateway' } : loginOf(init.account))
     // What the session runs now: the route's model, or what the CLI reports (a resumed session keeps its own).
     const used = this.route?.model ?? (await this.contextModel(session))
@@ -880,20 +886,27 @@ export class ClaudeWire implements AgentWire {
     ])
   }
 
-  private readCommands(listed: readonly unknown[]): Session['commands'] {
-    const commands: Session['commands'] = []
+  private reportCommands(session: Session, listed: readonly unknown[], namesOnly = false): void {
+    if (session.probe || this.session !== session) return
+    const commands: Commands = []
+    // system/init lists names only. Keep descriptions and argument hints from the SDK's detailed list.
+    const previous = namesOnly ? new Map(session.commands?.map(command => [command.name, command])) : undefined
     for (const item of listed) {
-      const read = slashCommand.safeParse(item)
+      const read = slashCommand.safeParse(namesOnly ? { name: item } : item)
       if (!read.success) continue
-      const parsed = commandsUpdate.shape.availableCommands.element.safeParse({
-        name: read.data.name.replace(/^\//u, ''),
+      const name = read.data.name.replace(/^\//u, '')
+      if (session.terminalCommands.has(name)) continue
+      const parsed = availableCommand.safeParse({
+        name,
         ...(read.data.description ? { description: clip(read.data.description, 1000) } : {}),
         ...(read.data.argumentHint ? { input: { hint: clip(read.data.argumentHint, 500) } } : {}),
       })
-      if (parsed.success) commands.push(parsed.data)
-      if (commands.length === MAX_COMMANDS) break
+      if (parsed.success) commands.push(previous?.get(name) ?? parsed.data)
+      if (commands.length === SESSION_COMMAND_LIMIT) break
     }
-    return commands
+    if (isDeepStrictEqual(session.commands, commands)) return
+    session.commands = commands
+    this.update(session, { sessionUpdate: 'available_commands_update', availableCommands: commands })
   }
 
   /** Ends a session's `query()` and waits for its process; its end is Latch's, not a crash. */
@@ -1020,10 +1033,8 @@ export class ClaudeWire implements AgentWire {
       else if (block.type === 'resource_link' && block.uri) content.push({ type: 'text', text: block.uri })
       else throw new RpcError(RPC.invalidParams, `Claude takes no ${clip(block.type, 64)} content here`)
     }
-    // Listed once the session has a turn, when the runtime surely knows it: it drops updates for a session it does not.
-    if (!session.listed) {
-      session.listed = true
-      this.update(session, { sessionUpdate: 'available_commands_update', availableCommands: session.commands })
+    if (!session.prompted) {
+      session.prompted = true
       for (const title of session.warnings.splice(0)) this.update(session, { sessionUpdate: 'notice', severity: 'warning', title })
       void this.reportMcp(session)
     }
@@ -1266,6 +1277,19 @@ export class ClaudeWire implements AgentWire {
   }
 
   private onSystem(session: Session, message: Record<string, unknown>): void {
+    if (message.session_id === session.id && message.parent_tool_use_id == null) {
+      if (message.subtype === 'commands_changed' && Array.isArray(message.commands)) {
+        this.reportCommands(session, message.commands)
+        return
+      }
+      if (message.subtype === 'init' && Array.isArray(message.slash_commands)) {
+        const terminal = z.array(text).optional().safeParse(message.terminal_slash_commands)
+        if (terminal.success) {
+          session.terminalCommands = new Set(terminal.data?.map(name => name.replace(/^\//u, '')))
+          this.reportCommands(session, message.slash_commands, true)
+        }
+      }
+    }
     if (message.subtype === 'compact_boundary') {
       if (message.parent_tool_use_id != null || typeof message.uuid !== 'string' || !UUID.test(message.uuid)) return
       session.contextGeneration = (session.contextGeneration ?? 0) + 1
@@ -1401,12 +1425,17 @@ export class ClaudeWire implements AgentWire {
       const said =
         errors.join('\n') || (typeof message.result === 'string' ? message.result : '') || `Claude Code stopped: ${String(message.subtype)}`
       // As the adapter: the error says what kind of failure it was; a refusal for the limit carries the limit Claude reported.
-      const data = turn.errorKind
-        ? {
-            errorKind: turn.errorKind,
-            ...(turn.errorKind === 'rate_limit' && session?.rateLimit !== undefined ? { rateLimit: session.rateLimit } : {}),
-          }
-        : undefined
+      const counted =
+        usage
+        && (usage.inputTokens > 0 || usage.outputTokens > 0 || (usage.cachedReadTokens ?? 0) > 0 || (usage.cachedWriteTokens ?? 0) > 0)
+      const data =
+        turn.errorKind || counted
+          ? {
+              ...(turn.errorKind ? { errorKind: turn.errorKind } : {}),
+              ...(turn.errorKind === 'rate_limit' && session?.rateLimit !== undefined ? { rateLimit: session.rateLimit } : {}),
+              ...(counted ? { usage } : {}),
+            }
+          : undefined
       return turn.reject(new RpcError(RPC.internal, clip(redactKnownSecrets(this.spec.redact(said)), 4000), data))
     }
     const stop = message.stop_reason

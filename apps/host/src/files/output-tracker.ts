@@ -1,9 +1,11 @@
-import { watch, type Stats } from 'node:fs'
-import { lstat, opendir, realpath } from 'node:fs/promises'
+import { watch, constants, type Stats } from 'node:fs'
+import { lstat, open, opendir, realpath } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { isFileMention, type FileChange } from '@latch/protocol'
 import type { FileTrackingHandle, FileTrackingInput, FileTrackingResult } from '@latch/sdk'
+import { hashHandle } from '../changes/objects.ts'
 import { isInsidePath } from '../paths.ts'
+import { openRootGitIgnore } from './git-ignore-scope.ts'
 import { isIgnoredPath, isSecretLookingPath } from './ignore.ts'
 import { fileFormat } from './metadata.ts'
 import { ProtectedPaths, resolveRecorded, type FileRoot, type ManagedHomeAccess } from './resolve.ts'
@@ -30,6 +32,7 @@ const splitKey = (key: string): { root: string; path: string } => {
   return { root: key.slice(0, at), path: key.slice(at + 1) }
 }
 const ignored = (path: string): boolean => isIgnoredPath(path) || isSecretLookingPath(path)
+const DOCUMENT_KINDS: ReadonlySet<string> = new Set(['pptx', 'pdf', 'docx', 'xlsx', 'csv', 'html', 'image', 'svg', 'audio', 'video'])
 const watchFiles: WatchFiles = (root, changed, failed) => {
   const watcher = watch(root, { recursive: true, persistent: false, encoding: 'utf8' }, (_event, filename) => changed(filename))
   watcher.on('error', failed)
@@ -88,6 +91,7 @@ export function createFileTrackingService(options: TrackerOptions) {
           return unavailable()
         roots.push({ id: folder.id, path })
       }
+      const gitScopes = new Map(await Promise.all(roots.map(async root => [root.id, await openRootGitIgnore(root)] as const)))
       const startedAt = Date.now(),
         baseline = new Map<string, Stamp>(),
         pending = new Set<string>(),
@@ -229,13 +233,18 @@ export function createFileTrackingService(options: TrackerOptions) {
           return
         }
         const { kind } = fileFormat(resolved.file),
-          born = info.birthtimeMs > 0 && info.birthtimeMs >= startedAt
+          born = info.birthtimeMs > 0 && info.birthtimeMs >= startedAt,
+          created = !previous && born && platform === 'darwin',
+          fresh = !created && !previous && baselineComplete,
+          gitIgnored = await gitScopes.get(id)?.isIgnored(resolved.file.relativePath)
         changes.set(key, {
           root: id,
           path: resolved.file.relativePath,
-          change: !previous && born && platform === 'darwin' ? 'created' : 'modified',
+          change: created ? 'created' : 'modified',
           size: resolved.file.size,
           kind,
+          ...(fresh ? { fresh: true as const } : {}),
+          ...(gitIgnored ? { gitIgnored: true as const } : {}),
         })
       }
       const refresh = () => {
@@ -358,6 +367,29 @@ export function createFileTrackingService(options: TrackerOptions) {
               truncated = true
               failedScan = true
             })
+            if (!disposed) {
+              const hashLimit = 128 * 1024 * 1024
+              for (const entry of changes.values()) {
+                if (entry.change === 'deleted' || (entry.size !== undefined && entry.size > hashLimit)) continue
+                const isNew = entry.change === 'created' || entry.fresh === true
+                if (!isNew && !entry.gitIgnored && !(entry.kind !== undefined && DOCUMENT_KINDS.has(entry.kind))) continue
+                const root = roots.find(item => item.id === entry.root)
+                if (!root) continue
+                const target = join(root.path, ...entry.path.split('/'))
+                const fd = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | constants.O_NONBLOCK).catch(
+                  () => undefined,
+                )
+                if (!fd) continue
+                try {
+                  const stat = await fd.stat({ bigint: true })
+                  if (stat.isFile() && Number(stat.size) <= hashLimit) entry.sha256 = await hashHandle(fd)
+                } catch {
+                  /* Best-effort settlement digest. */
+                } finally {
+                  await fd.close().catch(() => {})
+                }
+              }
+            }
             finished = true
             active.delete(handle)
             return structuredClone(result())

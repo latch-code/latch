@@ -317,6 +317,12 @@ export interface HarnessInfo {
    * for every device, so what was said once about this program is said again when it is bound to another.
    */
   bound?: { id: string; path?: string }
+  /**
+   * Why its command cannot run yet (`CommandDetection.outdated`), or a newer published release of its command
+   * (`CommandDetection.update`), sent only to a device with `admin`. Latch never runs the command.
+   */
+  outdated?: { need: string; upgrade: string }
+  update?: { current: string; latest: string; command?: string }
 }
 
 export type ProjectFolderAccess = 'all' | 'primary' | 'primary-asks' | 'primary-unbounded'

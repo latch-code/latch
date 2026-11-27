@@ -17,7 +17,7 @@ import { TurnFooter } from '../src/components/TurnFooter.tsx'
 import { Transcript } from '../src/components/Transcript.tsx'
 import { JumpLatest } from '../src/components/JumpLatest.tsx'
 import { StatusLine } from '../src/conversation/StatusLine.tsx'
-import { ChangesLinkContext, type ChangesLink } from '../src/conversation/changesLink.ts'
+import { ChangesLinkContext, ToolDiffOpenContext, type ChangesLink } from '../src/conversation/changesLink.ts'
 import { blockedReason, renderedMessages } from '../src/conversation.ts'
 import { escapeHiddenCharacters, hasHiddenCharacters, VisibleText } from '../src/components/VisibleText.tsx'
 import { contentHash } from '../src/core/contentHash.ts'
@@ -894,6 +894,18 @@ describe('a file edit and the right panel', () => {
     const html = row(link)
     expect(html).toContain('aria-expanded="false"')
     expect(html).toContain('process-chevron')
+  })
+
+  it('accepts the right-panel tool diff opener context on edit rows', () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        ToolDiffOpenContext.Provider,
+        { value: noop },
+        createElement(ToolCard, { message: tool({ state: 'completed', tool: { kind: 'edit', diffs } }) }),
+      ),
+    )
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).toContain('+1')
   })
 })
 

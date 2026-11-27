@@ -16,9 +16,12 @@ import {
 } from '@latch/ui'
 import { FileOpenContext } from '../preview/fileContext.ts'
 import { resolveFileImage } from '../preview/fileImages.ts'
+import { OutputsOpenContext } from '../conversation/changesLink.ts'
 import { FileSession } from './FileChip.tsx'
 import { VisibleText } from './VisibleText.tsx'
-import { defineCopy } from '../core/i18n.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const INLINE_LIMIT = 12
 
 const COPY = defineCopy(
   {
@@ -29,6 +32,10 @@ const COPY = defineCopy(
     outputs: '这一轮生成的文件',
     generated: '生成了 ',
     files: ' 个文件',
+    allIgnored: '临时产物',
+    someIgnored: (count: number) => `含 ${formatNumber(count)} 个忽略文件`,
+    manageFiles: '查看与清理',
+    moreInPanel: (count: number) => `另有 ${formatNumber(count)} 个文件 · 在侧栏查看与清理`,
     showFiles: '显示文件',
     bytes: (value1: string) => `${value1} 字节`,
     openFile: (value1: string) => `打开 ${value1}`,
@@ -42,6 +49,11 @@ const COPY = defineCopy(
     outputs: 'Files created this turn',
     generated: 'Created ',
     files: ' files',
+    allIgnored: 'temporary outputs',
+    someIgnored: (count: number) => plural(count, { one: '{n} ignored', other: '{n} ignored' }),
+    manageFiles: 'View & clean up',
+    moreInPanel: (count: number) =>
+      plural(count, { one: '{n} more file · View & clean up in panel', other: '{n} more files · View & clean up in panel' }),
     showFiles: 'Show files',
     bytes: (value1: string) => `${value1} bytes`,
     openFile: (value1: string) => `Open ${value1}`,
@@ -139,11 +151,31 @@ export function FileListToggle({ expanded, onToggle }: { expanded: boolean; onTo
  * 「生成了 2 个文件」: what the turn made for the person to open. These come from watching the folders, which sees other
  * writers too, so the card says what exists rather than who wrote it.
  */
-export function ProducedFiles({ files, actions }: { files: FileChange[]; actions?: ReactNode }) {
+export function ProducedFiles({
+  files,
+  actions,
+  turnId,
+  messageId,
+}: {
+  files: FileChange[]
+  actions?: ReactNode
+  turnId?: string | undefined
+  messageId?: string | undefined
+}) {
   const session = useContext(FileSession)
   const open = useContext(FileOpenContext)
+  const openOutputs = useContext(OutputsOpenContext)
   const [expanded, setExpanded] = useState(false)
   if (!files.length) return null
+  const ignoredCount = files.filter(file => file.gitIgnored === true).length
+  const inlineFiles = openOutputs && files.length > INLINE_LIMIT ? files.slice(0, INLINE_LIMIT) : files
+  const remaining = files.length - inlineFiles.length
+  const openPanel = () => {
+    openOutputs?.({
+      ...(turnId ? { turnId } : {}),
+      ...(messageId ? { messageId } : {}),
+    })
+  }
   return (
     <section className="file-outputs" aria-label={COPY.outputs} data-open={expanded ? '' : undefined}>
       <div className="changed-files-head">
@@ -152,9 +184,17 @@ export function ProducedFiles({ files, actions }: { files: FileChange[]; actions
           {files.length}
           {COPY.files}
         </span>
+        {ignoredCount > 0 && (
+          <span className="file-outputs-note">{ignoredCount === files.length ? COPY.allIgnored : COPY.someIgnored(ignoredCount)}</span>
+        )}
         <FileListToggle expanded={expanded} onToggle={() => setExpanded(!expanded)} />
         <span className="process-fill" />
         {actions}
+        {openOutputs && (
+          <Button size="xs" variant="outline" className="file-outputs-panel-open" onClick={openPanel}>
+            {COPY.manageFiles}
+          </Button>
+        )}
       </div>
       <Collapse
         open={expanded}
@@ -162,7 +202,7 @@ export function ProducedFiles({ files, actions }: { files: FileChange[]; actions
           setExpanded(true)
         }}>
         <ul>
-          {files.map(file => {
+          {inlineFiles.map(file => {
             const Glyph = KIND_ICONS[file.kind ?? ''] ?? PageGlyph
             const name = file.path.slice(file.path.lastIndexOf('/') + 1)
             return (
@@ -197,6 +237,13 @@ export function ProducedFiles({ files, actions }: { files: FileChange[]; actions
               </li>
             )
           })}
+          {remaining > 0 && openOutputs && (
+            <li className="file-outputs-more">
+              <button type="button" className="file-outputs-more-action" onClick={openPanel}>
+                {COPY.moreInPanel(remaining)}
+              </button>
+            </li>
+          )}
         </ul>
       </Collapse>
     </section>

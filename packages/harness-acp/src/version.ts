@@ -111,7 +111,7 @@ function entryFor(record: AgentRecord, path: string, fresh = false, own?: Gate):
   const key = keyOf(path, gate.minimum)
   const known = cache.get(key)
   if (!fresh && known && known.stamp === stamp && known.epoch === epoch) return known
-  const before = known?.verdict?.tooOld ?? false
+  const before = known?.verdict
   let timer: ReturnType<typeof setTimeout> | undefined
   const deadline = new Promise<undefined>(resolve => {
     const wait = setTimeout(() => resolve(undefined), READ_MS + 1_000)
@@ -127,7 +127,7 @@ function entryFor(record: AgentRecord, path: string, fresh = false, own?: Gate):
         const order = version === undefined ? undefined : compareVersions(version, gate.minimum)
         const verdict: VersionVerdict = { ...(version ? { version: version.slice(0, 64) } : {}), tooOld: order !== undefined && order < 0 }
         entry.verdict = verdict
-        if (verdict.tooOld !== before) learned?.()
+        if (before ? verdict.tooOld !== before.tooOld || verdict.version !== before.version : verdict.tooOld) learned?.()
         return verdict
       },
       () => {

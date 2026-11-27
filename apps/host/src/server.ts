@@ -1995,11 +1995,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         await withGeneralHomeSessions(dataDir, sessions =>
           generalHomes.migrateGeneral({
             previous: ownFolders,
-            previousRoots: [
-              workspaceRoot,
-              join(realDataDir, 'workspace'),
-              join(home, 'Latch', 'workspace'),
-              join(home, 'Latch Files', 'workspace'),
+            previousDefaults: [
+              { base: realDataDir, relative: 'workspace' },
+              { base: home, relative: join('Latch', 'workspace') },
+              { base: home, relative: join('Latch Files', 'workspace') },
             ],
             paths(name) {
               const paths = sessions.paths(name)
@@ -2013,7 +2012,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 action: 'agent.home.assigned',
                 actor: { listener: 'host', via: 'startup' },
                 target: GENERAL_AGENT_ID,
-                detail: { homeHash: sha256Hex(canonicalJson('agent-homes/general')) },
+                detail: { homeHash: sha256Hex(canonicalJson('agent-homes/general')), ...(!needsNativeMove ? { recreated: true } : {}) },
               })
             },
             moveDirectory: async (source, target) =>
@@ -9064,7 +9063,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     async function catalog(caller: Caller): Promise<HostCatalog> {
       // Only a device that may save a definition is offered one; everyone else keeps what is defined.
-      const mayDefine = caller.device?.scopes.includes('admin') === true && isLocalListener(caller.connection.listener)
+      const isAdmin = caller.device?.scopes.includes('admin') === true
+      const mayDefine = isAdmin && isLocalListener(caller.connection.listener)
       const offers = mayDefine ? presetsToOffer() : []
       const pages =
         !caller.nativeOpening && caller.device?.scopes.includes('view')
@@ -9112,7 +9112,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               ? BUILTIN_HELPER_CARD
               : AGENT_PRESETS.find(preset => preset.id === harness.capabilities.display.mark)?.helperCard
           const { helperCard: _ignored, ...info } = harness
-          const path = config.settings().agents.find(agent => agent.id === harness.id)?.confirmedCommand
+          const agent = config.settings().agents.find(item => item.id === harness.id)
+          const path = agent?.confirmedCommand
+          const found = isAdmin && agent ? resolveCommand(agent.command) : undefined
+          const outdated = isAdmin && agent && harness.statusReason === 'outdated' ? outdatedCommand(agent, found) : undefined
+          const update =
+            isAdmin && agent && !outdated && harness.statusReason !== 'moved' && found
+              ? withUpdate(agent, { found: true, path: found }).update
+              : undefined
           return {
             ...info,
             ...(reported ? { attachmentsReported: reported } : {}),
@@ -9120,6 +9127,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ...(path
               ? { bound: { id: createHmac('sha256', boundKey).update(path).digest('hex').slice(0, 16), ...(mayDefine ? { path } : {}) } }
               : {}),
+            ...(outdated ? { outdated } : {}),
+            ...(update ? { update } : {}),
           }
         }),
         providers: usableProviders().map(providerSummary),
@@ -12772,16 +12781,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       if (path === '/link/api/agents' && method === 'GET') {
         requireScope(caller, 'admin')
-        // Reading the agent settings is a re-check: the next catalog looks for every command again.
-        forgetCommandLookups()
-        // A command too old for its preset says so in this answer, and in the catalog read after it.
-        // Only programs this Mac confirmed are run to read their versions; a preset not added yet is read once it is.
-        await recheckVersions(
-          config.settings().agents.filter(agent => agent.enabled && versionReadable(agent)),
-          VERSION_RECHECK_MS,
-        )
-        // Each preset says whether its commands are here, so an agent can be added knowing what is still missing.
-        presetLookup = undefined
+        const recheck = new URL(req.url ?? '/', 'http://latch.invalid').searchParams.get('recheck') !== '0'
+        if (recheck) {
+          // Reading the agent settings is a re-check: the next catalog looks for every command again.
+          forgetCommandLookups()
+          // A command too old for its preset says so in this answer, and in the catalog read after it.
+          // Only programs this Mac confirmed are run to read their versions; a preset not added yet is read once it is.
+          await recheckVersions(
+            config.settings().agents.filter(agent => agent.enabled && versionReadable(agent)),
+            VERSION_RECHECK_MS,
+          )
+          // Each preset says whether its commands are here, so an agent can be added knowing what is still missing.
+          presetLookup = undefined
+        }
         // The newest release of each program whose version is known, asked once per package and kept for hours.
         if (harnessUpdates) {
           const sources: UpdateSource[] = []
@@ -12789,8 +12801,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             const source = record && updateSource(record, resolveCommand(record.command))
             if (source) sources.push(source)
           }
-          for (const agent of config.settings().agents) add(agent)
-          for (const preset of AGENT_PRESETS) add(presetRoute(preset.id))
+          for (const agent of config.settings().agents) if (recheck || agent.enabled) add(agent)
+          if (recheck) for (const preset of AGENT_PRESETS) add(presetRoute(preset.id))
           await harnessUpdates.settle(sources, UPDATE_WAIT_MS)
         }
         // A preset is added as a draft would save it: its adapter, when only that can run here.

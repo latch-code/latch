@@ -29,14 +29,14 @@ describe('slash suggestions in the real composer', () => {
             name: '菜单 Agent',
             command: process.execPath,
             args: [FAKE_ACP_AGENT],
-            env: { FAKE_ACP_COMMANDS: JSON.stringify(commands), FAKE_ACP_CONFIG: 'options' },
+            env: { FAKE_ACP_SETUP_COMMANDS: '1', FAKE_ACP_COMMANDS: JSON.stringify(commands), FAKE_ACP_CONFIG: 'options' },
           },
         })
         expect(saved.status).toBe(201)
         const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
           method: 'POST',
           body: {
-            prompt: 'plan',
+            prompt: 'hello',
             requestId: randomUUID(),
             harnessId: 'slash-test',
             mode: 'agent',
@@ -69,7 +69,7 @@ describe('slash suggestions in the real composer', () => {
                 await palette.getByRole('searchbox').fill(title)
                 await palette.getByRole('option', { name: title, exact: true }).first().click()
               } else await page.locator(`[data-task-id="${sessionId}"]:visible`).first().click()
-              await page.getByText('planned', { exact: true }).waitFor()
+              await page.getByText('echo: hello', { exact: true }).waitFor()
               const input = page.getByRole('textbox', { name: '继续对话', exact: true })
               await input.fill('/')
               const list = page.getByRole('listbox', { name: '命令与提示模板', exact: true })
@@ -77,9 +77,10 @@ describe('slash suggestions in the real composer', () => {
               expect(await list.getByRole('option', { selected: true }).count()).toBe(0)
               const harness = list.getByRole('group', { name: '菜单 Agent', exact: true })
               const reportedPrompt = { name: /mcp:files:review/u }
-              expect(await harness.getByRole('option').count()).toBe(201)
+              expect(await harness.getByRole('option').count()).toBe(commands.length)
               expect(await harness.getByRole('option', reportedPrompt).count()).toBe(1)
               expect(await list.getByRole('option', reportedPrompt).count()).toBe(1)
+              await page.screenshot({ path: `test-results/slash/menu-${engine}-${width}-${theme}.png`, animations: 'disabled' })
               const card = await input.locator('xpath=ancestor::form').boundingBox()
               const popup = await page.locator('.ui-suggest:popover-open').boundingBox()
               // Above the card; a phone docks it on the card as a sheet.
@@ -195,7 +196,7 @@ describe('slash suggestions in the real composer', () => {
                 await expect.poll(() => promptValue(nextInput)).toBe('新会话首句')
                 expect(starts).toBe(0)
                 await page.locator(`[data-task-id="${sessionId}"]:visible`).first().click()
-                await page.getByText('planned', { exact: true }).waitFor()
+                await page.getByText('echo: hello', { exact: true }).waitFor()
                 expect(await promptValue(input)).toBe('')
                 await input.fill('/fork 从这一轮接着检查')
                 await expect

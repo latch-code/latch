@@ -29,6 +29,7 @@ import type {
   DriverTaskSummary,
   HarnessCatalogue,
   HarnessQuota,
+  TokenUsage,
   UsageReport,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
@@ -146,6 +147,18 @@ export interface AcpRecord {
   imported?: { agentSessionId: string; cwd: string }
   /** Text that goes before the first message (`CreateTaskInput.seed`), until a turn has recorded it. */
   seed?: string
+  /** Latest session-scoped token total reported for `acpSessionId`, so later turns and native forks subtract what came before. */
+  sessionUsage?: TokenUsage
+  /** Tokens of `acpSessionId` from before this task (an imported session or a native fork), excluded from `summary.usage`. */
+  sessionOriginUsage?: TokenUsage
+  /** `acpSessionId` began with turns Latch never measured; the first session-scoped report becomes `sessionOriginUsage`. */
+  sessionUnmeasuredOrigin?: true
+  /** Session-scoped cost before this task began on `acpSessionId`. */
+  sessionCost?: { amount: number; currency: string }
+  /** Tokens accumulated by earlier contexts of this task before `clearContext` opened a new session. */
+  priorContextsUsage?: TokenUsage
+  /** Session-scoped totals after recent user messages of `acpSessionId`, for native forks at an earlier turn. */
+  turnSessionTotals?: Record<string, { usage?: TokenUsage; cost?: { amount: number; currency: string } }>
 }
 
 export interface StartChoice {
@@ -607,6 +620,20 @@ const stateSchema = z.object({
           .optional(),
         imported: z.object({ agentSessionId: z.string().min(1).max(512), cwd: z.string().min(1).max(4096) }).optional(),
         seed: z.string().max(1_000_000).optional(),
+        sessionUsage: usage.optional(),
+        sessionOriginUsage: usage.optional(),
+        sessionUnmeasuredOrigin: z.literal(true).optional(),
+        sessionCost: z.object({ amount: z.number().nonnegative().finite(), currency: z.string().regex(/^[A-Z]{3}$/u) }).optional(),
+        priorContextsUsage: usage.optional(),
+        turnSessionTotals: z
+          .record(
+            z.string().max(128),
+            z.object({
+              usage: usage.optional(),
+              cost: z.object({ amount: z.number().nonnegative().finite(), currency: z.string().regex(/^[A-Z]{3}$/u) }).optional(),
+            }),
+          )
+          .optional(),
       }),
     }),
   ),

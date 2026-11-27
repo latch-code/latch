@@ -1,4 +1,4 @@
-import { FileOpenContext } from '../preview/fileContext.ts'
+import { FileOpenContext, FolderOpenContext } from '../preview/fileContext.ts'
 import { createContext, useContext, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
 import { AppWindow } from 'lucide-react'
 import {
@@ -18,6 +18,7 @@ import {
   CodeGlyph,
   CopyGlyph,
   EyeGlyph,
+  FolderGlyph,
   FolderOpenGlyph,
   InfoGlyph,
   LockGlyph,
@@ -26,13 +27,26 @@ import { FILE_COPY, fileNote, type FileNote } from '../core/securityCopy.ts'
 import { defineCopy } from '../core/i18n.ts'
 
 const CHIP_COPY = defineCopy(
-  { file: '文件', preview: (name: string) => `预览文件：${name}` },
-  { file: 'File', preview: name => `Preview file: ${name}` },
+  {
+    file: '文件',
+    folder: '文件夹',
+    preview: (name: string) => `预览文件：${name}`,
+    openFolder: (name: string) => `打开文件夹：${name}`,
+    folderMenu: (name: string) => `文件夹：${name}`,
+  },
+  {
+    file: 'File',
+    folder: 'Folder',
+    preview: name => `Preview file: ${name}`,
+    openFolder: name => `Open folder: ${name}`,
+    folderMenu: name => `Folder: ${name}`,
+  },
 )
 import { currentShell, revealLabel, shellFiles, type FileActionResult, type FileInspection, type ShellFiles } from '../core/shell.ts'
 import { absoluteReference, referenceIcon, referenceName, splitPath } from '../fileReference.ts'
 import { editorLabel, openInEditor, useEditors } from './OpenInEditor.tsx'
 import { ReplyFileIcon } from './ReplyFileIcon.tsx'
+import { KnownFilesContext, ReplySettled, useKnownFolder } from './FileReferences.tsx'
 
 /** The session whose replies are shown and its folder: the desktop app asks about a file of that session. */
 export interface FileSessionInfo {
@@ -52,7 +66,8 @@ interface ChipProps {
   /** The reference as the reader sees it (what the Host is asked about). */
   path: string
   rootId?: string
-  onPreview?: () => void
+  onPreview?: (button: HTMLButtonElement) => void
+  folderLink?: boolean
   actionPath?: string
   /** The link's own text; the path when there is none. */
   label?: ReactNode
@@ -75,27 +90,37 @@ export function FileChip(props: ChipProps) {
   const session = useContext(FileSession)
   const files = shellFiles()
   const open = useContext(FileOpenContext)
-  const rootId = useContext(FileRootContext)
+  const openFolder = useContext(FolderOpenContext)
+  const inheritedRoot = useContext(FileRootContext)
+  const rootId = props.rootId ?? inheritedRoot
+  const settled = useContext(ReplySettled)
+  const known = useContext(KnownFilesContext)
+  const answer = useKnownFolder(props.path, !!open && settled && !props.prompt, rootId)
   const position = /(?::([1-9]\d*)(?::\d+)?|#L([1-9]\d*)(?:C\d+)?)$/u.exec(props.path)
   const line = position ? Math.min(10_000_000, Number(position[1] ?? position[2])) : undefined
-  const preview =
-    open && session
-      ? () =>
-          open({
-            sessionId: session.id,
-            reference: props.path,
-            ...(line ? { line } : {}),
-            ...((props.rootId ?? rootId) ? { rootId: props.rootId ?? rootId } : {}),
-          })
-      : undefined
-  const selectedRoot = props.rootId ?? rootId
-  const folder = selectedRoot
-    ? (session?.folders?.find(folder => folder.id === selectedRoot)?.path ?? (selectedRoot === 'default' ? session?.folder : undefined))
+  const folder = rootId
+    ? (session?.folders?.find(folder => folder.id === rootId)?.path ?? (rootId === 'default' ? session?.folder : undefined))
     : session?.folder
   const nativePath = folder ? absoluteReference(props.path, folder) : props.path
-  return files && session && (!selectedRoot || folder) ? (
+  let preview: ChipProps['onPreview']
+  if (open && session) {
+    const openReference = () =>
+      open({ sessionId: session.id, reference: props.path, ...(line ? { line } : {}), ...(rootId ? { rootId } : {}) })
+    if (!answer) preview = openReference
+    else if (answer.directory && openFolder && known) {
+      preview = async button => {
+        const focus = document.activeElement
+        const fresh = await known.refreshFolder(props.path, rootId)
+        if (!fresh || !button.isConnected || document.activeElement !== focus) return
+        if (typeof fresh === 'object' && fresh.directory) openFolder(session.id, fresh.directory.root, fresh.directory.path)
+        else openReference()
+      }
+    }
+  }
+  return files && session && (!rootId || folder) ? (
     <DesktopFileChip
       {...props}
+      folderLink={!!answer}
       label={props.label ?? props.path}
       actionPath={nativePath}
       onPreview={preview}
@@ -104,7 +129,7 @@ export function FileChip(props: ChipProps) {
       session={session}
     />
   ) : (
-    <CopyFileChip {...props} onPreview={preview} />
+    <CopyFileChip {...props} folderLink={!!answer} onPreview={preview} />
   )
 }
 
@@ -192,7 +217,7 @@ interface ChipMenuProps extends ChipProps {
 function ChipMenu({ name, checking = false, sections, note, copied, onOpen, triggerRef, ...props }: ChipMenuProps) {
   return (
     <Menu
-      label={CHIP_COPY.file}
+      label={props.folderLink ? CHIP_COPY.folder : CHIP_COPY.file}
       header={{ title: name, ...(checking ? { meta: FILE_COPY.checking } : {}) }}
       sections={sections}
       footer={
@@ -224,7 +249,15 @@ function ChipMenu({ name, checking = false, sections, note, copied, onOpen, trig
               data-file-chip=""
               aria-haspopup={menu['aria-haspopup']}
               aria-expanded={menu['aria-expanded']}
-              aria-label={props.onPreview ? CHIP_COPY.preview(spoken(props)) : spoken(props)}
+              aria-label={
+                props.folderLink
+                  ? props.onPreview
+                    ? CHIP_COPY.openFolder(spoken(props))
+                    : CHIP_COPY.folderMenu(spoken(props))
+                  : props.onPreview
+                    ? CHIP_COPY.preview(spoken(props))
+                    : spoken(props)
+              }
               onKeyDown={event => {
                 if (event.key !== 'ArrowDown' || menu['aria-expanded']) return
                 event.preventDefault()
@@ -237,7 +270,7 @@ function ChipMenu({ name, checking = false, sections, note, copied, onOpen, trig
               }}
               onClick={event => {
                 if (props.onPreview) {
-                  if (event.detail <= 1) props.onPreview()
+                  if (event.detail <= 1) props.onPreview(event.currentTarget)
                   return
                 }
                 // The second click of a double click (Finder's way to open a file) neither closes the menu nor asks again.
@@ -249,10 +282,10 @@ function ChipMenu({ name, checking = false, sections, note, copied, onOpen, trig
                 {...props}
                 icon={
                   <Swap value={copied} className={props.prompt ? 'file-chip-icon prompt-chip-icon' : 'file-chip-icon'}>
-                    {copied || props.prompt ? (
-                      <Icon icon={copied ? CheckGlyph : referenceIcon(props.path)} size={14} />
+                    {props.prompt ? (
+                      <Icon icon={copied ? CheckGlyph : props.folderLink ? FolderGlyph : referenceIcon(props.path)} size={14} />
                     ) : (
-                      <ReplyFileIcon path={props.path} />
+                      <ReplyFileIcon path={props.path} folder={props.folderLink} copied={copied} />
                     )}
                   </Swap>
                 }
@@ -282,7 +315,13 @@ function CopyFileChip(props: ChipProps) {
             void copy(props.path)
           }),
         ]}
-        note={outdated ? { text: FILE_COPY.shellOutdated, tone: 'info' } : { text: FILE_COPY.elsewhere(), tone: 'lock' }}
+        note={
+          props.folderLink
+            ? undefined
+            : outdated
+              ? { text: FILE_COPY.shellOutdated, tone: 'info' }
+              : { text: FILE_COPY.elsewhere(), tone: 'lock' }
+        }
       />
       <CopyStatus state={state} />
     </>
@@ -358,7 +397,7 @@ function DesktopFileChip({ files, session, line, ...props }: ChipProps & { files
     if (trigger.current && !trigger.current['aria-expanded']) trigger.current.onClick()
   }
 
-  const offered = inspection?.status === 'ok' ? inspection.actions : undefined
+  const offered = !props.folderLink && inspection?.status === 'ok' ? inspection.actions : undefined
   const item = (id: Action, label: string, icon: MenuItem['icon']): MenuItem[] =>
     offered?.[id]
       ? [
@@ -392,14 +431,18 @@ function DesktopFileChip({ files, session, line, ...props }: ChipProps & { files
       <ChipMenu
         {...props}
         name={name}
-        checking={inspection === undefined}
+        checking={!props.folderLink && inspection === undefined}
         sections={sections}
-        note={outcome ?? noteOf(inspection, context)}
+        note={props.folderLink ? undefined : (outcome ?? noteOf(inspection, context))}
         copied={state === 'copied'}
         triggerRef={trigger}
-        onOpen={() => {
-          void ask()
-        }}
+        onOpen={
+          props.folderLink
+            ? undefined
+            : () => {
+                void ask()
+              }
+        }
       />
       <CopyStatus state={state} />
     </>

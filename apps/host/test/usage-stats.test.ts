@@ -184,16 +184,17 @@ describe('usage from the ledger and the own-login turns', () => {
         turn(now, { projectId: 'latch', harness: 'opencode', model: 'anthropic/claude-sonnet-4-5', inputTokens: 900, outputTokens: 90 }),
       ),
       turnEntry(turn(now, { harness: 'opencode', model: 'Claude-Sonnet-4-5-20250929', inputTokens: undefined, outputTokens: undefined })),
+      turnEntry(turn(now, { harness: 'claude-agent', model: 'Claude Sonnet 4.5', inputTokens: 300, outputTokens: 30 })),
       ledgerEntry(request(now, { projectId: 'site' })),
     ]
     expect(projectsOf(entries)).toEqual([
       { projectId: 'latch', turns: 2, requests: 0, tokens: 1540 },
       { projectId: 'site', turns: 0, requests: 1, tokens: 1100 },
-      { turns: 1, requests: 0, tokens: 0 },
+      { turns: 2, requests: 0, tokens: 330 },
     ])
     expect(compareOf(entries)).toEqual([
+      { model: 'claude-sonnet-4-5', harness: 'claude-agent', turns: 2, measured: 2, inputTokens: 800, outputTokens: 80 },
       { model: 'claude-sonnet-4-5', harness: 'opencode', turns: 2, measured: 1, inputTokens: 900, outputTokens: 90 },
-      { model: 'claude-sonnet-4-5', harness: 'claude-agent', turns: 1, measured: 1, inputTokens: 500, outputTokens: 50 },
     ])
   })
 })

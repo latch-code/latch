@@ -41,7 +41,7 @@ struct SlashReadKey: Equatable {
         let value = text as NSString
         return value.substring(to: min(value.length, max(0, selection.location)))
     }
-    func menu(_ text: String, commands: [NativeJSON], context: PhoneSlashContext, focused: Bool) -> PhoneSlashMenu? {
+    func menu(_ text: String, commands: [NativeJSON]?, context: PhoneSlashContext, focused: Bool) -> PhoneSlashMenu? {
         guard focused, !composing, selection.length == 0, dismissed != word(text) else { return nil }
         return PhoneSlash.menu(text, caret: selection.location, commands: commands, templates: templates, context: context)
     }
@@ -116,13 +116,11 @@ struct SlashSuggestions: View {
     let active: Int?
     let engine: String
     let mark: String?
-    let reportedCommands: Int
     let loading: Bool
     let failure: String?
     let maximumHeight: CGFloat
     let retry: () -> Void
     let choose: (PhoneSlashOption) -> Void
-    private var showUnreportedCommands: Bool { menu.token.initial && menu.token.query.isEmpty && reportedCommands == 0 }
     private var emptyMessage: String? {
         guard menu.options.isEmpty, !loading, failure == nil else { return nil }
         if !menu.token.initial { return menu.token.query.isEmpty ? "没有可插入的提示模板" : "没有匹配的提示模板" }
@@ -132,7 +130,7 @@ struct SlashSuggestions: View {
     private var height: CGFloat {
         let notices = (loading ? 44 : 0) + (failure == nil ? 0 : 44)
         let rows = menu.options.count * 44
-        let empty = (showUnreportedCommands ? 44 : 0) + (emptyMessage == nil ? 0 : 52)
+        let empty = (menu.commandNotice == nil ? 0 : 44) + (emptyMessage == nil ? 0 : 52)
         return min(198, max(0, maximumHeight), CGFloat(rows + menu.sections.count * 24 + notices + empty + 8))
     }
     private func source(_ kind: PhoneSlashOption.Kind) -> String { switch kind { case .command: engine; case .template: "提示模板"; case .action: "Latch" } }
@@ -154,7 +152,7 @@ struct SlashSuggestions: View {
                     if let failure {
                         HStack { Text(failure); Spacer(); Button("重试", action: retry) }.font(PhoneTheme.caption).padding(12)
                     }
-                    if showUnreportedCommands { Text(engine + " 还没报告命令").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).padding(12) }
+                    if let notice = menu.commandNotice { Text(notice).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).padding(12) }
                     if menu.token.query.isEmpty {
                         ForEach(menu.sections, id: \.rawValue) { kind in
                             Section {

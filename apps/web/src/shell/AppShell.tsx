@@ -3,7 +3,7 @@ import { DETACHED, DetachedPlace } from '../panel/terminal/fills.ts'
 import { useLayoutEffect, useMemo } from 'react'
 import { dropAttachments } from '../composer/AttachmentDrafts.tsx'
 import { overlayDismissed } from '../escapeGrace.ts'
-import { FileOpenContext } from '../preview/fileContext.ts'
+import { FileOpenContext, FolderOpenContext } from '../preview/fileContext.ts'
 
 import { SIDEBAR_MIN } from './panelLayout.ts'
 import { keepAwakeLine } from '../core/shellLifecycle.ts'
@@ -264,7 +264,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
   const level = backdropLevel(shell.preferences, phone)
   const backdropEnabled = level !== 'off' && shell.space === 'code' && !settings && !shell.marketplace
   const homeBackdrop = backdropEnabled && start
-  return (
+  const workbench = (
     <FileOpenContext.Provider value={catalog?.features?.filePreview ? openFile : undefined}>
       <DetachedPlace.Provider value={catalog?.features?.terminal === true && !phone ? DETACHED : undefined}>
         <LayerHistory value={phone || shell.marketplace ? openLayer : null}>
@@ -794,4 +794,5 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
       </DetachedPlace.Provider>
     </FileOpenContext.Provider>
   )
+  return <FolderOpenContext.Provider value={shell.openFolder}>{workbench}</FolderOpenContext.Provider>
 }

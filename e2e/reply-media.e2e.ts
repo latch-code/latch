@@ -295,6 +295,52 @@ describe('media in replies', () => {
     }
   })
 
+  it('hides punctuation separators stranded beside resolved block images while keeping them for inline chips', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+    const page = await context.newPage()
+    page.setDefaultTimeout(15_000)
+    try {
+      await enrollBrowser(page, host, { name: '媒体标点', scopes: ['admin'] })
+      const home = page.locator('.workbench-home')
+      await home.getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
+      const { png } = await media(page)
+      await mkdir(join(host.workspaceRoot, 'out'), { recursive: true })
+      await writeFile(join(host.workspaceRoot, 'out', 'shot-a.png'), png)
+      await writeFile(join(host.workspaceRoot, 'out', 'shot-b.png'), png)
+      reply = [
+        '- 已核对真实截图：[shot-a.png](out/shot-a.png)、[shot-b.png](out/shot-b.png)。',
+        '- 无法展示的路径：[missing-a.png](/nonexistent/a.png)、[missing-b.png](/nonexistent/b.png)。',
+      ].join('\n')
+      await home.getByRole('textbox', { name: '新会话消息', exact: true }).fill('看多张截图')
+      await home.getByRole('button', { name: '发送', exact: true }).click()
+      const answer = page.locator('.message-assistant').last()
+      await expect.poll(() => answer.locator('img.inline-media-image').count(), SLOW).toBe(2)
+      const items = answer.locator('li')
+      // Resolved block images hide the stranded 、 and trailing 。 between/after them.
+      await expect
+        .poll(() =>
+          items
+            .nth(0)
+            .locator('.media-sep')
+            .evaluateAll(nodes => nodes.map(node => getComputedStyle(node).display)),
+        )
+        .toEqual(['none', 'none'])
+      // Unresolved links stay inline chips, so their 、 and 。 stay visible.
+      await expect
+        .poll(() =>
+          items
+            .nth(1)
+            .locator('.media-sep')
+            .evaluateAll(nodes => nodes.map(node => getComputedStyle(node).display)),
+        )
+        .toEqual(['inline', 'inline'])
+      await page.screenshot({ path: `${OUT}/separators-1440-light.png`, animations: 'disabled' })
+    } finally {
+      reply = REPLY
+      await context.close()
+    }
+  })
+
   it('steps between a reply’s pictures in the viewer with ← → and a swipe, and fits a tall one', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN', hasTouch: true })
     const page = await context.newPage()

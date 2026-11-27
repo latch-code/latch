@@ -259,8 +259,9 @@ interface Attached {
   id: string
   cwd: string
   selection: { model?: ModelRef; modeID?: string }
-  /** The commands and options last told to the runtime, once a turn has made the session known to it. */
-  shown?: { commands: string; options: string }
+  /** Commands reported on attach. Options are tracked for changes once the first turn has started. */
+  shownCommands: string
+  shownOptions?: string
   mcp: Map<string, string>
 }
 
@@ -288,7 +289,7 @@ interface Turn {
   compactions: Map<string, Compaction>
   retries: Map<string, Json>
   finish?: string
-  usage?: { turn: Tokens; last: Tokens }
+  usage?: { turn: Tokens; last?: Tokens }
   stepError?: Json
   executionError?: Json
   resolve(result: unknown): void
@@ -1042,16 +1043,19 @@ export class OpencodeWire implements AgentWire {
     }
   }
 
-  /** New options or commands of a session the runtime knows; the first are told with its first turn. */
+  /** Command changes from attach onward, and option changes after the first turn. */
   private showChanges(attached: Attached, catalog: Catalog): void {
-    if (!attached.shown) return
     const options = JSON.stringify(configOptions(catalog, attached.selection))
     const commands = availableCommands(catalog)
-    if (options !== attached.shown.options)
+    if (attached.shownOptions !== undefined && options !== attached.shownOptions) {
+      attached.shownOptions = options
       this.send(attached.id, { sessionUpdate: 'config_option_update', configOptions: JSON.parse(options) as unknown[] })
-    if (JSON.stringify(commands) !== attached.shown.commands)
+    }
+    const reported = JSON.stringify(commands)
+    if (reported !== attached.shownCommands) {
+      attached.shownCommands = reported
       this.send(attached.id, { sessionUpdate: 'available_commands_update', availableCommands: commands })
-    attached.shown = { options, commands: JSON.stringify(commands) }
+    }
   }
 
   // --- Sessions ---
@@ -1068,9 +1072,11 @@ export class OpencodeWire implements AgentWire {
     const servers = (Array.isArray(mcpServers) ? mcpServers : []).filter(isRecord)
     const configs = servers.map(server => [String(server.name), mcpConfig(server)] as const)
     const previous = this.sessions.get(id)
+    const commands = availableCommands(catalog)
     const attached: Attached = {
       id,
       cwd,
+      shownCommands: JSON.stringify(commands),
       selection: {
         ...(modelRef(session.model) ? { model: modelRef(session.model) } : {}),
         ...(typeof session.agent === 'string' ? { modeID: session.agent } : {}),
@@ -1078,6 +1084,7 @@ export class OpencodeWire implements AgentWire {
       mcp: previous?.mcp ?? new Map(),
     }
     this.sessions.set(id, attached)
+    this.send(id, { sessionUpdate: 'available_commands_update', availableCommands: commands })
     for (const [name, config] of configs) {
       const text = JSON.stringify(config)
       if (attached.mcp.get(name) === text) continue
@@ -1252,7 +1259,7 @@ export class OpencodeWire implements AgentWire {
     if ('model' in change) await this.post(`/api/session/${encodeURIComponent(attached.id)}/model`, { model: change.model })
     else await this.post(`/api/session/${encodeURIComponent(attached.id)}/agent`, { agent: change.modeID })
     const options = configOptions(catalog, attached.selection)
-    if (attached.shown) attached.shown.options = JSON.stringify(options)
+    if (attached.shownOptions !== undefined) attached.shownOptions = JSON.stringify(options)
     return { configOptions: options }
   }
 
@@ -1267,12 +1274,7 @@ export class OpencodeWire implements AgentWire {
     const prepared = preparePrompt(blocks)
     const catalog = await this.catalog(attached.cwd)
     this.unprompted.delete(attached.id)
-    // Told once the session has a turn, when the runtime surely knows it: it drops updates for a session it does not.
-    if (!attached.shown) {
-      const commands = availableCommands(catalog)
-      attached.shown = { commands: JSON.stringify(commands), options: JSON.stringify(configOptions(catalog, attached.selection)) }
-      this.send(attached.id, { sessionUpdate: 'available_commands_update', availableCommands: commands })
-    }
+    attached.shownOptions ??= JSON.stringify(configOptions(catalog, attached.selection))
     const compaction = prepared.slash?.name === 'compact'
     const command = !compaction && prepared.slash ? catalog.commands.find(item => item.name === prepared.slash!.name) : undefined
     const startId = command ? undefined : messageId()
@@ -1375,10 +1377,17 @@ export class OpencodeWire implements AgentWire {
     const type = str(error?.type)
     if (terminal !== 'interrupted' && type === 'provider.auth')
       return turn.reject(new RpcError(RPC.authRequired, 'provider authentication required'))
-    if (terminal !== 'interrupted' && error && type !== 'aborted' && type !== 'provider.content-filter')
+    if (terminal !== 'interrupted' && error && type !== 'aborted' && type !== 'provider.content-filter') {
+      await this.sendUsage(turn).catch(() => {})
+      const usage = turn.usage?.turn && totalTokens(turn.usage.turn) > 0 ? promptUsage(turn.usage.turn) : undefined
       return turn.reject(
-        new RpcError(RPC.internal, clip(this.redact(redactKnownSecrets(str(error.message) || 'OpenCode prompt failed')), 4000)),
+        new RpcError(
+          RPC.internal,
+          clip(this.redact(redactKnownSecrets(str(error.message) || 'OpenCode prompt failed')), 4000),
+          usage ? { usage } : undefined,
+        ),
       )
+    }
     await this.sendUsage(turn).catch(() => {})
     const stopReason =
       terminal === 'interrupted' || type === 'aborted'
@@ -1395,7 +1404,7 @@ export class OpencodeWire implements AgentWire {
 
   /** The context the last model call used, its window, and the session's cost, as the ACP route reports them. */
   private async sendUsage(turn: Turn): Promise<void> {
-    const used = turn.usage ? totalTokens(turn.usage.last) : 0
+    const used = turn.usage?.last ? totalTokens(turn.usage.last) : 0
     const attached = this.sessions.get(turn.sessionId)
     if (!used || !attached) return
     const catalog = await this.catalog(attached.cwd)
@@ -1508,6 +1517,11 @@ export class OpencodeWire implements AgentWire {
     }
     if (!turn.started) return
     if (owner.child) {
+      if (type === 'session.step.ended' || type === 'session.step.failed') {
+        const tokens = readTokens(data.tokens)
+        if (tokens) turn.usage = { turn: addTokens(turn.usage?.turn, tokens), ...(turn.usage?.last ? { last: turn.usage.last } : {}) }
+        return
+      }
       if (!type.startsWith('session.execution.')) this.sessionEvent(turn, type, event, data, owner.child)
       return
     }

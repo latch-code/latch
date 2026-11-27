@@ -298,19 +298,27 @@ export interface Tokens {
   input: number
   output: number
   reasoning: number
-  cache: { read: number; write: number }
+  cache: { read: number; write: number; reportedRead?: boolean; reportedWrite?: boolean }
 }
 
 const num = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0)
+const hasNum = (value: unknown): boolean => typeof value === 'number' && Number.isFinite(value) && value >= 0
 
 export function readTokens(value: unknown): Tokens | undefined {
   if (!isRecord(value)) return undefined
   const cache = rec(value.cache)
+  const reportedRead = hasNum(cache.read)
+  const reportedWrite = hasNum(cache.write)
   return {
     input: num(value.input),
     output: num(value.output),
     reasoning: num(value.reasoning),
-    cache: { read: num(cache.read), write: num(cache.write) },
+    cache: {
+      read: num(cache.read),
+      write: num(cache.write),
+      ...(reportedRead ? { reportedRead: true } : {}),
+      ...(reportedWrite ? { reportedWrite: true } : {}),
+    },
   }
 }
 
@@ -319,11 +327,18 @@ export const totalTokens = (tokens: Tokens): number =>
 
 export function addTokens(a: Tokens | undefined, b: Tokens): Tokens {
   if (!a) return b
+  const reportedRead = (a.cache.reportedRead ?? a.cache.read > 0) && (b.cache.reportedRead ?? b.cache.read > 0)
+  const reportedWrite = (a.cache.reportedWrite ?? a.cache.write > 0) && (b.cache.reportedWrite ?? b.cache.write > 0)
   return {
     input: a.input + b.input,
     output: a.output + b.output,
     reasoning: a.reasoning + b.reasoning,
-    cache: { read: a.cache.read + b.cache.read, write: a.cache.write + b.cache.write },
+    cache: {
+      read: a.cache.read + b.cache.read,
+      write: a.cache.write + b.cache.write,
+      reportedRead,
+      reportedWrite,
+    },
   }
 }
 
@@ -335,8 +350,8 @@ export function promptUsage(tokens: Tokens | undefined): Json | undefined {
     outputTokens: tokens.output,
     totalTokens: totalTokens(tokens),
     ...(tokens.reasoning > 0 ? { thoughtTokens: tokens.reasoning } : {}),
-    ...(tokens.cache.read > 0 ? { cachedReadTokens: tokens.cache.read } : {}),
-    ...(tokens.cache.write > 0 ? { cachedWriteTokens: tokens.cache.write } : {}),
+    ...((tokens.cache.reportedRead ?? tokens.cache.read > 0) ? { cachedReadTokens: tokens.cache.read } : {}),
+    ...((tokens.cache.reportedWrite ?? tokens.cache.write > 0) ? { cachedWriteTokens: tokens.cache.write } : {}),
   }
 }
 

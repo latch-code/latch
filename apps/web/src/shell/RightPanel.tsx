@@ -6,6 +6,7 @@ import { SessionPanels } from '../components/SessionPanels.tsx'
 import { harnessName } from '../composerChoice.ts'
 import { ChangesPanel } from '../panel/changes/ChangesPanel.tsx'
 import type { useStagingWrites } from '../panel/changes/useStaging.ts'
+import { GeneratedFilesPanel } from '../panel/outputs/GeneratedFilesPanel.tsx'
 import { AppDraftEntry } from '../plugin-pages/AppDraftEntry.tsx'
 import { DeliveryPanel } from '../panel/delivery/DeliveryPanel.tsx'
 import { FillPlace } from '../panel/terminal/fills.ts'
@@ -23,6 +24,7 @@ import { SessionOverview } from './SessionOverview.tsx'
 import { SessionTerminal } from './TerminalDock.tsx'
 import type { PanelKey } from '../panel/panelTabs.ts'
 import { currentShell } from '../core/shell.ts'
+import { sessionReadOnly } from '../core/permissions.ts'
 import { shortcutKeys } from '../workbenchShortcuts.ts'
 
 const COPY = defineCopy(
@@ -111,6 +113,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
     snapshot,
     connection,
     canViewChanges,
+    canViewOutputs,
     canDeliver,
     sessionTerminal,
     browserShell,
@@ -126,6 +129,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
     panelSelected,
     panelVisible,
     changesTarget,
+    outputsTarget,
     changesTotals,
     setChangesTotals,
     openFile,
@@ -211,6 +215,30 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
                       ),
                     }
                   : {})}
+              />
+            ),
+          }
+        : {})}
+      {...(summary && canViewOutputs
+        ? {
+            outputs: (
+              <GeneratedFilesPanel
+                key={summary.id}
+                sessionId={summary.id}
+                messages={current?.messages ?? []}
+                revision={`${summary.updatedAt}:${summary.status}`}
+                shown={showing('outputs')}
+                active={active}
+                canRun={access.scopes.has('run') && !sessionReadOnly(summary)}
+                offline={offline}
+                {...(outputsTarget ? { target: outputsTarget } : {})}
+                onOpenFile={file => {
+                  openFile({ sessionId: summary.id, reference: file.path, rootId: file.root })
+                }}
+                onChanged={shell.refresh}
+                onToast={(text, tone = 'ok') => {
+                  setToast({ text, tone })
+                }}
               />
             ),
           }
@@ -313,6 +341,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
       fileContext={canBrowseFiles && fileContext ? fileContext : undefined}
       fileRevision={JSON.stringify(summary?.folders ?? workspaceForFiles?.folders ?? workspaceForFiles?.path)}
       treeView={fileTabs.treeView}
+      folderNavigation={shell.folderNavigation}
       onTreeViewChange={fileTabs.setTreeView}
       onSearchFiles={searchFiles}
       {...(folderShell && project

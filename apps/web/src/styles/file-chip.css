@@ -87,7 +87,16 @@
   cursor: pointer;
 }
 .message-content .file-chip:not(.prompt-chip) {
-  line-height: var(--lh-code);
+  vertical-align: baseline;
+}
+/* Let the filename supply the button's baseline; the icon stays centred beside it. */
+.message-content .file-chip-text {
+  align-self: baseline;
+}
+/* The folder outline fills about two thirds of its square. Size its ink to the adjacent letters. */
+.message-content .reply-folder-icon {
+  width: 1.1em;
+  height: 1.1em;
 }
 .message-content .file-chip-text[data-mono] {
   font-family: inherit;
@@ -96,11 +105,9 @@
   color: var(--ink-2);
   font-weight: 400;
 }
-/* Align the mark with the filename's lowercase letters without moving its line box. */
 .message-content .file-chip:not(.prompt-chip) .file-chip-icon,
 .message-local-link > .ui-icon {
   color: var(--kind-read);
-  translate: 0 var(--sp-2);
 }
 .message-local-link > .ui-icon {
   margin-inline-end: var(--sp-4);

@@ -329,6 +329,10 @@ describe('OpenCode server wire', () => {
   it('streams a reply, its thinking and a tool, and answers with the turn’s usage once the run ends', async () => {
     const { fake, wire, created, updates, cwd } = await started()
     const sessionID = created.sessionId
+    expect(updates[0]?.update.availableCommands).toEqual([
+      { name: 'review', description: 'review changes' },
+      { name: 'compact', description: 'Compact the session' },
+    ])
     const answer = wire.request('session/prompt', {
       sessionId: sessionID,
       prompt: [
@@ -377,10 +381,7 @@ describe('OpenCode server wire', () => {
     })
     const kinds = updates.map(item => item.update.sessionUpdate)
     expect(kinds[0]).toBe('available_commands_update')
-    expect(updates[0]!.update.availableCommands).toEqual([
-      { name: 'review', description: 'review changes' },
-      { name: 'compact', description: 'Compact the session' },
-    ])
+    expect(kinds.filter(kind => kind === 'available_commands_update')).toHaveLength(1)
     expect(updates.find(item => item.update.sessionUpdate === 'agent_thought_chunk')?.update).toMatchObject({
       messageId: 'msg_a:reasoning:0',
       content: { type: 'text', text: 'thinking' },
@@ -409,6 +410,54 @@ describe('OpenCode server wire', () => {
       used: 127,
       size: 100000,
       cost: { amount: 0.25, currency: 'USD' },
+    })
+  })
+
+  it('keeps explicit zero cache counts, sums subagent steps into the turn, and attaches consumed tokens when a later step fails', async () => {
+    const { fake, wire, created, updates } = await started()
+    const sessionID = created.sessionId
+    const first = wire.request('session/prompt', { sessionId: sessionID, prompt: [{ type: 'text', text: 'cold' }] })
+    await vi.waitFor(() => expect(promptOf(fake)).toBeDefined())
+    const firstInbox = (promptOf(fake).body as { id: string }).id
+    fake.emit('session.execution.started', { sessionID })
+    fake.emit('session.inbox.delivered', { sessionID, inboxID: firstInbox })
+    fake.emit('session.created', { sessionID: 'ses_sub', parentID: sessionID, title: 'Worker' })
+    fake.emit('session.step.ended', {
+      sessionID,
+      finish: 'tool-calls',
+      tokens: { input: 50, output: 10, reasoning: 0, cache: { read: 0, write: 0 } },
+    })
+    fake.emit('session.step.ended', {
+      sessionID: 'ses_sub',
+      finish: 'stop',
+      tokens: { input: 100, output: 30, reasoning: 4, cache: { read: 0, write: 0 } },
+    })
+    fake.emit('session.execution.succeeded', { sessionID })
+    expect(await first).toEqual({
+      stopReason: 'end_turn',
+      usage: { inputTokens: 150, outputTokens: 40, totalTokens: 194, thoughtTokens: 4, cachedReadTokens: 0, cachedWriteTokens: 0 },
+      _meta: {},
+    })
+    // Context window reflects the root session's last call (60), not the subagent's own context (134).
+    expect(updates.findLast(item => item.update.sessionUpdate === 'usage_update')?.update).toMatchObject({ used: 60 })
+
+    fake.seen.length = 0
+    const second = wire.request('session/prompt', { sessionId: sessionID, prompt: [{ type: 'text', text: 'fail-step-2' }] })
+    await vi.waitFor(() => expect(promptOf(fake)).toBeDefined())
+    const secondInbox = (promptOf(fake).body as { id: string }).id
+    fake.emit('session.execution.started', { sessionID })
+    fake.emit('session.inbox.delivered', { sessionID, inboxID: secondInbox })
+    fake.emit('session.step.ended', {
+      sessionID,
+      finish: 'tool-calls',
+      tokens: { input: 80, output: 15, reasoning: 0, cache: { read: 20, write: 0 } },
+    })
+    fake.emit('session.step.failed', { sessionID, error: { type: 'provider.error', message: 'Upstream 500' } })
+    fake.emit('session.execution.failed', { sessionID, error: { type: 'provider.error', message: 'Upstream 500' } })
+    const failed = await second.catch((error: unknown) => error)
+    expect(failed).toMatchObject({
+      message: expect.stringContaining('Upstream 500'),
+      data: { usage: { inputTokens: 80, outputTokens: 15, totalTokens: 115, cachedReadTokens: 20, cachedWriteTokens: 0 } },
     })
   })
 
@@ -578,6 +627,8 @@ describe('OpenCode server wire', () => {
     }))
     await wire.request('session/load', { sessionId: created.sessionId, cwd, mcpServers: [] }, 5_000)
     expect(updates.map(item => [item.update.sessionUpdate, item.update.messageId ?? item.update.toolCallId])).toEqual([
+      ['available_commands_update', undefined],
+      ['available_commands_update', undefined],
       ['user_message_chunk', 'msg_1'],
       ['agent_thought_chunk', 'msg_2:reasoning:0'],
       ['agent_message_chunk', 'msg_2'],

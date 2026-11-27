@@ -326,6 +326,7 @@ describe('bringing in an earlier session of the agent', () => {
     await settled(bridge, sessionId)
     await vi.waitFor(() => expect(turns).toHaveLength(1))
     expect(asked).toEqual([])
+    expect(turns[0]?.usage).toBeUndefined()
     // A new context is a session Latch started: its turn may be read.
     await bridge.prompt(sessionId, 'echo fresh', `request-${randomUUID()}`, { freshContext: true })
     await settled(bridge, sessionId)

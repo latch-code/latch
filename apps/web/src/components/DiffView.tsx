@@ -296,7 +296,15 @@ function GapBand({ gap, hunks, tools, layout }: { gap: DiffGap; hunks: number; t
 }
 
 /** The conversation's preview: no head, one line each, and a foot with what is left and what the caller offers. */
-function CompactDiff({ diff, fileActions }: { diff: DiffViewFile; fileActions?: (diff: DiffViewFile) => ReactNode }) {
+function CompactDiff({
+  diff,
+  index,
+  fileActions,
+}: {
+  diff: DiffViewFile
+  index: number
+  fileActions?: (diff: DiffViewFile, index: number) => ReactNode
+}) {
   const view = useMemo(() => diffLines(diff.oldText, diff.newText), [diff.oldText, diff.newText])
   const previous = previousState(diff)
   const whole = wholeFile(diff, previous)
@@ -305,7 +313,7 @@ function CompactDiff({ diff, fileActions }: { diff: DiffViewFile; fileActions?: 
   const before = useHighlightedTokens(diff.oldText ?? '', language, true)
   const after = useHighlightedTokens(diff.newText, language, true)
   const marks = useMemo(() => (whole ? undefined : wordHighlights(lines)), [lines, whole])
-  const actions = fileActions?.(diff)
+  const actions = fileActions?.(diff, index)
   const note = whole ? undefined : PREVIOUS_NOTES[previous]
   return (
     <div className="diff-compact" data-whole={whole}>
@@ -324,6 +332,73 @@ function CompactDiff({ diff, fileActions }: { diff: DiffViewFile; fileActions?: 
         </div>
       )}
     </div>
+  )
+}
+
+/** One file in a multi-file compact preview: a collapsible file row whose opened body stays compact rather than flooding chat. */
+function CompactDiffFile({
+  diff,
+  index,
+  initiallyOpen,
+  fileActions,
+}: {
+  diff: DiffViewFile
+  index: number
+  initiallyOpen: boolean
+  fileActions?: (diff: DiffViewFile, index: number) => ReactNode
+}) {
+  const view = useMemo(() => diffLines(diff.oldText, diff.newText), [diff.oldText, diff.newText])
+  const previous = previousState(diff)
+  const whole = wholeFile(diff, previous)
+  const [open, setOpen] = useState(initiallyOpen)
+  const path = escapeHiddenCharacters(diff.path)
+  const shown = middleEllipsis(diff.path, 64)
+  const { folder, name } = splitPath(shown)
+  const actions = fileActions?.(diff, index)
+  return (
+    <section className="diff-file" data-open={open ? '' : undefined} data-whole={whole}>
+      <div className="diff-file-head">
+        <button
+          type="button"
+          className="diff-file-header"
+          aria-expanded={open}
+          onClick={() => {
+            setOpen(!open)
+          }}>
+          <ChevronRightGlyph className="chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+          <span className="diff-path" title={path}>
+            {folder && (
+              <span className="diff-path-folder">
+                <VisibleText text={folder} />
+              </span>
+            )}
+            <span className="diff-path-name">
+              <VisibleText text={name} />
+            </span>
+          </span>
+          <PreviousBadge state={whole ? 'none' : previous} />
+          {whole ? (
+            <WholeTag whole={whole} view={view} binary={diff.binary} />
+          ) : diff.binary ? null : (
+            <span className="diff-stat">
+              <span className={view.added ? 'diff-stat-add' : 'diff-stat-zero'}>+{view.added}</span>
+              {previous === 'text' && <span className={view.removed ? 'diff-stat-remove' : 'diff-stat-zero'}>−{view.removed}</span>}
+            </span>
+          )}
+        </button>
+        {actions && <span className="diff-file-actions">{actions}</span>}
+      </div>
+      <Collapse
+        open={open}
+        lazy
+        onReveal={() => {
+          setOpen(true)
+        }}>
+        <div className="diff-paper">
+          <CompactDiff diff={diff} index={index} fileActions={fileActions} />
+        </div>
+      </Collapse>
+    </section>
   )
 }
 
@@ -387,6 +462,7 @@ export function diffRows(diff: FileDiff): number {
  */
 function DiffFile({
   diff,
+  index,
   initiallyOpen,
   fold,
   layout: wanted,
@@ -396,11 +472,12 @@ function DiffFile({
   annotation,
 }: LineSlots & {
   diff: DiffViewFile
+  index: number
   initiallyOpen: boolean
   fold: number | undefined
   layout: 'unified' | 'split'
   mode: 'hunks' | 'full'
-  fileActions?: (diff: DiffViewFile) => ReactNode
+  fileActions?: (diff: DiffViewFile, index: number) => ReactNode
 }) {
   const view = useMemo(() => diffLines(diff.oldText, diff.newText), [diff.oldText, diff.newText])
   const previous = previousState(diff)
@@ -426,10 +503,10 @@ function DiffFile({
   const path = escapeHiddenCharacters(diff.path)
   const shown = middleEllipsis(diff.path, 64)
   const { folder, name } = splitPath(shown)
-  const tools: RowTools = { diff, marks, before: oldTokens, after: newTokens, gutter, annotation }
+  const tools: RowTools = { diff, marks, before: oldTokens, after: newTokens, gutter, annotation, indent: full }
   const gapBefore = (index: number) => (full ? view.gaps.find(gap => gap.before === index) : undefined)
   const trailing = gapBefore(view.hunks.length)
-  const actions = fileActions?.(diff)
+  const actions = fileActions?.(diff, index)
   let budget = folded ? fold : all ? Infinity : VISIBLE_LINES
   let shownLines = 0
   const header = (
@@ -623,18 +700,29 @@ export function DiffView({
   layout?: 'unified' | 'split'
   initiallyOpen?: boolean
   mode?: DiffMode
-  fileActions?: (diff: DiffViewFile) => ReactNode
+  fileActions?: (diff: DiffViewFile, index: number) => ReactNode
 }) {
   if (diffs.length === 0) return null
   return (
     <div className="diff-view" data-mode={mode}>
       {diffs.map((diff, index) =>
         mode === 'compact' ? (
-          <CompactDiff key={`${diff.path}:${index}`} diff={diff} fileActions={fileActions} />
+          diffs.length > 1 ? (
+            <CompactDiffFile
+              key={`${diff.path}:${index}`}
+              diff={diff}
+              index={index}
+              initiallyOpen={initiallyOpen ?? false}
+              fileActions={fileActions}
+            />
+          ) : (
+            <CompactDiff key={`${diff.path}:${index}`} diff={diff} index={index} fileActions={fileActions} />
+          )
         ) : (
           <DiffFile
             key={`${diff.path}:${index}`}
             diff={diff}
+            index={index}
             initiallyOpen={initiallyOpen ?? diffs.length === 1}
             fold={fold}
             layout={layout}

@@ -32,7 +32,7 @@ struct NewSessionSheet: View {
     @State private var delivered = false
     private var draftKey: String { fork.map { "fork-" + $0.id } ?? PhoneModel.newSessionTray }
     private var slashContext: PhoneSlashContext {
-        var value = PhoneSlashContext(bodyOpen: model.connected && model.verifiedUntil.map { $0 > Date() } == true, canRun: model.canRun)
+        var value = PhoneSlashContext(bodyOpen: model.connected && model.verifiedUntil.map { $0 > Date() } == true, canRun: model.canRun, harness: harness)
         value.pending = starting || model.busy || !model.pending.isEmpty; value.firstTurn = fork != nil
         value.harnessId = choice.harnessId; value.projectId = choice.workspaceId
         if PhoneStart.usesServices(harness), !PhoneStart.models(catalog).isEmpty { value.actions.insert(.model) }
@@ -45,7 +45,7 @@ struct NewSessionSheet: View {
             context: MentionContext(model, scope: scope, owner: draftKey),
             enabled: focused && slashSpace >= 44 && slashContext.bodyOpen && !slashContext.pending)
     }
-    private var slashMenu: PhoneSlashMenu? { slashSpace < 44 ? nil : slash.menu(prompt, commands: [], context: slashContext, focused: focused) }
+    private var slashMenu: PhoneSlashMenu? { slashSpace < 44 ? nil : slash.menu(prompt, commands: nil, context: slashContext, focused: focused) }
     private var slashRead: SlashReadKey { SlashReadKey(model: model, enabled: focused && slashContext.bodyOpen, retry: slash.retry) }
     private var slashReason: String? { if case let .unavailable(reason) = PhoneSlash.action(prompt, context: slashContext) { reason } else { nil } }
     private let attachKey = PhoneModel.newSessionTray
@@ -101,7 +101,7 @@ struct NewSessionSheet: View {
                 if let slashReason { Text(slashReason).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .leading) }
                 MentionSuggestions(input: mentions, maximumHeight: slashSpace)
                 if let menu = slashMenu {
-                    SlashSuggestions(menu: menu, active: slash.active(menu, text: prompt), engine: PhoneStart.engineName(harness), mark: PhoneStart.mark(harness), reportedCommands: 0,
+                    SlashSuggestions(menu: menu, active: slash.active(menu, text: prompt), engine: PhoneStart.engineName(harness), mark: PhoneStart.mark(harness),
                         loading: slash.loading, failure: slash.failure, maximumHeight: slashSpace, retry: { slash.retry += 1 },
                         choose: { slash.complete(menu, option: $0, text: $prompt, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending) })
                 }

@@ -1,6 +1,16 @@
 import { useEffect, useState } from 'react'
 import { Layers, Smartphone } from 'lucide-react'
-import { CommitGlyph, DiffGlyph, FolderGlyph, GlobeGlyph, OverviewGlyph, PluginsGlyph, TerminalGlyph, type IconComponent } from '@latch/ui'
+import {
+  CommitGlyph,
+  DiffGlyph,
+  FolderGlyph,
+  GlobeGlyph,
+  OverviewGlyph,
+  PageGlyph,
+  PluginsGlyph,
+  TerminalGlyph,
+  type IconComponent,
+} from '@latch/ui'
 import type { UiPanelInfo } from '@latch/protocol'
 import { defineCopy } from '../core/i18n.ts'
 import { storageGet, storageSet } from '../preferences.ts'
@@ -10,7 +20,17 @@ import { storageGet, storageSet } from '../preferences.ts'
  * terminal are one tab each whose own strip holds several pages or terminals. Opened files are tabs of their own
  * (`useFileTabs`), after these.
  */
-export type PanelKey = 'overview' | 'context' | 'changes' | 'files' | 'browser' | 'device' | 'terminal' | 'delivery' | `plugin:${string}`
+export type PanelKey =
+  | 'overview'
+  | 'context'
+  | 'changes'
+  | 'outputs'
+  | 'files'
+  | 'browser'
+  | 'device'
+  | 'terminal'
+  | 'delivery'
+  | `plugin:${string}`
 
 declare const __LATCH_CONTEXT_PANEL_HASH__: string
 const bundledContextHash = typeof __LATCH_CONTEXT_PANEL_HASH__ === 'string' ? __LATCH_CONTEXT_PANEL_HASH__ : ''
@@ -32,7 +52,17 @@ export interface PanelMemory {
   active?: PanelKey
 }
 
-const FIXED: ReadonlySet<string> = new Set(['overview', 'context', 'changes', 'files', 'browser', 'device', 'terminal', 'delivery'])
+const FIXED: ReadonlySet<string> = new Set([
+  'overview',
+  'context',
+  'changes',
+  'outputs',
+  'files',
+  'browser',
+  'device',
+  'terminal',
+  'delivery',
+])
 const MAX_TABS = 24
 const MAX_CONTEXTS = 40
 
@@ -138,6 +168,7 @@ const LABELS = defineCopy(
     terminal: '终端',
     files: '文件',
     changes: '改动',
+    outputs: '生成文件',
     delivery: '交付',
     overview: '概要',
     context: '上下文',
@@ -148,6 +179,7 @@ const LABELS = defineCopy(
     terminal: 'Terminal',
     files: 'Files',
     changes: 'Changes',
+    outputs: 'Generated',
     delivery: 'Delivery',
     overview: 'Overview',
     context: 'Context',
@@ -160,6 +192,7 @@ const FACES: Record<Exclude<PanelKey, `plugin:${string}`>, Pick<PanelChoice, 'ic
   terminal: { icon: TerminalGlyph, letter: 'T' },
   files: { icon: FolderGlyph, letter: 'F' },
   changes: { icon: DiffGlyph, letter: 'D' },
+  outputs: { icon: PageGlyph, letter: 'G' },
   delivery: { icon: CommitGlyph, letter: 'P' },
   overview: { icon: OverviewGlyph, letter: 'O' },
   context: { icon: Layers, letter: 'C' },
@@ -179,12 +212,13 @@ export function panelChoices(input: {
   terminal?: boolean
   files?: boolean
   changes?: boolean
+  outputs?: boolean
   delivery?: boolean
   overview?: boolean
   context?: boolean
   plugins?: ReadonlyArray<{ id: string; title: string }>
 }): PanelChoice[] {
-  const order = ['browser', 'device', 'terminal', 'files', 'changes', 'delivery', 'overview', 'context'] as const
+  const order = ['browser', 'device', 'terminal', 'files', 'changes', 'outputs', 'delivery', 'overview', 'context'] as const
   return [
     ...order.filter(key => input[key]).map(key => ({ key, ...panelFace(key) })),
     ...(input.plugins ?? []).map(plugin => ({ key: `plugin:${plugin.id}` as const, ...panelFace(`plugin:${plugin.id}`, plugin.title) })),

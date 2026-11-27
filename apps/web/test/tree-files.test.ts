@@ -1,9 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FileContext, FileMetadata } from '@latch/protocol'
 import { api } from '../src/core/api.ts'
-import { readTreeFile, treeChanges, treeFullPath, treeKey, treeLocation } from '../src/preview/treeFiles.ts'
+import { readTreeFile, treeChanges, treeFullPath, treeKey, treeLocation, viewOfFolder } from '../src/preview/treeFiles.ts'
 
 vi.mock('../src/core/api.ts', async importOriginal => ({ ...(await importOriginal<typeof import('../src/core/api.ts')>()), api: vi.fn() }))
+
+it('locates root and nested folders while preserving other expanded branches', () => {
+  const root = viewOfFolder('project', '')
+  expect(root.expanded).toEqual([treeKey('project', '')])
+  expect(root.selected).toBe(treeKey('project', ''))
+  const nested = viewOfFolder('docs', 'design/web', { ...root, showHidden: true })
+  expect(nested.expanded).toEqual([treeKey('docs', ''), treeKey('docs', 'design'), treeKey('docs', 'design/web'), ...root.expanded])
+  expect(nested.selected).toBe(treeKey('docs', 'design/web'))
+  expect(nested.showHidden).toBe(true)
+})
 const file: FileMetadata = {
   handle: 'A'.repeat(22),
   name: 'readme.md',

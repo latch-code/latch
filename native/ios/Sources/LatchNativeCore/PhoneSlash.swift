@@ -47,7 +47,13 @@ public struct PhoneSlashContext: Sendable {
     public var harnessId: String?
     public var actions: Set<PhoneSlashAction> = []
     public var actionReasons: [PhoneSlashAction: String] = [:]
-    public init(bodyOpen: Bool, canRun: Bool) { self.bodyOpen = bodyOpen; self.canRun = canRun }
+    fileprivate let unsupportedCommands: Bool
+    public init(bodyOpen: Bool, canRun: Bool, harness: NativeJSON = .null) {
+        self.bodyOpen = bodyOpen; self.canRun = canRun
+        if case let .array(reports) = harness["extensionSupport"]["reports"] {
+            unsupportedCommands = !reports.contains(.string("commands"))
+        } else { unsupportedCommands = harness["capabilities"]["permission"]["enforcement"].string == "latch" }
+    }
     fileprivate var blocked: String? { pending ? "先核对待确认的提交" : !canRun ? "这台设备不能开始会话" : nil }
 }
 
@@ -66,6 +72,7 @@ public struct PhoneSlashOption: Sendable, Identifiable {
 public struct PhoneSlashMenu: Sendable {
     public let token: PhoneSlashToken
     public let options: [PhoneSlashOption]
+    public let commandNotice: String?
     fileprivate let draft: String
     fileprivate let caret: Int
     public var sections: [PhoneSlashOption.Kind] {
@@ -183,7 +190,8 @@ public enum PhoneSlash {
         if let reason = context.actionReasons[action] { return reason }
         return context.actions.contains(action) ? nil : "iPhone 尚未实现"
     }
-    public static func menu(_ draft: String, caret: Int? = nil, commands: [NativeJSON], templates: [NativeJSON], context: PhoneSlashContext) -> PhoneSlashMenu? {
+    public static func menu(_ draft: String, caret: Int? = nil, commands report: [NativeJSON]?, templates: [NativeJSON], context: PhoneSlashContext) -> PhoneSlashMenu? {
+        let commands = report ?? []
         guard context.bodyOpen, let token = token(draft, caret: caret), commands.count <= 200, templates.count <= 200 else { return nil }
         var options: [PhoneSlashOption] = [], seen = Set<String>()
         func add(_ kind: PhoneSlashOption.Kind, id: String, label: String, description: String, text: String,
@@ -231,7 +239,7 @@ public enum PhoneSlash {
                 add(.action, id: action.rawValue, label: "/" + action.rawValue, description: action.label, text: "/" + action.rawValue + " ",
                     matched: matched, hint: action.inputHint, reason: reason)
             }
-            if context.session, !commands.contains(where: { equal($0["name"].string, "compact") }) {
+            if context.session, report != nil, token.query == "compact", !commands.contains(where: { equal($0["name"].string, "compact") }) {
                 add(.command, id: "compact", label: "/compact", description: "压缩上下文", text: "/compact ",
                     matched: match("compact", query: token.query, description: "压缩上下文"), reason: "这个 Harness 尚不支持")
             }
@@ -246,7 +254,13 @@ public enum PhoneSlash {
             if (a.unavailable == nil) != (b.unavailable == nil) { return a.unavailable == nil }
             return left.offset < right.offset
         }.map(\.element)
-        return PhoneSlashMenu(token: token, options: sorted, draft: draft, caret: caret ?? draft.utf16.count)
+        let notice: String?
+        if !token.initial || !token.query.isEmpty || sorted.contains(where: { $0.kind == .command }) { notice = nil }
+        else if let report { notice = report.isEmpty ? "当前会话没有可用的 Harness 命令" : "没有可单独列出的 Harness 命令" }
+        else if context.unsupportedCommands { notice = "当前接入方式不提供 Harness 命令" }
+        else if !context.session || context.firstTurn { notice = "发送第一条消息后，可查看 Harness 返回的命令" }
+        else { notice = "当前连接尚未提供命令列表" }
+        return PhoneSlashMenu(token: token, options: sorted, commandNotice: notice, draft: draft, caret: caret ?? draft.utf16.count)
     }
     /** A tap/Tab only edits visible text. The sender separately intercepts all eight reserved names. */
     public static func complete(_ menu: PhoneSlashMenu, optionId: String, draft: String, caret: Int, enabled: Bool) -> PhoneSlashEdit? {

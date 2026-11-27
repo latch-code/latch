@@ -16,7 +16,7 @@ import { clientKind, useShortcutBindings } from '../core/shortcutBindings.ts'
 import { followUpKeyLabels, followUpShortcuts, primarySendKeys, shortcutChordMatches } from '../workbenchShortcuts.ts'
 import { useViewport } from '../breakpoints.ts'
 import { escapeIsLeftover } from '../escapeGrace.ts'
-import { SlashCommands, useSlashCommands, type SlashAction } from './SlashCommands.tsx'
+import { SlashCommands, useSlashCommands, type CommandListSource, type SlashAction } from './SlashCommands.tsx'
 import { promptLengthError } from './promptLength.ts'
 import { latchActionOf } from './latchActions.ts'
 import { PromptEditor, type PromptInput } from './PromptEditor.tsx'
@@ -170,8 +170,8 @@ export function Composer({
   skills,
   skillsTruncated,
   commandSource,
+  firstTurn,
   historyScope,
-  onCreateTemplate,
   templates,
   actions,
   showSlashButton = true,
@@ -254,9 +254,9 @@ export function Composer({
   commands?: SessionCommand[]
   skills?: SessionSkill[]
   skillsTruncated?: boolean
-  commandSource?: { name: string; media?: ReactNode; firstTurn?: boolean; previousSession?: boolean; awaitingSession?: boolean }
+  commandSource?: { name: string; media?: ReactNode; source: CommandListSource }
+  firstTurn?: boolean
   historyScope?: { deviceId: string; harnessId?: string }
-  onCreateTemplate?: () => void
   /** What Latch itself does from the slash menu in this session. */
   actions?: SlashAction[]
   /** The optional insertion shortcut; typing slash commands uses the same sender either way. */
@@ -496,10 +496,9 @@ export function Composer({
     harnessName: commandSource?.name,
     harnessMedia: commandSource?.media,
     running: !!run,
-    firstTurn: commandSource?.firstTurn,
-    session: commands !== undefined && !commandSource?.previousSession,
-    previousSession: commandSource?.previousSession,
-    awaitingSession: commandSource?.awaitingSession,
+    firstTurn,
+    session: commands !== undefined && commandSource?.source !== 'previous-session',
+    source: commandSource?.source,
     ...(historyScope ? { historyScope } : {}),
     ...(actions ? { actions } : {}),
     enabled: !addressed && !locked && readOnly === undefined && answer === undefined,
@@ -809,7 +808,7 @@ export function Composer({
           }}
         />
       )}
-      <SlashCommands menu={slash} anchorRef={commandAnchor} onCreateTemplate={onCreateTemplate} />
+      <SlashCommands menu={slash} anchorRef={commandAnchor} />
     </>
   )
   return (

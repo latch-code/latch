@@ -25,7 +25,7 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 - 安全错误文案按码取自 `src/core/securityCopy.ts`。
 - `permissions.ts` 只是展示，Host 再查；事件流用 `eventStream.ts`（fetch），不用 `EventSource`。
 - 本机按 `isLocalListener`；回环浏览器算远程。缺邀请或用掉后重领（ARCHITECTURE）。
-- 回复仅链接 http(s)、mailto，行内代码继承链接，文件用后缀图标、无 href。用户网址输入时可编辑、发出后可点，闭合围栏保留原文。
+- 仅链 http(s)、mailto，行内代码继承链接。路径无 href，文件按后缀配图，目录开树。网址输入可改、发出可点；闭合围栏保留原文。
 - 确认走 `withConfirmation`；未知留原请求，确认后解锁设置。草稿只存文字，按设备与会话存浏览器，14 天过期；像凭据的只存内存，摘录要 `all`；删会话、撤权或退出即清。项目失效保留草稿供显式继续（`composer/WorkspaceRecovery.tsx`）。
 - 用 `@latch/ui` 令牌、层、原语。对话/看板同底，各列滚动（DESIGN）。
 - Harness 与模型图标在 `src/assets/brands/`，许可在 `public/licenses/brands/`，用 `?no-inline`，缺图用中性图形，禁用字母。草稿开模型面板时读缺失选项（HARNESSES）。
@@ -41,5 +41,5 @@ Host 计量，窗口增量同口径。本会话引用整删、不补全。仅消
 设置留草稿与授权读回，准备沿用原号；终端保活，摘录可移除，暂存留回执。ProfileLayer 跨断点保留实例、草稿、焦点、未知写，撤权卸载。
 
 - 排队附件绑定原上传，按本轮能力追加。编辑回填原文与附件，保留草稿。菜单列键位，未知写用原号。裸 `@` 无预选，个人聊天按回执定位委托。粘贴纯文本替换选区。
-- Slash 透传 Harness 命令；技能只补全，pi 限开头（HARNESSES）。替换 `/btw` 先确认；PR 摘录只追加草稿。
+- Slash 透传，区分未报与空表；技能只补全，pi 限开头。替换 `/btw` 须确认；PR 摘录只追加草稿。
 - 配色、主色按设备选，安全界面锁色。设置与安全模式共用同页保留的 Host/设备外观未知写。

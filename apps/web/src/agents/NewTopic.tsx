@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type Dispatch, type ReactNode, type SetSta
 import { GENERAL_AGENT_ID, type CustomAgentSummary, type HarnessInfo, type HostCatalog, type WorktreeStart } from '@latch/protocol'
 import { Badge, Button, ICON_STROKE, IconButton, FolderGlyph, HistoryGlyph, PlusGlyph, CloseGlyph } from '@latch/ui'
 import { Composer } from '../composer/Composer.tsx'
+import { harnessCommandSource } from '../composer/SlashCommands.tsx'
 import type { PromptInput } from '../composer/PromptEditor.tsx'
 import { FolderControl } from '../composer/FolderControl.tsx'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
@@ -309,6 +310,7 @@ export function NewTopic({
       {(!ready || draft.trim() || attachments.items.length > 0) && (
         <Composer
           showSlashButton={false}
+          commandSource={harnessCommandSource(harness, ready ? 'session' : 'before-session')}
           agentMentions={shell.agentMentions.source === owner ? shell.agentMentions : undefined}
           textareaRef={input}
           variant="new"

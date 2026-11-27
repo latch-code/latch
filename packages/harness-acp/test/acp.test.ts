@@ -3020,9 +3020,26 @@ describe('ACP turn mapping', () => {
     expect(turns[0]).not.toHaveProperty('usage')
     // The session shows what it was told; the record keeps only what is surely this turn's: its time and steps.
     expect(detail.summary.usage).toEqual({ inputTokens: 10, outputTokens: 20 })
+    expect(detail.messages.filter(message => message.role === 'user')[1]?.turn?.usage).toBeUndefined()
     expect(turns[1]).not.toHaveProperty('usage')
     expect(turns[1]).not.toHaveProperty('cost')
     expect(turns[1]).toMatchObject({ sessionId, steps: 0 })
+  })
+
+  it('accumulates session-scoped tokens and fresh cost across clearContext, and names the model consistently without a reply', async () => {
+    const turns: HarnessTurnRecord[] = []
+    const fixture = await setup({ FAKE_ACP_CONFIG: 'options', FAKE_ACP_COST: '0.25' }, {}, {}, { turnEnded: turn => void turns.push(turn) })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid() })
+    await settled(bridge, sessionId)
+    await bridge.prompt(sessionId, 'plan', rid(), { freshContext: true })
+    const detail = await settled(bridge, sessionId)
+    expect(detail.summary.usage).toEqual({ inputTokens: 20, outputTokens: 40 })
+    // The fake agent multiplies FAKE_ACP_COST by its process-wide turn count (0.25 on turn 1, 0.5 on turn 2); clearing context resets costBase so turn 2 takes the new session's full 0.5.
+    expect(turns.map(turn => [turn.usage, turn.cost, turn.model])).toEqual([
+      [{ inputTokens: 10, outputTokens: 20 }, { amount: 0.25, currency: 'USD' }, 'Small'],
+      [{ inputTokens: 10, outputTokens: 20 }, { amount: 0.5, currency: 'USD' }, 'Small'],
+    ])
   })
 
   it('adds up the turns of a Harness that counts each turn, with its cached input put back in the input', async () => {
@@ -4915,6 +4932,65 @@ describe('command cache from real sessions', () => {
     } finally {
       calls.mockRestore()
     }
+  })
+
+  it.each([
+    ['resume', '1'],
+    ['load', 'interleaved'],
+  ])('keeps opening command reports and withdraws them on %s before a prompt', async (method, timing) => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-opening-commands-'))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const file = join(root, 'commands.json')
+    const privateValue = 'unit-key'
+    await writeFile(
+      file,
+      JSON.stringify([
+        { name: 'project:check', description: `Check with ${privateValue}`, input: { hint: 'target' } },
+        { name: privateValue },
+      ]),
+    )
+    const expected = [{ name: 'project:check', description: 'Check with [redacted]', inputHint: 'target' }]
+    const fixture = await setup({
+      FAKE_ACP_CAPS: method,
+      FAKE_ACP_SETUP_COMMANDS: timing,
+      FAKE_ACP_COMMANDS_FILE: file,
+      FAKE_ACP_TOKEN: privateValue,
+    })
+    const bridge = await fixture.open()
+    const context = { cwd: fixture.workspace }
+    const { sessionId } = await bridge.createTask({ ...context, prompt: 'echo one', requestId: rid() })
+    expect((await settled(bridge, sessionId)).commands).toEqual(expected)
+    await vi.waitFor(async () => expect((await bridge.commandCatalogue?.(context))?.catalogue.commands).toEqual(expected))
+    await bridge.close()
+    const restored = await fixture.open()
+    expect((await restored.detail(sessionId)).commands).toEqual(expected)
+    await writeFile(file, '[]')
+    expect(await restored.warm!(sessionId)).toBe(true)
+    const detail = await restored.detail(sessionId)
+    expect(received(await fixture.log(), `session/${method}`)).toHaveLength(1)
+    expect(detail.commands).toEqual([])
+    expect(detail.messages.map(message => message.text)).toEqual(['echo one', 'echo: echo one'])
+    expect(received(await fixture.log(), 'session/prompt')).toHaveLength(1)
+    await vi.waitFor(async () => expect((await restored.commandCatalogue?.(context))?.catalogue.commands).toEqual([]))
+  })
+
+  it('keeps the first 200 visible commands in a larger ACP report, on open and during a turn', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-many-commands-'))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const file = join(root, 'commands.json')
+    const visible = Array.from({ length: 200 }, (_, index) => ({ name: `project-${index}` }))
+    const hidden = 'private-test-key'
+    await writeFile(file, JSON.stringify([{ name: hidden }, ...visible]))
+    const fixture = await setup({ FAKE_ACP_SETUP_COMMANDS: '1', FAKE_ACP_COMMANDS_FILE: file, FAKE_ACP_TOKEN: hidden })
+    const bridge = await fixture.open()
+    const context = { cwd: fixture.workspace }
+    const { sessionId } = await bridge.createTask({ ...context, prompt: 'echo hello', requestId: rid() })
+    expect((await settled(bridge, sessionId)).commands).toEqual(visible)
+    const revised = [{ name: 'new-first' }, ...visible]
+    await writeFile(file, JSON.stringify(revised))
+    await bridge.prompt(sessionId, 'plan', rid())
+    expect((await settled(bridge, sessionId)).commands).toEqual(revised.slice(0, 200))
+    await vi.waitFor(async () => expect((await bridge.commandCatalogue?.(context))?.catalogue.commands).toEqual(revised.slice(0, 200)))
   })
 
   it('publishes a durable command-report version after cache validation, without changing it for ordinary messages', async () => {

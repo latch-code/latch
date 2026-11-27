@@ -11,7 +11,17 @@ import { redactKnownSecrets } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
 import { readSessionSkills, boundSessionSkills, type HarnessPluginReport, type SessionSkill } from '@latch/protocol'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
-import { commandsUpdate, FORK_METHOD, RPC, RpcError, STEER_METHOD, SESSION_SKILLS_UPDATE, type TurnTokens } from '../protocol.ts'
+import {
+  availableCommand,
+  type AvailableCommand,
+  SESSION_COMMAND_LIMIT,
+  FORK_METHOD,
+  RPC,
+  RpcError,
+  STEER_METHOD,
+  SESSION_SKILLS_UPDATE,
+  type TurnTokens,
+} from '../protocol.ts'
 import { AgentProcess, ConnectionClosed, ConnectionStopping, isRecord, RequestTimeout, type ExitInfo, type SpawnSpec } from './process.ts'
 import { GATE_COMMAND, GATE_LEVELS, GATE_MARK, writeGate } from './pi-gate.ts'
 import { piPlugins } from './pi-plugins.ts'
@@ -308,7 +318,7 @@ export class PiWire implements AgentWire {
   readonly exited: Promise<ExitInfo>
   readonly idleCommands = new Set([COMPACT.name])
   readonly commandsWithoutContext = new Set([COMPACT.name])
-  private commands: z.infer<typeof commandsUpdate>['availableCommands'] = [COMPACT]
+  private commands: AvailableCommand[] = [COMPACT]
   private skills?: SessionSkill[]
   private skillsTruncated?: true
   private pluginReport?: HarnessPluginReport
@@ -575,6 +585,7 @@ export class PiWire implements AgentWire {
     this.current = { ...(read.model ? { model: read.model } : {}), ...(read.thinkingLevel ? { thinkingLevel: read.thinkingLevel } : {}) }
     await this.readLevels(timeoutMs, signal)
     await this.readGate(timeoutMs, signal)
+    this.update({ sessionUpdate: 'available_commands_update', availableCommands: this.commands })
     return { sessionId: this.sessionId, configOptions: this.options() }
   }
 
@@ -598,7 +609,7 @@ export class PiWire implements AgentWire {
     this.listedFor = undefined
     for (const item of commands) {
       if (!isRecord(item) || !['extension', 'prompt', 'skill'].includes(String(item.source))) continue
-      const parsed = commandsUpdate.shape.availableCommands.element.safeParse({
+      const parsed = availableCommand.safeParse({
         name: item.name,
         ...(typeof item.description === 'string' ? { description: clip(item.description, 1000) } : {}),
       })
@@ -616,7 +627,7 @@ export class PiWire implements AgentWire {
           this.commandsWithoutContext.add(name)
         }
       }
-      if (this.commands.length === 200) continue
+      if (this.commands.length === SESSION_COMMAND_LIMIT) continue
       this.commands.push(parsed.data)
       this.commandsWithoutContext.add(name)
       // pi's steer expands skills/templates, but explicitly rejects extension commands.
@@ -801,10 +812,9 @@ export class PiWire implements AgentWire {
     this.assertSession(parsed.data.sessionId)
     if (this.turn) throw new RpcError(RPC.internal, 'A turn is already running')
     const input = piInput(parsed.data.prompt)
-    // Listed once the session has a turn, when the runtime surely knows it: it drops updates for a session it does not.
+    // Skill and plugin metadata is published on the first prompt, after the session has bound.
     if (this.listedFor !== this.sessionId) {
       this.listedFor = this.sessionId
-      this.update({ sessionUpdate: 'available_commands_update', availableCommands: this.commands })
       this.update({
         sessionUpdate: SESSION_SKILLS_UPDATE,
         skills: this.skills ?? null,
@@ -897,8 +907,18 @@ export class PiWire implements AgentWire {
     }
     if (turn.cancelled || aborted || turn.stopReason === 'aborted')
       return turn.resolve({ stopReason: 'cancelled', ...(usage ? { usage } : {}) })
-    if (turn.stopReason === 'error')
-      return turn.reject(new RpcError(RPC.internal, clip(redactKnownSecrets(turn.errorMessage || 'pi stopped with an error'), 4000)))
+    if (turn.stopReason === 'error') {
+      const counted =
+        usage
+        && (usage.inputTokens > 0 || usage.outputTokens > 0 || (usage.cachedReadTokens ?? 0) > 0 || (usage.cachedWriteTokens ?? 0) > 0)
+      return turn.reject(
+        new RpcError(
+          RPC.internal,
+          clip(redactKnownSecrets(turn.errorMessage || 'pi stopped with an error'), 4000),
+          counted ? { usage } : undefined,
+        ),
+      )
+    }
     turn.resolve({ stopReason: turn.stopReason === 'length' ? 'max_tokens' : 'end_turn', ...(usage ? { usage } : {}) })
   }
 

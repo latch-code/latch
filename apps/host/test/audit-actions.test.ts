@@ -109,6 +109,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'change.redo': { sessionId, turnId: 'run-1', restore: 1, remove: 0, skipped: 0, planHash: hex },
   'change.rewind': { sessionId, turnId: 'run-1', restore: 1, remove: 1, skipped: 0, planHash: hex },
   'change.discard': { sessionId, scope: 'uncommitted', restore: 1, remove: 1, skipped: 0, planHash: hex },
+  'change.outputs-clean': { sessionId, remove: 2, skipped: 0, planHash: hex },
   'git.stage': { sessionId, requestHash: hex, files: 2, filtered: false },
   'git.unstage': { sessionId, requestHash: hex, files: 1 },
   'git.commit': {

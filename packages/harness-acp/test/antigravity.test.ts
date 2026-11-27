@@ -27,4 +27,14 @@ it('sets the model and thinking a session ran on again when Antigravity opens it
   expect(detail.summary.model).toBe('Gemini 4 Hydrogen')
   expect(detail.messages.filter(message => message.role === 'assistant').map(message => message.text)).toEqual(['Hello.', 'Hello again.'])
   expect(detail.messages.filter(message => message.role === 'user').map(message => message.text)).toEqual(['Say hello', 'And again'])
+  // agy reports each turn's own count with cached input outside `inputTokens`: each turn puts cached reads back into input, and the session sums both turns.
+  const perTurn = { inputTokens: 19_034, outputTokens: 91, cacheReadTokens: 7375, cacheWriteTokens: 0, reasoningTokens: 15 }
+  expect(detail.messages.filter(message => message.role === 'user').map(message => message.turn?.usage)).toEqual([perTurn, perTurn])
+  expect(detail.summary.usage).toEqual({
+    inputTokens: 38_068,
+    outputTokens: 182,
+    cacheReadTokens: 14_750,
+    cacheWriteTokens: 0,
+    reasoningTokens: 30,
+  })
 })

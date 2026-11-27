@@ -31,7 +31,8 @@ import { TextPreview } from './TextPreview.tsx'
 import { MarkdownPreview } from './MarkdownPreview.tsx'
 import { HtmlPreview } from './HtmlPreview.tsx'
 import { ImagePreview } from './ImagePreview.tsx'
-import { FileOpenContext, contextOf, fileContextBody, fileContextKey, fileRoute, targetIn } from './fileContext.ts'
+import { FileOpenContext, FolderOpenContext, contextOf, fileContextBody, fileContextKey, fileRoute, targetIn } from './fileContext.ts'
+import { resolvedFolder } from './treeFiles.ts'
 import { resolveFileImage } from './fileImages.ts'
 import type { FileTab } from './useFileTabs.ts'
 import { selectedQuote, type FileQuote, type PreviewQuote } from './quote.ts'
@@ -49,6 +50,7 @@ const COPY = defineCopy(
     largeFile: (size: number) => `文件较大，仅显示前 ${formatNumber(size)} MiB。`,
     badAttachment: '附件响应无效。',
     cannotRead: '无法读取这个文件。',
+    folder: '这是一个文件夹。',
     previous: '文件暂不可用；之前读到的内容仍保留在这里。',
     busy: '上一个操作还没有完成，请稍后再试。',
     preview: '文件预览',
@@ -86,6 +88,7 @@ const COPY = defineCopy(
     largeFile: (size: number) => `Large file · Showing the first ${formatNumber(size)} MiB.`,
     badAttachment: 'Invalid attachment response.',
     cannotRead: 'Can’t read this file.',
+    folder: 'This is a folder.',
     previous: 'File unavailable for now; what was read earlier stays here.',
     busy: 'The last action hasn’t finished. Try again shortly.',
     preview: 'File preview',
@@ -122,7 +125,7 @@ const COPY = defineCopy(
 )
 
 interface ResolveResult {
-  files: Array<{ status: string; code?: string; line?: number; file?: unknown }>
+  files: Array<{ status: string; code?: string; line?: number; file?: unknown; directory?: unknown }>
 }
 export function FilePreview({
   tab,
@@ -165,6 +168,8 @@ export function FilePreview({
   /** The bytes behind a known file could not be read; other errors (a download, a native action) leave the preview standing. */
   const [textFailed, setTextFailed] = useState(false)
   const openFile = useContext(FileOpenContext)
+  const openFolder = useContext(FolderOpenContext)
+  const [folder, setFolder] = useState(false)
   const [text, setText] = useState<string>(),
     [downloading, setDownloading] = useState(false)
   /** The text as the editor would take it and the hash of its bytes, for the version on screen. */
@@ -229,9 +234,19 @@ export function FilePreview({
         ...(signal ? { signal } : {}),
       })
       const answer = result.files[0]
+      if (signal?.aborted) return
+      setFolder(answer?.status === 'folder')
+      if (answer?.status === 'folder') {
+        setFile(undefined)
+        setText(undefined)
+        setError('')
+        setRetained(false)
+        const directory = resolvedFolder(answer.directory)
+        if (directory && context.kind === 'session') openFolder?.(context.sessionId, directory.root, directory.path, tab.id)
+        return
+      }
       if (!answer || answer.status !== 'ok' || !isFileMetadata(answer.file))
         throw new MessageError(() => (answer?.code ? describeFailure(403, answer.code, { fallback: COPY.cannotRead }) : COPY.cannotRead))
-      if (signal?.aborted) return
       setFile(answer.file)
       if (announce) {
         setSelection(undefined)
@@ -241,7 +256,7 @@ export function FilePreview({
       setError('')
       setRetained(false)
     },
-    [contextKey, reference, rootId, showSecret, attachmentId],
+    [contextKey, reference, rootId, showSecret, attachmentId, openFolder, tab.id],
   )
   useEffect(() => {
     const controller = new AbortController()
@@ -726,7 +741,17 @@ export function FilePreview({
           {COPY.updating}
         </p>
       )}
-      {!file && !error && <Loading label={COPY.readingInfo} />}
+      {folder && (
+        <InlineNotice
+          action={
+            <Button size="xs" onClick={() => void copied.copy(reference)}>
+              {COPY.copy}
+            </Button>
+          }>
+          {COPY.folder}
+        </InlineNotice>
+      )}
+      {!file && !error && !folder && <Loading label={COPY.readingInfo} />}
       {file && (
         <ViewerActionsProvider value={viewer.value}>
           {file.truncated && <InlineNotice tone="warn">{COPY.largeFile(Math.round(file.limit / 1024 / 1024))}</InlineNotice>}

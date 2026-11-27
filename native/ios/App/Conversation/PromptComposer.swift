@@ -52,11 +52,15 @@ struct PromptComposer: View {
     @State private var slashSpace: CGFloat = 198
     @State private var slashControl: SlashControlRequest?
     @State private var slashStart: SlashStartDraft?
-    private var slashCommands: [NativeJSON] { model.detail["summary"]["id"].string == draftId ? model.detail["commands"].array : [] }
+    private var slashCommands: [NativeJSON]? {
+        guard model.detail["summary"]["id"].string == draftId, case let .array(commands) = model.detail["commands"] else { return nil }
+        return commands
+    }
     private var slashContext: PhoneSlashContext {
         var value = PhoneSlashContext(bodyOpen: draftId != nil && gate == nil && rejecting == nil && !drawerOpen
-            && model.verifiedUntil.map { $0 > Date() } == true && model.detail["summary"]["id"].string == draftId, canRun: model.canRun)
+            && model.verifiedUntil.map { $0 > Date() } == true && model.detail["summary"]["id"].string == draftId, canRun: model.canRun, harness: harness)
         value.pending = !model.pending.isEmpty || model.busy || sending; value.running = running; value.session = draftId != nil
+        value.firstTurn = person && !model.detail["messages"].array.contains { $0["role"].string == "user" }
         value.harnessId = model.currentSummary["harnessId"].string; value.projectId = model.currentSummary["workspaceId"].string
         if !person || newTopic != nil { value.actions.insert(.new) }
         if model.detail["clearContext"].bool || model.openClearing { value.actions.insert(.clear) }
@@ -176,7 +180,7 @@ struct PromptComposer: View {
             if addressing == nil { MentionSuggestions(input: mentions, maximumHeight: slashSpace).padding(.horizontal, 12) }
             if let menu = slashMenu {
                 SlashSuggestions(menu: menu, active: slash.active(menu, text: text), engine: engine,
-                    mark: model.engineMark(model.currentSummary["harnessId"].string), reportedCommands: slashCommands.count, loading: slash.loading, failure: slash.failure,
+                    mark: model.engineMark(model.currentSummary["harnessId"].string), loading: slash.loading, failure: slash.failure,
                     maximumHeight: slashSpace, retry: { slash.retry += 1 }, choose: { slash.complete(menu, option: $0, text: draftText, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending) })
                     .padding(.horizontal, 12)
             }
@@ -285,7 +289,7 @@ struct PromptComposer: View {
         let input = LocalTextEditor(text: draftText, placeholder: hint, maximumLines: slashMenu == nil && !mentions.isOpen ? 6 : 3, focused: $focused,
             selection: $slash.selection, composing: $slash.composing, selectionRequest: $slash.selectionRequest,
             mentionMarkers: mentions.markers, commandKeys: slashKeys, onCommand: slashKey,
-            suffixHint: slash.hint(text, commands: slashCommands, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending),
+            suffixHint: slash.hint(text, commands: slashCommands ?? [], enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending),
             onPasteImages: imagePasteHandler, referenceDraft: rawDraft)
         // UIKit's undo history belongs to a single session and unlocked window.
         return input.id(draftId).id(model.privateSnapshot.epoch)

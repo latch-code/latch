@@ -85,7 +85,7 @@ async function computer(
   env: Record<string, string> = {},
   extra: string[] = [],
   options: AcpAgentOptions = {},
-  host: Pick<HarnessHostOptions, 'toolGateway' | 'modelGateway' | 'saveAttachment' | 'readAttachment'> = {},
+  host: Pick<HarnessHostOptions, 'toolGateway' | 'modelGateway' | 'saveAttachment' | 'readAttachment' | 'turnEnded'> = {},
 ) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-codex-')))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
@@ -1034,6 +1034,66 @@ describe('Codex over its app-server', () => {
     expect(currentTurn(done)?.usage).toMatchObject({ inputTokens: 20, outputTokens: 10 })
   })
 
+  it('subtracts the pre-fork thread total on a native fork and keeps prior contexts when clearing context', async () => {
+    const turns: Array<{ sessionId: string; usage?: DriverTaskDetail['summary']['usage'] }> = []
+    const t = await computer(
+      { FAKE_CODEX_VERSION: '0.169.0' },
+      [],
+      {},
+      { turnEnded: turn => void turns.push({ sessionId: turn.sessionId, usage: turn.usage }) },
+    )
+    const bridge = await t.open()
+    const source = await start(bridge, t.main, 'echo one')
+    await settled(bridge, source)
+    await bridge.prompt(source, 'echo two', rid())
+    const sourceDetail = await settled(bridge, source)
+    const firstReply = sourceDetail.messages.find(message => message.role === 'assistant')!
+
+    // Native fork after turn 1 (whose cumulative thread total was 20/10): turn 1 of the fork reports cumulative 40/20/16,
+    // so only the fork's own 20/10/16 delta belongs to the forked session and its TurnLog record.
+    const prefix = 'Earlier context:\n'
+    const { launchHash } = await bridge.launchPreview!({ cwd: t.main })
+    const { sessionId: forked } = await bridge.createTask({
+      prompt: `${prefix}echo branched`,
+      requestId: rid(),
+      cwd: t.main,
+      expectedLaunchHash: launchHash,
+      fork: { taskId: source, upToMessageId: firstReply.id, prefixLength: prefix.length },
+    })
+    const forkedDetail = await settled(bridge, forked)
+    const forkUser = forkedDetail.messages.find(message => message.role === 'user')!
+    expect(forkUser.nativeFork).toBe(true)
+    expect(forkUser.turn?.usage).toEqual({
+      inputTokens: 20,
+      outputTokens: 10,
+      cacheReadTokens: 16,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+    })
+    expect(forkedDetail.summary.usage).toEqual(forkUser.turn?.usage)
+    expect(turns.filter(turn => turn.sessionId === forked).map(turn => turn.usage)).toEqual([forkUser.turn?.usage])
+
+    // Clearing context on `source` (already at 40/20) starts a fresh Codex thread at 0: the new turn's 20/10 adds onto 40/20.
+    await bridge.prompt(source, 'echo fresh', rid(), { freshContext: true })
+    const clearedDetail = await settled(bridge, source)
+    const freshUser = clearedDetail.messages.findLast(message => message.role === 'user')!
+    expect(freshUser.freshContext).toBe(true)
+    expect(freshUser.turn?.usage).toEqual({
+      inputTokens: 20,
+      outputTokens: 10,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+    })
+    expect(clearedDetail.summary.usage).toEqual({
+      inputTokens: 60,
+      outputTokens: 30,
+      cacheReadTokens: 16,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+    })
+  })
+
   it('keeps the parts of a streamed reasoning summary apart as sections', async () => {
     const t = await computer()
     const bridge = await t.open()
@@ -1042,6 +1102,22 @@ describe('Codex over its app-server', () => {
     expect(detail.messages.find(message => message.reasoning)?.reasoning).toBe(
       '**Checking the project**\n\nReading `AGENTS.md` first.\n\n**Planning the page**\n\n- one\n- two',
     )
+  })
+
+  it('lists /compact for a warm thread before sending its first message', async () => {
+    const t = await computer()
+    const bridge = await t.open()
+    const { launchHash } = await bridge.launchPreview!({ cwd: t.main })
+    const { sessionId } = await bridge.createTask({
+      cwd: t.main,
+      expectedLaunchHash: launchHash,
+      prompt: '',
+      seed: 'Earlier conversation',
+      requestId: rid(),
+    })
+    expect(await bridge.warm!(sessionId)).toBe(true)
+    expect((await bridge.detail(sessionId)).commands).toContainEqual(expect.objectContaining({ name: 'compact', idleOnly: true }))
+    expect(sent(await t.log(), 'turn/start')).toHaveLength(0)
   })
 
   it('runs /compact as an idle native operation and preserves a first-turn brief for the next message', async () => {

@@ -18,7 +18,7 @@ import { Transcript } from '../components/Transcript.tsx'
 import { MoveHistory } from '../conversation/HarnessMove.tsx'
 import { FillPlace } from '../panel/terminal/fills.ts'
 import { isLive, liveMessageId, renderedMessages } from '../conversation.ts'
-import { ChangesLinkContext } from '../conversation/changesLink.ts'
+import { ChangesLinkContext, OutputsOpenContext, ToolDiffOpenContext } from '../conversation/changesLink.ts'
 import { useTranscriptProjection } from '../conversation/useTranscriptProjection.ts'
 import {
   Backdrop,
@@ -127,6 +127,7 @@ export function ConversationView({
     run,
     frozenAt,
     changesLink,
+    openToolDiff,
     submission,
     choose,
     jumpToLatest,
@@ -468,146 +469,151 @@ export function ConversationView({
                   <FillPlace.Provider
                     value={shell.canTerminal && shell.terminalTarget?.sessionId === current.summary.id ? current.summary.id : undefined}>
                     <ChangesLinkContext.Provider value={changesLink}>
-                      <TeamPageContext.Provider value={teamPage}>
-                        <RoundPageContext.Provider value={roundPage}>
-                          {current.summary.worktree?.unfiltered !== undefined && (
-                            <div className="session-start-note" role="note">
-                              <Hint label={COPY.unfiltered(current.summary.worktree.unfiltered)}>{COPY.unfilteredHint}</Hint>
-                            </div>
-                          )}
-                          {current.summary.teamOf && (
-                            <MemberLine
-                              summary={current.summary}
-                              teams={snapshot.teams}
-                              tasks={snapshot.tasks}
-                              harnesses={catalog?.harnesses}
-                              untitled={SHELL_COPY.untitled}
-                              onOpen={choose}
-                            />
-                          )}
-                          {current.summary.forkOf?.moved && (
-                            <MoveHistory
-                              fork={current.summary.forkOf}
-                              harnesses={catalog?.harnesses}
-                              to={{ name: harnessName, harness: harnessInfo }}
-                              resumed={current.messages.find(message => message.role === 'user')?.nativeFork === true}
-                            />
-                          )}
-                          <ReplyQuoteSource.Provider value={{ id: current.summary.id, open: quote => revealQuote(quote, reading.reveal) }}>
-                            <SentCatalogue.Provider value={sentCatalogue}>
-                              <Transcript
-                                detail={current}
-                                observeStream={showTranscript && frozenAt === undefined}
-                                projection={projection}
-                                replyViewport={reading.containerRef}
-                                onSource={choose}
-                                failureSteps={owner ? OWNER_FAILURE_STEPS : access.scopes.has('run') ? DEVICE_FAILURE_STEPS : undefined}
-                                checkUnknown={access.scopes.has('run')}
-                                onFailureStep={step => takeFailureStep(step, openSettings)}
-                                onCopyError={cause => setToast({ text: errorMessage(cause), tone: 'error' })}
-                                {...(mayEdit && catalog?.features?.fork
-                                  ? { onEditFrom: (message, before) => void editFrom.start(message, before) }
-                                  : {})}
-                                onFork={
-                                  catalog?.features?.fork && access.scopes.has('run')
-                                    ? (upToMessageId, draft = FORK_CONTINUATION_PROMPT) => {
-                                        submission.setFork({
-                                          taskId: current.summary.id,
-                                          upToMessageId,
-                                          title: current.summary.title,
-                                          choice: forkChoice(),
-                                          source: forkSource(current, harnessInfo),
-                                        })
-                                        choose(null)
-                                        submission.setDraft(draft)
-                                        shell.showHome()
-                                      }
-                                    : undefined
-                                }
-                                approvals={approvals}
-                                harnessName={harnessName}
-                                {...(speaker ? { speaker } : {})}
-                                login={
-                                  harnessInfo?.login
-                                    ? {
-                                        harnessId: harnessInfo.id,
-                                        login: harnessInfo.login,
-                                        // In this session's 终端 tab, where it can have one.
-                                        surface: loginSurface(
-                                          catalog?.features,
-                                          current.summary.archived || current.summary.personal ? undefined : current.summary.id,
-                                        ),
-                                      }
-                                    : undefined
-                                }
-                                harness={topHarness}
-                                demo={demo}
-                                active={active}
-                                changes={{
-                                  // The Host shows a session's files only to a device whose data scope covers them.
-                                  enabled: catalog?.features?.changes === true && readsProjectFiles(snapshot.device.dataScope),
-                                  undo: sessionReadOnly(current.summary) || !access.scopes.has('run') ? 'read-only' : 'open',
-                                  // As the 改动 tab reads it: nothing can be written until the connection is back.
-                                  offline: connection === 'reconnecting' || connection === 'offline',
-                                }}
-                                {...(run ? { onStop: run.onCancel } : {})}
-                                {...(current.summary.personal
-                                  ? {}
-                                  : {
-                                      onStopSubagent: async (subagentId: string) => {
-                                        try {
-                                          await api(`tasks/${encodeURIComponent(current.summary.id)}/stop-subagent`, {
-                                            method: 'POST',
-                                            body: { subagentId },
-                                          })
-                                        } catch (cause) {
-                                          setToast({ text: errorMessage(cause), tone: 'error' })
-                                          throw cause
-                                        }
-                                      },
-                                    })}
-                                onReveal={reading.reveal}
-                                contextToolMessageId={shell.contextToolMessageId}
-                                {...(handing ? { onHandoff: handOff } : {})}
-                                {...(ownTeams.length ? { teams: ownTeams } : {})}
-                                {...(returned.length
-                                || placeProposals
-                                || placeResults
-                                || placeBoard
-                                || placeOwnTeams
-                                || mentions?.rows.length
-                                  ? {
-                                      placed: (turns: ReadonlyArray<{ key: string; at: number | undefined }>) =>
-                                        // After a turn, what it proposed comes first (想定时), then the results of what was
-                                        // set up since, which can only come later.
-                                        joinPlaced(
-                                          joinPlaced(
-                                            joinPlaced(
-                                              joinPlaced(returned.length ? placeReturned(turns) : undefined, placeProposals?.(turns)),
-                                              placeBoard?.(turns),
-                                            ),
-                                            // A team started from a turn's proposal stands where that proposal stood.
-                                            placeOwnTeams?.(turns),
-                                          ),
-                                          joinPlaced(placeResults?.(turns), placeMentions(turns)),
-                                        ),
+                      <ToolDiffOpenContext.Provider value={openToolDiff}>
+                        <OutputsOpenContext.Provider value={shell.openOutputs}>
+                          <TeamPageContext.Provider value={teamPage}>
+                            <RoundPageContext.Provider value={roundPage}>
+                              {current.summary.worktree?.unfiltered !== undefined && (
+                                <div className="session-start-note" role="note">
+                                  <Hint label={COPY.unfiltered(current.summary.worktree.unfiltered)}>{COPY.unfilteredHint}</Hint>
+                                </div>
+                              )}
+                              {current.summary.teamOf && (
+                                <MemberLine
+                                  summary={current.summary}
+                                  teams={snapshot.teams}
+                                  tasks={snapshot.tasks}
+                                  harnesses={catalog?.harnesses}
+                                  untitled={SHELL_COPY.untitled}
+                                  onOpen={choose}
+                                />
+                              )}
+                              {current.summary.forkOf?.moved && (
+                                <MoveHistory
+                                  fork={current.summary.forkOf}
+                                  harnesses={catalog?.harnesses}
+                                  to={{ name: harnessName, harness: harnessInfo }}
+                                  resumed={current.messages.find(message => message.role === 'user')?.nativeFork === true}
+                                />
+                              )}
+                              <ReplyQuoteSource.Provider
+                                value={{ id: current.summary.id, open: quote => revealQuote(quote, reading.reveal) }}>
+                                <SentCatalogue.Provider value={sentCatalogue}>
+                                  <Transcript
+                                    detail={current}
+                                    observeStream={showTranscript && frozenAt === undefined}
+                                    projection={projection}
+                                    replyViewport={reading.containerRef}
+                                    onSource={choose}
+                                    failureSteps={owner ? OWNER_FAILURE_STEPS : access.scopes.has('run') ? DEVICE_FAILURE_STEPS : undefined}
+                                    checkUnknown={access.scopes.has('run')}
+                                    onFailureStep={step => takeFailureStep(step, openSettings)}
+                                    onCopyError={cause => setToast({ text: errorMessage(cause), tone: 'error' })}
+                                    {...(mayEdit && catalog?.features?.fork
+                                      ? { onEditFrom: (message, before) => void editFrom.start(message, before) }
+                                      : {})}
+                                    onFork={
+                                      catalog?.features?.fork && access.scopes.has('run')
+                                        ? (upToMessageId, draft = FORK_CONTINUATION_PROMPT) => {
+                                            submission.setFork({
+                                              taskId: current.summary.id,
+                                              upToMessageId,
+                                              title: current.summary.title,
+                                              choice: forkChoice(),
+                                              source: forkSource(current, harnessInfo),
+                                            })
+                                            choose(null)
+                                            submission.setDraft(draft)
+                                            shell.showHome()
+                                          }
+                                        : undefined
                                     }
-                                  : {})}
-                                {...(frozenAt !== undefined ? { frozenAt } : {})}
-                                cancelling={cancelState === 'cancelling'}
-                                coarse={coarse}
-                                providerName={providerName}
-                                {...(fallbackElapsed !== undefined ? { fallbackElapsed } : {})}
-                                {...(retry ? { retry } : {})}
-                              />
-                            </SentCatalogue.Provider>
-                          </ReplyQuoteSource.Provider>
-                          {mentions?.readError && (
-                            <AgentMentionHistory mentions={mentions} items={[]} snapshot={snapshot} open={shell.openMentionTarget} />
-                          )}
-                          <SendingBubble shell={shell} />
-                        </RoundPageContext.Provider>
-                      </TeamPageContext.Provider>
+                                    approvals={approvals}
+                                    harnessName={harnessName}
+                                    {...(speaker ? { speaker } : {})}
+                                    login={
+                                      harnessInfo?.login
+                                        ? {
+                                            harnessId: harnessInfo.id,
+                                            login: harnessInfo.login,
+                                            // In this session's 终端 tab, where it can have one.
+                                            surface: loginSurface(
+                                              catalog?.features,
+                                              current.summary.archived || current.summary.personal ? undefined : current.summary.id,
+                                            ),
+                                          }
+                                        : undefined
+                                    }
+                                    harness={topHarness}
+                                    demo={demo}
+                                    active={active}
+                                    changes={{
+                                      // The Host shows a session's files only to a device whose data scope covers them.
+                                      enabled: catalog?.features?.changes === true && readsProjectFiles(snapshot.device.dataScope),
+                                      undo: sessionReadOnly(current.summary) || !access.scopes.has('run') ? 'read-only' : 'open',
+                                      // As the 改动 tab reads it: nothing can be written until the connection is back.
+                                      offline: connection === 'reconnecting' || connection === 'offline',
+                                    }}
+                                    {...(run ? { onStop: run.onCancel } : {})}
+                                    {...(current.summary.personal
+                                      ? {}
+                                      : {
+                                          onStopSubagent: async (subagentId: string) => {
+                                            try {
+                                              await api(`tasks/${encodeURIComponent(current.summary.id)}/stop-subagent`, {
+                                                method: 'POST',
+                                                body: { subagentId },
+                                              })
+                                            } catch (cause) {
+                                              setToast({ text: errorMessage(cause), tone: 'error' })
+                                              throw cause
+                                            }
+                                          },
+                                        })}
+                                    onReveal={reading.reveal}
+                                    contextToolMessageId={shell.contextToolMessageId}
+                                    {...(handing ? { onHandoff: handOff } : {})}
+                                    {...(ownTeams.length ? { teams: ownTeams } : {})}
+                                    {...(returned.length
+                                    || placeProposals
+                                    || placeResults
+                                    || placeBoard
+                                    || placeOwnTeams
+                                    || mentions?.rows.length
+                                      ? {
+                                          placed: (turns: ReadonlyArray<{ key: string; at: number | undefined }>) =>
+                                            // After a turn, what it proposed comes first (想定时), then the results of what was
+                                            // set up since, which can only come later.
+                                            joinPlaced(
+                                              joinPlaced(
+                                                joinPlaced(
+                                                  joinPlaced(returned.length ? placeReturned(turns) : undefined, placeProposals?.(turns)),
+                                                  placeBoard?.(turns),
+                                                ),
+                                                // A team started from a turn's proposal stands where that proposal stood.
+                                                placeOwnTeams?.(turns),
+                                              ),
+                                              joinPlaced(placeResults?.(turns), placeMentions(turns)),
+                                            ),
+                                        }
+                                      : {})}
+                                    {...(frozenAt !== undefined ? { frozenAt } : {})}
+                                    cancelling={cancelState === 'cancelling'}
+                                    coarse={coarse}
+                                    providerName={providerName}
+                                    {...(fallbackElapsed !== undefined ? { fallbackElapsed } : {})}
+                                    {...(retry ? { retry } : {})}
+                                  />
+                                </SentCatalogue.Provider>
+                              </ReplyQuoteSource.Provider>
+                              {mentions?.readError && (
+                                <AgentMentionHistory mentions={mentions} items={[]} snapshot={snapshot} open={shell.openMentionTarget} />
+                              )}
+                              <SendingBubble shell={shell} />
+                            </RoundPageContext.Provider>
+                          </TeamPageContext.Provider>
+                        </OutputsOpenContext.Provider>
+                      </ToolDiffOpenContext.Provider>
                     </ChangesLinkContext.Provider>
                   </FillPlace.Provider>
                 )}

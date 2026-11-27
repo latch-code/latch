@@ -1,6 +1,7 @@
+import type { HarnessInfo } from '@latch/protocol'
 import { LATCH_COMMAND } from './commands.ts'
 import type { UpdateState } from './shell.ts'
-import { defineCopy } from './i18n.ts'
+import { defineCopy, plural } from './i18n.ts'
 
 const COPY = defineCopy(
   {
@@ -16,6 +17,12 @@ const COPY = defineCopy(
     development: '检查更新 · 开发运行，无构建号',
     failed: (build: string) => `未能检查 · 构建 ${build}`,
     current: (build: string) => `已是最新 · 构建 ${build}`,
+    harnessUpdate: (name: string, version: string) => `${name} ${version} 可更新`,
+    harnessOutdated: (name: string) => `${name} 需要升级`,
+    harnessMoved: (name: string) => `${name} 需要确认新程序`,
+    harnessesAvailable: (count: number) => `${count} 个 Harness 可更新`,
+    harnessesAttention: (count: number) => `${count} 个 Harness 需要处理`,
+    withHarnesses: (base: string, count: number) => `${base} · 另有 ${count} 个 Harness`,
   },
   {
     oldTitle: (computer: string) => `Latch on ${computer} is out of date`,
@@ -30,6 +37,12 @@ const COPY = defineCopy(
     development: 'Check for updates · Development build, no build number',
     failed: (build: string) => `Couldn’t check for updates · Build ${build}`,
     current: (build: string) => `Up to date · Build ${build}`,
+    harnessUpdate: (name: string, version: string) => `${name} ${version} available`,
+    harnessOutdated: (name: string) => `${name} needs an update`,
+    harnessMoved: (name: string) => `${name} needs confirmation`,
+    harnessesAvailable: (count: number) => plural(count, { one: '{n} harness update available', other: '{n} harness updates available' }),
+    harnessesAttention: (count: number) => plural(count, { one: '{n} harness needs attention', other: '{n} harnesses need attention' }),
+    withHarnesses: (base: string, count: number) => `${base} · +${plural(count, { one: '{n} harness', other: '{n} harnesses' })}`,
   },
 )
 
@@ -95,6 +108,71 @@ export type BuildStatus =
   | { kind: 'dev' }
   | { kind: 'failed'; build: string }
 
+/** One saved, enabled external Harness with a newer release or a binary state that needs action. */
+export type HarnessUpdateItem =
+  | {
+      id: string
+      name: string
+      mark?: string
+      kind: 'outdated'
+      need: string
+      command: string
+    }
+  | {
+      id: string
+      name: string
+      mark?: string
+      kind: 'moved'
+    }
+  | {
+      id: string
+      name: string
+      mark?: string
+      kind: 'update'
+      current: string
+      latest: string
+      command?: string
+    }
+
+const HARNESS_ORDER: Record<HarnessUpdateItem['kind'], number> = { outdated: 0, moved: 1, update: 2 }
+
+/**
+ * External Harnesses on this Host that have an update or need upgrade/confirmation, ordered with blocking states first.
+ * Only a device that manages the Host (`canManage`) sees them; turned-off definitions are not in `harnesses`.
+ */
+export function harnessUpdateItems(harnesses: readonly HarnessInfo[] | undefined, canManage = true): HarnessUpdateItem[] {
+  if (!canManage || !harnesses) return []
+  const items: HarnessUpdateItem[] = []
+  for (const harness of harnesses) {
+    if (!harness.editable) continue
+    const name = harness.capabilities.display.label || harness.id
+    const mark = harness.capabilities.display.mark
+    if (harness.outdated) {
+      items.push({
+        id: harness.id,
+        name,
+        ...(mark ? { mark } : {}),
+        kind: 'outdated',
+        need: harness.outdated.need,
+        command: harness.outdated.upgrade,
+      })
+    } else if (harness.statusReason === 'moved') {
+      items.push({ id: harness.id, name, ...(mark ? { mark } : {}), kind: 'moved' })
+    } else if (harness.update) {
+      items.push({
+        id: harness.id,
+        name,
+        ...(mark ? { mark } : {}),
+        kind: 'update',
+        current: harness.update.current,
+        latest: harness.update.latest,
+        ...(harness.update.command ? { command: harness.update.command } : {}),
+      })
+    }
+  }
+  return items.toSorted((a, b) => HARNESS_ORDER[a.kind] - HARNESS_ORDER[b.kind])
+}
+
 /** The desktop updater's states that hold a release on its way to being installed. */
 const APP_RELEASE: ReadonlySet<UpdateState> = new Set(['available', 'downloading', 'ready', 'waiting', 'installing'])
 
@@ -107,10 +185,11 @@ export function buildStatus(input: {
   host: string | undefined
   served: string | null | undefined
   checking: boolean
+  harnessChecking?: boolean | undefined
   app?: { state: UpdateState; version?: string | undefined } | null | undefined
 }): BuildStatus {
   const { page, host, served, app } = input
-  if (input.checking || app?.state === 'checking') return { kind: 'checking' }
+  if (input.checking || input.harnessChecking || app?.state === 'checking') return { kind: 'checking' }
   if (app && APP_RELEASE.has(app.state)) return { kind: 'app', version: app.version }
   if (!page) return { kind: 'dev' }
   if ((served && served > page) || (host && host > page)) return { kind: 'page' }
@@ -119,22 +198,38 @@ export function buildStatus(input: {
   return { kind: 'current', build: page }
 }
 
-/** The icon's tooltip for a status; the ones that ask for something carry the dot. */
-export function buildStatusWords(status: BuildStatus): { tooltip: string; dot: boolean } {
-  switch (status.kind) {
-    case 'checking':
-      return { tooltip: COPY.checking, dot: false }
-    case 'app':
-      return { tooltip: status.version ? COPY.version(status.version) : COPY.available, dot: true }
-    case 'page':
-      return { tooltip: COPY.newPage, dot: true }
-    case 'host':
-      return { tooltip: COPY.oldService, dot: true }
-    case 'dev':
-      return { tooltip: COPY.development, dot: false }
-    case 'failed':
-      return { tooltip: COPY.failed(shortBuild(status.build)), dot: false }
-    case 'current':
-      return { tooltip: COPY.current(shortBuild(status.build)), dot: false }
+function harnessWords(harnesses: readonly HarnessUpdateItem[]): string {
+  if (harnesses.length === 1) {
+    const item = harnesses[0]!
+    if (item.kind === 'outdated') return COPY.harnessOutdated(item.name)
+    if (item.kind === 'moved') return COPY.harnessMoved(item.name)
+    return COPY.harnessUpdate(item.name, item.latest)
   }
+  return harnesses.every(item => item.kind !== 'update')
+    ? COPY.harnessesAttention(harnesses.length)
+    : COPY.harnessesAvailable(harnesses.length)
+}
+
+/** The icon's tooltip for a status; the ones that ask for something carry the dot. */
+export function buildStatusWords(status: BuildStatus, harnesses: readonly HarnessUpdateItem[] = []): { tooltip: string; dot: boolean } {
+  if (status.kind === 'checking') return { tooltip: COPY.checking, dot: false }
+  const base = ((): { tooltip: string; dot: boolean } => {
+    switch (status.kind) {
+      case 'app':
+        return { tooltip: status.version ? COPY.version(status.version) : COPY.available, dot: true }
+      case 'page':
+        return { tooltip: COPY.newPage, dot: true }
+      case 'host':
+        return { tooltip: COPY.oldService, dot: true }
+      case 'dev':
+        return { tooltip: COPY.development, dot: false }
+      case 'failed':
+        return { tooltip: COPY.failed(shortBuild(status.build)), dot: false }
+      case 'current':
+        return { tooltip: COPY.current(shortBuild(status.build)), dot: false }
+    }
+  })()
+  if (harnesses.length === 0) return base
+  if (base.dot) return { tooltip: COPY.withHarnesses(base.tooltip, harnesses.length), dot: true }
+  return { tooltip: harnessWords(harnesses), dot: true }
 }
