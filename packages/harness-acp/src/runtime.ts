@@ -475,6 +475,8 @@ interface Run {
   /** Text added to this turn while it ran (`steer`), in flight or taken, and when the latest was sent. */
   steers?: number
   steeredAt?: number
+  /** Active `session/prompt` handoff state for harnesses whose concurrent `session/prompt` steers the turn (`promptSteer`). */
+  promptTurn?: PromptTurn
   /** Gateway requests of the process when the prompt was sent, for a session on a route. */
   gatewayMark?: number
   /**
@@ -516,6 +518,29 @@ interface Permission {
   claimed: boolean
   answer(result: unknown): void
   fail(error: Error): void
+}
+
+interface PromptTurn {
+  current: Promise<unknown>
+  handoff?: Promise<void>
+  lock?: Promise<void>
+  usage?: TurnTokens
+  settled?: boolean
+}
+
+function sumTurnTokens(first: TurnTokens | undefined, second: TurnTokens | undefined): TurnTokens | undefined {
+  if (!first) return second
+  if (!second) return first
+  const cachedReadTokens = (first.cachedReadTokens ?? 0) + (second.cachedReadTokens ?? 0)
+  const cachedWriteTokens = (first.cachedWriteTokens ?? 0) + (second.cachedWriteTokens ?? 0)
+  const thoughtTokens = (first.thoughtTokens ?? 0) + (second.thoughtTokens ?? 0)
+  return {
+    inputTokens: first.inputTokens + second.inputTokens,
+    outputTokens: first.outputTokens + second.outputTokens,
+    ...(first.cachedReadTokens !== undefined || second.cachedReadTokens !== undefined ? { cachedReadTokens } : {}),
+    ...(first.cachedWriteTokens !== undefined || second.cachedWriteTokens !== undefined ? { cachedWriteTokens } : {}),
+    ...(first.thoughtTokens !== undefined || second.thoughtTokens !== undefined ? { thoughtTokens } : {}),
+  }
 }
 
 interface Binding {
@@ -3592,6 +3617,14 @@ export class AgentRuntime implements Bridge {
     return promise
   }
 
+  private hasOpenInteraction(run: Run): boolean {
+    if (run.asking?.size) return true
+    for (const permission of this.permissions.values()) {
+      if (permission.taskId === run.taskId && !permission.claimed) return true
+    }
+    return false
+  }
+
   private steerable(run: Run): boolean {
     return (
       run.sent
@@ -3600,6 +3633,7 @@ export class AgentRuntime implements Bridge {
       && run.live?.initialized === true
       && run.live.capabilities.steer
       && !!run.acpSessionId
+      && (!this.selection.profile?.promptSteer || (!run.promptTurn?.settled && !this.hasOpenInteraction(run)))
     )
   }
 
@@ -3680,18 +3714,21 @@ export class AgentRuntime implements Bridge {
         run.sensitiveOutput = true
         live.receivedAttachments = true
       }
-      const result = await live.wire.request(
-        STEER_METHOD,
-        {
-          sessionId: run.acpSessionId,
-          prompt: blocks,
-          _meta: { steering: { idleBehavior: 'promptRequired' } },
-        },
-        Math.min(this.limits.requestTimeoutMs, STEER_TIMEOUT_MS),
-        undefined,
-        add,
-        userText === undefined ? undefined : { userText },
-      )
+      const timeoutMs = Math.min(this.limits.requestTimeoutMs, STEER_TIMEOUT_MS)
+      const result = this.selection.profile?.promptSteer
+        ? await this.steerPromptTurn(run, live, blocks, timeoutMs, add, userText)
+        : await live.wire.request(
+            STEER_METHOD,
+            {
+              sessionId: run.acpSessionId,
+              prompt: blocks,
+              _meta: { steering: { idleBehavior: 'promptRequired' } },
+            },
+            timeoutMs,
+            undefined,
+            add,
+            userText === undefined ? undefined : { userText },
+          )
       const answer = steerResult.safeParse(result)
       outcome = answer.success ? answer.data.outcome : 'invalid'
       if (outcome === 'injected') add(result)
@@ -6120,9 +6157,10 @@ export class AgentRuntime implements Bridge {
           ...(run.userMessageId ? { messageId: run.userMessageId } : {}),
         },
       )
+      if (this.selection.profile?.promptSteer) run.promptTurn = { current: answer }
       if (brief) this.briefSent(run, brief)
       if (note) this.noteSent(run, note)
-      const result = await answer
+      const result = run.promptTurn ? await this.awaitPromptTurn(run.promptTurn) : await answer
       status = this.outcome(run, result, notes)
     } catch (error) {
       status = this.failure(run, error, notes)
@@ -6170,10 +6208,145 @@ export class AgentRuntime implements Bridge {
     if (reported && task && scope !== 'none' && !countedLive) this.noteTokens(task, run, reported, scope)
   }
 
+  private promptAnswerTokens(result: unknown): TurnTokens | undefined {
+    const parsed = promptResult.safeParse(result)
+    return parsed.success ? (parsed.data.usage ?? this.selection.profile?.turnUsage?.(result)) : undefined
+  }
+
+  private promptErrorTokens(error: unknown): TurnTokens | undefined {
+    const rawUsage = error instanceof RpcError && isObject(error.data) ? (error.data as { usage?: unknown }).usage : undefined
+    return rawUsage !== undefined
+      ? (promptResult.safeParse({ stopReason: 'end_turn', usage: rawUsage }).data?.usage ?? undefined)
+      : undefined
+  }
+
+  private async awaitPromptTurn(state: PromptTurn): Promise<unknown> {
+    for (;;) {
+      const active = state.current
+      let settled: { ok: true; value: unknown } | { ok: false; error: unknown }
+      try {
+        settled = { ok: true, value: await active }
+      } catch (error) {
+        settled = { ok: false, error }
+      }
+      if (state.handoff) await state.handoff
+      if (state.current !== active) continue
+      state.settled = true
+      if (settled.ok) return settled.value
+      throw settled.error
+    }
+  }
+
+  /**
+   * Sends a concurrent `session/prompt` to steer an `agy acp` turn. When accepted, the server answers the prior
+   * `session/prompt` with `end_turn` and the turn's usage so far while the new `session/prompt` owns the rest of the turn;
+   * when refused (e.g. while an interaction waits), the new `session/prompt` rejects first and the prior one runs on.
+   */
+  private async steerPromptTurn(
+    run: Run,
+    live: Live,
+    blocks: unknown[],
+    timeoutMs: number,
+    add: (result: unknown) => void,
+    userText?: string,
+  ): Promise<unknown> {
+    const state = run.promptTurn
+    if (!state) return { outcome: 'promptRequired' }
+    while (state.lock) await state.lock
+    if (this.runs.get(run.taskId) !== run || !this.steerable(run) || state.settled) return { outcome: 'promptRequired' }
+    let releaseLock!: () => void
+    state.lock = new Promise<void>(resolve => {
+      releaseLock = () => {
+        state.lock = undefined
+        resolve()
+      }
+    })
+    let releaseHandoff!: () => void
+    const handoff = new Promise<void>(resolve => {
+      releaseHandoff = () => {
+        if (state.handoff === handoff) state.handoff = undefined
+        resolve()
+      }
+    })
+    state.handoff = handoff
+    const previous = state.current
+    const next = live.wire.request(
+      'session/prompt',
+      { sessionId: run.acpSessionId, prompt: blocks },
+      undefined,
+      undefined,
+      undefined,
+      userText === undefined ? undefined : { userText },
+    )
+    let nextFailure: { error: unknown } | undefined
+    next.then(
+      () => {},
+      (error: unknown) => {
+        nextFailure = { error }
+      },
+    )
+    let timedOut = false
+    const transition = (async (): Promise<unknown> => {
+      type Settled = { which: 'previous' | 'next'; ok: true; value: unknown } | { which: 'previous' | 'next'; ok: false; error: unknown }
+      try {
+        const first = await Promise.race<Settled>([
+          previous.then(
+            value => ({ which: 'previous', ok: true, value }),
+            (error: unknown) => ({ which: 'previous', ok: false, error }),
+          ),
+          next.then(
+            value => ({ which: 'next', ok: true, value }),
+            (error: unknown) => ({ which: 'next', ok: false, error }),
+          ),
+        ])
+        if (first.which === 'next') {
+          if (!first.ok) throw first.error
+          const prior = await previous.then(
+            value => ({ ok: true as const, value }),
+            (error: unknown) => ({ ok: false as const, error }),
+          )
+          state.usage = sumTurnTokens(state.usage, prior.ok ? this.promptAnswerTokens(prior.value) : this.promptErrorTokens(prior.error))
+          const injected = { outcome: 'injected' as const }
+          if (!timedOut) add(injected)
+          state.current = next
+          return injected
+        }
+        await Promise.resolve()
+        if (nextFailure) throw nextFailure.error
+        state.usage = sumTurnTokens(state.usage, first.ok ? this.promptAnswerTokens(first.value) : this.promptErrorTokens(first.error))
+        const injected = { outcome: 'injected' as const }
+        if (!timedOut) add(injected)
+        state.current = next
+        if (run.cancelRequested && run.acpSessionId) live.wire.notify('session/cancel', { sessionId: run.acpSessionId })
+        return injected
+      } finally {
+        releaseHandoff()
+        releaseLock()
+      }
+    })()
+    transition.catch(() => {})
+    if (!timeoutMs) return transition
+    let timer: NodeJS.Timeout | undefined
+    try {
+      return await Promise.race([
+        transition,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            timedOut = true
+            reject(new RequestTimeout(STEER_METHOD))
+          }, timeoutMs)
+          timer.unref()
+        }),
+      ])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   private outcome(run: Run, result: unknown, notes: string[]): TaskStatus {
     this.askQuota(run.live, true)
     const parsed = promptResult.safeParse(result)
-    this.recordReportedTokens(run, parsed.success ? (parsed.data.usage ?? this.selection.profile?.turnUsage?.(result)) : undefined)
+    this.recordReportedTokens(run, sumTurnTokens(run.promptTurn?.usage, this.promptAnswerTokens(result)))
     const stopReason = parsed.success ? parsed.data.stopReason : undefined
     // The Host's own stop is no cancel by anyone: the turn was interrupted, whatever the agent answered.
     if (run.cancelRequested && this.closed && run.sent) {
@@ -6232,10 +6405,7 @@ export class AgentRuntime implements Bridge {
 
   private failure(run: Run, error: unknown, notes: string[]): TaskStatus {
     if (run.sent) {
-      const rawUsage = error instanceof RpcError && isObject(error.data) ? (error.data as { usage?: unknown }).usage : undefined
-      const dataUsage =
-        rawUsage !== undefined ? (promptResult.safeParse({ stopReason: 'end_turn', usage: rawUsage }).data?.usage ?? undefined) : undefined
-      this.recordReportedTokens(run, dataUsage)
+      this.recordReportedTokens(run, sumTurnTokens(run.promptTurn?.usage, this.promptErrorTokens(error)))
     }
     const hideOutput = run.sensitiveOutput || run.attachments?.length
     if (error instanceof ConnectionClosed) {
@@ -6847,6 +7017,7 @@ export class AgentRuntime implements Bridge {
         )
       }
       const capabilities = result.data.agentCapabilities
+      const promptSteer = this.selection.profile?.promptSteer === true
       live.capabilities = {
         resume: capabilities?.sessionCapabilities?.resume != null,
         list: capabilities?.sessionCapabilities?.list != null,
@@ -6856,8 +7027,9 @@ export class AgentRuntime implements Bridge {
         additionalDirectories: isObject(capabilities?.sessionCapabilities?.additionalDirectories),
         images: capabilities?.promptCapabilities?.image === true,
         embeddedContext: capabilities?.promptCapabilities?.embeddedContext === true,
-        steer: result.data._meta?.steering?.supported === true,
-        steerAttachments: result.data._meta?.steering?.supported === true && result.data._meta.steering.attachments === true,
+        steer: result.data._meta?.steering?.supported === true || promptSteer,
+        steerAttachments:
+          (result.data._meta?.steering?.supported === true && result.data._meta.steering.attachments === true) || promptSteer,
         logout: capabilities?.auth?.logout != null,
       }
       this.learnPromptCapabilities(live.capabilities)

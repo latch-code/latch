@@ -14,9 +14,8 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { redactKnownSecrets } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
 import { clip } from '../mapping.ts'
-import { RPC, RpcError } from '../protocol.ts'
+import { PERMISSION_FACTS, RELEASE_CLAIM, RPC, RpcError, STEER_METHOD } from '../protocol.ts'
 import { OPENCODE_DIRECT_MINIMUM, OPENCODE_RULES } from '../profiles/opencode.ts'
-import { PERMISSION_FACTS, RELEASE_CLAIM } from '../protocol.ts'
 import { compareVersions } from '../semver.ts'
 import {
   addTokens,
@@ -280,6 +279,8 @@ interface Turn {
   cwd: string
   /** The inbox item that starts the run: Latch's own ID, or for a command the one the server queued for it. */
   startId?: string
+  steeredIds?: Set<string>
+  deliveredSteers?: Set<string>
   started: boolean
   cancelled: boolean
   interrupted: boolean
@@ -571,7 +572,13 @@ export class OpencodeWire implements AgentWire {
     return this.process.stopping
   }
 
-  request(method: string, params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
+  request(
+    method: string,
+    params: unknown,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+    onResult?: (result: unknown) => void,
+  ): Promise<unknown> {
     const exit = this.process.exit
     if (exit) return Promise.reject(new ConnectionClosed(exit))
     if (this.stopping) return Promise.reject(new ConnectionStopping())
@@ -602,6 +609,8 @@ export class OpencodeWire implements AgentWire {
           return this.setOption({ sessionId: p.sessionId, configId: 'mode', value: p.modeId }).then(() => ({}))
         case 'session/prompt':
           return this.prompt(p)
+        case STEER_METHOD:
+          return this.steer(p, onResult)
         default:
           throw new RpcError(RPC.methodNotFound, `Method not found: ${clip(method, 200)}`)
       }
@@ -943,6 +952,7 @@ export class OpencodeWire implements AgentWire {
       },
       authMethods: [{ id: AUTH_METHOD, name: 'Login with opencode', description: 'Run `opencode auth login` in the terminal' }],
       agentInfo: { name: 'OpenCode', version },
+      _meta: { steering: { supported: true, attachments: true } },
     }
   }
 
@@ -1330,6 +1340,58 @@ export class OpencodeWire implements AgentWire {
     return done
   }
 
+  /**
+   * Adds input to a running turn (`delivery: 'steer', resume: false`), as `opencode acp` does: when the server reports no
+   * active run on the session, or the run finishes before the inbox item is delivered, nothing new starts (`promptRequired`).
+   */
+  private async steer(params: Json, onResult?: (result: unknown) => void): Promise<unknown> {
+    const attached = this.require(params.sessionId)
+    const idleBehavior = rec(rec(params._meta).steering).idleBehavior
+    if (idleBehavior !== undefined && idleBehavior !== 'promptRequired')
+      throw new RpcError(RPC.invalidParams, 'unsupported steering idleBehavior')
+    if (!Array.isArray(params.prompt)) throw new RpcError(RPC.invalidParams, 'prompt must be an array')
+    const blocks = params.prompt.filter(isRecord)
+    if (blocks.some(block => block.type === 'image' && !block.data && !block.uri))
+      throw new RpcError(RPC.invalidParams, 'image content has no data or uri')
+    const turn = this.turns.get(attached.id)
+    if (!turn || turn.cancelled) return { outcome: 'promptRequired' }
+    const active = rec(rec(await this.get('/api/session/active')).data)
+    if (this.turns.get(attached.id) !== turn || turn.cancelled || !Object.hasOwn(active, attached.id)) return { outcome: 'promptRequired' }
+    const prepared = preparePrompt(blocks)
+    const steerId = messageId()
+    ;(turn.steeredIds ??= new Set()).add(steerId)
+    const path = `/api/session/${encodeURIComponent(attached.id)}`
+    let syntheticId: string | undefined
+    if (prepared.synthetic.length) {
+      const sent = rec(
+        rec(
+          await this.post(`${path}/synthetic`, {
+            text: prepared.synthetic.join('\n\n'),
+            description: 'ACP embedded context',
+            delivery: 'steer',
+            resume: false,
+          }),
+        ).data,
+      )
+      syntheticId = str(sent.id)
+    }
+    await this.post(`${path}/prompt`, {
+      id: steerId,
+      text: prepared.text,
+      files: prepared.files,
+      delivery: 'steer',
+      resume: false,
+    })
+    if (this.turns.get(attached.id) !== turn && !turn.deliveredSteers?.has(steerId)) {
+      if (syntheticId) await this.call('DELETE', `${path}/inbox/${encodeURIComponent(syntheticId)}`).catch(() => {})
+      await this.call('DELETE', `${path}/inbox/${encodeURIComponent(steerId)}`).catch(() => {})
+      return { outcome: 'promptRequired' }
+    }
+    const answer = { outcome: 'injected' as const }
+    onResult?.(answer)
+    return answer
+  }
+
   private async awaitCommand(turn: Turn): Promise<void> {
     await sleep(COMMAND_QUEUE_MS)
     if (turn.startId === undefined && this.turns.get(turn.sessionId) === turn) {
@@ -1507,6 +1569,10 @@ export class OpencodeWire implements AgentWire {
     if (!turn) return
     if (!owner.child && type === 'session.inbox.enqueued' && turn.startId === undefined && rec(data.item).type === 'user') {
       turn.startId = str(data.inboxID)
+      return
+    }
+    if (!owner.child && type === 'session.inbox.delivered' && typeof data.inboxID === 'string' && turn.steeredIds?.has(data.inboxID)) {
+      ;(turn.deliveredSteers ??= new Set()).add(data.inboxID)
       return
     }
     if (!owner.child && type === 'session.inbox.delivered' && turn.startId !== undefined && data.inboxID === turn.startId) {

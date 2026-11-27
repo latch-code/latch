@@ -31,6 +31,7 @@ import {
   QUOTA_READ_METHOD,
   RPC,
   RpcError,
+  STEER_METHOD,
   type TurnTokens,
 } from '../protocol.ts'
 import { ELICITATION_METHOD } from '../questions.ts'
@@ -195,6 +196,14 @@ const promptParams = z.object({
     }),
   ),
 })
+const steerParams = promptParams.extend({
+  _meta: z
+    .object({
+      steering: z.object({ idleBehavior: z.literal('promptRequired').optional() }).optional(),
+    })
+    .passthrough()
+    .optional(),
+})
 const optionParams = z.object({ sessionId: text, configId: text, value: text.max(1024) })
 const forkParams = z.object({ sessionId: text, cwd: text, through: text.optional() })
 const listParams = z.object({ cursor: text.max(64).nullish(), cwd: text.nullish() })
@@ -333,18 +342,60 @@ class Inbox implements AsyncIterable<unknown> {
 /** The prompt being run, answered once its result came and, after a cancel, once `claude` acknowledged the interrupt. */
 interface Turn {
   uuid: string
+  uuids: Set<string>
+  pendingSteers?: Set<string>
+  usage?: TurnTokens
   messageId?: string
   resolve(result: unknown): void
   reject(error: Error): void
   cancelled: boolean
   /** The interrupt was acknowledged, or failed: either way nothing more waits on it. */
   interrupted?: boolean
-  /** The turn's result, held until an interrupt sent for it was acknowledged. */
+  /** The turn's result, held until an interrupt sent for it was acknowledged, or until an unstamped steered turn goes idle. */
   ended?: Record<string, unknown>
   /** A choice that stops the turn (keep planning) was made: it ends as cancelled, as on the adapter. */
   stopped?: boolean
   /** What the last reply said went wrong (`SDKAssistantMessageError`). */
   errorKind?: string
+}
+
+function promptContent(blocks: z.infer<typeof promptParams>['prompt']): unknown[] {
+  const content: unknown[] = []
+  for (const block of blocks) {
+    if (block.type === 'text' && block.text !== undefined) content.push({ type: 'text', text: block.text })
+    else if (block.type === 'image' && block.data && block.mimeType)
+      content.push({ type: 'image', source: { type: 'base64', media_type: block.mimeType, data: block.data } })
+    else if (block.type === 'resource' && block.resource?.text !== undefined)
+      content.push({ type: 'text', text: `<context ref="${block.resource.uri ?? ''}">\n${block.resource.text}\n</context>` })
+    else if (block.type === 'resource_link' && block.uri) content.push({ type: 'text', text: block.uri })
+    else throw new RpcError(RPC.invalidParams, `Claude takes no ${clip(block.type, 64)} content here`)
+  }
+  return content
+}
+
+function readTurnTokens(raw: unknown): TurnTokens | undefined {
+  const read = resultUsage.safeParse(raw)
+  if (!read.success) return undefined
+  return {
+    // Claude's input leaves out the cache reads and writes it counts beside it (`inputExcludesCache`).
+    inputTokens: read.data.input_tokens,
+    outputTokens: read.data.output_tokens,
+    ...(read.data.cache_read_input_tokens != null ? { cachedReadTokens: read.data.cache_read_input_tokens } : {}),
+    ...(read.data.cache_creation_input_tokens != null ? { cachedWriteTokens: read.data.cache_creation_input_tokens } : {}),
+  }
+}
+
+function addClaudeTokens(first: TurnTokens | undefined, second: TurnTokens | undefined): TurnTokens | undefined {
+  if (!first) return second
+  if (!second) return first
+  const cachedReadTokens = (first.cachedReadTokens ?? 0) + (second.cachedReadTokens ?? 0)
+  const cachedWriteTokens = (first.cachedWriteTokens ?? 0) + (second.cachedWriteTokens ?? 0)
+  return {
+    inputTokens: first.inputTokens + second.inputTokens,
+    outputTokens: first.outputTokens + second.outputTokens,
+    ...(first.cachedReadTokens !== undefined || second.cachedReadTokens !== undefined ? { cachedReadTokens } : {}),
+    ...(first.cachedWriteTokens !== undefined || second.cachedWriteTokens !== undefined ? { cachedWriteTokens } : {}),
+  }
 }
 
 /** A subagent Claude started with an Agent call, shown as a child session the way the adapter's RFD form shows it. */
@@ -416,6 +467,8 @@ interface Session {
   given: Set<string>
   /** Prompt IDs sent on this session: one is never sent twice. */
   sent: Map<string, true>
+  /** Permission or question callbacks currently awaiting the person's answer. */
+  openAsks: number
   contextReads?: number
   contextReported?: number
   /** A query spanning a compaction cannot be attributed to either side of that boundary. */
@@ -513,7 +566,7 @@ export class ClaudeWire implements AgentWire {
     params: unknown,
     timeoutMs?: number,
     signal?: AbortSignal,
-    _onResult?: (result: unknown) => void,
+    onResult?: (result: unknown) => void,
     context?: PromptContext,
   ): Promise<unknown> {
     if (this.info) throw new ConnectionClosed(this.info)
@@ -533,6 +586,7 @@ export class ClaudeWire implements AgentWire {
             sessionCapabilities: { resume: {}, close: {}, ...(store ? { list: {}, delete: {} } : {}) },
             _meta: { authStatus: {} },
           },
+          _meta: { steering: { supported: true, attachments: true } },
         }
       }
       case 'session/new':
@@ -561,6 +615,8 @@ export class ClaudeWire implements AgentWire {
       }
       case 'session/prompt':
         return this.prompt(params, context)
+      case STEER_METHOD:
+        return this.bounded(this.steer(params, onResult), method, timeoutMs, signal)
       case 'session/set_config_option':
         return this.bounded(this.setOption(params), method, timeoutMs, signal)
       default:
@@ -820,6 +876,7 @@ export class ClaudeWire implements AgentWire {
       warnings: routeWarnings(settings, this.route),
       given: new Set(parsed.data.mcpServers.map(server => server.name)),
       sent: new Map<string, true>(),
+      openAsks: 0,
     })
     this.session = session
     void this.consume(session)
@@ -1046,16 +1103,7 @@ export class ClaudeWire implements AgentWire {
     if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
     const session = this.assertSession(parsed.data.sessionId)
     if (this.turn) throw new RpcError(RPC.internal, 'A turn is already running')
-    const content: unknown[] = []
-    for (const block of parsed.data.prompt) {
-      if (block.type === 'text' && block.text !== undefined) content.push({ type: 'text', text: block.text })
-      else if (block.type === 'image' && block.data && block.mimeType)
-        content.push({ type: 'image', source: { type: 'base64', media_type: block.mimeType, data: block.data } })
-      else if (block.type === 'resource' && block.resource?.text !== undefined)
-        content.push({ type: 'text', text: `<context ref="${block.resource.uri ?? ''}">\n${block.resource.text}\n</context>` })
-      else if (block.type === 'resource_link' && block.uri) content.push({ type: 'text', text: block.uri })
-      else throw new RpcError(RPC.invalidParams, `Claude takes no ${clip(block.type, 64)} content here`)
-    }
+    const content = promptContent(parsed.data.prompt)
     if (!session.prompted) {
       session.prompted = true
       for (const title of session.warnings.splice(0)) this.update(session, { sessionUpdate: 'notice', severity: 'warning', title })
@@ -1067,11 +1115,40 @@ export class ClaudeWire implements AgentWire {
     const uuid = mine && UUID.test(mine) && !session.sent.has(mine) ? mine : randomUUID()
     remember(session.sent, uuid, true)
     const done = new Promise<unknown>((resolve, reject) => {
-      this.turn = { uuid, messageId: mine, resolve, reject, cancelled: false }
+      this.turn = { uuid, uuids: new Set([uuid]), messageId: mine, resolve, reject, cancelled: false }
     })
     done.catch(() => {})
     session.inbox.push({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, uuid })
     return done
+  }
+
+  /**
+   * Adds a message to the running turn, as `claude-agent-acp` does: `priority: 'now'` interrupts the current model cycle
+   * to take it, except while a permission or question waits on the person (`priority: 'later'`), where `now` would abort
+   * the open callback in the SDK. When no turn is running, returns `promptRequired` without pushing input.
+   */
+  private steer(params: unknown, onResult?: (result: unknown) => void): Promise<unknown> {
+    const parsed = steerParams.safeParse(params)
+    if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
+    const session = this.assertSession(parsed.data.sessionId)
+    const content = promptContent(parsed.data.prompt)
+    const turn = this.turn
+    if (!turn || turn.cancelled) return Promise.resolve({ outcome: 'promptRequired' })
+    const uuid = randomUUID()
+    remember(session.sent, uuid, true)
+    turn.uuids.add(uuid)
+    ;(turn.pendingSteers ??= new Set()).add(uuid)
+    turn.ended = undefined
+    const answer = { outcome: 'injected' as const }
+    onResult?.(answer)
+    session.inbox.push({
+      type: 'user',
+      message: { role: 'user', content },
+      parent_tool_use_id: null,
+      uuid,
+      priority: session.openAsks > 0 ? 'later' : 'now',
+    })
+    return Promise.resolve(answer)
   }
 
   private interrupted(turn: Turn): void {
@@ -1380,36 +1457,52 @@ export class ClaudeWire implements AgentWire {
 
   private onResult(session: Session, message: Record<string, unknown>): void {
     const turn = this.turn
-    const owner = typeof message.user_message_uuid === 'string' || Array.isArray(message.user_message_uuids)
-    const ours =
-      turn !== undefined
-      && (!owner
-        || message.user_message_uuid === turn.uuid
-        || (Array.isArray(message.user_message_uuids) && message.user_message_uuids.includes(turn.uuid)))
+    const consumed = Array.isArray(message.user_message_uuids)
+      ? message.user_message_uuids.filter((id): id is string => typeof id === 'string')
+      : typeof message.user_message_uuid === 'string'
+        ? [message.user_message_uuid]
+        : []
+    const owner = consumed.length > 0
+    const ours = turn !== undefined && (!owner || consumed.some(id => turn.uuids.has(id)))
     if (!ours || !turn) {
       // A turn Claude Code started on its own: its cost is real, and only its usage is reported.
       void this.reportUsage(session, message)
       return
     }
+    turn.usage = addClaudeTokens(turn.usage, readTurnTokens(message.usage))
     if (turn.cancelled && !turn.interrupted) {
       turn.ended = message
       return
+    }
+    if (!turn.cancelled && turn.pendingSteers?.size) {
+      let answeredSteer = false
+      for (const id of consumed) {
+        if (turn.pendingSteers.delete(id)) answeredSteer = true
+      }
+      if (owner ? turn.pendingSteers.size > 0 || !answeredSteer : true) {
+        // An interrupted pre-steer cycle's diagnostic error does not fail the steered cycle ahead; unstamped CLIs settle at `idle`.
+        if (turn.errorKind !== 'authentication_failed') turn.errorKind = undefined
+        if (!owner) {
+          turn.ended =
+            message.is_error === true && !turn.ended
+              ? { ...message, subtype: 'success', is_error: false, stop_reason: 'end_turn' }
+              : message
+        }
+        return
+      }
+      turn.ended = undefined
     }
     void this.settle(turn, message)
   }
 
   /** What the turn used: its tokens for the answer, the context in use and the session's cost as an update. */
-  private async reportUsage(session: Session, message: Record<string, unknown>, turnId?: string): Promise<TurnTokens | undefined> {
-    const read = resultUsage.safeParse(message.usage)
-    const tokens: TurnTokens | undefined = read.success
-      ? {
-          // Claude's input leaves out the cache reads and writes it counts beside it (`inputExcludesCache`).
-          inputTokens: read.data.input_tokens,
-          outputTokens: read.data.output_tokens,
-          ...(read.data.cache_read_input_tokens != null ? { cachedReadTokens: read.data.cache_read_input_tokens } : {}),
-          ...(read.data.cache_creation_input_tokens != null ? { cachedWriteTokens: read.data.cache_creation_input_tokens } : {}),
-        }
-      : undefined
+  private async reportUsage(
+    session: Session,
+    message: Record<string, unknown>,
+    turnId?: string,
+    accumulated?: TurnTokens,
+  ): Promise<TurnTokens | undefined> {
+    const tokens = accumulated ?? readTurnTokens(message.usage)
     const generation = session.contextGeneration
     const readNumber = (session.contextReads = (session.contextReads ?? 0) + 1)
     const sample = await this.withTimeout(session.query.getContextUsage(), CONTEXT_TIMEOUT_MS).catch(() => undefined)
@@ -1437,7 +1530,7 @@ export class ClaudeWire implements AgentWire {
     if (this.turn !== turn) return
     this.turn = undefined
     const session = this.session
-    const usage = session ? await this.reportUsage(session, message, turn.messageId) : undefined
+    const usage = session ? await this.reportUsage(session, message, turn.messageId, turn.usage) : turn.usage
     const withUsage = usage ? { usage } : {}
     // A cancel, or a choice that stops the turn (keep planning), ends it as cancelled, as on the adapter.
     if (turn.cancelled || turn.stopped) return turn.resolve({ stopReason: 'cancelled', ...withUsage })
@@ -1629,6 +1722,7 @@ export class ClaudeWire implements AgentWire {
     return async (request: Record<string, unknown>, options: { signal: AbortSignal }): Promise<Record<string, unknown>> => {
       if (this.session !== session || request.mode === 'url') return { action: 'cancel' }
       const schema = isRecord(request.requestedSchema) ? request.requestedSchema : {}
+      session.openAsks++
       try {
         const answer = await this.handlers.request(
           ELICITATION_METHOD,
@@ -1645,6 +1739,8 @@ export class ClaudeWire implements AgentWire {
         return { action: answer.action === 'decline' ? 'decline' : 'cancel' }
       } catch {
         return { action: 'cancel' }
+      } finally {
+        session.openAsks--
       }
     }
   }
@@ -1654,11 +1750,14 @@ export class ClaudeWire implements AgentWire {
     const questions = askedQuestions(input)
     if (!questions) return { behavior: 'deny', message: 'AskUserQuestion called with no valid questions.' }
     let answer: unknown
+    session.openAsks++
     try {
       answer = await this.handlers.request(ELICITATION_METHOD, questionForm(questions, owner, toolCallId), `ask-${toolCallId}`)
     } catch {
       if (signal.aborted) throw new Error('Tool use aborted')
       return { behavior: 'deny', message: 'Could not present the question to the user.' }
+    } finally {
+      session.openAsks--
     }
     if (signal.aborted) throw new Error('Tool use aborted')
     const updatedInput = answeredInput(answer, input, questions)
@@ -1717,6 +1816,7 @@ export class ClaudeWire implements AgentWire {
       ...(blocked && !facts.locations?.some(item => item.path === blocked) ? [{ path: blocked }] : []),
     ]
     let answer: unknown
+    session.openAsks++
     try {
       answer = await this.handlers.request(
         'session/request_permission',
@@ -1738,6 +1838,8 @@ export class ClaudeWire implements AgentWire {
       )
     } catch {
       return refused()
+    } finally {
+      session.openAsks--
     }
     if (context.signal.aborted) return refused('The user cancelled this prompt.')
     const outcome = isRecord(answer) && isRecord(answer.outcome) ? answer.outcome : {}
