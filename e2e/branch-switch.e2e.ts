@@ -14,6 +14,14 @@ import { layersInWindow, noHorizontalOverflow, openPanelTab, openSession, phoneS
 const OUT = 'test-results/branch-switch'
 const LONG = 'fix/studio-sidebar-history-scroll'
 
+function pauseRequest() {
+  let release!: () => void
+  const waiting = new Promise<void>(resolve => {
+    release = resolve
+  })
+  return { waiting, release }
+}
+
 /** Every place a branch name is drawn stays on one line, whatever the width. */
 async function oneLine(page: Page): Promise<number> {
   return page.evaluate(() => {
@@ -304,15 +312,49 @@ describe('the branch chip', () => {
       await tree.waitFor()
       await page.waitForTimeout(300)
       await page.screenshot({ path: `${OUT}/session-after--1440--light.png` })
-      // Back by the keyboard alone: a search, ↓ to the row, Enter; the open tree follows.
-      await header.click()
-      await page.getByRole('searchbox', { name: '搜索分支' }).fill('history')
-      await page.getByRole('menu', { name: '分支' }).getByRole('menuitemradio', { name: LONG }).waitFor()
-      await page.keyboard.press('ArrowDown')
-      await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('role'))).toBe('menuitemradio')
-      await page.keyboard.press('Enter')
-      await expect.poll(() => git('branch', '--show-current').trim()).toBe(LONG)
-      await expect.poll(() => header.textContent()).toBe(LONG)
+      const isListing = (url: URL) => url.pathname.endsWith('/branches')
+      const heldListings = Array.from({ length: 2 }, () => ({
+        captured: pauseRequest(),
+        response: pauseRequest(),
+      }))
+      let read = 0
+      await page.route(
+        isListing,
+        async route => {
+          const hold = heldListings[read++]!
+          const response = await route.fetch()
+          hold.captured.release()
+          await hold.response.waiting
+          await route.fulfill({ response }).catch(() => {})
+        },
+        { times: heldListings.length },
+      )
+      try {
+        // Switch back from the cached menu while its refresh is held.
+        await header.click()
+        await heldListings[0]!.captured.waiting
+        await page.getByRole('searchbox', { name: '搜索分支' }).fill('history')
+        const branch = list.getByRole('menuitemradio', { name: LONG })
+        await branch.waitFor()
+        expect(await branch.getAttribute('aria-checked')).toBe('false')
+        await page.keyboard.press('ArrowDown')
+        await expect.poll(() => branch.evaluate(element => element === document.activeElement)).toBe(true)
+        await page.keyboard.press('Enter')
+        await expect.poll(() => git('branch', '--show-current').trim()).toBe(LONG)
+        await expect.poll(() => header.textContent()).toBe(LONG)
+
+        // A response read before switching back cannot roll back the next menu's cache.
+        const previousListing = page.waitForResponse(response => isListing(new URL(response.url())) && response.ok())
+        heldListings[0]!.response.release()
+        await (await previousListing).finished()
+        await header.click()
+        await heldListings[1]!.captured.waiting
+        await branch.waitFor()
+        expect(await branch.getAttribute('aria-checked')).toBe('true')
+        await page.keyboard.press('Escape')
+      } finally {
+        for (const hold of heldListings) hold.response.release()
+      }
       await tree.waitFor({ state: 'detached' })
 
       const notice = page.locator('.branch-list-notice')

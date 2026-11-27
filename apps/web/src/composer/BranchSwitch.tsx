@@ -23,7 +23,7 @@ import { api, ApiError, errorMessage, isUncertain, newRequestId } from '../core/
 import { defineCopy } from '../core/i18n.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
-import { branchRows, choosable, enterChoice, type BranchGroup, type SwitchState } from './branchList.ts'
+import { branchRows, choosable, enterChoice, withCurrentBranch, type BranchGroup, type SwitchState } from './branchList.ts'
 
 const COPY = defineCopy(
   {
@@ -86,7 +86,7 @@ type ListState = { state: 'reading' } | { state: 'ready'; listing: BranchListing
  * Each project's last listing in this page, so the list opens again at its own size at once while it is read anew;
  * without it the layer would show a short 「读取中」 and then jump to the list's height.
  */
-const lastListings = new Map<string, BranchListing>()
+const lastListings = new Map<string, { listing: BranchListing | undefined; readVersion: number }>()
 
 /** A refusal's words: the Host's, with the kind of setting named for a configuration that keeps the switch from running. */
 function refusalText(error: unknown): string {
@@ -185,7 +185,7 @@ function BranchList({
 }) {
   const close = useLayerClose()
   const [list, setList] = useState<ListState>(() => {
-    const kept = lastListings.get(projectId)
+    const kept = lastListings.get(projectId)?.listing
     return kept ? { state: 'ready', listing: kept } : { state: 'reading' }
   })
   const [query, setQuery] = useState('')
@@ -196,18 +196,22 @@ function BranchList({
   useLayoutEffect(() => {
     if (needsAttention) results.current?.scrollTo(0, 0)
   }, [needsAttention])
-  const asked = useRef(0)
   const load = useCallback(() => {
-    const ask = ++asked.current
+    const cached = lastListings.get(projectId) ?? { listing: undefined, readVersion: 0 }
+    lastListings.set(projectId, cached)
+    const readVersion = ++cached.readVersion
+    const current = () => cached.readVersion === readVersion && lastListings.get(projectId) === cached
     void api<BranchListing>(`workspaces/${encodeURIComponent(projectId)}/branches`).then(
       listing => {
-        lastListings.set(projectId, listing)
-        if (asked.current === ask) setList({ state: 'ready', listing })
+        if (!current()) return
+        cached.listing = listing
+        setList({ state: 'ready', listing })
       },
       (cause: unknown) => {
+        if (!current()) return
         // A folder that can no longer be read is not shown as it was.
         lastListings.delete(projectId)
-        if (asked.current === ask) setList({ state: 'failed', message: errorMessage(cause) })
+        setList({ state: 'failed', message: errorMessage(cause) })
       },
     )
   }, [projectId])
@@ -226,7 +230,14 @@ function BranchList({
     }).then(
       result => {
         setSwitching({ state: 'idle' })
-        onLanded(result.branch)
+        // A replay confirms a past switch. Only a fresh answer names the current branch.
+        if (!result.replay) {
+          const listing = lastListings.get(projectId)?.listing
+          // Replace the cache entry so reads that began before this answer cannot restore older HEAD data.
+          if (listing) lastListings.set(projectId, { listing: withCurrentBranch(listing, result.branch), readVersion: 0 })
+          else lastListings.delete(projectId)
+          onLanded(result.branch)
+        }
         close()
       },
       (cause: unknown) => {

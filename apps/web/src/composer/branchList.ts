@@ -35,6 +35,12 @@ export function branchRows(listing: BranchListing, query: string, group: BranchG
   return { rows, hidden: matching.length - rows.length }
 }
 
+/** Keep the cached rows and the Host's ordering after a confirmed switch. */
+export function withCurrentBranch({ branches, detached: _detached, ...listing }: BranchListing, current: string): BranchListing {
+  const others = branches.filter(branch => branch.name !== current).toSorted((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  return { ...listing, current, branches: others.length < branches.length ? [{ name: current }, ...others] : others }
+}
+
 /** What Enter in the search field switches to: the first row it can switch to that is not the current branch. */
 export function enterChoice(rows: readonly BranchRow[]): BranchRow | undefined {
   return rows.find(row => !row.current && !row.checkedOut)

@@ -251,6 +251,9 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 - **比较基线。** 自动基线取 HEAD 与主分支的共同祖先，`files` 可以读取可见会话的自动比较。工作树共享仓库引用，分支建议和通过分支或完整提交号自选基线需要 `all`。返回结果前重新核对权限。
 - **`gh`。** Latch 从不运行 `gh auth token`，不读取、不保存 token，`GH_TOKEN`、`GITHUB_TOKEN` 不在终端环境的白名单里也不进参数。每个命令带 `--repo`（`gh api` 带 `--hostname`），主机只限 `github.com`、`*.ghe.com` 与显示为已登录的 GHES；从不关闭、合并或改写 PR；推送远端仓库以外的 PR 不绑定；没有绑定 PR 的会话不启动 `gh`。
 - **切换分支。** 分支必须是这次读出的列表里的名字；任何作用域的 `filter.*`、仓库的 `core.hooksPath` 或 `hook.*` 都拒绝而不置空（409 `branch-switch-config`，只带种类）。切换期间这个文件夹挡住回合、审批、文件读写与终端；先写 `git.switch` 再运行；从不 `--force`、`--discard-changes`、`--merge`，不贮藏，不覆盖被忽略的文件。切换与列表只由人按下：没有 Agent 工具、插件页面能力或定时任务能到这两条路由。
+
+  网页用上次读取的分支列表保留菜单高度，再读当前列表。Host 确认切换后，网页立即更新该项目的勾选，丢弃此前已发出的列表读取。重放回执只确认原请求的结果，当前分支仍按最新 Host 状态显示。
+
 - **工作树。** 工作树的根不在仓库、数据目录或 Latch 自己的目录里，也不包含它们；Driver 自报的位置被丢弃。新建时另关掉 attributes、LFS 下载与 replace 对象，`safe.bareRepository=explicit`，先 `--no-checkout`、置空 filter 再检出，不运行任何 setup 脚本；遇到名字含 `=` 或换行的 filter 与钩子、仓库的 `includeIf`、LFS 的程序设置或链接的位置就拒绝。`.worktreeinclude` 只复制既匹配又被忽略的文件，不跟随链接、不覆盖。只有带本用户标记的链接工作树算 Latch 的；嵌套仓库或检出的子模块拒绝，Latch 从不删 `modules/`；有未提交的文件时要带与当前一致的计数与摘要。分支从不强制删除：回滚只删这次新建且仍指向起点的分支，`existingBranch` 从不删，移除时只删 Latch 建的 `latch/<名字>`、已合并、人要求了的，经 `update-ref --stdin` 核对后删除。
 
 ### 终端

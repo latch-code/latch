@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { BranchListing } from '@latch/protocol'
-import { branchRows, choosable, enterChoice, matches } from '../src/composer/branchList.ts'
+import { branchRows, choosable, enterChoice, matches, withCurrentBranch } from '../src/composer/branchList.ts'
 
 const listing: BranchListing = {
   current: 'fix/studio-sidebar-history-scroll',
@@ -49,6 +49,21 @@ describe('the branch list', () => {
     expect(enterChoice(branchRows(listing, 'history', 'local').rows)?.name).toBe('release/history-2')
     expect(enterChoice(branchRows(listing, 'main', 'worktrees').rows)).toBeUndefined()
     expect(enterChoice(branchRows(listing, '', 'local').rows)?.name).toBe('feature/One')
+  })
+
+  it('marks a confirmed branch first, keeps other branches, and drops the detached HEAD label', () => {
+    const detached = { detached: 'abcdef1', branches: [...listing.branches, { name: '中文分支' }], more: 3 }
+    expect(withCurrentBranch(detached, '中文分支')).toEqual({
+      current: '中文分支',
+      branches: [
+        { name: '中文分支' },
+        { name: 'feature/One' },
+        { name: 'fix/studio-sidebar-history-scroll' },
+        { name: 'main', checkedOut: true },
+        { name: 'release/history-2' },
+      ],
+      more: 3,
+    })
   })
 
   it('takes no second press while a switch is under way', () => {
