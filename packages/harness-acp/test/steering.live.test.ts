@@ -1,9 +1,12 @@
 import { existsSync, mkdirSync } from 'node:fs'
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
+import { AGENT_PRESETS, type DriverTaskDetail } from '@latch/protocol'
+import type { Bridge, HarnessDriver, HarnessPlugin } from '@latch/sdk'
 import { startFakeModels, type FakeModelRequest, type FakeReply } from '@latch/testkit'
+import { createAcpAgentPlugin, forgetCommandLookups, setCommandSearch } from '../src/index.ts'
 import { agentEnvironment } from '../src/environment.ts'
 import { opencodeProfile } from '../src/profiles/opencode.ts'
 import { clientCapabilities, STEER_METHOD } from '../src/protocol.ts'
@@ -13,10 +16,12 @@ import type { AgentWire, WireHandlers } from '../src/wires/types.ts'
 
 /**
  * Adding to a running turn with the installed `claude` and `opencode`, each on a temporary home and a local fake model:
- * no login, no paid model. Opt-in with the programs' paths.
+ * no login, no paid model. Opt-in with the programs' paths. `agy` has no way to a fake model: its case uses the person's
+ * own login and two short real prompts, opt-in on its own.
  */
 const claude = process.env.LATCH_CLAUDE_DIRECT_BINARY
 const opencode = process.env.LATCH_OPENCODE_GATEWAY_BINARY
+const agy = process.env.LATCH_AGY_BINARY
 
 const cleanups: Array<() => Promise<void> | void> = []
 afterEach(async () => {
@@ -269,4 +274,125 @@ it.skipIf(!opencode)(
     if (!taken) expect(nextTurn.some(request => said(request, late))).toBe(false)
   },
   180_000,
+)
+
+async function activateDriver(plugin: HarnessPlugin): Promise<HarnessDriver> {
+  let driver!: HarnessDriver
+  const disposers: Array<() => void | Promise<void>> = []
+  await plugin.activate({
+    registerHarness: registered => {
+      driver = registered
+    },
+    registerProvider: () => {},
+    registerTool: () => {},
+    registerClientPanel: () => {},
+    registerSkill: () => {},
+    registerTransport: () => {},
+    registerUiPanel: () => {},
+    onDispose: dispose => {
+      disposers.push(dispose)
+    },
+  })
+  cleanups.push(async () => {
+    for (const dispose of disposers.reverse()) await dispose()
+  })
+  return driver
+}
+
+async function detailUntil(bridge: Bridge, sessionId: string, check: (detail: DriverTaskDetail) => boolean, ms: number) {
+  let latest = await bridge.detail(sessionId)
+  await until(() => check(latest), ms).catch(() => {
+    throw new Error(`timed out at ${latest.summary.status}: ${JSON.stringify(latest.messages.map(m => [m.role, m.text.slice(0, 80)]))}`)
+  })
+  return latest
+  async function until(test: () => boolean, limit: number): Promise<void> {
+    const deadline = Date.now() + limit
+    while (!test()) {
+      if (Date.now() > deadline) throw new Error('timed out')
+      await new Promise(resolve => setTimeout(resolve, 50))
+      latest = await bridge.detail(sessionId)
+    }
+  }
+}
+
+it.skipIf(!agy)(
+  'steers a real Antigravity turn with a concurrent session/prompt: it splits there, goes on and counts both parts',
+  async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-agy-steer-')))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const workspace = join(root, 'workspace')
+    const tmpRoot = join(root, 'tmp')
+    await mkdir(workspace, { recursive: true })
+    await mkdir(tmpRoot, { mode: 0o700 })
+    setCommandSearch(() => [dirname(agy!)])
+    forgetCommandLookups()
+    cleanups.push(() => {
+      setCommandSearch(undefined)
+      forgetCommandLookups()
+    })
+    const preset = AGENT_PRESETS.find(item => item.id === 'antigravity')!
+    const driver = await activateDriver(
+      createAcpAgentPlugin(
+        {
+          id: 'antigravity',
+          presetId: 'antigravity',
+          name: 'Antigravity',
+          command: preset.command,
+          args: [...preset.args],
+          env: {},
+          enabled: true,
+        },
+        { cancelGraceMs: 2_000, stopGraceMs: 2_000, restartDelayMs: 0, requestTimeoutMs: 60_000 },
+      ),
+    )
+    const bridge = driver.create({
+      dataDir: join(root, 'data'),
+      workspaceRoot: workspace,
+      tmpRoot,
+      providerId: 'unused',
+      registry: {
+        acquire() {
+          throw new Error('ACP sessions do not lease Host providers')
+        },
+      },
+      readAttachment: async () => {
+        throw new Error('no attachments here')
+      },
+    })
+    cleanups.push(() => bridge.close())
+    await bridge.start()
+    const { launchHash } = await bridge.launchPreview!({ cwd: workspace })
+    const { sessionId } = await bridge.createTask({
+      prompt: 'Write the whole numbers from 1 to 150, one per line, and nothing else. Do not use any tools.',
+      requestId: 'agy-steer-1',
+      cwd: workspace,
+      expectedLaunchHash: launchHash,
+    })
+    // Steer as soon as the count has begun, well before it could end.
+    await detailUntil(bridge, sessionId, detail => detail.steer === true && /\b3\b/u.test(detail.liveText), 120_000)
+    expect(await bridge.steer!(sessionId, 'Stop counting now. Reply with exactly the word KIWI and nothing else.', 'agy-steer-2')).toBe(
+      'injected',
+    )
+    const done = await detailUntil(bridge, sessionId, detail => detail.summary.status !== 'running', 180_000)
+    expect(done.summary.status).toBe('idle')
+    const steered = done.messages.findIndex(message => message.role === 'user' && message.steered)
+    expect(steered).toBeGreaterThan(0)
+    const before = done.messages.slice(0, steered).filter(message => message.role === 'assistant')
+    const after = done.messages.slice(steered + 1).filter(message => message.role === 'assistant')
+    // The turn splits where agy took the addition. The model step under way still writes to its end (1.5.18: the rest
+    // of the count), and the next step answers the addition.
+    expect(before.map(message => message.text).join('')).toMatch(/^\s*1\s*\n\s*2\b/u)
+    expect(before.map(message => message.text).join('')).not.toMatch(/\b150\b/u)
+    expect(
+      after
+        .map(message => message.text)
+        .join('')
+        .trim(),
+    ).toMatch(/KIWI$/u)
+    // 1.5.18 answers the superseded request with no usage; the last answer counts the whole turn.
+    const usage = done.messages.find(message => message.role === 'user' && !message.steered)?.turn?.usage
+    expect(usage?.outputTokens).toBeGreaterThan(0)
+    expect(done.summary.usage).toEqual(usage)
+  },
+  360_000,
 )
