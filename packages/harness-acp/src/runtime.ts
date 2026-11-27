@@ -1039,6 +1039,8 @@ export class AgentRuntime implements Bridge {
   private readonly holds = new Map<string, number>()
   /** Sessions whose agent 核对 is reading: nothing else may reach their process meanwhile. */
   private readonly checking = new Set<string>()
+  /** A new turn must not use the old mode while its replacement is being prepared or applied. */
+  private readonly modeWrites = new Set<string>()
   /** A mode change owns this session through stop, resume and service read-back. */
   private readonly processModeChanges = new Map<string, { value: string; authorize?: () => void }>()
   private readonly launchThinkingChanges = new Map<string, { selected: { model: string; value: string }; authorize?: () => void }>()
@@ -3532,6 +3534,7 @@ export class AgentRuntime implements Bridge {
     try {
       blocks = await this.inputBlocks(run.taskId, live, prompt, attachments)
       await options?.authorize?.()
+      this.assertNotChecking(run.taskId)
     } catch (error) {
       delete this.state.receipts[key]
       this.mark()
@@ -3781,26 +3784,37 @@ export class AgentRuntime implements Bridge {
   async setConfig(sessionId: string, configId: string, value: string, options: SetConfigOptions = {}): Promise<void> {
     // Whether the change request has left for the agent: a refusal before that certainly did not apply.
     const reach = { sent: false }
+    let mode = false
     try {
-      await this.writeConfig(sessionId, configId, value, options, reach)
+      await this.ready()
+      this.assertNotChecking(sessionId)
+      const task = this.task(sessionId)
+      const option = task.config?.find(item => item.id === configId)
+      if (!option) throw new AppError(404, 'config-not-found', '该会话没有这个设置项')
+      mode = this.isModeOption(task, option)
+      if (mode) this.modeWrites.add(sessionId)
+      await this.writeConfig(task, option, value, options, reach, mode)
     } catch (error) {
       if (!reach.sent) throw refusedConfig(error, 'not-sent')
       throw error
+    } finally {
+      if (mode) {
+        this.modeWrites.delete(sessionId)
+        this.scheduleIdle(sessionId)
+      }
     }
   }
 
   private async writeConfig(
-    sessionId: string,
-    configId: string,
+    task: AcpTask,
+    option: SessionConfigOption,
     value: string,
     options: SetConfigOptions,
     reach: { sent: boolean },
+    mode: boolean,
   ): Promise<void> {
-    await this.ready()
-    this.assertNotChecking(sessionId)
-    const task = this.task(sessionId)
-    const option = task.config?.find(item => item.id === configId)
-    if (!option) throw new AppError(404, 'config-not-found', '该会话没有这个设置项')
+    const sessionId = task.summary.id
+    const configId = option.id
     const choice = option.category === 'model' && typeof value === 'string' ? parseModelChoice(value) : undefined
     if (choice) return this.writeRoute(task, option, choice, options, reach)
     if (typeof value !== 'string' || !(option.options.some(item => item.value === value) || this.isCustomModel(task, option, value)))
@@ -3816,12 +3830,11 @@ export class AgentRuntime implements Bridge {
     }
     checkThinking()
     await this.assertLaunch(task.acp.cwd, confirmedOf(task.acp))
-    this.assertNotChecking(sessionId)
-    const mode = this.isModeOption(task, option)
+    this.assertNotChecking(sessionId, mode)
     options.authorize?.()
     if (mode && this.changesProcessMode(task, value)) {
       await this.assertWorkspace(task)
-      this.assertNotChecking(sessionId)
+      this.assertNotChecking(sessionId, mode)
       return this.writeProcessMode(task, value, options, reach)
     }
     if (!mode && option.source === 'launch') {
@@ -3847,7 +3860,7 @@ export class AgentRuntime implements Bridge {
     if (run && !run.sent) throw new AppError(409, 'task-running', '会话正在启动，请稍后再修改设置')
     await this.assertWorkspace(task)
     // Preparation can yield to a config check; reserve the write only while its process is still free.
-    this.assertNotChecking(sessionId)
+    this.assertNotChecking(sessionId, mode)
     this.enter(this.holds, sessionId)
     try {
       options.authorize?.()
@@ -3996,9 +4009,10 @@ export class AgentRuntime implements Bridge {
     }
   }
 
-  private assertNotChecking(sessionId: string): void {
+  private assertNotChecking(sessionId: string, ownsModeWrite = false): void {
     if (
       this.checking.has(sessionId)
+      || (!ownsModeWrite && this.modeWrites.has(sessionId))
       || this.processModeChanges.has(sessionId)
       || this.launchThinkingChanges.has(sessionId)
       || this.routeChanges.has(sessionId)
@@ -4036,7 +4050,7 @@ export class AgentRuntime implements Bridge {
     const id = task.summary.id
     const live = this.lives.get(id)
     if (
-      this.busy(id)
+      this.busy(id, true)
       || task.summary.status === 'running'
       || task.summary.status === 'waiting-approval'
       || [...(live?.children.values() ?? [])].some(child => child.taskId === id && !child.ended)
@@ -7661,7 +7675,7 @@ export class AgentRuntime implements Bridge {
     }
   }
 
-  private busy(key: string): boolean {
+  private busy(key: string, ownsModeWrite = false): boolean {
     if (
       this.runs.has(key)
       || this.attaching.has(key)
@@ -7669,6 +7683,7 @@ export class AgentRuntime implements Bridge {
       || this.spawning.has(key)
       || this.holds.has(key)
       || this.checking.has(key)
+      || (!ownsModeWrite && this.modeWrites.has(key))
       || this.processModeChanges.has(key)
       || this.launchThinkingChanges.has(key)
       || this.routeChanges.has(key)

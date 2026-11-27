@@ -115,6 +115,7 @@ export function QueueDrawer({
   sessionId,
   items,
   canSend,
+  deliveryBlocked,
   canRemove,
   queueControl,
   steerRunId,
@@ -128,6 +129,7 @@ export function QueueDrawer({
   sessionId: string
   items: PromptQueueItem[]
   canSend: boolean
+  deliveryBlocked?: string | undefined
   canRemove: boolean
   queueControl: boolean
   steerRunId?: string | undefined
@@ -307,9 +309,9 @@ export function QueueDrawer({
                       size="xs"
                       variant={canSteer ? 'ghost' : 'primary'}
                       icon={canSteer ? SendGlyph : undefined}
-                      tooltip={canSteer ? COPY.steerHint : undefined}
+                      tooltip={deliveryBlocked ?? (canSteer ? COPY.steerHint : undefined)}
                       loading={busy === itemPath}
-                      disabled={editing || busy !== null}
+                      disabled={!!deliveryBlocked || editing || busy !== null}
                       onClick={() => {
                         void change(itemPath, () =>
                           canSteer

@@ -220,6 +220,8 @@ describe('queued follow-up presentation', () => {
     const live = { running: true, steerRunId: 'run' }
     const active = tray(items, true, live)
     expect(active.match(/>引导</g)).toHaveLength(1)
+    const blocked = new DOMParser().parseFromString(tray(items, true, { ...live, deliveryBlocked: '正在切换权限' }), 'text/html')
+    expect([...blocked.querySelectorAll('button[aria-disabled="true"]')].map(button => button.textContent)).toEqual(['引导'])
     expect(active).toContain('本轮不能接收附件')
     expect(active).toContain('本轮不能接收这条消息')
     expect(active).toContain('aria-label="调整顺序"')

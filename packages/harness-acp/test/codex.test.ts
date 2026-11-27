@@ -1455,10 +1455,18 @@ describe('Codex over its app-server', () => {
     expect(sent(log, 'turn/start').at(-1)!.params).toMatchObject({ approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } })
   })
 
-  it('answers a stop only once Codex reports the interrupted turn ended', async () => {
+  it('waits for Codex to stop and applies a tighter permission to the next turn on the same thread', async () => {
     const t = await computer({ FAKE_CODEX_INTERRUPT_MS: '600' })
     const bridge = await t.open()
-    const id = await start(bridge, t.main, 'sleep until told')
+    const config = [{ configId: 'mode', value: 'agent-full-access' }]
+    const { launchHash } = await bridge.launchPreview!({ cwd: t.main, config })
+    const { sessionId: id } = await bridge.createTask({
+      prompt: 'sleep until told',
+      requestId: rid(),
+      cwd: t.main,
+      config,
+      expectedLaunchHash: launchHash,
+    })
     await vi.waitFor(async () => expect(sent(await t.log(), 'turn/start')).toHaveLength(1), { timeout: 5_000 })
     await bridge.cancel(id)
     let completedFirst = true
@@ -1472,6 +1480,16 @@ describe('Codex over its app-server', () => {
     )
     expect(completedFirst).toBe(true)
     expect(sent(await t.log(), 'turn/interrupt')).toHaveLength(1)
+    await bridge.setConfig!(id, 'mode', 'read-only')
+    await bridge.prompt(id, 'edit', rid())
+    await until(bridge, id, detail => detail.summary.status === 'waiting-approval')
+    const [first, next] = sent(await t.log(), 'turn/start')
+    expect(first?.params).toMatchObject({ approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } })
+    expect(next?.params).toMatchObject({
+      threadId: first!.params!.threadId,
+      approvalPolicy: 'untrusted',
+      sandboxPolicy: { type: 'readOnly', networkAccess: false },
+    })
   })
 
   it('interrupts once when the stop comes before Codex has named the turn', async () => {

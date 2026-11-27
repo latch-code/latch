@@ -294,7 +294,8 @@ export function useSessionController({
   const [configBusy, setConfigBusy] = useState<ReadonlyMap<string, string>>(new Map())
   const configRequests = useRef(new ConfigRequests())
   /** A setting change still on its way, per session. */
-  const configFlights = useRef(new Map<string, Promise<void>>())
+  const configFlights = useRef(new Map<string, Promise<boolean>>())
+  const draftsWaitingForFiles = useRef(new Set<{ sessionId: string | null; permissionFailed: boolean }>())
   const [configFeedback, setConfigFeedback] = useState<ReadonlyMap<string, SessionConfigFeedback>>(new Map())
   const [recoveryProjects, setRecoveryProjects] = useState<ReadonlyMap<string, string>>(new Map())
   const [workspaceChanged, setWorkspaceChanged] = useState<ReadonlySet<string>>(new Set())
@@ -655,8 +656,11 @@ export function useSessionController({
     setProjectRequest(request => request + 1)
   }
   // A setting picked a moment before sending goes first, or the session would refuse it and run the turn on the old one.
-  const settingsLanded = async () => {
-    if (inputId !== null) await configFlights.current.get(inputId)
+  const settingsLanded = async (id: string | null | undefined) => {
+    if (!id) return true
+    if ((await configFlights.current.get(id)) === false) return false
+    // An unknown permission write (or a newer one already under way) still owns this session's choice.
+    return !configRequests.current.get(id)?.permission
   }
   const sendDraft = async (queueForLater = false) => {
     if (creating && creatorBlocked) {
@@ -667,18 +671,27 @@ export function useSessionController({
       submission.setError(heldFileRefs ? COPY.fileRefsAfterTurn : COPY.attachmentsAfterTurn)
       return
     }
-    await settingsLanded()
-    const ids = await attachmentDraft.wait()
-    if (ids && inputId !== null) clearUnverified(inputId)
+    if (!(await settingsLanded(inputId))) return
+    const draft = { sessionId: inputId, permissionFailed: false }
+    draftsWaitingForFiles.current.add(draft)
+    let ids: string[] | undefined
+    try {
+      ids = await attachmentDraft.wait()
+      // A permission change may have started or already failed while the uploads were finishing.
+      if (!ids || !(await settingsLanded(inputId)) || draft.permissionFailed) return
+    } finally {
+      draftsWaitingForFiles.current.delete(draft)
+    }
+    if (inputId !== null) clearUnverified(inputId)
     const followUp =
       inputId === null || !active
         ? undefined
-        : !queueForLater && canSteerDraft(submission.draft, !!ids?.length)
+        : !queueForLater && canSteerDraft(submission.draft, ids.length > 0)
           ? 'steer'
           : canQueue
             ? 'queue'
             : undefined
-    if (ids && (await submission.submit(undefined, undefined, followUp, ids, creating ? [] : mentionChoice.refs, creating))) {
+    if (await submission.submit(undefined, undefined, followUp, ids, creating ? [] : mentionChoice.refs, creating)) {
       attachmentDraft.clear()
       setFileMentions([])
     }
@@ -687,7 +700,7 @@ export function useSessionController({
   const retryDraft = async () => {
     const held = submission.pending
     if (!held || abandoning) return
-    await settingsLanded()
+    if (!(await settingsLanded(held.sessionId))) return
     // A prompt sent again never took the input's attachments or file references, so its delivery leaves them.
     if ((await submission.submit(held)) && fromInput(held)) {
       attachmentDraft.clear()
@@ -706,7 +719,8 @@ export function useSessionController({
     if (held.attachmentIds?.length) {
       if (!listedRetries.current.has(held.requestId)) {
         listedRetries.current.add(held.requestId)
-        await settingsLanded()
+        // The Host already lists this message. Completing its attachment receipt cannot start another turn.
+        if (held.sessionId) await configFlights.current.get(held.sessionId)
         if ((await submission.submit(held)) && fromInput(held)) {
           if (held.sessionId === undefined) {
             newAttachments.clear()
@@ -1220,7 +1234,8 @@ export function useSessionController({
   const setConfig = async (configId: string, value: string) => {
     if (selectedId === null) return
     const id = selectedId
-    const request = configRequests.current.begin(id, configId, value)
+    const permission = current?.config?.find(option => option.id === configId)?.category === 'mode'
+    const request = configRequests.current.begin(id, configId, value, permission)
     if (!request) return
     await sendConfig(id, request, Date.now())
   }
@@ -1233,11 +1248,12 @@ export function useSessionController({
       return next
     })
     clearAction(id)
-    let settled!: () => void
-    const flight = new Promise<void>(resolve => {
+    let settled!: (maySend: boolean) => void
+    const flight = new Promise<boolean>(resolve => {
       settled = resolve
     })
     configFlights.current.set(id, flight)
+    let applied = false
     try {
       await api<unknown>(`tasks/${encodeURIComponent(id)}/config`, {
         method: 'POST',
@@ -1248,6 +1264,7 @@ export function useSessionController({
         },
         timeoutMs: CONFIG_WRITE_TIMEOUT_MS,
       })
+      applied = true
       configRequests.current.settle(id, request)
       await refresh()
     } catch (cause) {
@@ -1269,7 +1286,12 @@ export function useSessionController({
         return next
       })
       if (configFlights.current.get(id) === flight) configFlights.current.delete(id)
-      settled()
+      if (request.permission && !applied) {
+        for (const draft of draftsWaitingForFiles.current) {
+          if (draft.sessionId === id) draft.permissionFailed = true
+        }
+      }
+      settled(applied || !request.permission)
     }
   }
 
@@ -1589,16 +1611,14 @@ export function useSessionController({
       ? undefined
       : retryOfRefused(refusedInput, { draft: submission.draft, attachments: attachmentDraft.items.length })
   const resend = async (prompt: string, teamRequest?: true) => {
-    if (selectedId === null) return
+    if (selectedId === null || !(await settingsLanded(selectedId))) return
     clearUnverified(selectedId)
-    await settingsLanded()
     await submission.send({ prompt, ...(teamRequest ? { teamRequest } : {}) })
   }
   /** A team request gets a turn of its own, including while another turn runs. */
   const sendTeamPrompt = async (prompt: string) => {
-    if (inputId === null) return false
+    if (inputId === null || !(await settingsLanded(inputId))) return false
     clearUnverified(inputId)
-    await settingsLanded()
     return submission.send({ prompt, teamRequest: true }, active && canQueue ? 'queue' : undefined)
   }
   const retryStopped = () => {
@@ -1613,7 +1633,7 @@ export function useSessionController({
     const again = retryOfRefused(refusedInput, { draft: submission.draft, attachments: attachmentDraft.items.length })
     clearHomeRefused(selectedId)
     if (again?.kind === 'draft') void sendDraft()
-    else if (again?.kind === 'prompt') void submission.send({ prompt: again.prompt, ...(again.teamRequest ? { teamRequest: true } : {}) })
+    else if (again?.kind === 'prompt') void resend(again.prompt, again.teamRequest)
   }
   // Rebuilt as text into another session: this one stays to read, and links there.
   const rebuiltInto = summary ? rebuiltFrom(snapshot.tasks, summary.id) : undefined
