@@ -530,7 +530,10 @@ describe('the login command', () => {
     const script = join(directory, 'login.command')
     const source = loginTerminalScript(record, undefined, { inLatch: true })!
     for (const value of [proxy, otherKey, 'uninterpreted-mise-state']) expect(source).not.toContain(value)
-    await writeFile(script, source, { mode: 0o700 })
+    // Let the clean shell try to read the pipe before awk writes its first byte.
+    const delayed = source.replace(/^(  LC_ALL=C \/usr\/bin\/awk[\s\S]+?)( \|\n    \/usr\/bin\/env -i )/mu, '{ /bin/sleep 0.5; $1; }$2')
+    expect(delayed).not.toBe(source)
+    await writeFile(script, delayed, { mode: 0o700 })
     const login = run('/bin/sh', ['-x', script], {
       env: {
         PATH: '/usr/bin:/bin',

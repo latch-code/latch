@@ -369,6 +369,7 @@ export function loginTerminalScript(record: AgentRecord, method?: string, option
     ]
     const env = accountEnvironment(record)
     // Proxy URLs can carry passwords. Pass exports through a pipe, and pass the terminal input separately to the CLI.
+    const end = '#latch-login-environment-ready'
     const writeEnvironment = String.raw`
       BEGIN {
         quote = sprintf("%c", 39)
@@ -385,15 +386,22 @@ export function loginTerminalScript(record: AgentRecord, method?: string, option
           }
           printf "%s%s\n", value, quote
         }
-        print "latch_login_env_ready=1"
+        print "${end}"
       }
     `
     const readEnvironment = [
-      'if ! . /dev/fd/3 || [ "$latch_login_env_ready" != 1 ]; then',
+      'read_login_environment() {',
+      // On macOS, sh can source an empty /dev/fd path before its producer writes. Read the existing pipe to EOF.
+      '  exports=$(/bin/cat <&3) || return 1',
+      `  case "$exports" in ${shellQuote(end)}|*${shellQuote(`\n${end}`)}) ;; *) return 1 ;; esac`,
+      '  eval "$exports" 2>/dev/null',
+      '}',
+      'if ! read_login_environment; then',
       `  printf '%s\\n' ${shellQuote('无法读取登录终端环境，未运行登录命令。')} >&2`,
       '  exit 1',
       'fi',
       'exec 3<&-',
+      'unset exports',
       ...Object.entries(env).map(([key, path]) => `export ${key}=${shellQuote(path)}`),
       'exec "$@"',
     ].join('\n')
