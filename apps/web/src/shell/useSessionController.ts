@@ -170,6 +170,25 @@ const COPY = defineCopy(
   },
 )
 
+/** A row can keep its unread callback after the conversation it was rendered beside has closed. */
+function useReadMarkers(deviceId: string, tasks: TaskSummary[], selected: Pick<TaskSummary, 'id' | 'updatedAt'> | undefined) {
+  const seenKey = `latch.seen.${location.origin}.${deviceId}`
+  const [seen, setSeen] = useState<SeenState>(() => readSeen(seenKey) ?? emptySeen())
+  const id = selected?.id
+  const updatedAt = selected?.updatedAt
+  useEffect(() => {
+    if (id !== undefined && updatedAt !== undefined) setSeen(previous => markSeen(previous, id, updatedAt))
+  }, [id, updatedAt])
+  useEffect(() => {
+    setSeen(previous => (Object.keys(previous.seen).length > tasks.length + 50 ? pruneSeen(previous, tasks) : previous))
+  }, [tasks])
+  useEffect(() => {
+    writeSeen(seenKey, seen)
+  }, [seenKey, seen])
+  const unread = useCallback((task: TaskSummary) => isUnread(task, seen), [seen])
+  return { seen, seenKey, setSeen, unread }
+}
+
 /** Session IDs are never empty. */
 const NEW_SESSION_DRAFT = ''
 /** Text only a device that may read every kind of data sees: an agent's session, or one an assistant ran. */
@@ -807,7 +826,7 @@ export function useSessionController({
     }
   }
   // A Host that records no run times: the time since this page saw the run start, or nothing.
-  const pageRunElapsed = useRunClock(snapshot.tasks, selectedId)
+  const fallbackElapsed = useRunClock(snapshot.tasks, current?.runStartedAt === undefined ? selectedId : null)
   const sendingView = sendingMessageFor(snapshot, submission.sendingMessage, selectedId, current)
   useEffect(() => {
     const timer = setInterval(() => {
@@ -835,18 +854,7 @@ export function useSessionController({
   }, [harness.removed])
 
   // Per-device read markers; the selected session is read while it is open.
-  const seenKey = `latch.seen.${location.origin}.${snapshot.device.id}`
-  const [seen, setSeen] = useState<SeenState>(() => readSeen(seenKey) ?? emptySeen())
-  useEffect(() => {
-    if (current) setSeen(previous => markSeen(previous, current.summary.id, current.summary.updatedAt))
-  }, [current?.summary.id, current?.summary.updatedAt])
-  useEffect(() => {
-    setSeen(previous => (Object.keys(previous.seen).length > snapshot.tasks.length + 50 ? pruneSeen(previous, snapshot.tasks) : previous))
-  }, [snapshot.tasks])
-  useEffect(() => {
-    writeSeen(seenKey, seen)
-  }, [seenKey, seen])
-  const unread = useCallback((task: TaskSummary) => isUnread(task, seen), [seen])
+  const { seen, seenKey, setSeen, unread } = useReadMarkers(snapshot.device.id, snapshot.tasks, current?.summary)
 
   useEffect(() => {
     // The list can pass over a settlement: a newer run is not the one being stopped.
@@ -1454,8 +1462,16 @@ export function useSessionController({
           },
         }
   })
-  const sessionMenu = useCallback(
-    (task: TaskSummary): MenuSection[] =>
+  const pinTask = useStableCallback((task: TaskSummary) => {
+    void patchTask(task, { pinned: !task.pinned })
+  })
+  const archiveTask = useStableCallback((task: TaskSummary) => {
+    void patchTask(task, { archived: !task.archived }).then(done => {
+      if (done) setArchivedLast(task.archived ? null : task)
+    })
+  })
+  const rowMenu = useCallback(
+    (task: TaskSummary, clearing?: boolean): MenuSection[] =>
       sessionMenuSections(
         task,
         {
@@ -1470,15 +1486,11 @@ export function useSessionController({
           },
           marks: boardMarks(task),
           item: itemActions(task),
-          pin: () => {
-            void patchTask(task, { pinned: !task.pinned })
-          },
+          pin: () => pinTask(task),
           ...(!isPersonalChat(snapshot, task)
             ? {
                 archive: () => {
-                  void patchTask(task, { archived: !task.archived }).then(done => {
-                    if (done) setArchivedLast(task.archived ? null : task)
-                  })
+                  archiveTask(task)
                 },
               }
             : {}),
@@ -1503,7 +1515,7 @@ export function useSessionController({
                 },
               }
             : {}),
-          ...(clearable && task.id === selectedId
+          ...(clearing !== undefined
             ? {
                 clear: () => {
                   armClear(!clearing)
@@ -1541,11 +1553,16 @@ export function useSessionController({
       snapshot.items,
       itemActions,
       saveSessionProject,
-      clearable,
-      selectedId,
-      clearing,
+      pinTask,
+      archiveTask,
       armClear,
     ],
+  )
+
+  const selectedClearing = clearable ? clearing : undefined
+  const sessionMenu = useCallback(
+    (task: TaskSummary) => rowMenu(task, task.id === selectedId ? selectedClearing : undefined),
+    [rowMenu, selectedId, selectedClearing],
   )
 
   // Creator sessions use a dedicated Host folder and do not depend on the ordinary default folder.
@@ -1726,7 +1743,6 @@ export function useSessionController({
           },
         }
       : undefined
-  const fallbackElapsed = current?.runStartedAt === undefined ? pageRunElapsed : undefined
   const providerName = useCallback((id: string) => findProvider(catalog, id)?.name, [catalog])
   // Resending the latest turn is the same as typing its prompt again: only where this device may send now.
   const retry =
@@ -1950,7 +1966,6 @@ export function useSessionController({
         setProjectNotice(undefined)
       },
     },
-    pageRunElapsed,
     sendingView,
     seenKey,
     seen,
@@ -1989,6 +2004,10 @@ export function useSessionController({
     exportTask,
     manageable,
     copyTask,
+    rowMenu,
+    selectedClearing,
+    pinTask,
+    archiveTask,
     sessionMenu,
     clearable,
     armClear,

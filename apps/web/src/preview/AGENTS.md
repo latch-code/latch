@@ -11,6 +11,7 @@ The UI in this directory is browser code. `office-frame.ts` is a separate IIFE e
 - Retain page/fit/10–400% zoom only for the same file identity. External DOCX links become internal anchors before rendering; only a trusted click and the parent's active user gesture may open the finite mapped URL. Scripted clicks never open links.
 - Spreadsheet formulas are never evaluated. Display cached values, show when a cache is missing, preserve 1900/1904 dates, and mark truncation. CSV remains text, including strings that start with a formula character.
 - PDF range requests convert the library's exclusive end to the parent's inclusive end (`end - 1`). Only the fixed CMap/font directories and validated resource basenames may be fetched. Disable XFA, WASM, automatic fetch and streaming; do not invoke PDF scripting APIs.
+- Keep PDF module failures inside the preview.
 - Terminate workers, cancel loads/renders, close ports and revoke renderer resources on file/version changes and unmount. Product chrome uses UI tokens; PDF selection geometry and Office content preserve document-space typography.
 - Session and workspace file contexts have separate tabs; workspace requests always name the selected Harness. Tree reads are lazy, cancellable and paged; never follow a symlink or save bytes/handles in browser storage.
 - File history uses recorded tool diffs and frozen root IDs. Keep both sides' line numbers and unknown previous-content warnings; split review expands the desktop pane, while phones stay unified.
@@ -18,4 +19,6 @@ The UI in this directory is browser code. `office-frame.ts` is a separate IIFE e
 - HTML DOMParser stays in `html-frame.ts`. Static mode strips document scripts; `html-script` is only offered by a desktop shell that declares network restrictions. Never pass a secret, session state or another file to either variant. `html-canvas.ts`: frame-only.
 - Dependency versions live in the catalog. Preserve distributed licenses and corresponding-source links in `public/licenses/` and its `README.txt`.
 
-Focused coverage: `apps/web/test/preview-data.test.ts` and `e2e/preview-renderers.e2e.ts`. The latter uses only a temporary-port Vite fixture, generated documents and the real browser; it does not connect a real Host.
+Retain unsaved edits and unanswered saves when evicting clean tabs.
+
+Focused coverage: `apps/web/test/preview-data.test.ts` and `e2e/preview-renderers.e2e.ts` (temporary Vite fixture).

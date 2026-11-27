@@ -8,6 +8,7 @@ let flags = args.prefix { $0.hasPrefix("--") }
 let settled = flags.contains("--settled")
 let vertical = flags.contains("--vertical")
 let queueActions = flags.contains("--queue-actions")
+let inverted = flags.contains("--invert")
 let words = Array(args.dropFirst(flags.count))
 let url = URL(fileURLWithPath: CommandLine.arguments[1])
 let screenshot = CIImage(contentsOf: url)!
@@ -25,7 +26,8 @@ let context = CIContext(options: [.workingColorSpace: NSNull()])
 let request = VNRecognizeTextRequest()
 request.recognitionLevel = .accurate
 request.recognitionLanguages = ["zh-Hans", "en-US"]
-let reader = queueActions ? VNImageRequestHandler(ciImage: image) : VNImageRequestHandler(url: url)
+let recognitionImage = inverted ? image.applyingFilter("CIColorInvert") : image
+let reader = queueActions || inverted ? VNImageRequestHandler(ciImage: recognitionImage) : VNImageRequestHandler(url: url)
 try reader.perform([request])
 var positions = Dictionary(uniqueKeysWithValues: words.map { ($0, [Double]()) })
 for observation in request.results ?? [] {

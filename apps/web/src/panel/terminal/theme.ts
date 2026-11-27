@@ -7,7 +7,11 @@ const token = (style: CSSStyleDeclaration, name: string) => style.getPropertyVal
  * A colour token as `#rrggbb`. The computed value of a custom property keeps functions such as light-dark() (the
  * palettes' canvas), which xterm cannot parse, so the colour is read back from a probe that paints with it.
  */
-function color(element: Element, name: string): string {
+function color(element: Element, style: CSSStyleDeclaration, name: string): string {
+  const raw = token(style, name)
+  if (/^#[0-9a-f]{6}$/iu.test(raw)) return raw
+  const pair = /^light-dark\(\s*(#[0-9a-f]{6})\s*,\s*(#[0-9a-f]{6})\s*\)$/iu.exec(raw)
+  if (pair && (style.colorScheme === 'light' || style.colorScheme === 'dark')) return style.colorScheme === 'dark' ? pair[2]! : pair[1]!
   const probe = document.createElement('span')
   probe.hidden = true
   probe.style.color = `var(${name})`
@@ -15,12 +19,17 @@ function color(element: Element, name: string): string {
   const resolved = getComputedStyle(probe).color
   probe.remove()
   const channels = /^rgba?\((\d+),\s*(\d+),\s*(\d+)/u.exec(resolved)
-  if (!channels) return token(getComputedStyle(element), name)
+  if (!channels) return raw
   return `#${channels
     .slice(1)
     .map(channel => Number(channel).toString(16).padStart(2, '0'))
     .join('')}`
 }
+
+export const terminalFont = (style: CSSStyleDeclaration) => ({
+  fontFamily: token(style, '--mono'),
+  fontSize: Number.parseFloat(token(style, '--fs-term')) || 12.5,
+})
 
 /** Whether a resolved `#rrggbb` is dark: the canvas of the dark theme. */
 function dark(hex: string): boolean {
@@ -37,14 +46,13 @@ function dark(hex: string): boolean {
  */
 export function terminalTheme(element: Element): ITheme & { fontFamily: string; fontSize: number } {
   const style = getComputedStyle(element)
-  const canvas = color(element, '--canvas')
+  const canvas = color(element, style, '--canvas')
   const ink = token(style, '--ink')
   const night = dark(canvas)
   const black = night ? token(style, '--faint') : ink
   const white = night ? ink : token(style, '--faint')
   return {
-    fontFamily: token(style, '--mono'),
-    fontSize: Number.parseFloat(token(style, '--fs-term')) || 12.5,
+    ...terminalFont(style),
     background: canvas,
     foreground: ink,
     cursor: ink,

@@ -1,5 +1,8 @@
+// @vitest-environment happy-dom
 import { createHash } from 'node:crypto'
-import { describe, expect, it } from 'vitest'
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
+import { describe, expect, it, vi } from 'vitest'
 import type { Handoff, HandoffSummary, Message, TaskSummary } from '@latch/protocol'
 import { ApiError, ApiTimeoutError } from '../src/core/api.ts'
 import { setLocale } from '../src/core/i18n.ts'
@@ -28,6 +31,9 @@ import {
   type HandoffForm,
   type MaterialChip,
 } from '../src/handoffs/model.ts'
+import { useSessionHandoffs } from '../src/handoffs/useHandoffs.ts'
+
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const messages: Message[] = [
   { id: 'u1', role: 'user', text: '比较三家汇率接口', fileRefs: [{ root: 'default', path: 'notes/brief.md' }] },
@@ -220,6 +226,68 @@ describe('handoff states', () => {
     returnScope: 'summary',
     updatedAt: '2026-11-12T10:00:00.000Z',
     ...patch,
+  })
+
+  it('cancels obsolete reads and resumes once the conversation returns', async () => {
+    const reads: Array<{ signal: AbortSignal; finish: (reply: Response) => void }> = []
+    vi.stubGlobal(
+      'fetch',
+      (_target: string, init: RequestInit) =>
+        new Promise<Response>(finish => {
+          reads.push({ signal: init.signal!, finish })
+        }),
+    )
+    const host = document.body.appendChild(document.createElement('div'))
+    const root = createRoot(host)
+    function View({ enabled, summaries }: { enabled: boolean; summaries: HandoffSummary[] }) {
+      const { handoffs } = useSessionHandoffs({ sessionId: 'source', enabled, summaries })
+      return createElement('div', null, handoffs.map(handoff => handoff.requirements).join())
+    }
+    const draw = (enabled: boolean, ...summaries: HandoffSummary[]) =>
+      act(async () => root.render(createElement(View, { enabled, summaries })))
+    const finish = (index: number, requirements: string) =>
+      act(async () =>
+        reads[index]!.finish(
+          Response.json({
+            handoffs: [
+              {
+                ...summary({}),
+                requestId: 'request-1',
+                target: { kind: 'session', sessionId: 'target' },
+                locale: 'zh-CN',
+                createdAt: '2026-11-12T10:00:00.000Z',
+                requirements,
+              } satisfies Handoff,
+            ],
+          }),
+        ),
+      )
+    try {
+      await draw(true, summary({}))
+      await draw(true, summary({ updatedAt: '2026-11-12T10:01:00.000Z' }))
+      expect(reads.map(read => read.signal.aborted)).toEqual([true, false])
+      await draw(true)
+      expect(reads[1]!.signal.aborted).toBe(true)
+      await finish(0, 'Gone')
+      await finish(1, 'Also gone')
+      expect(host.textContent).toBe('')
+
+      const current = summary({ updatedAt: '2026-11-12T10:02:00.000Z' })
+      await draw(true, current)
+      await draw(false, current)
+      expect(reads[2]!.signal.aborted).toBe(true)
+      expect(reads).toHaveLength(3)
+      await finish(2, 'Hidden')
+      expect(host.textContent).toBe('')
+
+      await draw(true, current)
+      await finish(3, 'Current')
+      expect(host.textContent).toBe('Current')
+    } finally {
+      act(() => root.unmount())
+      host.remove()
+      vi.unstubAllGlobals()
+    }
   })
 
   it('waits for a return only when one was agreed and the target’s turn has ended', () => {

@@ -417,7 +417,7 @@ const FAILURE: Partial<Record<string, NativeRelayTest['failure']>> = {
  * compiled list has nodes) with its state and a ⋯ menu, and 添加转发服务. Only this Mac's local administrator changes anything;
  * other admin devices read the list.
  */
-export function RelaySettings({ access, hostId }: { access: DeviceAccess; hostId: string }) {
+export function RelaySettings({ access, hostId, active: showing }: { access: DeviceAccess; hostId: string; active: boolean }) {
   useLocale()
   const manage = access.admin && access.local
   const [info, setInfo] = useState<NativeLinkInfo | null>(null)
@@ -445,6 +445,7 @@ export function RelaySettings({ access, hostId }: { access: DeviceAccess; hostId
   const refresh = useRef<{ info: () => void; files: (force?: boolean) => void } | null>(null)
   const writing = useRef(false)
   useEffect(() => {
+    if (!showing) return undefined
     const controller = new AbortController()
     const { signal } = controller
     let infoLoading = 0
@@ -497,8 +498,7 @@ export function RelaySettings({ access, hostId }: { access: DeviceAccess; hostId
         if (force || !filesLoading) void loadFiles()
       },
     }
-    void loadInfo()
-    void loadFiles()
+    updateVisible()
     const timer = window.setInterval(updateVisibleInfo, 5000)
     const filesTimer = manage ? window.setInterval(updateVisibleFiles, 30_000) : undefined
     window.addEventListener('focus', updateVisible)
@@ -511,8 +511,8 @@ export function RelaySettings({ access, hostId }: { access: DeviceAccess; hostId
       controller.abort()
       refresh.current = null
     }
-  }, [manage])
-  const watchingFiles = manage && adding && !candidate && !progress
+  }, [showing, manage])
+  const watchingFiles = showing && manage && adding && !candidate && !progress
   useEffect(() => {
     if (!watchingFiles) return
     const look = () => {

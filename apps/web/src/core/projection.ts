@@ -6,14 +6,50 @@ export interface ProjectionTicket {
 }
 
 type DetailSource = 'http' | 'stream'
+type ReadDetail = { detail: TaskDetail; source: DetailSource }
 const RECENT_DETAILS = 8
+const RECENT_DETAIL_BUDGET = 4 * 1024 * 1024
+const MAX_DETAIL_SLOTS = 20_000
+
+/** Estimate retained text and structure without serializing the full history or traversing unbounded tool payloads. */
+function detailCost(detail: TaskDetail): number {
+  const pending: unknown[] = [detail]
+  let cost = 0
+  let slots = 0
+  while (pending.length > 0) {
+    const value = pending.pop()
+    if (typeof value === 'string') cost += value.length * 2
+    if (value && typeof value === 'object') {
+      cost += 32
+      if (Array.isArray(value)) {
+        slots += value.length
+        cost += value.length * 16
+        if (slots > MAX_DETAIL_SLOTS || cost > RECENT_DETAIL_BUDGET) return Infinity
+        for (const item of value) pending.push(item)
+      } else {
+        for (const key in value) {
+          if (!Object.hasOwn(value, key)) continue
+          slots++
+          cost += key.length * 2 + 16
+          if (slots > MAX_DETAIL_SLOTS || cost > RECENT_DETAIL_BUDGET) return Infinity
+          const entry: unknown = Reflect.get(value, key)
+          pending.push(entry)
+        }
+      }
+    }
+    if (cost > RECENT_DETAIL_BUDGET) return Infinity
+  }
+  return cost
+}
 
 /** Selection generations and Host-scoped revisions protect async replacements. */
 export class ProjectionGuard {
   private generation = 0
   private revision = -1
   private sourcePriority = 0
-  private readonly recent = new Map<string, { detail: TaskDetail; source: DetailSource }>()
+  private displayed: ReadDetail | null = null
+  private readonly recent = new Map<string, ReadDetail & { cost: number }>()
+  private recentCost = 0
   instanceId: string | null = null
   sessionId: string | null = null
 
@@ -27,11 +63,13 @@ export class ProjectionGuard {
     this.generation++
     this.revision = -1
     this.sourcePriority = 0
+    this.displayed = null
   }
   /** A change of authority (or sign-out) also invalidates every cached detail. */
   invalidate(): void {
     this.reset()
     this.recent.clear()
+    this.recentCost = 0
   }
   bind(instanceId: string | null): void {
     if (this.instanceId === instanceId) return
@@ -40,28 +78,49 @@ export class ProjectionGuard {
   }
   select(sessionId: string | null, warm = false): TaskDetail | null {
     if (this.sessionId === sessionId) return null
+    const previous = this.displayed
+    const saved = warm && sessionId !== null ? this.recent.get(sessionId) : undefined
+    if (saved) this.dropRecent(saved.detail.summary.id)
     this.sessionId = sessionId
     this.reset()
-    const saved = warm && sessionId !== null ? this.recent.get(sessionId) : undefined
+    // Once per switch, never on a text delta: the detail in use can be larger than the warm cache.
+    if (previous) {
+      const cost = detailCost(previous.detail)
+      if (cost <= RECENT_DETAIL_BUDGET) {
+        this.recent.set(previous.detail.summary.id, { ...previous, cost })
+        this.recentCost += cost
+        this.trimRecent(RECENT_DETAILS)
+      }
+    }
     return saved && this.accept(this.capture(), saved.detail, saved.source) ? saved.detail : null
   }
-  forget(sessionId: string): void {
+  private dropRecent(sessionId: string): void {
+    const entry = this.recent.get(sessionId)
+    if (entry) this.recentCost -= entry.cost
     this.recent.delete(sessionId)
+  }
+  private trimRecent(count: number): void {
+    while (this.recent.size > count || this.recentCost > RECENT_DETAIL_BUDGET) this.dropRecent(this.recent.keys().next().value!)
+  }
+  forget(sessionId: string): void {
+    this.dropRecent(sessionId)
     if (this.sessionId === sessionId) this.reset()
   }
   /** A complete, current listing can end the selected detail's visibility. Return its ID for the view to close. */
   retain(snapshot: Pick<AppSnapshot, 'tasks' | 'tasksComplete' | 'revision'>): string | null {
     if (!snapshot.tasksComplete || snapshot.revision === undefined) return null
     const listed = new Set(snapshot.tasks.map(task => task.id))
-    let removed: string | null = null
+    const current = this.sessionId
+    const selected = this.displayed ?? (current === null ? undefined : this.recent.get(current))
     for (const [id, { detail }] of this.recent) {
       // The snapshot request may have started before the session's first streamed detail.
       if (listed.has(id) || (detail.sync?.revision ?? -1) > snapshot.revision) continue
-      this.recent.delete(id)
-      if (id === this.sessionId) removed = id
+      this.dropRecent(id)
     }
-    if (removed !== null) this.select(null)
-    return removed
+    if (current === null || !selected || listed.has(current) || (selected.detail.sync?.revision ?? -1) > snapshot.revision) return null
+    this.sessionId = null
+    this.reset()
+    return current
   }
   accept(ticket: ProjectionTicket, detail: TaskDetail, source: DetailSource = 'http'): boolean {
     if (!this.current(ticket) || detail.summary.id !== this.sessionId) return false
@@ -74,9 +133,9 @@ export class ProjectionGuard {
       this.revision = detail.sync.revision
       this.sourcePriority = priority
     } else if (this.revision >= 0) return false
-    this.recent.delete(detail.summary.id)
-    this.recent.set(detail.summary.id, { detail, source })
-    if (this.recent.size > RECENT_DETAILS) this.recent.delete(this.recent.keys().next().value!)
+    this.dropRecent(detail.summary.id)
+    this.displayed = { detail, source }
+    this.trimRecent(RECENT_DETAILS - 1)
     return true
   }
 }

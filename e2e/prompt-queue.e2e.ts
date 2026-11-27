@@ -107,6 +107,8 @@ describe('queued follow-ups', () => {
         await enqueue(second)
         await expect.poll(() => tray.locator('.prompt-queue-title').textContent()).toBe('接下来 · 2')
         await expect.poll(async () => (await owner.json<TaskDetail>(path)).queue?.length).toBe(2)
+        // Leave the send button's hover preview before returning to the draft and editing a queue row.
+        await page.mouse.move(0, 0)
         await input.fill(`仍在输入的草稿 ${width}`)
         await tray.getByRole('button', { name: '编辑', exact: true }).first().click()
         const composer = page.locator('form.composer:visible'),

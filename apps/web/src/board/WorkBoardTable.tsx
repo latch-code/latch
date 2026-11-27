@@ -334,7 +334,7 @@ export function WorkBoardTable({
   /** 审阅 a proposal; absent where this device may not decide. */
   onReview?: ((proposal: TodoProposal) => void) | undefined
 }) {
-  useTicker(shell.connection === 'connected' ? 'minute' : false)
+  useTicker(shell.board && !shell.settings && shell.connection === 'connected' ? 'minute' : false)
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set())
   return (
     <div className="work-board-table">

@@ -22,8 +22,8 @@ const COPY = defineCopy(
 )
 
 /** Composition root: theme, authority from the Host, then enrollment or the workspace shell. */
-export function App() {
-  const harness = useHarness()
+export function App({ startAtHome = false }: { startAtHome?: boolean } = {}) {
+  const harness = useHarness(startAtHome)
   const preferences = usePreferences()
   const { theme, motion, density, palette, accent, floatingMaterial } = preferences
   const locale = useLocale()

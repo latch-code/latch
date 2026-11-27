@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { chromium, type Browser, type Page } from '@playwright/test'
+import { chromium, type Browser, type Page, type Request } from '@playwright/test'
 import { expect, it } from 'vitest'
 import type { AppSnapshot, TaskDetail, WorkItem, WorkItemAnswer, WorkItemStartAnswer, WorkspaceInfo } from '@latch/protocol'
 import { latchEnv } from '@latch/host/env'
@@ -313,8 +313,26 @@ it('opens a 待办 inside 看板 with its sessions, starts another, brings a rep
 
     await row(page, loose).getByRole('button').click()
     await page.locator('main.workspace:not([inert]) .user-bubble').getByText('echo 单独的会话', { exact: true }).waitFor()
+    const hiddenReads: string[] = []
+    const recordRead = (request: Request) => {
+      const path = new URL(request.url()).pathname
+      if (request.method() === 'GET' && path.startsWith(`/link/api/work/items/${todo.id}`)) hiddenReads.push(path)
+    }
+    const baseRevision = (await itemOf(todo.id)).revision
+    page.on('request', recordRead)
+    const refreshed = page.waitForResponse(async response => {
+      if (new URL(response.url()).pathname !== '/link/api/snapshot' || !response.ok()) return false
+      const snapshot = (await response.json()) as AppSnapshot
+      return snapshot.items?.some(item => item.id === todo.id && item.revision > baseRevision) === true
+    })
+    await owner.json(`work/items/${todo.id}`, { method: 'PATCH', body: { baseRevision, note: '离开待办期间的改动' } })
+    await refreshed
+    await settleShell(page)
+    expect(hiddenReads).toEqual([])
     await page.getByRole('button', { name: '返回待办', exact: true }).click()
     await outside.waitFor()
+    await expect.poll(() => hiddenReads).toContain(`/link/api/work/items/${todo.id}`)
+    page.off('request', recordRead)
 
     // Done: 重新打开 in the head, no 再开一个.
     const showBoard = () => itemPage(page).getByRole('button', { name: '看板', exact: true }).click()

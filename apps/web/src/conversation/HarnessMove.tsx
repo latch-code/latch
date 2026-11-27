@@ -283,7 +283,7 @@ export function MoveCarry({
       alive.current = false
     }
   }, [sourceId])
-  const turns = detail?.messages.filter(message => message.role === 'user').length ?? 0
+  const turns = detail?.messages.filter(message => message.role === 'user' && !message.steered).length ?? 0
   const chars = detail?.messages.reduce((sum, message) => sum + message.text.length, 0) ?? 0
   const lastId = detail?.messages.at(-1)?.id
   async function write() {

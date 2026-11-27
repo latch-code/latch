@@ -185,7 +185,6 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
     const testHost = await startTestHost({
       demo: false,
       sessionFolders: true,
-      uiDir: resolve('dist/web'),
       detectPreset: preset => (preset.id === 'codex' ? { found: true, path: join(bin, 'codex-acp') } : { found: false }),
       loginPrograms: name => (existsSync(join(bin, name)) ? join(bin, name) : undefined),
       commandDirectories: () => [bin],

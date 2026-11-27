@@ -4,18 +4,16 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/core/` | API、流与同步、阅读位置、身份与权限、确认、桌面桥 |
+| `src/core/` | API、流同步、阅读位置、身份权限、确认、桌面桥 |
 | `src/shell/` | 壳层、路由、会话控制；概要分列团队成员与子 Agent |
 | `src/agents/` | 我的 Agent：总览按 Host 记录开原聊天、运行或工作电脑 |
 | `src/handoffs/` | 交接 |
 | `src/markdown/` | 流式 Markdown |
 | `src/` | `main.tsx` → `App.tsx` → `shell/AppShell.tsx` |
-| `index.html`、`public/`、`vite.config.ts` | 页面、资源、开发代理 |
+| `index.html`、`public/`、`vite.config.ts` | 入口、恢复页、开发代理 |
 | `test/` | `pnpm test --project @latch/web` |
 
 browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
-
-不变量：
 
 - `src/core/` 仅导入本目录、`react` 与 `@latch/protocol`；禁用布局组件（lint）。
 - 正文滚动仅 `useReadingPosition` 写，消息和工具行用 `data-message-id`。工具输出到边缘后滚动正文。刻度列独立滚动，定位（含待办回合）走 `reveal`。缓存见 STREAMING。
@@ -34,11 +32,11 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 - 项目菜单仅新会话、编辑。摘要列目录和已知分支，悬停看路径；会话冻结目录；可见时每 30 秒按 Host 的 `checkedOut` 分类（GIT-REVIEW）。
 - 桌面文件夹签名操作需 `folders.protocolVersion === 1`（`test/shell-folders.test.ts`）。
 - 电脑菜单按来源识别当前电脑，经 `computers.switchTo` 切换。
-- 聊天页头点头像、名字或箭头打开资料，入口与页签见 DESIGN。
+- 聊天页头打开资料。头像最后释放时回收 URL。恢复页见 DESIGN。
 
-Host 计量，窗口增量同口径。本会话引用整删、不补全。仅消息用 `motionAllowed` 淡入。
+Host 计量，窗口同口径。本会话引用整删、不补全。仅消息用 `motionAllowed` 淡入。
 
-设置留草稿与授权读回，准备沿用原号；终端保活，摘录可移除，暂存留回执。ProfileLayer 跨断点保留实例、草稿、焦点、未知写，撤权卸载。
+设置留草稿、授权读回与准备原号；终端按需挂载保活，可删摘录，暂存留回执。ProfileLayer 跨断点留实例、草稿、焦点、未知写，撤权卸载。
 
 - 队列「引导」按本轮能力追加，附件绑原上传。编辑回填原文、附件，留草稿。菜单列键位，未知写用原号。裸 @ 无预选，滚动续查。私聊选一人发文字，回执定位原轮。粘贴纯文本替换选区。
 - Slash 透传，区分未报与空表；技能只补全，pi 限开头。替换 `/btw` 须确认；PR 摘录只追加草稿。

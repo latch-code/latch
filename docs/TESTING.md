@@ -325,12 +325,16 @@ Live 模式只在 `LatchScreens`（仅模拟器）中编译，用进程内存里
 
 | 开关 | 用例 | 选项 |
 | --- | --- | --- |
+| `LATCH_DESKTOP_IDLE_BENCH=1` | `e2e/desktop-idle.e2e.ts` | macOS Electron 使用临时 Host 和长会话。全屏显示 20 分钟、隐藏 15 分钟、恢复显示 10 分钟。每 30 秒记录进程内存与 CPU、自然 JS 堆、DOM 节点与监听器数、请求次数，以及窗口和网页可见状态。核对 renderer PID 与页面时间原点，最后点侧边面板验证响应，再强制 GC 一次区分保留内存与待回收垃圾。`LATCH_DESKTOP_IDLE_PHASE_MS` 可设三个逗号分隔的阶段时长，`LATCH_DESKTOP_IDLE_SAMPLE_MS` 可设采样间隔，均以毫秒计。`LATCH_E2E_UI_DIR` 指定构建，`LATCH_DESKTOP_IDLE_LABEL` 区分 `test-results/desktop-idle/` 下的记录。 |
 | `VITE_LATCH_UI_PERF=1` | `packages/ui/test/v9-performance.test.tsx` | `VITE_LATCH_UI_PERF_ENFORCE=1` 时超过每帧 8ms 的脚本预算即失败；只量脚本，不量合成 |
+| `LATCH_WORKSPACE_SOAK=1` | `e2e/workspace-stability.e2e.ts` | 同一窗口反复经过对话、看板、Agent、搜索、市场和当前设备的设置分类；校验草稿、Host 消息列表与页面身份，记录每轮回收后的堆、节点和监听器。 |
+| `LATCH_LARGE_HISTORY_BENCH=1` | `e2e/workspace-stability.e2e.ts` | 记录 8 轮长回复的定时读取与详情流量，再验证输入。另往返切换超出详情缓存预算的会话，强制 GC 后用弱引用核对浏览器至多保留一个旧详情的消息数组。`LATCH_E2E_UI_DIR` 和 `LATCH_SPACE_LABEL` 选构建与结果名。 |
+| `LATCH_SPACE_BENCH=1` | `e2e/space-performance.e2e.ts` | 在 60 行 Code 侧栏旁输入，并在两个已打开的聊天间切换。记录点击到选中和正文出现的帧、快照和详情请求数、关闭状态的菜单项数，以及按键到下一帧的耗时。`LATCH_E2E_UI_DIR` 指定构建，`LATCH_SPACE_LABEL` 区分 `test-results/space-performance/` 下的读数。`LATCH_SPACE_SOAK=1` 连续切换 112 次，每隔 32 次在同一空间强制 GC，记录 JS 堆、节点和监听器数。 |
 | `LATCH_STREAM_BENCH=1` | `e2e/stream-performance.e2e.ts` | `LATCH_STREAM_LABEL`（结果名）、`LATCH_STREAM_TRANSPORT=full`（去掉增量协商作对照）、`LATCH_STREAM_PROFILE=1`、`LATCH_STREAM_QUIET=1`、`LATCH_STREAM_MOTION=1`、`LATCH_STREAM_ENFORCE_BUDGET=1`（每帧脚本不超过 8ms 且没有 50ms 长任务）；`LATCH_E2E_UI_DIR` 可对照旧构建 |
 | `LATCH_BACKDROP_BENCH=1` | `e2e/backdrop-performance.e2e.ts` | 起始页背景在 1440×900 与 2560×1440（2 倍像素）下的帧间隔、绘制节拍、每帧脚本、长任务、渲染与 GPU 主线程每秒耗时、每帧画布调用，以及打字时按键到下一帧；`LATCH_BACKDROP_LABEL`、`LATCH_BACKDROP_SECONDS`、`LATCH_BACKDROP_THROTTLE=4`（CPU 降速）、`LATCH_BACKDROP_ONLY`；`LATCH_E2E_UI_DIR` 可对照旧构建。`LATCH_BACKDROP_SHOTS=<仓库外目录>` 改为截两种样式在三宽、深浅下的起始页，桌面另截会话与外观设置 |
 | `LATCH_NATIVE_CADENCE=1` | `apps/host/test/native-swift.test.ts -t "large-history publication cadence"` | 不含 SwiftUI 渲染 |
 
-堆内存没有强制 GC，不能用来宣称泄漏。
+流式性能报告在浏览器自然 GC 下采样堆内存。判断泄漏还需核对对象保留路径。
 
 大文档预览的首屏预算在 `e2e/document-performance.e2e.ts`（先 `pnpm build`）：输入由 `performanceDocumentFixtures`（`packages/testkit/src/documents.ts`）在内存里生成，不提交第三方文档；预算固定，超出即失败，不按机器或当次结果放宽。没有所有者参照（`LATCH_DOCUMENT_REFERENCE_DIR`，原应用导出的逐页 PNG）时报告标为 `unverified-original-application-fidelity`：自己的截图不是保真验收。
 
@@ -491,6 +495,7 @@ testkit 另导出：`FAKE_ACP_AGENT`、`FAKE_CODEX_APP_SERVER`、`FAKE_PI_AGENT`
 
 - **先构建。** e2e 在同一个 Vitest 进程内用 `startTestHost` 启动 Host，页面来自 `dist/web`（或 `LATCH_E2E_UI_DIR`）；改客户端后先 `pnpm build`，否则测的是旧页面。
 - `e2e/host-state.e2e.ts` 在临时目录替换两版页面，检查旧窗口的设置模块返回 404 后可手动载入新版，并恢复普通文字草稿。`e2e/settings-loading.e2e.ts` 验证同版网络恢复及组件渲染出错后的就地重试。
+- `e2e/page-recovery.e2e.ts` 用生产构建复现入口资源丢失、React 根异常与 PDF 模块请求失败，检查手动重载、配对及草稿恢复，并验证 PDF 可在原预览内重试。
 - **浏览器。** 默认用 `playwright install chromium` 装的 Chromium，设置 `LATCH_BROWSER_PATH` 时用该路径的 Chrome，都无头运行。WebKit 用例（`webkit.e2e.ts`、`preview-security-webkit.e2e.ts`，以及 `slash.e2e.ts` 等的 WebKit 分支）需要 `pnpm --filter @latch/e2e exec playwright install webkit`。
 - **设备。** 每台设备是独立的 BrowserContext，用 `enrollBrowser` 经真实连接页登记。手机经 HTTPS 与邀请的登记只在 `enrollment.e2e.ts`。需要本机桌面端或另一台设备时，用 `testHost.enroll({ listener: 'unix' })` 等 API 设备直接驱动 Host。
 - **走正常入口。** 用例经页面的真实控件到达状态：按 Host ID 打开会话用 `helpers/layout.ts` 的 `openSession`，不用 CSS 隐藏、直接调用内部函数或手填 DTO 代替。
@@ -561,6 +566,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 - 临时的 `--latch-user-data` 让凭据文件不碰用户的桌面端数据，`--use-mock-keychain` 让 safeStorage 不使用登录钥匙串。Electron 的环境来自 `desktopShellEnvironment`，不带 Host 设置、模型密钥与调试开关。
 - Electron 由 Playwright 的 `_electron.launch()` 启动；它从自己的安装位置解析 `electron` 包，只能找到根 `node_modules` 中的那一份，所以根 `package.json` 保留 `electron`（CI 的 `pnpm exec install-electron` 也用它）。
 - 原生对话框、`shell.openExternal`、`shell.showItemInFolder`、通知与剪贴板在主进程中替换成记录调用的内存实现：不打开真实面板，不投递系统通知，不读写系统剪贴板。系统剪贴板、原生粘贴快捷键、通知授权与专注模式要实机验证。
+- `desktop-recovery.e2e.ts` 终止隔离 Electron 的真实渲染进程，核对原窗口、原分区重新连上同一 Host，且读回已保存的草稿。主文档加载失败时检查原生重载，连续退出时检查「回到起始页」保留未确认的请求且没有重发。两台临时 Host 的用例覆盖主窗口内的远端视图、单独打开的远端窗口及恢复后的设备撤销。
 - `desktop-first-use.e2e.ts` 用临时的假 DeepSeek Harness 验证首次打开模型面板会添加已安装的预设，读到模型与思考档位，重开复用同一份结果。
 - 模型服务用例阻断外部 DNS，只用本地假服务；终端用例用假终端组件，登录用例运行夹具里的假 `codex login`，从不运行真实 CLI 的登录。
 - 拒绝导航的检查放在用例最后：Playwright 把被拒绝的导航一直当作进行中，所以由主进程触发并监听 `will-frame-navigate`，之后只读取地址、不再驱动页面。

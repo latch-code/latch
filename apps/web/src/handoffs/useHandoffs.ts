@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isFileMetadata, type FileMention, type Handoff, type HandoffCreate, type HandoffList, type HandoffSummary } from '@latch/protocol'
 import { api, fileBytes } from '../core/api.ts'
 import { defineCopy } from '../core/i18n.ts'
@@ -35,33 +35,37 @@ export function useSessionHandoffs({
   summaries: readonly HandoffSummary[] | undefined
   enabled: boolean
 }) {
-  const signature =
-    sessionId === null
-      ? ''
-      : (summaries ?? [])
-          .filter(item => item.sourceSessionId === sessionId || item.targetSessionId === sessionId)
-          .map(item => `${item.id}:${item.status}:${item.updatedAt}`)
-          .join('|')
+  const signature = useMemo(
+    () =>
+      !enabled || sessionId === null
+        ? ''
+        : (summaries ?? [])
+            .filter(item => item.sourceSessionId === sessionId || item.targetSessionId === sessionId)
+            .map(item => `${item.id}:${item.status}:${item.updatedAt}`)
+            .join('|'),
+    [enabled, sessionId, summaries],
+  )
   const [held, setHeld] = useState<{ sessionId: string; handoffs: Handoff[] } | null>(null)
-  const asked = useRef(0)
+  const request = useRef<AbortController | null>(null)
   const reload = useCallback(async () => {
     if (!sessionId || !enabled) return
-    const ask = ++asked.current
+    request.current?.abort()
+    const controller = new AbortController()
+    request.current = controller
     try {
-      const { handoffs } = await api<HandoffList>(`handoffs?sessionId=${encodeURIComponent(sessionId)}`)
-      if (asked.current === ask) setHeld({ sessionId, handoffs })
+      const { handoffs } = await api<HandoffList>(`handoffs?sessionId=${encodeURIComponent(sessionId)}`, { signal: controller.signal })
+      if (!controller.signal.aborted) setHeld({ sessionId, handoffs })
     } catch {
       // The list stays as it was; the next change in the snapshot asks again.
+    } finally {
+      if (request.current === controller) request.current = null
     }
   }, [sessionId, enabled])
   useEffect(() => {
-    if (!sessionId || !enabled) return
-    if (!signature) {
-      setHeld({ sessionId, handoffs: [] })
-      return
-    }
-    void reload()
-  }, [sessionId, enabled, signature, reload])
+    if (!enabled || !signature) setHeld(null)
+    else void reload()
+    return () => request.current?.abort()
+  }, [enabled, signature, reload])
   /** Puts the Host's answer in the list at once, before the snapshot says it changed. */
   const merge = useCallback(
     (handoff: Handoff) => {
@@ -73,7 +77,7 @@ export function useSessionHandoffs({
     },
     [sessionId],
   )
-  const handoffs = held && held.sessionId === sessionId ? held.handoffs : []
+  const handoffs = enabled && held?.sessionId === sessionId ? held.handoffs : []
   return { handoffs, reload, merge }
 }
 

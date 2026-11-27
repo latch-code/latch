@@ -602,6 +602,7 @@ export function SettingsPage({
                           key={`${snapshot.host.hostId}:${access.admin && access.local}`}
                           hostId={snapshot.host.hostId}
                           access={access}
+                          active={active === 'relays'}
                         />
                       )}
                       {panel === 'data' && <DataSettings />}

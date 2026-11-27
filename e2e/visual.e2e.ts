@@ -47,7 +47,7 @@ async function useSystemLanguage(page: Page, locale: 'en' | 'zh-CN'): Promise<vo
     Object.defineProperty(navigator, 'languages', { configurable: true, get: () => [language] })
     window.dispatchEvent(new Event('languagechange'))
   }, locale)
-  await expect.poll(() => page.locator('html').getAttribute('lang')).toBe(locale)
+  await page.locator(`html[lang="${locale}"]`).waitFor({ state: 'attached' })
 }
 
 const PROVIDER = 'visual-model'
@@ -562,6 +562,8 @@ describe('visual capture of the real product', () => {
       plugins: [visualPlugin],
       providerId: PROVIDER,
       presenceMode: 'manual',
+      // A saved service is probed through the Host. Fail DNS locally before opening any connection.
+      egressLookup: (_hostname, _options, done) => done(Object.assign(new Error('ENOTFOUND'), { code: 'ENOTFOUND' }), []),
       // The Host's clock (credentials, enrollments, device activity) stands still at the page clock's instant.
       now: () => VISUAL_TIME,
       // The times recorded on runs and messages follow the scripted clock above.
@@ -1576,6 +1578,8 @@ describe('visual capture of the real product', () => {
       await openDetails(target, viewport)
       if (viewport.name === 'desktop') {
         // The column's edge toward the paper resizes it: its line under a held hover, and with keyboard focus.
+        await connected(target)
+        await target.getByText('这台设备没有联网', { exact: true }).waitFor({ state: 'hidden' })
         const edge = target.getByRole('separator', { name: '调整侧边面板宽度', exact: true })
         await reachable(edge)
         let release = await forceState(target, '.inspector-resize', ['hover'])
@@ -1900,6 +1904,7 @@ describe('visual capture of the real product', () => {
       ] as const) {
         await openSection(settings, section)
         await ready.waitFor()
+        if (surface === 'settings-providers') await settings.getByText('连不上', { exact: true }).waitFor()
         await noHorizontalOverflow(target, settings)
         await recorder.capture(target, viewport, surface, section)
         const top = () => (viewport.name === 'phone' ? settings.locator('.settings-level[data-state="top"]') : settings)
@@ -2059,44 +2064,47 @@ describe('visual capture of the real product', () => {
 
   // ---- The primitives -----------------------------------------------------------------------------------------
 
-  it('captures the gallery of the design system primitives at each viewport', async () => {
-    const gallery = await serveGallery()
-    try {
-      for (const viewport of VISUAL_VIEWPORTS) {
-        const context = await visualContext(browser, viewport)
-        try {
-          const target = await context.newPage()
-          await target.goto(gallery.url)
-          const main = target.getByRole('main', { name: '@latch/ui' })
-          await main.waitFor()
-          await forceGalleryStates(target)
-          // Samples that open as they mount (a disclosure, the reason under a row of tiles) have finished moving.
-          await settleMotion(target)
-          // Capture each section within the viewport. A single phone gallery exceeds Chromium's texture limit;
-          // captureBeyondViewport can also drop touch emulation, so every section must fit before it is captured.
-          const sections = main.locator('.gallery-header, .gallery-section')
-          for (const section of await sections.all()) {
-            const name = (await section.getAttribute('aria-label')) ?? 'overview'
-            const before = await section.boundingBox()
-            expect(before).not.toBeNull()
-            await target.setViewportSize({ width: viewport.width, height: Math.max(viewport.height, Math.ceil(before!.height) + 32) })
-            await section.scrollIntoViewIfNeeded()
-            const box = await section.boundingBox()
-            expect(box && box.height <= (target.viewportSize()?.height ?? 0)).toBe(true)
-            const switchTrack = await target
-              .getByRole('switch')
-              .first()
-              .evaluate(element => getComputedStyle(element, '::before').width)
-            expect(switchTrack).toBe(viewport.touch ? '44px' : '34px')
-            await recorder.capture(target, viewport, `ui-gallery-${name}`, `design system: ${name}`, section)
-          }
-        } finally {
-          await context.close()
+  describe('gallery of the design system primitives', () => {
+    let gallery: Awaited<ReturnType<typeof serveGallery>>
+    beforeAll(async () => {
+      gallery = await serveGallery()
+    })
+    afterAll(async () => {
+      await gallery?.close()
+    })
+
+    it.each(VISUAL_VIEWPORTS)('captures each group at $name width', async viewport => {
+      const context = await visualContext(browser, viewport)
+      try {
+        const target = await context.newPage()
+        await target.goto(gallery.url)
+        const main = target.getByRole('main', { name: '@latch/ui' })
+        await main.waitFor()
+        await forceGalleryStates(target)
+        // Samples that open as they mount (a disclosure, the reason under a row of tiles) have finished moving.
+        await settleMotion(target)
+        // Capture each section within the viewport. A single phone gallery exceeds Chromium's texture limit;
+        // captureBeyondViewport can also drop touch emulation, so every section must fit before it is captured.
+        const sections = main.locator('.gallery-header, .gallery-section')
+        for (const section of await sections.all()) {
+          const name = (await section.getAttribute('aria-label')) ?? 'overview'
+          const before = await section.boundingBox()
+          expect(before).not.toBeNull()
+          await target.setViewportSize({ width: viewport.width, height: Math.max(viewport.height, Math.ceil(before!.height) + 32) })
+          await section.scrollIntoViewIfNeeded()
+          const box = await section.boundingBox()
+          expect(box && box.height <= (target.viewportSize()?.height ?? 0)).toBe(true)
+          const switchTrack = await target
+            .getByRole('switch')
+            .first()
+            .evaluate(element => getComputedStyle(element, '::before').width)
+          expect(switchTrack).toBe(viewport.touch ? '44px' : '34px')
+          await recorder.capture(target, viewport, `ui-gallery-${name}`, `design system: ${name}`, section)
         }
+      } finally {
+        await context.close()
       }
-    } finally {
-      await gallery.close()
-    }
+    })
   })
 
   // ---- Stability ----------------------------------------------------------------------------------------------
@@ -2125,6 +2133,9 @@ describe('visual capture of the real product', () => {
     ]
     for (const [surface, drive] of again) {
       await drive()
+      await connected(target)
+      // A page rebuilt while this Host is running deliberately shows the older-Host banner.
+      expect(await target.getByText(`${HOST_NAME} 上的 Latch 还是旧版本`, { exact: true }).count()).toBe(0)
       await settleMotion(target)
       for (const theme of ['light', 'dark'] as const) {
         await target.emulateMedia({ colorScheme: theme })

@@ -60,15 +60,26 @@ export function editDraft(sessionId: string, key: string): EditDraft | undefined
 
 export function setEditDraft(sessionId: string, key: string, draft: EditDraft | undefined): void {
   const tabs = drafts.get(sessionId) ?? new Map<string, EditDraft>()
+  const previous = tabs.get(key)
   if (draft) tabs.set(key, draft)
   else if (!tabs.delete(key)) return
   else if (tabs.size === 0) drafts.delete(sessionId)
   if (tabs.size) drafts.set(sessionId, tabs)
-  changed()
+  // The leave guard only displays the transition into or out of unsaved edits.
+  if (!!(previous && unsaved(previous)) !== !!(draft && unsaved(draft))) changed()
 }
 
 /** Text that would be lost: changed, sent without an answer, or held in a conflict. */
-export const unsaved = (draft: EditDraft) => draft.state.phase !== 'editing' || draft.state.draft !== draft.text
+export const unsaved = (draft: EditDraft) => draft.state.phase !== 'editing' || draft.state.draft !== (draft.state.base?.text ?? draft.text)
+
+/** A session evicted from the tab history no longer has an editor to restore. Keep any unanswered save or unsaved text. */
+export function retainOpenEditors(sessions: ReadonlySet<string>): void {
+  for (const [sessionId, tabs] of drafts) {
+    if (sessions.has(sessionId) || pending?.sessionId === sessionId) continue
+    for (const [key, draft] of tabs) if (!unsaved(draft)) tabs.delete(key)
+    if (tabs.size === 0) drafts.delete(sessionId)
+  }
+}
 
 export function hasUnsaved(sessionId?: string): boolean {
   const sessions = sessionId === undefined ? [...drafts.values()] : [drafts.get(sessionId) ?? new Map<string, EditDraft>()]

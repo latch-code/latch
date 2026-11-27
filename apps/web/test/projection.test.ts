@@ -116,6 +116,43 @@ describe('authoritative stream projection', () => {
     expect(guard.select('A', true)).toBeNull()
   })
 
+  it('accepts very large details, keeps their visibility checks, and fetches them cold when selected again', () => {
+    const guard = new ProjectionGuard()
+    guard.bind('host')
+    const long = detail('large-text', 8)
+    long.messages = [{ id: 'reply', role: 'assistant', text: 'a'.repeat(3 * 1024 * 1024) }]
+    const nested = detail('large-tool', 9)
+    nested.messages = [
+      { id: 'tool', role: 'tool', text: '', tool: { actions: Array.from({ length: 24_000 }, () => ({ kind: 'read', path: 'file.txt' })) } },
+    ]
+    for (const large of [long, nested]) {
+      expect(guard.select(large.summary.id, true)).toBeNull()
+      expect(guard.accept(guard.capture(), large, 'stream')).toBe(true)
+      guard.select('other')
+      expect(guard.select(large.summary.id, true) === null).toBe(true)
+      const selected = guard.capture()
+      expect(guard.accept(selected, large)).toBe(true)
+      expect(guard.retain({ tasks: [], tasksComplete: true, revision: large.sync!.revision })).toBe(large.summary.id)
+      expect(guard.current(selected)).toBe(false)
+      expect(guard.select(large.summary.id, true)).toBeNull()
+    }
+  })
+
+  it('keeps recent details within a shared budget and releases the oldest warm entry first', () => {
+    const guard = new ProjectionGuard()
+    guard.bind('host')
+    const first = detail('first', 1)
+    const second = detail('second', 2)
+    for (const large of [first, second]) {
+      large.messages = [{ id: 'reply', role: 'assistant', text: large.summary.id[0]!.repeat(1_200_000) }]
+      guard.select(large.summary.id)
+      expect(guard.accept(guard.capture(), large)).toBe(true)
+    }
+    guard.select('other')
+    expect(guard.select('first', true) === null).toBe(true)
+    expect(guard.select('second', true)).toBe(second)
+  })
+
   it('rejects older revisions, old Host instances and old selection generations, including A → B → A', () => {
     const guard = new ProjectionGuard()
     guard.bind('host')

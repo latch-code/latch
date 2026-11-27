@@ -142,12 +142,12 @@ export function roundOfReturn(team: TeamSummary, messageId: string): { round: Te
  * A member's reply to one round, in its own session: the last words after that round's message (its `requestId`; the
  * start's is the session's first message) and before the next message to it.
  */
-export function replyOf(messages: readonly Pick<Message, 'role' | 'text' | 'requestId'>[], requestId?: string): string {
-  const start = requestId
-    ? messages.findIndex(message => message.role === 'user' && message.requestId === requestId)
-    : messages.findIndex(message => message.role === 'user')
+export function replyOf(messages: readonly Pick<Message, 'role' | 'text' | 'requestId' | 'steered'>[], requestId?: string): string {
+  const start = messages.findIndex(
+    message => message.role === 'user' && !message.steered && (!requestId || message.requestId === requestId),
+  )
   if (start < 0) return ''
-  const next = messages.findIndex((message, index) => index > start && message.role === 'user')
+  const next = messages.findIndex((message, index) => index > start && message.role === 'user' && !message.steered)
   const turn = messages.slice(start + 1, next < 0 ? undefined : next)
   return turn.findLast(message => message.role === 'assistant' && message.text.trim())?.text ?? ''
 }

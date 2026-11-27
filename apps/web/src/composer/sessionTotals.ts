@@ -1,5 +1,4 @@
 import type { HarnessInfo, TaskDetail, TaskSummary, TokenUsage, UsageReport } from '@latch/protocol'
-import { turnsOf } from '../conversation.ts'
 import { parseDuration } from '../core/hostClock.ts'
 import { currencyAmount, formatDuration, tokenLines } from '../format.ts'
 import { harnessName } from '../core/harnessName.ts'
@@ -76,13 +75,16 @@ export function sessionTotals(input: {
       text: cost.amount > 0 && cost.amount < 0.01 ? '<$0.01' : currencyAmount(cost.amount, cost.currency),
       reporter: name,
     }
-  const timed = (own ? turnsOf(own.messages) : []).flatMap(turn => {
-    const active = parseDuration(turn.user?.turn?.activeMs)
-    return active === undefined || turn.user?.turn?.endedAt === undefined ? [] : [active]
-  })
-  if (timed.length > 0) {
-    const ms = timed.reduce((sum, value) => sum + value, 0)
-    totals.time = { ms, turns: timed.length, text: [formatDuration(ms), TOTALS_COPY.turns(timed.length)].filter(Boolean).join(' · ') }
+  let ms = 0
+  let turns = 0
+  for (const message of own?.messages ?? []) {
+    if (message.role !== 'user' || message.steered || message.turn?.endedAt === undefined) continue
+    const active = parseDuration(message.turn.activeMs)
+    if (active !== undefined) {
+      ms += active
+      turns++
+    }
   }
+  if (turns > 0) totals.time = { ms, turns, text: [formatDuration(ms), TOTALS_COPY.turns(turns)].filter(Boolean).join(' · ') }
   return totals
 }

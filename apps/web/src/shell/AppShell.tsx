@@ -164,7 +164,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
   const stagingWrites = useStagingWrites(summary, snapshot)
   // The fork behind an open /btw panel is the panel's: it joins the list once opened as a session.
   const sideForks = useSideQuestionForks()
-  const listed = withoutSideForks(snapshot, sideForks, selectedId)
+  const listed = useMemo(() => withoutSideForks(snapshot, sideForks, selectedId), [snapshot, sideForks, selectedId])
   const board = shell.board
   // 对话's start screen: the new session's input over the session kept under it. Under 看板 it is not drawn at all, so
   // only one new-session input is ever mounted (看板's 新建 holds it then).
@@ -219,24 +219,26 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     const frame = appShell.current
     const head = main.current?.querySelector<HTMLElement>(':scope > .workspace-view > .topbar')
     if (!frame || !head || phone) return undefined
-    const write = () => frame.style.setProperty('--session-head', `${head.offsetHeight}px`)
-    write()
-    const observer = new ResizeObserver(write)
-    observer.observe(head)
+    const observer = new ResizeObserver(([entry]) => {
+      const height = Math.round(entry.borderBoxSize?.[0]?.blockSize ?? head.offsetHeight)
+      frame.style.setProperty('--session-head', `${height}px`)
+    })
+    observer.observe(head, { box: 'border-box' })
     return () => {
       observer.disconnect()
       frame.style.removeProperty('--session-head')
     }
-  }, [appShell, main, phone, selectedId, board])
+  }, [appShell, main, phone])
   // The right panel's strip shares the window's top row with the title row's end, and keeps that end's width clear.
   useLayoutEffect(() => {
     const frame = appShell.current
     const views = frame?.querySelector<HTMLElement>(':scope > .titlebar > .titlebar-views')
     if (!frame || !views || phone) return undefined
-    const write = () => frame.style.setProperty('--window-controls', `${views.offsetWidth}px`)
-    write()
-    const observer = new ResizeObserver(write)
-    observer.observe(views)
+    const observer = new ResizeObserver(([entry]) => {
+      const width = Math.round(entry.borderBoxSize?.[0]?.inlineSize ?? views.offsetWidth)
+      frame.style.setProperty('--window-controls', `${width}px`)
+    })
+    observer.observe(views, { box: 'border-box' })
     return () => {
       observer.disconnect()
       frame.style.removeProperty('--window-controls')
@@ -392,7 +394,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     }
                     spaces={shellSpaces(shell)}
                     agents={
-                      entries.includes('agents')
+                      entries.includes('agents') && (route.entry === 'sessions' || shell.marketplace)
                         ? { primary: <ShellNewAgent shell={shell} />, list: <AgentsSpaceList shell={shell} /> }
                         : undefined
                     }
@@ -407,7 +409,10 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     onRefresh={() => {
                       void resync()
                     }}
-                    sessionMenu={sessionMenu}
+                    sessionMenu={shell.rowMenu}
+                    onPinSession={shell.pinTask}
+                    onArchiveSession={shell.archiveTask}
+                    clearing={shell.selectedClearing}
                     now={now}
                     apps={entries.includes('apps') ? { current: false, onOpen: () => shell.openApp() } : undefined}
                     computerChip={computers => <SidebarComputer shell={shell} computers={computers} />}

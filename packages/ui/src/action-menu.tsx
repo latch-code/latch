@@ -40,7 +40,7 @@ export function ActionMenu({
 }: {
   label: string
   title?: string
-  sections: ActionMenuSection[]
+  sections: ActionMenuSection[] | (() => ActionMenuSection[])
   trigger?: (props: MenuTriggerProps) => ReactNode
   /** The row whose context gesture opens the same menu (see `Menu`). */
   context?: ComponentProps<typeof Menu>['context']
@@ -54,7 +54,7 @@ export function ActionMenu({
     <Menu
       label={label}
       title={title}
-      sections={sectionsOf(sections)}
+      sections={typeof sections === 'function' ? () => sectionsOf(sections()) : sectionsOf(sections)}
       {...(trigger ? { trigger } : {})}
       {...(context ? { context } : {})}
       side={placement.startsWith('top') ? 'top' : 'bottom'}

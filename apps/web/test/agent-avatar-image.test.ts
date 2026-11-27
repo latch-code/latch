@@ -1,18 +1,15 @@
-import { createElement } from 'react'
+// @vitest-environment happy-dom
+import { act, createElement } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentAvatar as Avatar } from '@latch/protocol'
 import { AgentAvatar } from '../src/agents/AgentAvatar.tsx'
-import {
-  AVATAR_FILE_BYTES,
-  AVATAR_PROBLEM_WORDS,
-  avatarImageUrl,
-  centreSquare,
-  preparePicture,
-  sniffPicture,
-} from '../src/agents/avatarImage.ts'
+import { AVATAR_FILE_BYTES, AVATAR_PROBLEM_WORDS, centreSquare, preparePicture, sniffPicture } from '../src/agents/avatarImage.ts'
 import { hostProblem, PictureRow, type PictureUpload } from '../src/agents/AvatarPicture.tsx'
 import { BRACKET_PATHS } from '../src/agents/avatarFace.ts'
+
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const bytes = (text: string) => Uint8Array.from(text, letter => letter.charCodeAt(0))
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13])
@@ -122,7 +119,31 @@ describe('a chosen picture, before any of it is decoded', () => {
 })
 
 describe('an Agent with a picture', () => {
-  const pictured: Avatar = { kind: 'image', image: 'a'.repeat(64), bracket: 'curly', eyes: 'arc', hue: 'plum' }
+  const pictured = { kind: 'image', image: 'a'.repeat(64), bracket: 'curly', eyes: 'arc', hue: 'plum' } satisfies Avatar
+  let host: HTMLDivElement | undefined
+  let root: Root | undefined
+  afterEach(() => {
+    act(() => root?.unmount())
+    root = undefined
+    host?.remove()
+    host = undefined
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+  const show = (...hashes: string[]) => {
+    if (!root) {
+      host = document.body.appendChild(document.createElement('div'))
+      root = createRoot(host)
+    }
+    return act(async () =>
+      root!.render(
+        hashes.map((hash, index) =>
+          createElement(AgentAvatar, { key: index, avatar: { ...pictured, image: hash }, still: true, size: 40 }),
+        ),
+      ),
+    )
+  }
+  const pictures = () => [...host!.querySelectorAll('image')].map(element => element.getAttribute('href'))
 
   it('is its face until this page has read the picture, and whenever it cannot: never a broken image, never a data URL', () => {
     const html = renderToStaticMarkup(createElement(AgentAvatar, { avatar: pictured, size: 40 }))
@@ -133,10 +154,66 @@ describe('an Agent with a picture', () => {
     expect(html).not.toContain('data-picture')
   })
 
-  it('asks for a picture only by a well-formed hash', async () => {
-    expect(await avatarImageUrl('../../etc/passwd')).toBeUndefined()
-    expect(await avatarImageUrl('A'.repeat(64))).toBeUndefined()
-    expect(await avatarImageUrl('')).toBeUndefined()
+  it('reads only well-formed hashes', async () => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    await show('../../etc/passwd', 'A'.repeat(64), '')
+    expect(fetch).not.toHaveBeenCalled()
+    expect(pictures()).toEqual([])
+  })
+
+  it('shares a picture while it is used, revokes replaced URLs, and checks permission on a later mount', async () => {
+    const fetch = vi.fn(async () => new Response(new Uint8Array([1, 2, 3])))
+    vi.stubGlobal('fetch', fetch)
+    let number = 0
+    const create = vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:avatar-${++number}`)
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    await show(pictured.image, pictured.image)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(pictures()).toEqual(['blob:avatar-1', 'blob:avatar-1'])
+    await show(pictured.image)
+    expect(revoke).not.toHaveBeenCalled()
+    expect(pictures()).toEqual(['blob:avatar-1'])
+    for (let index = 0; index < 24; index++) {
+      await show(index.toString(16).padStart(64, '0'))
+      expect(revoke).toHaveBeenLastCalledWith(`blob:avatar-${index + 1}`)
+      expect(pictures()).toEqual([`blob:avatar-${index + 2}`])
+    }
+    await show()
+    expect(revoke.mock.calls).toEqual(create.mock.calls.map((_, index) => [`blob:avatar-${index + 1}`]))
+
+    fetch.mockResolvedValueOnce(new Response('{}', { status: 403 }))
+    await show(pictured.image)
+    expect(fetch).toHaveBeenCalledTimes(26)
+    expect(pictures()).toEqual([])
+    await show()
+    await show(pictured.image)
+    expect(fetch).toHaveBeenCalledTimes(27)
+    expect(pictures()).toEqual(['blob:avatar-26'])
+  })
+
+  it('aborts an unfinished read after its last avatar leaves and ignores a late response', async () => {
+    const reads: Array<{ signal: AbortSignal; finish: (response: Response) => void }> = []
+    vi.stubGlobal(
+      'fetch',
+      (_target: string, init: RequestInit) =>
+        new Promise<Response>(finish => {
+          reads.push({ signal: init.signal!, finish })
+        }),
+    )
+    const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:avatar')
+    await show(pictured.image, pictured.image)
+    const [first] = reads
+    await show(pictured.image)
+    expect(first!.signal.aborted).toBe(false)
+    await show()
+    expect(first!.signal.aborted).toBe(true)
+    await show(pictured.image)
+    expect(reads).toHaveLength(2)
+    await act(async () => first!.finish(new Response(new Uint8Array([1]))))
+    expect(create).not.toHaveBeenCalled()
+    await act(async () => reads[1]!.finish(new Response(new Uint8Array([2]))))
+    expect(pictures()).toEqual(['blob:avatar'])
   })
 })
 

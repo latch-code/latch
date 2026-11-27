@@ -29,22 +29,35 @@ export const HOLD_SLOP = 8
 
 export const PHONE_QUERY = '(max-width: 767.98px)'
 
-export function useMediaQuery(query: string): boolean {
-  const subscribe = useCallback(
-    (notify: () => void) => {
-      const list = matchMedia(query)
+export const TOUCH_PHONE_QUERY = `${PHONE_QUERY} and (hover: none)`
+
+/** One live MediaQueryList per layer breakpoint, shared by every trigger and created only in the browser. */
+function breakpoint(query: string) {
+  let media: MediaQueryList | undefined
+  let matcher: typeof matchMedia | undefined
+  const current = () => {
+    if (!media || matcher !== window.matchMedia) {
+      matcher = window.matchMedia
+      media = window.matchMedia(query)
+    }
+    return media
+  }
+  return {
+    matches: () => current().matches,
+    subscribe: (notify: () => void) => {
+      const list = current()
       list.addEventListener('change', notify)
-      return () => {
-        list.removeEventListener('change', notify)
-      }
+      return () => list.removeEventListener('change', notify)
     },
-    [query],
-  )
-  return useSyncExternalStore(
-    subscribe,
-    () => matchMedia(query).matches,
-    () => false,
-  )
+  }
+}
+
+const breakpoints = { [PHONE_QUERY]: breakpoint(PHONE_QUERY), [TOUCH_PHONE_QUERY]: breakpoint(TOUCH_PHONE_QUERY) }
+const serverMatches = () => false
+
+export function useMediaQuery(query: keyof typeof breakpoints): boolean {
+  const store = breakpoints[query]
+  return useSyncExternalStore(store.subscribe, store.matches, serverMatches)
 }
 
 export type Orientation = 'horizontal' | 'vertical'

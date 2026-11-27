@@ -424,6 +424,8 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
               await vi.waitFor(
                 async () => {
                   await simctl('io', udid, 'screenshot', shot)
+                  const settled = JSON.parse((await run(textReader, [shot, '--settled', 'Codex'])).stdout) as Record<string, number[]>
+                  expect(settled.Codex).toHaveLength(1)
                   const visible = ['Codex', '默认账号', '工作', '研究项目', '自定命令', 'Qwen Code', '管理账号']
                   const absent = ['Grok Build', '插件实例']
                   const positions = JSON.parse((await run(textReader, [shot, ...visible, ...absent, '小组件'])).stdout) as Record<
@@ -432,7 +434,12 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
                   >
                   for (const word of visible) expect(positions[word], word).toHaveLength(1)
                   for (const word of absent) expect(positions[word], word).toHaveLength(0)
-                  expect(positions['小组件']).toHaveLength(2)
+                  // Vision can misread the small light-on-dark badges even when the account rows have settled.
+                  const badges =
+                    theme === 'dark' && positions['小组件']?.length !== 2
+                      ? (JSON.parse((await run(textReader, [shot, '--invert', '小组件'])).stdout) as Record<string, number[]>)['小组件']
+                      : positions['小组件']
+                  expect(badges, '小组件').toHaveLength(2)
                   const brandX = positions.Codex?.[0] ?? Number.NaN
                   for (const alias of ['默认账号', '工作', '研究项目']) {
                     const aliasX = positions[alias]?.[0] ?? Number.NaN
@@ -488,8 +495,11 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
                       ) as Record<string, number[]>
                       return positions['引导']!
                     }
-                    const whole = await queueRows()
-                    const rows = whole.length < 3 && device.name !== 'ipad' ? await queueRows('--queue-actions') : whole
+                    let rows = await queueRows()
+                    if (rows.length < 3 && device.name !== 'ipad') {
+                      rows = await queueRows('--queue-actions')
+                      if (theme === 'dark' && rows.length < 3) rows = await queueRows('--queue-actions', '--invert')
+                    }
                     expect(rows).toHaveLength(3)
                     const [first, second, third] = rows.toSorted((a, b) => a - b)
                     expect(second! - first!).toBeGreaterThan(0.015)

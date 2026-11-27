@@ -306,7 +306,8 @@ describe('the shell', () => {
       await enrollBrowser(page, updateHost, { name: '更新检查桌面', scopes: ['view', 'run', 'admin'] })
       await connected(page)
 
-      const trigger = page.getByRole('button', { name: '检查更新', exact: true }).filter({ visible: true }).first()
+      const updateButton = (surface: Locator) => surface.getByRole('button', { name: '检查更新', exact: true })
+      const trigger = updateButton(page.getByRole('navigation', { name: '主导航', exact: true }))
       await trigger.locator('.icon-dot').waitFor()
       await trigger.click()
       const dialog = page.getByRole('dialog', { name: '检查更新', exact: true })
@@ -330,7 +331,7 @@ describe('the shell', () => {
 
       // Tablet (820x1180) and phone (390x844) rendering.
       await page.setViewportSize({ width: 820, height: 1180 })
-      const railTrigger = page.locator('.workbench-tablet-rail').getByRole('button', { name: '检查更新', exact: true })
+      const railTrigger = updateButton(page.getByRole('navigation', { name: '工作台导航', exact: true }))
       await railTrigger.locator('.icon-dot').waitFor()
       await railTrigger.click()
       await dialog.getByText('0.2.2 → 0.3.0', { exact: true }).waitFor()

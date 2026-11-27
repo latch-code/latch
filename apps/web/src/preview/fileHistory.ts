@@ -49,7 +49,7 @@ export function fileHistories(detail: Pick<TaskDetail, 'summary' | 'messages'>):
   const groups = new Map<string, FileHistory>()
   let turnId: string | undefined
   for (const message of detail.messages) {
-    if (message.role === 'user') turnId = message.id
+    if (message.role === 'user' && !message.steered) turnId = message.id
     if (message.role !== 'tool') continue
     let selected: (typeof folders)[number] | undefined = folders[0]
     try {
@@ -110,7 +110,7 @@ export function recordedFileHistory(
   let turnId: string | undefined
   const entries: FileHistory['entries'] = []
   for (const message of detail.messages) {
-    if (message.role === 'user') turnId = message.id
+    if (message.role === 'user' && !message.steered) turnId = message.id
     if (message.role !== 'tool') continue
     for (const [index, diff] of appliedDiffs(message).entries()) {
       if ((normalize(diff.path) ?? diff.path) !== targetKey) continue

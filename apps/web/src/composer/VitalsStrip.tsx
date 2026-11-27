@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from 'react'
+import { Fragment, useMemo, type ReactNode } from 'react'
 import { Database, Gauge } from 'lucide-react'
 import { ICON_STROKE, Popover, Tooltip } from '@latch/ui'
 import type { HarnessInfo, TaskDetail, TaskSummary } from '@latch/protocol'
@@ -238,7 +238,7 @@ export function SessionVitalsLine({
   harness: Pick<HarnessInfo, 'capabilities'> | undefined
   phone: boolean
 }) {
-  const vitals = sessionVitals(summary, detail)
+  const vitals = useMemo(() => sessionVitals(summary, detail), [summary, detail])
   if (!hasVitals(vitals)) return <div className="vitals-strip" aria-hidden="true" />
   return <VitalsStrip vitals={vitals} by={harness ? harnessName(harness) : 'Harness'} phone={phone} />
 }

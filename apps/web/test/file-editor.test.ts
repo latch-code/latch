@@ -5,7 +5,15 @@ import { FILE_EDIT_LIMIT, isFileMetadata, type FileMetadata } from '@latch/proto
 import { FileEditor } from '../src/preview/FileEditor.tsx'
 import { decodeEditable, editHash, mixedLineEndings } from '../src/preview/editText.ts'
 import { needsRecheck, notePersonEdit } from '../src/preview/personEdits.ts'
-import { answerLeave, editDraft, hasUnsaved, requestDrop, requestLeave, setEditDraft } from '../src/preview/editDrafts.ts'
+import {
+  answerLeave,
+  editDraft,
+  hasUnsaved,
+  requestDrop,
+  requestLeave,
+  retainOpenEditors,
+  setEditDraft,
+} from '../src/preview/editDrafts.ts'
 import { eviction, type FileTab } from '../src/preview/useFileTabs.ts'
 
 const file: FileMetadata = {
@@ -111,6 +119,22 @@ describe('file editor', () => {
     expect(requestLeave('s1', () => left++)).toBe(true)
     answerLeave(true)
     expect([left, hasUnsaved('s1'), editDraft('s1', 'tab')]).toEqual([1, false, undefined])
+  })
+
+  it('reclaims clean editors only after their session tabs have been evicted', () => {
+    const base = { file, text: 'original', hash: 'a'.repeat(64) }
+    const latest = { text: 'updated', hash: 'b'.repeat(64) }
+    setEditDraft('retained', 'tab', { ...base, state: { draft: base.text, phase: 'editing' } })
+    setEditDraft('evicted', 'clean', { ...base, state: { draft: latest.text, base: latest, phase: 'editing' } })
+    setEditDraft('evicted', 'dirty', { ...base, state: { draft: base.text, base: latest, phase: 'editing' } })
+    setEditDraft('evicted', 'pending', { ...base, state: { draft: base.text, phase: 'unknown' } })
+    retainOpenEditors(new Set(['retained']))
+    expect(editDraft('retained', 'tab')).toBeDefined()
+    expect(editDraft('evicted', 'clean')).toBeUndefined()
+    expect(editDraft('evicted', 'dirty')).toBeDefined()
+    expect(editDraft('evicted', 'pending')).toBeDefined()
+    for (const key of ['dirty', 'pending']) setEditDraft('evicted', key, undefined)
+    setEditDraft('retained', 'tab', undefined)
   })
 
   it('closes a tab with unsaved text only after asking, and takes a clean draft with the tab', () => {

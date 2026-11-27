@@ -131,7 +131,10 @@ export function useTerminalFill(input: {
   /** A screen's handle, or null once it is gone. */
   const screen = useCallback((id: string, handle: ScreenHandle | null) => {
     if (handle) handles.current.set(id, handle)
-    else handles.current.delete(id)
+    else {
+      handles.current.delete(id)
+      filled.current.delete(id)
+    }
     setHandleCount(count => count + 1)
   }, [])
 

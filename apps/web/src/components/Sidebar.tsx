@@ -1,6 +1,7 @@
 import { sessionsAwaitingReturn } from '../handoffs/model.ts'
+import { isPersonalChat } from '../agents/chat.ts'
 import { ProjectGroupHeading, ShelfHead, type ProjectNavigationActions } from './ProjectNavigation.tsx'
-import { Fragment, memo, useMemo, useRef, type ReactNode } from 'react'
+import { Fragment, memo, useCallback, useMemo, useRef, type ReactNode } from 'react'
 import { Coffee, FolderGit2 } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { HARNESS_MARKS, harnessArt, presetOf } from '../brands.ts'
@@ -89,7 +90,8 @@ export function taskHarness(snapshot: AppSnapshot, task: TaskSummary): TaskHarne
  */
 const SessionItem = memo(function SessionItem({
   task,
-  harness,
+  harnessLabel,
+  harnessMark,
   project,
   inWaitingShelf,
   inPinnedShelf = false,
@@ -101,21 +103,29 @@ const SessionItem = memo(function SessionItem({
   now,
   onSelect,
   menu,
+  onPin,
+  onArchive,
+  clearing,
   handoffWaits = false,
   from,
   member = false,
-  members,
+  memberCount,
+  membersFolded = false,
+  onFoldMembers,
 }: {
   /** A member of the team of the session above it: drawn one step in, on a thin line down from that session. */
   member?: boolean
-  /** It has members under it: how many, whether they are folded away, and the way to fold them. */
-  members?: { count: number; folded: boolean; onToggle: () => void } | undefined
+  /** How many members sit under this session, whether they are folded away, and the way to fold them. */
+  memberCount?: number | undefined
+  membersFolded?: boolean | undefined
+  onFoldMembers?: ((leadId: string) => void) | undefined
   /** A handoff here waits for its result to be handed back. */
   handoffWaits?: boolean
   /** The plugin page that started it: 「来自 <页面名>」. */
   from?: string | undefined
   task: TaskSummary
-  harness: TaskHarness
+  harnessLabel: string
+  harnessMark?: string | undefined
   /** Named on the second line in 等你处理, where the shelf no longer says where the session belongs. */
   project: string | undefined
   inWaitingShelf: boolean
@@ -130,14 +140,17 @@ const SessionItem = memo(function SessionItem({
   leaving: boolean
   now: number
   onSelect: (id: string) => void
-  menu: (task: TaskSummary) => MenuSection[]
+  menu: (task: TaskSummary, clearing?: boolean) => MenuSection[]
+  onPin?: ((task: TaskSummary) => void) | undefined
+  onArchive?: ((task: TaskSummary) => void) | undefined
+  clearing?: boolean | undefined
 }) {
   useLocale()
   const title = task.title || COPY.untitled
   const time = relativeTime(task.updatedAt, new Date(now))
   const status = rowStatus(task, { unread, stopping, frozen: frozen !== null })
-  const engine = harness.label
-  const named = harnessArt(harness.mark).kind === 'glyph'
+  const engine = harnessLabel
+  const named = harnessArt(harnessMark).kind === 'glyph'
   const model = rowModel(task)
   const gateway = model !== undefined && rowGateway(task)
   const wait = inWaitingShelf && status.kind === 'waiting' ? waitWords(task) : undefined
@@ -149,10 +162,6 @@ const SessionItem = memo(function SessionItem({
     || status.kind === 'failed'
     || showsUnread(status)
     || (status.kind === 'frozen' && waitsOnYou(task))
-  const sections = menu(task)
-  const items = sections.flatMap(section => section.items)
-  const pin = task.archived ? undefined : items.find(item => item.id === 'pin')?.onSelect
-  const archive = task.archived ? undefined : items.find(item => item.id === 'archive')?.onSelect
   const said = statusLabel(status, task.live)
   const worktree = task.worktree
     ? `${task.worktree.removed ? COPY.worktreeRemoved : COPY.worktree} · ${escapeSecurityText(task.branch ?? task.worktree.branch)}`
@@ -195,7 +204,7 @@ const SessionItem = memo(function SessionItem({
               onSelect(task.id)
             }}>
             <span className="session-line">
-              <SessionRowGlyph status={status} mark={harness.mark} />
+              <SessionRowGlyph status={status} mark={harnessMark} />
               {task.pinned && !inPinnedShelf && (
                 <PinGlyph className="session-pin" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-label={COPY.pinned} />
               )}
@@ -219,7 +228,7 @@ const SessionItem = memo(function SessionItem({
             </span>
             <span className="session-meta" aria-hidden="true">
               <span className="session-mark">
-                <MarkTile mark={harness.mark} size={14} />
+                <MarkTile mark={harnessMark} size={14} />
               </span>
               {wait ? <span className="session-wait">{wait}</span> : model !== undefined && <span className="session-model">{model}</span>}
               {named && <span className="session-harness">{engine}</span>}
@@ -231,33 +240,41 @@ const SessionItem = memo(function SessionItem({
             <span className="sr-only">{details}</span>
           </button>
         </Tooltip>
-        {members && <TeamFold count={members.count} folded={members.folded} onToggle={members.onToggle} />}
+        {memberCount !== undefined && onFoldMembers && (
+          <TeamFold
+            count={memberCount}
+            folded={membersFolded}
+            onToggle={() => {
+              onFoldMembers(task.id)
+            }}
+          />
+        )}
         <span className="session-actions">
-          {pin && (
+          {onPin && !task.archived && (
             <IconButton
               className="session-item-pin"
               size="xs"
               label={task.pinned ? COPY.unpinSession(title) : COPY.pinSession(title)}
               tooltip={task.pinned ? COPY.unpin : COPY.pin}
               icon={task.pinned ? UnpinGlyph : PinGlyph}
-              onClick={pin}
+              onClick={() => onPin(task)}
             />
           )}
-          {archive && (
+          {onArchive && !task.archived && (
             <IconButton
               className="session-item-archive"
               size="xs"
               label={COPY.archiveSession(title)}
               tooltip={COPY.archive}
               icon={ArchiveGlyph}
-              onClick={archive}
+              onClick={() => onArchive(task)}
             />
           )}
           <Menu
             label={COPY.actionsFor(title)}
             placement="bottom-end"
             context={rowOf('.session-item')}
-            sections={sections}
+            sections={() => menu(task, clearing)}
             frosted
             trigger={props => (
               <IconButton
@@ -279,6 +296,7 @@ const SessionItem = memo(function SessionItem({
 function SessionGroupView({
   group,
   snapshot,
+  awaiting,
   context,
   settled,
   selectedId,
@@ -295,12 +313,16 @@ function SessionGroupView({
   onNewWithoutProject,
   onEditProject,
   menu,
+  onPin,
+  onArchive,
+  clearing,
   others = [],
 }: ProjectNavigationActions & {
   /** 等你处理 only: what waits on other computers, after this computer's own rows. */
   others?: readonly OtherWaiting[]
   group: SessionGroup
   snapshot: AppSnapshot
+  awaiting: ReadonlySet<string>
   /** The filter the list shows; rows leave at once when it changes. */
   context: string
   /** Called once rows that left have folded away. */
@@ -318,15 +340,18 @@ function SessionGroupView({
   onSelect: (id: string) => void
   onNewIn?: (workspaceId: string) => void
   onNewWithoutProject?: () => void
-  menu: (task: TaskSummary) => MenuSection[]
+  menu: (task: TaskSummary, clearing?: boolean) => MenuSection[]
+  onPin?: ((task: TaskSummary) => void) | undefined
+  onArchive?: ((task: TaskSummary) => void) | undefined
+  clearing?: boolean | undefined
 }) {
   const shown = useMemo(() => foldMembers(group.tasks, group.members, foldedSet), [group.tasks, group.members, foldedSet])
   const rows = usePresence(shown.tasks, task => task.id, context, settled)
-  const awaiting = sessionsAwaitingReturn(snapshot)
   const workspaceId = group.workspaceId
   const waiting = group.id === 'waiting'
   const pinned = group.id === 'pinned'
   const workspaces = snapshot.catalog?.workspaces
+  const manageable = snapshot.catalog !== undefined
   const count = group.tasks.length + others.reduce((sum, other) => sum + (other.live ? other.items.length : 0), 0)
   return (
     <section className="session-group" aria-label={group.label} data-shelf={group.id} data-flip-id={`group:${group.id}`} data-flip-scope="">
@@ -356,29 +381,25 @@ function SessionGroupView({
         <ul>
           {rows.map(({ item: task, leaving }) => {
             const project = (waiting || pinned) && workspaces ? projectOf(task, workspaces) : undefined
+            const harness = taskHarness(snapshot, task)
+            const memberCount = shown.counts.get(task.id)
+            const selected = !leaving && task.id === selectedId
             return (
               <SessionItem
                 member={group.members?.has(task.id) === true}
-                members={
-                  shown.counts.has(task.id)
-                    ? {
-                        count: shown.counts.get(task.id)!,
-                        folded: foldedSet.has(teamFoldKey(task.id)),
-                        onToggle: () => {
-                          onFoldMembers(task.id)
-                        },
-                      }
-                    : undefined
-                }
+                memberCount={memberCount}
+                membersFolded={memberCount !== undefined ? foldedSet.has(teamFoldKey(task.id)) : false}
+                onFoldMembers={memberCount !== undefined ? onFoldMembers : undefined}
                 handoffWaits={awaiting.has(task.id)}
                 from={originTitle(task, snapshot)}
                 key={task.id}
                 task={task}
-                harness={taskHarness(snapshot, task)}
+                harnessLabel={harness.label}
+                harnessMark={harness.mark}
                 project={project && projectName(project)}
                 inWaitingShelf={waiting}
                 inPinnedShelf={pinned}
-                selected={!leaving && task.id === selectedId}
+                selected={selected}
                 unread={task.id !== selectedId && isUnread(task)}
                 stopping={cancelling.has(task.id)}
                 frozen={frozen}
@@ -386,6 +407,9 @@ function SessionGroupView({
                 now={now}
                 onSelect={onSelect}
                 menu={menu}
+                onPin={manageable ? onPin : undefined}
+                onArchive={manageable && !isPersonalChat(snapshot, task) ? onArchive : undefined}
+                clearing={selected ? clearing : undefined}
               />
             )
           })}
@@ -426,6 +450,9 @@ export function Sidebar({
   onClose,
   connection,
   sessionMenu,
+  onPinSession,
+  onArchiveSession,
+  clearing,
   now,
   keepAwake,
   apps,
@@ -483,7 +510,10 @@ export function Sidebar({
   onClose: () => void
   connection: ConnectionStatus
   onRefresh: () => void
-  sessionMenu: (task: TaskSummary) => MenuSection[]
+  sessionMenu: (task: TaskSummary, clearing?: boolean) => MenuSection[]
+  onPinSession?: ((task: TaskSummary) => void) | undefined
+  onArchiveSession?: ((task: TaskSummary) => void) | undefined
+  clearing?: boolean | undefined
   now: number
   onCreateProject?: () => void
   /** 设置, where this device can open it. */
@@ -528,6 +558,9 @@ export function Sidebar({
             onCreateProject={onCreateProject}
             connection={connection}
             sessionMenu={sessionMenu}
+            onPinSession={onPinSession}
+            onArchiveSession={onArchiveSession}
+            clearing={clearing}
             now={now}
             space={spaces ? 'code' : undefined}
           />
@@ -556,7 +589,7 @@ export function Sidebar({
 }
 
 /** Code's list: its shelves, without the sessions delegated to an Agent where the Host has 我的 Agent. */
-function CodeList({
+const CodeList = memo(function CodeList({
   snapshot,
   selectedId,
   isUnread,
@@ -570,6 +603,9 @@ function CodeList({
   onCreateProject,
   connection,
   sessionMenu,
+  onPinSession,
+  onArchiveSession,
+  clearing,
   now,
   space,
   projectTree,
@@ -586,17 +622,28 @@ function CodeList({
   onNewIn?: ((workspaceId: string) => void) | undefined
   onNewWithoutProject?: (() => void) | undefined
   connection: ConnectionStatus
-  sessionMenu: (task: TaskSummary) => MenuSection[]
+  sessionMenu: (task: TaskSummary, clearing?: boolean) => MenuSection[]
+  onPinSession?: ((task: TaskSummary) => void) | undefined
+  onArchiveSession?: ((task: TaskSummary) => void) | undefined
+  clearing?: boolean | undefined
   now: number
   space: Space | undefined
   projectTree: boolean
 }) {
   const list = useRef<HTMLElement>(null)
   const [folded, toggleShelf] = useFoldedShelves(shelvesKey(snapshot.device.id))
+  const foldTeamMembers = useCallback(
+    (leadId: string) => {
+      toggleShelf(teamFoldKey(leadId))
+    },
+    [toggleShelf],
+  )
   const frozen = useLastConfirmed(connection, snapshot)
+  const locale = useLocale()
   const archived = filter === 'archived'
   const own = useMemo(() => inSpace(snapshot.tasks, space), [snapshot.tasks, space])
   const visible = useMemo(() => filterSessions(snapshot.tasks, filter, '', space), [snapshot.tasks, filter, space])
+  const awaiting = useMemo(() => sessionsAwaitingReturn(snapshot), [snapshot.handoffs, snapshot.tasks])
   const projectSections = snapshot.catalog?.projectFolders !== undefined && !archived
   const computers = useComputers()
   // Only this Mac's page holds what waits on other computers (main gives it to no other page).
@@ -606,15 +653,19 @@ function CodeList({
     archived || space === 'agents'
       ? []
       : otherComputerLists(computers, hostView(snapshot)?.hostId).filter(list => list.count > 0 || !list.live)
-  const grouped = groupSessions(visible, snapshot.catalog?.workspaces, {
-    includeEmpty: projectSections,
-    teams: snapshot.teams,
-    ...(archived ? {} : { pinnedShelf: true }),
-    ...(archived || projectTree ? {} : { waitingFrom: own }),
-  })
+  const grouped = useMemo(
+    () =>
+      groupSessions(visible, snapshot.catalog?.workspaces, {
+        includeEmpty: projectSections,
+        teams: snapshot.teams,
+        ...(archived ? {} : { pinnedShelf: true }),
+        ...(archived || projectTree ? {} : { waitingFrom: own }),
+      }),
+    [visible, snapshot.catalog?.workspaces, projectSections, snapshot.teams, archived, projectTree, own, locale],
+  )
   const groups: SessionGroup[] =
     others.length > 0 && grouped[0]?.id !== 'waiting' ? [{ id: 'waiting', label: COPY.waiting, tasks: [] }, ...grouped] : grouped
-  const archivedCount = own.filter(task => task.archived).length
+  const archivedCount = useMemo(() => own.filter(task => task.archived).length, [own])
   const context = filter
   const signature =
     groups.map(group => `${group.id}:${folded.has(group.id) ? '' : group.tasks.map(task => task.id).join(',')}`).join('|')
@@ -659,6 +710,7 @@ function CodeList({
             <SessionGroupView
               group={group}
               snapshot={snapshot}
+              awaiting={awaiting}
               context={context}
               settled={remeasure}
               selectedId={selectedId}
@@ -670,14 +722,15 @@ function CodeList({
                 toggleShelf(group.id)
               }}
               foldedSet={folded}
-              onFoldMembers={leadId => {
-                toggleShelf(teamFoldKey(leadId))
-              }}
+              onFoldMembers={foldTeamMembers}
               now={now}
               onSelect={onSelect}
               onNewIn={onNewIn}
               onNewWithoutProject={onNewWithoutProject}
               menu={sessionMenu}
+              onPin={onPinSession}
+              onArchive={onArchiveSession}
+              clearing={clearing}
               {...(group.id === 'waiting' ? { others } : {})}
               onEditProject={onEditProject}
             />
@@ -702,4 +755,4 @@ function CodeList({
       )}
     </nav>
   )
-}
+})

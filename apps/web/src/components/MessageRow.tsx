@@ -318,12 +318,22 @@ function UserMessage({
   const bubble = useRef<HTMLDivElement>(null)
   const [tall, setTall] = useState(false)
   const [whole, setWhole] = useState(false)
-  useLayoutEffect(() => {
-    const element = bubble.current
-    if (element) setTall(element.scrollHeight > BUBBLE_CLAMP + 1)
-  }, [message.text])
   // What an undo told the engine sits in front of the words the person wrote; it is a record, not part of the bubble.
   const { note, text } = splitChangeNote(message.text.slice(ownTextStart(message)))
+  // Even one plain character per line fits: the largest prose line height is 28px.
+  const alwaysFits =
+    text.length <= 6 && !/[^\p{L}\p{N} ]/u.test(text) && !message.forkContext && !message.importContext && !message.fileRefs?.length
+  useLayoutEffect(() => {
+    const element = bubble.current
+    if (!element || alwaysFits) return
+    setTall(element.scrollHeight > BUBBLE_CLAMP + 1)
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry && entry.contentRect.height > 0)
+        setTall(entry.contentRect.height >= BUBBLE_CLAMP && element.scrollHeight > BUBBLE_CLAMP + 1)
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [alwaysFits, message.text])
   return (
     <article
       className="message message-user"
@@ -358,7 +368,7 @@ function UserMessage({
       {message.origin === 'conversation-reference' && <p className="message-change-note">{COPY.readReference}</p>}
       <MessageAttachments attachments={message.attachments} />
       {message.text && (
-        <div className="user-bubble" data-clamped={tall && !whole ? '' : undefined}>
+        <div className="user-bubble" data-clamped={!alwaysFits && tall && !whole ? '' : undefined}>
           <div className="user-bubble-text" ref={bubble}>
             {message.forkContext && message.nativeFork && !message.forkContext.moved && (
               // The harness forked its own record: the text record was not sent, so there is none to show.
@@ -392,7 +402,7 @@ function UserMessage({
             )}
             <UserText text={text} refs={message.fileRefs} />
           </div>
-          {tall && (
+          {!alwaysFits && tall && (
             <button
               type="button"
               className="user-bubble-more"

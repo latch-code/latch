@@ -18,7 +18,6 @@ import { OverviewPendingSection, OverviewPlanSection, OverviewProjectSection, Ov
 import { switchWorkView } from '../preferences.ts'
 import { BranchName } from '../components/MiddleEllipsis.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { turnsOf } from '../conversation.ts'
 import { projectOf } from '../sessions.ts'
 import { deliveryChecks, useWorkbenchDelivery } from './useWorkbenchEvidence.ts'
 import type { ShellState } from './useShellLayout.tsx'
@@ -193,16 +192,26 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
     () => (shell.snapshot.workProposals ?? []).filter(proposal => proposal.from.sessionId === summary.id),
     [shell.snapshot.workProposals, summary.id],
   )
-  const turn = detail ? turnsOf(detail.messages).at(-1) : undefined
-  const messages = turn?.replies ?? []
-  const changes = detail?.fileChanges?.files ?? messages.flatMap(message => message.outputs ?? [])
-  const turnDistinct = [...new Map(changes.map(file => [`${file.root}:${file.path}`, file])).values()]
-  const unavailable = detail?.fileChanges?.unavailable || messages.some(message => message.outputsUnavailable)
-  const pending = detail?.fileChanges?.state === 'settling' || messages.some(message => message.outputsPending)
-  const truncated = detail?.fileChanges?.truncated || messages.some(message => message.outputsTruncated)
+  const history = detail?.messages
+  const turn = useMemo(() => {
+    if (!history?.length) return undefined
+    const start = history.findLastIndex(message => message.role === 'user' && !message.steered)
+    return { user: history[start], replies: start < 0 ? history : history.slice(start + 1) }
+  }, [history])
+  const files = detail?.fileChanges
+  const { turnDistinct, unavailable, pending, truncated } = useMemo(() => {
+    const messages = turn?.replies ?? []
+    const changes = files?.files ?? messages.flatMap(message => message.outputs ?? [])
+    return {
+      turnDistinct: [...new Map(changes.map(file => [`${file.root}:${file.path}`, file])).values()],
+      unavailable: files?.unavailable || messages.some(message => message.outputsUnavailable),
+      pending: files?.state === 'settling' || messages.some(message => message.outputsPending),
+      truncated: files?.truncated || messages.some(message => message.outputsTruncated),
+    }
+  }, [turn, files])
   const earlierDistinct = useMemo(
-    () => (detail && turnDistinct.length === 0 && !unavailable && !pending && !truncated ? sessionOutputs(detail.messages) : []),
-    [detail, pending, truncated, turnDistinct.length, unavailable],
+    () => (history && turnDistinct.length === 0 && !unavailable && !pending && !truncated ? sessionOutputs(history) : []),
+    [history, pending, truncated, turnDistinct.length, unavailable],
   )
   const usingSessionScope = turnDistinct.length === 0 && earlierDistinct.length > 0
   const distinct = usingSessionScope ? earlierDistinct : turnDistinct

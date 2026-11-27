@@ -170,8 +170,12 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')(
         expect((await screenText(shown())).split('touch').length).toBe(2)
         // The person presses Enter: only now does it run.
         await screen.locator('.xterm').click()
+        const usedRows = () => shown().locator(':scope > div').filter({ hasText: /\S/u }).count()
+        const rowsBeforeEnter = await usedRows()
         await page.keyboard.press('Enter')
         await expect.poll(() => existsSync(marker)).toBe(true)
+        // The marker can be written before xterm receives the next shell prompt.
+        await expect.poll(usedRows).toBeGreaterThan(rowsBeforeEnter)
 
         // ---- The refused block types nothing ----
         const before = await shown().innerText()

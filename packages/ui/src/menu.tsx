@@ -25,6 +25,7 @@ import {
   ShieldAlertGlyph,
 } from './glyphs/index.tsx'
 import { motionAllowed } from './changes.ts'
+import { MOTION, usePresence } from './motion.tsx'
 import { ChoiceList } from './choice.tsx'
 import { SearchField } from './field.tsx'
 import { Sheet } from './dialog.tsx'
@@ -39,6 +40,7 @@ import {
   nextIndex,
   onAnchorScrolled,
   PHONE_QUERY,
+  TOUCH_PHONE_QUERY,
   pinLayer,
   pointAnchor,
   setPopover,
@@ -731,8 +733,10 @@ export function Menu({
   previewOnHover = false,
   className,
   ...placement
-}: Omit<PanelProps, 'onChoose' | 'onDismiss' | 'open' | 'panelRef'>
+}: Omit<PanelProps, 'sections' | 'onChoose' | 'onDismiss' | 'open' | 'panelRef'>
   & LayerPlacement & {
+    /** A function supplies a nonempty menu on demand. Its items unmount after the closing transition. */
+    sections: MenuSection[] | (() => MenuSection[])
     trigger?: (props: MenuTriggerProps) => ReactNode
     /** The row whose context gesture opens this menu: the element, or how to find it from the trigger (or from where
      * the menu is written, when it has none). */
@@ -745,9 +749,11 @@ export function Menu({
     previewOnHover?: boolean
     title?: string
   }) {
-  const phone = useMediaQuery(previewOnHover ? `${PHONE_QUERY} and (hover: none)` : PHONE_QUERY)
+  const phone = useMediaQuery(previewOnHover ? TOUCH_PHONE_QUERY : PHONE_QUERY)
   const panel = useRef<HTMLDivElement>(null)
   const { trigger: triggerRef, layer, open, setOpen, close, openFrom } = useLayer(placement)
+  const { present } = usePresence(typeof sections !== 'function' || open, phone ? MOTION.sheetExit : MOTION.enterExit)
+  const resolvedSections = typeof sections === 'function' ? (present ? sections() : undefined) : sections
   const preview = useRef(false)
   useEffect(() => {
     const button = triggerRef.current
@@ -803,7 +809,7 @@ export function Menu({
   useContextGesture(
     () => (typeof context === 'function' ? context(triggerRef.current ?? mark.current) : context?.current),
     openFrom,
-    context !== undefined && sections.some(section => section.items.length > 0),
+    context !== undefined && (resolvedSections === undefined || resolvedSections.some(section => section.items.length > 0)),
   )
   // In a sheet too: its items are out of the Tab order, so the sheet itself does not move focus onto them.
   useEffect(() => {
@@ -814,7 +820,7 @@ export function Menu({
     close(!phone)
     item.onSelect()
   }
-  const content = (
+  const content = resolvedSections ? (
     <LayerClose.Provider
       value={() => {
         close(!phone)
@@ -822,7 +828,7 @@ export function Menu({
       <MenuPanel
         label={label}
         header={header}
-        sections={sections}
+        sections={resolvedSections}
         footer={footer}
         selection={selection}
         open={open}
@@ -834,7 +840,7 @@ export function Menu({
         }}
       />
     </LayerClose.Provider>
-  )
+  ) : null
   return (
     <>
       {!trigger && <span ref={mark} hidden />}

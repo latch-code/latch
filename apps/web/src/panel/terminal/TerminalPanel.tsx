@@ -56,10 +56,10 @@ import { TerminalLink } from './link.ts'
 import { TerminalFind } from './TerminalFind.tsx'
 import { findTerminalLine } from './find.ts'
 import { loginRuns, useRevealedLogin } from './loginRuns.ts'
-import { terminalTheme } from './theme.ts'
+import { terminalFont, terminalTheme } from './theme.ts'
 import { useTerminals } from './useTerminals.ts'
 import { useTerminalFill, type ScreenHandle } from './useTerminalFill.ts'
-import { defineCopy, formatNumber } from '../../core/i18n.ts'
+import { defineCopy, formatNumber, useLocale } from '../../core/i18n.ts'
 
 const COPY = defineCopy(
   {
@@ -193,16 +193,22 @@ export interface TerminalPanelProps {
   request?: number | undefined
 }
 
-/** The terminal font's cell, as xterm lays it out. */
+let cellCanvas: CanvasRenderingContext2D | null | undefined
+let measuredCell: { font: string; width: number; height: number } | undefined
+
+/** The secure terminal uses a system font. Dragging the dock changes its box but keeps the same cell. */
 function cellOf(element: HTMLElement): { width: number; height: number } {
-  const { fontFamily, fontSize } = terminalTheme(element)
-  const context = document.createElement('canvas').getContext('2d')
+  const { fontFamily, fontSize } = terminalFont(getComputedStyle(element))
+  const font = `${fontSize}px ${fontFamily}`
+  if (font === measuredCell?.font) return measuredCell
+  if (cellCanvas === undefined) cellCanvas = document.createElement('canvas').getContext('2d')
   let width = fontSize * 0.6
-  if (context) {
-    context.font = `${fontSize}px ${fontFamily}`
-    width = context.measureText('W').width || width
+  if (cellCanvas) {
+    cellCanvas.font = font
+    width = cellCanvas.measureText('W').width || width
   }
-  return { width, height: Math.round(fontSize * LINE_HEIGHT * 1.2) }
+  measuredCell = { font, width, height: Math.round(fontSize * LINE_HEIGHT * 1.2) }
+  return measuredCell
 }
 
 /** The size a new terminal opens at: what fits the box (the screen area, or the half of a pane it splits). */
@@ -239,6 +245,13 @@ const SPLIT = {
 
 const readLayout = (key: string | undefined): PaneLayout => (key ? parseLayout(readStorage('localStorage', key)) : [])
 
+function withoutTerminal<T>(values: Record<string, T>, id: string): Record<string, T> {
+  if (!Object.hasOwn(values, id)) return values
+  const next = { ...values }
+  delete next[id]
+  return next
+}
+
 /** Where pane `index` of a tab stands, in shares of the screen area. */
 function paneBox(tab: PaneTab, index: number): CSSProperties {
   const start = tab.sizes.slice(0, index).reduce((sum, size) => sum + size, 0)
@@ -271,6 +284,7 @@ export function TerminalPanel({
   move,
   request = 0,
 }: TerminalPanelProps) {
+  useLocale()
   const id = useId()
   const screens = useRef<HTMLDivElement>(null)
   const usableCompose = useRef<typeof onCompose>(undefined)
@@ -322,7 +336,7 @@ export function TerminalPanel({
       const width = element.clientWidth
       const height = element.clientHeight
       setArea(previous =>
-        previous.width === width && previous.height === height && width > 0
+        previous.width === width && previous.height === height
           ? previous
           : { width, height, cell: width > 0 ? cellOf(element) : previous.cell, pad: PAD },
       )
@@ -730,7 +744,12 @@ export function TerminalPanel({
                   onInputFailed={text => setNotice({ tone: 'error', text })}
                   onHandle={handle => {
                     if (handle) handles.current.set(tab.id, handle)
-                    else handles.current.delete(tab.id)
+                    else {
+                      handles.current.delete(tab.id)
+                      remembered.current.delete(tab.id)
+                      setSelection(previous => withoutTerminal(previous, tab.id))
+                      setConnection(previous => withoutTerminal(previous, tab.id))
+                    }
                     fill.screen(tab.id, handle)
                   }}
                 />
@@ -1039,7 +1058,7 @@ export function TerminalScreen({
       const scheme = matchMedia('(prefers-color-scheme: dark)')
       scheme.addEventListener('change', retheme)
       const attributes = new MutationObserver(retheme)
-      attributes.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-palette', 'class', 'style'] })
+      attributes.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-palette'] })
       const unwatchMotion = watchMotion(() => {
         terminal.options.cursorBlink = cursorBlink()
       })

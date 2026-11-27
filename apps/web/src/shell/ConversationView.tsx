@@ -96,6 +96,27 @@ function TranscriptSkeleton() {
   )
 }
 
+/** Keep the document listener in a scope that has no reference to the transcript. */
+function useHandoffSelection(enabled: boolean) {
+  const selected = useRef<{ text: string; ids: string[]; at: number } | null>(null)
+  useEffect(() => {
+    if (!enabled) return
+    const read = () => {
+      const selection = document.getSelection()
+      const text = selection?.toString().trim()
+      if (!selection || !text || selection.rangeCount === 0) return
+      const within = (node: Node | null) => (node instanceof Element ? node : node?.parentElement)?.closest('.transcript [data-message-id]')
+      const ids = [within(selection.anchorNode), within(selection.focusNode)].flatMap(row =>
+        row ? [row.getAttribute('data-message-id')!] : [],
+      )
+      if (ids.length) selected.current = { text, ids, at: Date.now() }
+    }
+    document.addEventListener('selectionchange', read)
+    return () => document.removeEventListener('selectionchange', read)
+  }, [enabled])
+  return selected
+}
+
 /** Under the top bar: the notices and the conversation (or the new session). Phones draw it as paper. */
 export function ConversationView({
   shell,
@@ -218,22 +239,7 @@ export function ConversationView({
   const importedFrom = current?.summary.imported && catalog?.harnesses.find(item => item.id === current.summary.imported!.from)
   const handoffNonce = useRef(0)
   // The text last selected in the conversation and the messages it lies in: a message action takes it along.
-  const selected = useRef<{ text: string; ids: string[]; at: number } | null>(null)
-  useEffect(() => {
-    if (!handing) return
-    const read = () => {
-      const selection = document.getSelection()
-      const text = selection?.toString().trim()
-      if (!selection || !text || selection.rangeCount === 0) return
-      const within = (node: Node | null) => (node instanceof Element ? node : node?.parentElement)?.closest('.transcript [data-message-id]')
-      const ids = [within(selection.anchorNode), within(selection.focusNode)].flatMap(row =>
-        row ? [row.getAttribute('data-message-id')!] : [],
-      )
-      if (ids.length) selected.current = { text, ids, at: Date.now() }
-    }
-    document.addEventListener('selectionchange', read)
-    return () => document.removeEventListener('selectionchange', read)
-  }, [handing])
+  const selected = useHandoffSelection(handing)
   const handOff = (messageIds: string[]) => {
     const last = selected.current
     const text = last && Date.now() - last.at < 60_000 && last.ids.every(id => messageIds.includes(id)) ? last.text : undefined

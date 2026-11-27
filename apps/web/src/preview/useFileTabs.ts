@@ -3,7 +3,7 @@ import type { FileContext, FileMetadata } from '@latch/protocol'
 import { storageGet, storageSet } from '../preferences.ts'
 import { contextOf, fileContextKey, targetIn, type PreviewTarget } from './fileContext.ts'
 import type { FileTreeView } from './treeFiles.ts'
-import { draftKey, editDraft, requestDrop } from './editDrafts.ts'
+import { draftKey, editDraft, requestDrop, retainOpenEditors } from './editDrafts.ts'
 
 /** In-memory focus for a specific recorded tool edit (`${messageId}:${diffIndex}`), never persisted to storage. */
 export interface FileDiffFocus {
@@ -157,28 +157,28 @@ export function useFileTabs(deviceId: string, context: FileContext | null, autho
     setBank({ key, authority, epoch, contexts })
   }
   useEffect(() => {
+    const history = Object.values(contexts)
+    retainOpenEditors(new Set(history.flatMap(({ context }) => (context.kind === 'session' ? [context.sessionId] : []))))
     storageSet(
       key,
       JSON.stringify(
-        Object.values(contexts)
-          .slice(-40)
-          .map(state => ({
-            context: state.context,
-            files: state.tabs.flatMap(tab => {
-              const root = tab.file?.root ?? tab.target.rootId,
-                path = tab.file?.path ?? tab.target.reference
-              // A file outside the session's folders is reopened only by the path a message named, never kept here.
-              if (tab.recordedOnly || !root || path.startsWith('/') || tab.file?.folder !== undefined) return []
-              return [
-                {
-                  root,
-                  path,
-                  ...(tab.file?.attachmentId ? { attachmentId: tab.file.attachmentId } : {}),
-                  ...(tab.target.view === 'changes' ? { view: 'changes' } : {}),
-                },
-              ]
-            }),
-          })),
+        history.slice(-40).map(state => ({
+          context: state.context,
+          files: state.tabs.flatMap(tab => {
+            const root = tab.file?.root ?? tab.target.rootId,
+              path = tab.file?.path ?? tab.target.reference
+            // A file outside the session's folders is reopened only by the path a message named, never kept here.
+            if (tab.recordedOnly || !root || path.startsWith('/') || tab.file?.folder !== undefined) return []
+            return [
+              {
+                root,
+                path,
+                ...(tab.file?.attachmentId ? { attachmentId: tab.file.attachmentId } : {}),
+                ...(tab.target.view === 'changes' ? { view: 'changes' } : {}),
+              },
+            ]
+          }),
+        })),
       ),
     )
   }, [key, contexts])

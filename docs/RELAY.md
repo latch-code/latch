@@ -209,6 +209,7 @@ mv -n ~/.latch-relay/latch-relay-ne ~/.latch/relays/ne/deploy && rmdir ~/.latch-
 - 手选文件或连接旧位置的文件，Host 在身份核验和登记通过后默认归档一份 0600 的连接配置。旧文件优先用原名称，手选文件按节点 ID 命名；同名冲突时按节点 ID 保存，同内容的私有文件可复用，已有文件不会被覆盖。归档和 Host 登记是两次写入：归档成功后如果 Host 的保存结果待确认，可继续原请求；如果只失败在归档，页面会报告已连接及归档失败。
 - 「从这台 Mac 移除」从本 Host 收回中继连接并隐藏首页的本机文件。导出的配置仍可重新添加。云端 Worker 及其他 Mac 的连接不受影响。启停和移除都不用 Cloudflare 账户权限。
 - 只有这台 Mac 上有 `admin` 的设备能添加、停用、移除；其他有 `admin` 的设备只看得到列表与状态。
+- 网页打开「连接转发」时定期刷新状态。离开该分类后停止刷新，返回时读最新状态。
 - 每个节点只能添加一次，至多四个自己的中继；存在多个中继时手机按列表从上到下的顺序依次尝试连接，本机管理员可在「设置 › 连接转发」中直接拖动（或经菜单上移、下移）调整优先顺序并重新签发连接簿，已建立的控制连接不断开。
 - 中继文件使用完整、规范化的 HTTPS 来源地址，例如 `https://relay.example.com/` 或 `https://relay.example.com:8443/`，保留末尾的 `/`。域名小写，IPv6 用方括号。设置、`latch relay add` 与 Host 都核对地址（[relay-endpoint.ts](../packages/protocol/src/relay-endpoint.ts)）。
 - Host 停止时可用 `latch relay add --data-dir <目录>`（读 `~/.latch/relays` 里唯一的中继文件；`--name <名称>` 选其中一个，`--file <中继文件>` 指定其他位置）、`relay list` 和 `relay remove <节点标识>`。源码运行使用 `pnpm latch`。添加时终端列出每个地址与密钥短哈希，核对后输入 y，非交互用 `--expect-key <密钥短哈希>`。先写审计再保存为待核对，Host 启动后节点证明密钥并接受登记，才可进入签名连接簿。离线 `relay list` 会标出「已停用」与「待核对」。Host 运行时可用 `relay test <节点标识>` 检查连通性、身份与登记，并查看 Host 签发状态。源码目录运行 `pnpm latch relay setup linux` 可经 SSH 一键把自包含中继部署到 Linux 服务器、完成端到端验收并写出 `~/.latch/relays/<名称>.json`。

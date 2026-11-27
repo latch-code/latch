@@ -11,9 +11,51 @@
     <link rel="apple-touch-icon" href="/link/icon.png" />
     <link rel="manifest" href="/link/manifest.webmanifest" />
     <title>Latch</title>
+    <script defer src="/recovery.js"></script>
+    <style>
+      #root:empty,
+      #root:not(:empty) + #latch-recovery {
+        display: none;
+      }
+      #latch-recovery {
+        box-sizing: border-box;
+        display: grid;
+        place-content: center;
+        justify-items: center;
+        position: fixed;
+        inset: 0;
+        overflow: auto;
+        padding: 1rem;
+        background: Canvas;
+        color: CanvasText;
+        font:
+          1rem/1.5 system-ui,
+          sans-serif;
+        text-align: center;
+      }
+      #latch-recovery h1,
+      #latch-recovery p {
+        margin: 0 0 0.75rem;
+      }
+      #latch-recovery button {
+        min-height: 44px;
+        padding: 0.5rem 1rem;
+        border: 1px solid ButtonText;
+        border-radius: 0.5rem;
+        background: ButtonFace;
+        color: ButtonText;
+        font: inherit;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <main id="latch-recovery" aria-labelledby="latch-recovery-title">
+      <h1 id="latch-recovery-title">Latch</h1>
+      <p role="status">正在打开…</p>
+      <p id="latch-recovery-instructions">页面一直没有打开时，请用浏览器重新加载。</p>
+      <button type="button" hidden>重新加载</button>
+    </main>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

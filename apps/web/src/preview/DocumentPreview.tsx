@@ -1,8 +1,9 @@
 import csvWorkerUrl from './csv.worker.ts?worker&url'
 import { trustedScriptUrl } from './runtime.ts'
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { InlineNotice } from '@latch/ui'
 import { isFrameEvent, type DocumentPreviewProps, type FrameCommand, type FrameOrigin, type GridCell, type SheetInfo } from './types.ts'
+import { deferredComponent } from '../components/DeferredContent.tsx'
 import { SheetGrid, type SheetView } from './SheetGrid.tsx'
 import { openDocumentLink } from './openLink.ts'
 import { DOCUMENT_PREVIEW_ERRORS } from '../core/securityCopy.ts'
@@ -32,7 +33,6 @@ const COPY = defineCopy(
     tableUpdating: '正在更新表格…',
     tableReading: '正在读取表格…',
     notSupported: '这个文件不能在应用内预览。',
-    pdfLoading: '正在加载 PDF…',
     unavailable: '暂时无法预览这个文件。',
   },
   {
@@ -57,12 +57,11 @@ const COPY = defineCopy(
     tableUpdating: 'Updating table…',
     tableReading: 'Reading table…',
     notSupported: 'This file cannot be previewed in the app.',
-    pdfLoading: 'Loading PDF…',
     unavailable: 'This file cannot be previewed right now.',
   },
 )
 
-const PdfPreview = lazy(() => import('./PdfPreview.tsx'))
+const PdfPreview = deferredComponent(() => import('./PdfPreview.tsx'), 'PDF')
 const sheetLabel = (sheet: SheetInfo) => (sheet.unnamed ? COPY.sheetName(sheet.id + 1) : sheet.name)
 type Pending = { resolve: (rows: GridCell[][]) => void; reject: () => void; timer: ReturnType<typeof setTimeout> }
 /** `system` pins no attribute on the page, so the frame reads what the media query decided. */
@@ -516,12 +515,7 @@ function CsvPreview({ read, versionKey, onQuote }: DocumentPreviewProps) {
 export function DocumentPreview(props: DocumentPreviewProps) {
   const identity = `${props.file.root}\n${props.file.path}\n${props.file.attachmentId ?? ''}`
   if (props.file.secret || !props.file.actions.preview) return <InlineNotice>{COPY.notSupported}</InlineNotice>
-  if (props.file.kind === 'pdf')
-    return (
-      <Suspense fallback={<p role="status">{COPY.pdfLoading}</p>}>
-        <PdfPreview key={identity} {...props} />
-      </Suspense>
-    )
+  if (props.file.kind === 'pdf') return <PdfPreview key={identity} {...props} />
   if (props.file.kind === 'csv') return <CsvPreview key={identity} {...props} />
   if (['pptx', 'docx', 'xlsx'].includes(props.file.kind) && props.file.size <= 50 * 1024 * 1024)
     return <OfficePreview key={identity} {...props} />

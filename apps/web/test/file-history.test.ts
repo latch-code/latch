@@ -33,6 +33,7 @@ describe('per-file recorded history', () => {
         edit('one', 'main', 'a.ts'),
         { id: 'second', role: 'user', text: 'Next change' },
         edit('two', 'main', 'b.ts'),
+        { id: 'steer', role: 'user', text: 'While you work', steered: true },
         edit('three', 'main', 'a.ts'),
       ],
     })
@@ -88,7 +89,14 @@ describe('per-file recorded history', () => {
     const pending = edit('wait', 'main', '/outside/notes.ts', 'awaiting-approval')
     const detail = {
       summary,
-      messages: [{ id: 'u1', role: 'user' as const, text: 'edit' }, inside, outside1, outside2, pending],
+      messages: [
+        { id: 'u1', role: 'user' as const, text: 'edit' },
+        inside,
+        outside1,
+        { id: 's1', role: 'user' as const, text: 'steer', steered: true as const },
+        outside2,
+        pending,
+      ],
     }
     const inRoot = recordedFileHistory(detail, 'one', 0)
     expect(inRoot?.insideRoot).toBe(true)
@@ -99,6 +107,7 @@ describe('per-file recorded history', () => {
     expect(outRoot?.insideRoot).toBe(false)
     expect(outRoot?.history.path).toBe('/outside/notes.ts')
     expect(outRoot?.history.entries.map(entry => entry.id)).toEqual(['out1:0', 'out2:0'])
+    expect(outRoot?.history.entries.map(entry => entry.turnId)).toEqual(['u1', 'u1'])
     expect(outRoot?.history.currentTurnId).toBe('u1')
 
     expect(recordedFileHistory(detail, 'wait', 0)).toBeUndefined()

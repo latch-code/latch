@@ -814,7 +814,8 @@ button.overview-agent-line:hover,
   display: flex;
   flex-direction: column;
 }
-.code-home-notices:has(> .harness-found) > :not(.harness-found) {
+/* This only takes effect when the card makes this a flex column. Keep the sibling rule independent of :has(). */
+.code-home-notices > :not(.harness-found) {
   flex: none;
 }
 /* A login notice may fill this area by itself. Let it scroll past a complete card before scrolling the list inside. */

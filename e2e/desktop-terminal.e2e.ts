@@ -219,6 +219,8 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
 
       const panes = page.getByRole('group', { name: '工作台面板', exact: true })
       const terminalToggle = panes.getByRole('button', { name: '终端', exact: true })
+      await terminalToggle.waitFor()
+      expect(await page.locator('#terminal-dock .terminal-panel').count()).toBe(0)
       await terminalToggle.click()
       const panel = page.getByRole('region', { name: '终端', exact: true })
       const tabs = panel.getByRole('tablist', { name: '终端', exact: true })

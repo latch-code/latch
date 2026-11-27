@@ -190,7 +190,7 @@ export const WorkBoardCard = memo(function WorkBoardCard({
   useLocale()
   const connected = shell.connection === 'connected'
   const live = task.status === 'running' || task.status === 'waiting-approval'
-  useTicker(connected && live ? 'second' : 'minute')
+  useTicker(shell.board && !shell.settings ? (connected && live ? 'second' : 'minute') : false)
   const now = hostNow()
   const stopping = shell.stopping.has(task.id) || task.live?.activity === 'cancelling'
   const state = cardState(task, { connected, now, stopping, delivery, sharedFolder })

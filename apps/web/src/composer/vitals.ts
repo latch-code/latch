@@ -1,5 +1,4 @@
 import type { Message, TaskDetail, TaskSummary, TokenUsage } from '@latch/protocol'
-import { turnsOf } from '../conversation.ts'
 import { contextTotals, type ContextTotals } from './sessionTotals.ts'
 
 /** From this share of the window on, the context ring turns amber. */
@@ -53,9 +52,16 @@ export function sessionVitals(
   const own = detail?.summary.id === summary.id ? detail : undefined
   const vitals: SessionVitals = {}
   const messages = own?.messages ?? []
-  const turns = turnsOf(messages).filter(turn => turn.user)
-  if (turns.length > 0)
-    vitals.turns = { turns: turns.length, steps: messages.filter(message => message.role === 'tool' && !message.subagent).length }
+  let turns = 0
+  let steps = 0
+  let latest: Message | undefined
+  for (const message of messages) {
+    if (message.role === 'user' && !message.steered) {
+      turns++
+      latest = message
+    } else if (message.role === 'tool' && !message.subagent) steps++
+  }
+  if (turns > 0) vitals.turns = { turns, steps }
   const routed = summary.usage ? undefined : routedUsage(messages)
   const usage = summary.usage ?? routed
   if (usage && usage.inputTokens + usage.outputTokens > 0) {
@@ -70,9 +76,8 @@ export function sessionVitals(
       by: routed ? 'gateway' : 'harness',
     }
   }
-  const last = turns.at(-1)
   const running = summary.status === 'running' || summary.status === 'waiting-approval'
-  const stats = last?.user?.turn
+  const stats = latest?.turn
   // Both from the Harness: the turn's output tokens and how long its output streamed by its own times.
   if (running && stats?.stream && stats.stream.ms >= MIN_STREAM_MS)
     vitals.speed = Math.round(stats.stream.outputTokens / (stats.stream.ms / 1000))

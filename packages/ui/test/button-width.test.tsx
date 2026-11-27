@@ -10,6 +10,52 @@ const painted = () => new Promise<void>(resolve => requestAnimationFrame(() => r
 const width = (element: Element) => element.getBoundingClientRect().width
 
 describe('button width while work is pending', () => {
+  it('mounts and observes idle buttons without synchronous style or layout reads', async () => {
+    const styles = vi.spyOn(window, 'getComputedStyle')
+    const sizes = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get')
+    try {
+      await render(
+        <section>
+          {Array.from({ length: 16 }, (_, row) => (
+            <Button key={row} data-width-probe="">
+              Action {row}
+            </Button>
+          ))}
+        </section>,
+      )
+      await painted()
+      const probed = (element: unknown) => element instanceof HTMLElement && element.hasAttribute('data-width-probe')
+      expect(styles.mock.calls.filter(([element]) => probed(element))).toHaveLength(0)
+      expect(sizes.mock.contexts.filter(probed)).toHaveLength(0)
+    } finally {
+      styles.mockRestore()
+      sizes.mockRestore()
+    }
+  })
+
+  it('holds the old physical width when work starts before the first observer delivery, also in vertical text', async () => {
+    let step: (value: number) => void
+    function Control() {
+      const [state, set] = useState(0)
+      step = set
+      return state ? (
+        <Button style={{ writingMode: 'vertical-rl', ...(state === 1 ? { width: 144 } : {}) }} loading={state === 2} loadingLabel="…">
+          保存设置
+        </Button>
+      ) : null
+    }
+    const screen = await render(<Control />)
+    flushSync(() => step(1))
+    const button = screen.container.querySelector('button')!
+    const idle = width(button)
+    flushSync(() => step(2))
+    expect(width(button)).toBeGreaterThanOrEqual(idle - 1)
+    flushSync(() => step(1))
+    await painted()
+    flushSync(() => step(2))
+    expect(width(button)).toBeGreaterThanOrEqual(idle - 1)
+  })
+
   it('does not force a measurement on unchanged buttons during unrelated parent commits', async () => {
     let update: (value: number) => void
     function StreamingParent() {
@@ -150,9 +196,9 @@ describe('button width while work is pending', () => {
   })
 
   it('follows container resizing while idle and keeps a block button fitted while busy', async () => {
-    const content = (size: number, busy = false) => (
+    const content = (size: number, busy = false, block = true) => (
       <div style={{ width: size }}>
-        <Button block loading={busy} loadingLabel="…">
+        <Button block={block} loading={busy} loadingLabel="…">
           保存设置
         </Button>
       </div>
@@ -169,6 +215,10 @@ describe('button width while work is pending', () => {
     expect(width(button)).toBe(220)
     await screen.rerender(content(360, true))
     await painted()
+    expect(width(button)).toBe(360)
+    await screen.rerender(content(220, true))
+    await painted()
+    await screen.rerender(content(220, true, false))
     expect(width(button)).toBe(360)
   })
 

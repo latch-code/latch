@@ -1,32 +1,32 @@
-import { useEffect, useState } from 'react'
-import type { TaskStatus, TaskSummary } from '@latch/protocol'
+import { useEffect, useRef, useState } from 'react'
+import type { TaskSummary } from '@latch/protocol'
 import { isActive } from '../format.ts'
 
 /**
- * Elapsed time of the selected run, only when this page saw the run start. The
- * Host does not report start times, so a run already active on first load shows
- * no clock rather than a misleading one.
+ * Fallback for a Host without a start time. Only a run this page saw start gets a clock.
+ * A null selection still records transitions so switching back can resume its elapsed time.
  */
 export function useRunClock(tasks: TaskSummary[], selectedId: string | null): number | undefined {
-  const [state, setState] = useState<{ statuses: Map<string, TaskStatus> | null; starts: Map<string, number> }>({
-    statuses: null,
-    starts: new Map(),
-  })
+  const activeBefore = useRef<Set<string> | null>(null)
+  const [starts, setStarts] = useState(() => new Map<string, number>())
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
-    setState(previous => {
-      const starts = new Map(previous.starts)
-      for (const task of tasks) {
-        const before = previous.statuses?.get(task.id)
-        if (!isActive(task.status)) starts.delete(task.id)
-        else if (previous.statuses !== null && !isActive(before) && !starts.has(task.id)) starts.set(task.id, Date.now())
-      }
-      return { statuses: new Map(tasks.map(task => [task.id, task.status])), starts }
-    })
-  }, [tasks])
+    const previous = activeBefore.current
+    const active = new Set<string>()
+    const startedAt = Date.now()
+    let changed: Map<string, number> | undefined
+    for (const task of tasks) {
+      if (isActive(task.status)) {
+        active.add(task.id)
+        if (previous !== null && !previous.has(task.id) && !starts.has(task.id)) (changed ??= new Map(starts)).set(task.id, startedAt)
+      } else if (starts.has(task.id)) (changed ??= new Map(starts)).delete(task.id)
+    }
+    activeBefore.current = active
+    if (changed) setStarts(changed)
+  }, [tasks, starts])
 
-  const start = selectedId === null ? undefined : state.starts.get(selectedId)
+  const start = selectedId === null ? undefined : starts.get(selectedId)
   useEffect(() => {
     if (start === undefined) return
     setNow(Date.now())

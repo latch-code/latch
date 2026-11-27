@@ -23,6 +23,7 @@ describe('session vitals', () => {
           { id: 't1', role: 'tool', text: '' },
           { id: 'a1', role: 'assistant', text: 'ok' },
           user('u2'),
+          user('continue', { steered: true }),
           { id: 't2', role: 'tool', text: '' },
           { id: 't3', role: 'tool', text: '', subagent: { id: 'c', title: 'c', steps: [] } as unknown as Message['subagent'] },
         ],

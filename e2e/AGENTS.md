@@ -25,7 +25,7 @@ Vitest 驱动浏览器、Electron 与原生。剪贴板用隔离夹具，Host �
 
 `stream-delta.e2e.ts` 验证增量与修复；`streaming-render.e2e.ts` 检查长历史定位。
 
-`stream-performance.e2e.ts`：`LATCH_STREAM_BENCH=1`（TESTING）。
+静置、跨页和流式基准见 TESTING「性能测量」。
 node 环境；Host、protocol、sdk、testkit、relay、link-client、link-wire、Playwright、Vite 只写 devDependencies；Vitest 使用根项目的版本，本项目不重复声明。
 
 不变量：

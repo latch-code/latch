@@ -2,17 +2,15 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/main.cjs` | 窗口、协议、渲染限制、调试 |
+| `src/main.cjs` | 窗口、协议、渲染限制、调试、原分区恢复 |
 | `src/proxy.cjs`、`credentials.cjs`、`host.cjs`、`preload.cjs` | host.sock 转发并附凭据；设备密钥；host.json 核对；`latchShell` |
 | `src/folders.cjs`、`files.cjs`、`editors.cjs`、`lifecycle.cjs` | 目录面板；`latchShell.files`、`editors`；Host 重启、防睡、登录项与睡眠报告 |
 
-electron-main：CommonJS，不导 TS；仅依赖 `@latch/protocol`。
-
-不变量：
+electron-main：CommonJS，禁 TS；只依赖 `@latch/protocol`。
 
 - 应用页无网络与凭据。顶层 `latch:`，固定文档用无凭据的 `latch-frame:`。仅本来源顶层可 `clipboard-sanitized-write`（`h-` 页需 5 秒内真实手势）；`execCommand` 复制不经权限。
 - 每个 webContents 加载前禁用非代理 WebRTC UDP；应用 session 用实际监听的回环黑洞代理并关隐式回环绕过。HTML 脚本开关只由有此二限的壳声明。
-- 页面限 `latch://app/` 或所属 `latch://h-<hostId>/`（独立分区、凭据与证书）。主窗口切页保留各自状态，隐藏本机浏览器标签并拒 Agent 输入。会话仍可单开。本机真实点击直开网页、邮件与本地网络设置，远程和脚本外链先确认，其他协议拒绝。`latch://app/about` 禁脚本、取前台配色。
+- 页面限 `latch://app/` 或所属 `latch://h-<hostId>/`（独立分区、凭据与证书）。主窗口切页保留各自状态，隐藏本机浏览器标签并拒 Agent 输入。会话可单开。本机真实点击直开网页、邮件与本地网络设置，远程和脚本外链先确认，其他协议拒绝。`latch://app/about` 禁脚本、取前台配色。
 - preload 仅暴露 `latchShell`。IPC 限顶层；远端只到电脑列表、窗口操作与当前页是否选中、spaces、设置菜单、全屏及关于配色（ARCHITECTURE）。电脑写入、打开与切换需前台页一秒内真实手势。生命周期只收布尔。`/pairings` 仅 macOS 主进程申请，链接不进页面或日志。
 - 工作电脑限本机顶层真实手势，复核身份权限；原生菜单仅给助手 ID。跨机待办原生确认目标与原文。
 - 通知只读 Host 状态，取消/中断不冒充完成；首个后台结束时开通知；偏好串行存，标题默认隐藏。

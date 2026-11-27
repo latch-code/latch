@@ -64,6 +64,10 @@ it('follows same-session growth after the observed layout', () => {
   expect(measure).not.toHaveBeenCalled()
   f.controller.layout(f.viewport)
   expect(f.geometry.top).toBe(950)
+  expect(measure).toHaveBeenCalledTimes(2) // Geometry before the scroll write and the actual clamped result.
+  measure.mockClear()
+  f.controller.layout(f.viewport)
+  expect(measure).toHaveBeenCalledTimes(1)
   f.geometry.extent = 650
   f.controller.sync('b', true, f.viewport, true)
   expect(f.geometry.top).toBe(450)

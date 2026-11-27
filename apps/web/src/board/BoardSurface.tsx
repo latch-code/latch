@@ -30,7 +30,6 @@ import {
   filterOptions,
   filtering,
   firstPhoneState,
-  groupCounts,
   GROUP_LABELS,
   listRows,
   NO_FILTERS,
@@ -207,7 +206,8 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
   }
   const root = useRef<HTMLElement>(null)
   const narrow = useNarrow(root)
-  useTicker(connection === 'connected' ? 'minute' : false)
+  const boardVisible = shell.board && !shell.settings && !showItem
+  useTicker(boardVisible && connection === 'connected' ? 'minute' : false)
   const now = hostNow()
   const tasks = snapshot.tasks
   const items = useMemo(() => snapshot.items ?? [], [snapshot.items])
@@ -222,7 +222,6 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
   const filtered = filtering(filters)
   const columns = boardColumns(tasks, filters, workspaces, now, items, proposals)
   const column = (group: BoardColumnGroup) => columns.find(item => item.group === group)!
-  const counts = groupCounts(tasks, now, items, proposals)
   const locale = useLocale()
   const options = useMemo(() => filterOptions(tasks, snapshot, items, proposals), [tasks, snapshot, items, proposals, locale])
   const marked = started ?? shell.selectedId
@@ -234,7 +233,17 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
     () => deliverable.flatMap(card => (card.kind === 'session' ? [card.id] : [])).slice(0, DELIVERY_READS),
     [deliverable],
   )
-  const delivery = useDeliveryFor(shell, deliveryIds, !narrow && memory.view === 'board')
+  const delivery = useDeliveryFor(shell, deliveryIds, boardVisible && !narrow && memory.view === 'board')
+  const sharedFolders = useMemo(() => {
+    const seen = new Set<string>()
+    const shared = new Set<string>()
+    for (const task of tasks) {
+      if (!task.cwd || task.archived) continue
+      if (seen.has(task.cwd)) shared.add(task.cwd)
+      else seen.add(task.cwd)
+    }
+    return shared
+  }, [tasks])
 
   const open = useCallback(
     (id: string) => {
@@ -485,7 +494,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
   const drag = useBoardDrag({
     root,
     // A phone shows the list; a narrow desktop window still has the columns (2 + 2 + 1) and a mouse.
-    enabled: !narrow && !showItem && memory.view === 'board',
+    enabled: boardVisible && !narrow && memory.view === 'board',
     placeOf,
     onDrop,
   })
@@ -578,9 +587,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
         shell={shell}
         marked={marked === task.id}
         delivery={delivery.get(task.id)}
-        sharedFolder={
-          !!task.cwd && !task.worktree && tasks.some(other => other.id !== task.id && !other.archived && other.cwd === task.cwd)
-        }
+        sharedFolder={!!task.cwd && !task.worktree && sharedFolders.has(task.cwd)}
         menu={menuFor(task)}
         onOpen={open}
         decision={decide ? <WorkbenchDecision task={task} shell={decisionShell} /> : undefined}
@@ -609,9 +616,13 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
       </Button>
     ) : undefined
   let noMatches = false
-  const phoneGroup = phoneState ?? firstPhoneState(counts)
   let body
-  if (narrow) {
+  if (showItem) {
+    body = null
+  } else if (narrow) {
+    const counts = { todo: 0, attention: 0, running: 0, deliver: 0, done: 0 }
+    for (const { group, total } of columns) counts[group] = total
+    const phoneGroup = phoneState ?? firstPhoneState(counts)
     const shownDone = new Set(column('done').cards.map(card => card.id))
     const rows = listRows(tasks, phoneGroup, filters, workspaces, 'group', items, proposals).filter(
       card => phoneGroup !== 'done' || shownDone.has(card.id),

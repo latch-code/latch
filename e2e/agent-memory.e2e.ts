@@ -97,9 +97,10 @@ it('an Agent proposes, the person decides in the conversation, and 记忆 shows 
       owner.json<AppSnapshot>('snapshot').then(snapshot => snapshot.tasks.find(task => task.agent?.customAgentId === agent.id))
     const idle = () => expect.poll(async () => (await topicId())?.status).toBe('idle')
     const reply = page.getByRole('textbox', { name: '继续对话', exact: true })
-    await idle()
     const footer = latestTurn(page).locator('.turn-footer')
+    // The first turn mounts the fake ACP's local MCP servers before the settled footer appears.
     await footer.locator('time').waitFor()
+    await idle()
     expect(
       await footer.evaluate(element => element.getBoundingClientRect().top - element.closest('.turn')!.getBoundingClientRect().bottom),
     ).toBeGreaterThan(0)

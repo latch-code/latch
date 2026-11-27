@@ -164,21 +164,28 @@ const itemPath = (id: string) => `work/items/${encodeURIComponent(id)}`
 /** The 待办's full record (its 要求 is not in the snapshot), read again whenever the Host's revision moves. */
 function useItemRecord(id: string, revision: number | undefined, onGone: () => void) {
   const [record, setRecord] = useState<WorkItem | null>(null)
+  const request = useRef<AbortController | null>(null)
   const gone = useRef(onGone)
   useEffect(() => {
     gone.current = onGone
   })
   const read = useCallback(async () => {
+    request.current?.abort()
+    const controller = new AbortController()
+    request.current = controller
     try {
-      const { item } = await api<WorkItemAnswer>(itemPath(id))
-      setRecord(previous => (previous && previous.id === item.id && previous.revision > item.revision ? previous : item))
+      const { item } = await api<WorkItemAnswer>(itemPath(id), { signal: controller.signal })
+      if (!controller.signal.aborted)
+        setRecord(previous => (previous && previous.id === item.id && previous.revision > item.revision ? previous : item))
     } catch (cause) {
-      if (cause instanceof ApiError && cause.status === 404) gone.current()
+      if (!controller.signal.aborted && cause instanceof ApiError && cause.status === 404) gone.current()
+    } finally {
+      if (request.current === controller) request.current = null
     }
   }, [id])
   useEffect(() => {
-    if (revision === undefined) return
-    void read()
+    if (revision !== undefined) void read()
+    return () => request.current?.abort()
   }, [read, revision])
   return { record: record?.id === id ? record : null, setRecord, read }
 }
@@ -192,13 +199,14 @@ function useItemRecord(id: string, revision: number | undefined, onGone: () => v
 export function ItemPage({ shell, itemId, outside }: { shell: ShellState; itemId: string; outside: readonly TaskSummary[] }) {
   const { snapshot } = shell
   const item = snapshot.items?.find(entry => entry.id === itemId)
-  const thread = useItemThread(item, snapshot, shell.connection === 'connected')
+  const visible = shell.board && !shell.settings
+  const thread = useItemThread(item, snapshot, visible && shell.connection === 'connected')
   const canWrite = shell.access.scopes.has('run')
   const root = useRef<HTMLElement>(null)
   const close = useCallback(() => {
     closeItemPage()
   }, [])
-  const { record, setRecord, read } = useItemRecord(itemId, item?.revision, close)
+  const { record, setRecord, read } = useItemRecord(itemId, visible ? item?.revision : undefined, close)
   // A 待办 the snapshot no longer lists (deleted, or no longer readable here) closes its page without a word.
   const listed = item !== undefined
   useEffect(() => {
@@ -227,7 +235,7 @@ export function ItemPage({ shell, itemId, outside }: { shell: ShellState; itemId
   }, [close, shell.board])
 
   const canReadFiles = readsProjectFiles(snapshot.device.dataScope)
-  const evidence = useWorkbenchDelivery(snapshot, shell.connection, shell.board && item !== undefined, item?.sessionIds ?? [])
+  const evidence = useWorkbenchDelivery(snapshot, shell.connection, visible && item !== undefined, item?.sessionIds ?? [])
 
   const factsId = useId()
   const [factsOpen, setFactsOpen] = useState(false)
@@ -750,7 +758,7 @@ function SessionRow({
 }) {
   const connected = shell.connection === 'connected'
   const live = task.status === 'running' || task.status === 'waiting-approval'
-  useTicker(connected && live ? 'second' : 'minute')
+  useTicker(shell.board && !shell.settings ? (connected && live ? 'second' : 'minute') : false)
   const now = hostNow()
   const stopping = shell.stopping.has(task.id) || task.live?.activity === 'cancelling'
   const state = cardState(task, { connected, now, stopping, sharedFolder: false })

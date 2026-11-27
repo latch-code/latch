@@ -69,6 +69,7 @@ const { createAgentRunner, createBrowserProvider } = require('./browser-agent.cj
 // Through the module objects, so the end-to-end test's bootstrap can give the updater a local feed and a fake installer.
 const updates = require('./updater.cjs')
 const menus = require('./menu.cjs')
+const { createWorkbenchRecovery } = require('./workbench-recovery.cjs')
 const {
   ABOUT_BACKGROUND,
   ABOUT_SIZE,
@@ -174,11 +175,23 @@ app.setName('Latch')
 app.setPath('userData', resolve(argument('latch-user-data') ?? join(app.getPath('appData'), 'Latch', 'Desktop')))
 const desktopLocale = createLocale(app.getPath('userData'), () => app.getPreferredSystemLanguages())
 const NATIVE_COPY = defineCopy(
-  { chooseConnectionFile: '选择连接文件', newWorkAgent: '在这台电脑新建助手…', exportDiagnostics: '导出诊断' },
+  {
+    chooseConnectionFile: '选择连接文件',
+    newWorkAgent: '在这台电脑新建助手…',
+    exportDiagnostics: '导出诊断',
+    workbenchUnavailable: '工作台未能打开',
+    reloadWorkbench: '重新载入',
+    recoverStart: '回到起始页',
+    dismissRecovery: '稍后',
+  },
   {
     chooseConnectionFile: 'Choose connection file',
     newWorkAgent: 'Create an assistant on this computer…',
     exportDiagnostics: 'Export diagnostics',
+    workbenchUnavailable: 'The workbench could not open',
+    reloadWorkbench: 'Reload',
+    recoverStart: 'Open Start Page',
+    dismissRecovery: 'Later',
   },
 )
 const STARTUP_EN = {
@@ -285,6 +298,11 @@ function createWindow({ width = 1250, height = 850, preload = true, partition, s
   }
   window.on('enter-full-screen', tellFullScreen)
   window.on('leave-full-screen', tellFullScreen)
+  const updateRecovery = () => recoveryOf(contentsOf(window))?.update()
+  window.on('show', updateRecovery)
+  window.on('hide', updateRecovery)
+  window.on('restore', updateRecovery)
+  window.on('minimize', updateRecovery)
   return window
 }
 
@@ -296,11 +314,40 @@ let workbenchView
 let workbenchRevision = 0
 let workbenchChanged = () => {}
 const workbenchOwners = new WeakMap()
+/** @type {WeakMap<Electron.WebContents, ReturnType<typeof createWorkbenchRecovery>>} */
+const workbenchRecoveries = new WeakMap()
+/** @param {Electron.WebContents | undefined} contents */
+const recoveryOf = contents => (contents ? workbenchRecoveries.get(contents) : undefined)
 const ownerOf = contents => workbenchOwners.get(contents) ?? BrowserWindow.fromWebContents(contents)
 function contentsOf(window) {
   if (!window || window.isDestroyed()) return undefined
   const contents = window === mainWindow && workbenchView ? workbenchView.contents : window.webContents
   return contents.isDestroyed() ? undefined : contents
+}
+
+/** @param {Electron.BrowserWindow} window @param {Electron.WebContents} contents @param {string} url
+ * @param {() => boolean} [discardUnselected]
+ */
+function trackWorkbench(window, contents, url, discardUnselected) {
+  const recovery = createWorkbenchRecovery(contents, {
+    url,
+    log,
+    discardUnselected,
+    active: () => contentsOf(window) === contents && window.isVisible() && !window.isMinimized(),
+    offerReload: signal =>
+      dialog
+        .showMessageBox(window, {
+          type: 'warning',
+          message: NATIVE_COPY.workbenchUnavailable,
+          buttons: [NATIVE_COPY.reloadWorkbench, NATIVE_COPY.recoverStart, NATIVE_COPY.dismissRecovery],
+          defaultId: 0,
+          cancelId: 2,
+          signal,
+        })
+        .then(answer => (answer.response === 0 ? 'reload' : answer.response === 1 ? 'start' : undefined)),
+  })
+  workbenchRecoveries.set(contents, recovery)
+  return recovery
 }
 
 const refusedFolders = { status: 'failed', code: 'shell-refused' }
@@ -332,6 +379,7 @@ function showWorkbenchView(next) {
   if (previous) gestures.get(previous)?.clear()
   if (workbenchView) window.contentView.removeChildView(workbenchView.view)
   workbenchView = next
+  recoveryOf(previous)?.update()
   previewBrowser.setWorkbenchVisible(!next)
   if (next) {
     sizeWorkbenchView()
@@ -344,6 +392,7 @@ function showWorkbenchView(next) {
     if (window.isFocused()) contents.focus()
     contents.send(FULL_SCREEN_CHANNEL, window.isFullScreen())
     contents.send(WORKSPACE_ACTIVE_CHANNEL, true)
+    workbenchRecoveries.get(contents)?.update()
   }
   workbenchChanged()
 }
@@ -524,7 +573,9 @@ function openWindow({ show = true } = {}) {
     browserProvider?.stop()
     workbenchChanged()
   })
-  void window.loadURL(APP_URL)
+  void trackWorkbench(window, window.webContents, APP_URL)
+    .load()
+    ?.catch(() => {})
   return window
 }
 
@@ -626,8 +677,9 @@ app.on('web-contents-created', (_event, contents) => {
     if (covered()) event.preventDefault()
     else gesture.key(input)
   })
-  contents.on('blur', () => gesture.clear())
-  contents.on('did-start-navigation', () => gesture.clear())
+  contents.on('blur', gesture.clear)
+  contents.on('did-start-navigation', gesture.clear)
+  contents.on('render-process-gone', gesture.clear)
   contents.setWindowOpenHandler(({ url }) => {
     const owner = ownerOf(contents)
     if (contentsOf(owner) !== contents) return { action: 'deny' }
@@ -974,12 +1026,15 @@ async function startUpdates({ proxy, supervisor }) {
     if (contents) menus.openSafeMode(contents, { home: homeOf(contents) })
   }
   const reloadPage = () => {
+    const workbench = contentsOf(focusedAppWindow())
+    if (recoveryOf(workbench)?.reloadFailed()) return
     if (workbenchView && BrowserWindow.getFocusedWindow() === mainWindow) {
       workbenchView.contents.reload()
       return
     }
     const focused = webContents.getFocusedWebContents()
     if (focused) (webContents.getAllWebContents().find(contents => contents.devToolsWebContents === focused) ?? focused).reload()
+    else workbench?.reload()
   }
   // The menu bar, built again when the focused window's keys for Code and 我的 Agent differ (`menus.spaceMenu`).
   buildMenu = accelerators => {
@@ -1256,16 +1311,20 @@ async function startComputers({ localHostId, localState, localSnapshot, localReq
     }
     contents.on('did-navigate', navigated)
     const loaded = Promise.resolve()
-      .then(() => contents.loadURL(`latch://h-${hostId}/link/`))
+      .then(() => recovery.load())
       .then(() => documentLoaded)
       .catch(() => false)
       .finally(() => {
         if (!contents.isDestroyed()) contents.removeListener('did-navigate', navigated)
       })
     const entry = { window, view, contents, loaded }
+    const recovery = trackWorkbench(window, contents, `latch://h-${hostId}/link/`, () => {
+      if (workbenchView === entry) return false
+      dropView(hostId, entry)
+      return true
+    })
     remoteViews.set(hostId, entry)
     contents.once('destroyed', () => dropView(hostId, entry))
-    contents.once('render-process-gone', () => dropView(hostId, entry))
     return entry
   }
 
@@ -1386,7 +1445,9 @@ async function startComputers({ localHostId, localState, localSnapshot, localReq
       window.on('closed', () => {
         if (remoteWindows.get(hostId) === window) remoteWindows.delete(hostId)
       })
-      void window.loadURL(`latch://h-${hostId}/link/`)
+      void trackWorkbench(window, window.webContents, `latch://h-${hostId}/link/`)
+        .load()
+        ?.catch(() => {})
       return window
     },
   })

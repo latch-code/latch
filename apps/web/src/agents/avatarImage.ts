@@ -77,41 +77,58 @@ export async function preparePicture(file: Blob): Promise<{ picture: Blob } | { 
   }
 }
 
-const loaded = new Map<string, Promise<string | undefined>>()
+interface AvatarRead {
+  controller: AbortController
+  result: Promise<string | undefined>
+  url?: string
+  users: number
+}
 
-/**
- * A stored picture as this page can show it: read once through the authorised route and kept as an object URL for the
- * page's life. Undefined when it cannot be read (offline, a smaller scope, gone): the face is shown then.
- */
-export function avatarImageUrl(hash: string): Promise<string | undefined> {
-  if (!/^[a-f0-9]{64}$/u.test(hash)) return Promise.resolve(undefined)
-  let url = loaded.get(hash)
-  if (!url) {
-    url = api<ArrayBuffer>(`custom-agents/avatar-images/${hash}`, { response: 'bytes', timeoutMs: 30_000 }).then(
-      bytes => URL.createObjectURL(new Blob([bytes], { type: 'image/png' })),
-      () => {
-        // Asked again the next time something shows it.
-        loaded.delete(hash)
-        return undefined
-      },
-    )
-    loaded.set(hash, url)
+const loaded = new Map<string, AvatarRead>()
+
+function acquireAvatarImage(hash: string): AvatarRead {
+  const existing = loaded.get(hash)
+  if (existing) {
+    existing.users++
+    return existing
   }
-  return url
+  const controller = new AbortController()
+  const read: AvatarRead = {
+    controller,
+    users: 1,
+    result: api<ArrayBuffer>(`custom-agents/avatar-images/${hash}`, { response: 'bytes', timeoutMs: 30_000, signal: controller.signal })
+      .then(bytes => {
+        if (controller.signal.aborted) return undefined
+        read.url = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }))
+        return read.url
+      })
+      .catch(() => {
+        if (loaded.get(hash) === read) loaded.delete(hash)
+        return undefined
+      }),
+  }
+  loaded.set(hash, read)
+  return read
 }
 
 /** The object URL of an Agent's picture once it is read; undefined before, and whenever it cannot be. */
 export function useAvatarImage(hash: string | undefined): string | undefined {
-  const [shown, setShown] = useState<{ hash: string; url: string }>()
+  const [shown, setShown] = useState<{ hash: string; read: AvatarRead }>()
   useEffect(() => {
-    if (!hash) return undefined
+    if (!hash || !/^[a-f0-9]{64}$/u.test(hash)) return undefined
+    const read = acquireAvatarImage(hash)
     let live = true
-    void avatarImageUrl(hash).then(url => {
-      if (live && url) setShown({ hash, url })
+    void read.result.then(url => {
+      if (live && url) setShown({ hash, read })
     })
     return () => {
       live = false
+      if (--read.users !== 0) return
+      // Only mounted avatars share a read. A later mount must be authorized again.
+      if (loaded.get(hash) === read) loaded.delete(hash)
+      read.controller.abort()
+      if (read.url) URL.revokeObjectURL(read.url)
     }
   }, [hash])
-  return hash !== undefined && shown?.hash === hash ? shown.url : undefined
+  return shown && shown.hash === hash && !shown.read.controller.signal.aborted ? shown.read.url : undefined
 }

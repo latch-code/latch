@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { resolve } from 'node:path'
-import { chromium, type Page } from '@playwright/test'
+import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test'
 import { describe, expect, it } from 'vitest'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
@@ -137,11 +136,9 @@ describe('negotiated text stream', () => {
           })
         },
       }
-      const host = await startTestHost({ demo: false, plugins: [provider], uiDir: resolve('dist/web') })
-      const browser = await chromium.launch(browserLaunchOptions())
-      const context = await browser.newContext({ viewport: { width: 1440, height: 950 }, locale: 'zh-CN', reducedMotion: 'reduce' })
-      const page = await context.newPage()
-      page.setDefaultTimeout(20_000)
+      const host = await startTestHost({ demo: false, plugins: [provider] })
+      let browser: Browser | undefined
+      let context: BrowserContext | undefined
       try {
         const owner = await host.enroll({ listener: 'unix' })
         const bridge = host.host.bridge
@@ -151,12 +148,17 @@ describe('negotiated text stream', () => {
           mode: 'chat',
           model: { providerId: 'delta-browser', model: 'fixture' },
         })
-        const settled = () => expect.poll(async () => (await bridge.detail(sessionId)).summary.status).toBe('idle')
+        // A prompt acknowledges acceptance. Each fixture turn must finish persisting before the next starts.
+        const settled = () => expect.poll(async () => (await bridge.detail(sessionId)).summary.status, { timeout: 20_000 }).toBe('idle')
         await settled()
         for (let index = 1; index < 10; index++) {
           await bridge.prompt(sessionId, `历史-${index}`, randomUUID())
           await settled()
         }
+        browser = await chromium.launch(browserLaunchOptions())
+        context = await browser.newContext({ viewport: { width: 1440, height: 950 }, locale: 'zh-CN', reducedMotion: 'reduce' })
+        const page = await context.newPage()
+        page.setDefaultTimeout(20_000)
         await instrument(page, damage)
         await enrollBrowser(page, host)
         if (remote) {
@@ -251,8 +253,8 @@ describe('negotiated text stream', () => {
         }
       } finally {
         for (const step of steps) step.release()
-        await context.close()
-        await browser.close()
+        await context?.close()
+        await browser?.close()
         await host.close()
       }
     },

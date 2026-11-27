@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test'
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -95,6 +96,31 @@ function countProjectionRequests(page: Page): RequestCounts {
     else if (/^\/link\/api\/tasks\/[^/]+$/.test(path)) counts.detail++
   })
   return counts
+}
+
+async function watchAnimations(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const root = document.documentElement
+    root.dataset.seen = ''
+    document.addEventListener('animationstart', event => {
+      root.dataset.seen += ` ${event.animationName}`
+    })
+    const animate = Element.prototype.animate
+    Element.prototype.animate = function (...args) {
+      root.dataset.seen += ` animate:${this.getAttribute('class') ?? ''}`
+      return animate.apply(this, args)
+    }
+  })
+}
+
+const seenAnimations = async (page: Page) => (await page.evaluate(() => document.documentElement.dataset.seen ?? '')).trim().split(/\s+/)
+
+function pauseRequest() {
+  let release!: () => void
+  const waiting = new Promise<void>(resolve => {
+    release = resolve
+  })
+  return { waiting, release }
 }
 
 async function geometry(page: Page) {
@@ -587,24 +613,8 @@ describe('streamed messages in the real workspace', () => {
       first.reply.append('第一轮。')
       first.reply.finish()
       await expect.poll(async () => (await host.bridge.detail(first.id)).summary.status, { interval: 20 }).toBe('idle')
-      // CSS animations as they start, and each frame the elements that scripted animations move.
-      await page.evaluate(() => {
-        const root = document.documentElement
-        root.dataset.seen = ''
-        document.addEventListener('animationstart', event => {
-          root.dataset.seen += ` ${event.animationName}`
-        })
-        const watch = () => {
-          for (const animation of document.getAnimations()) {
-            if (animation instanceof CSSAnimation || animation instanceof CSSTransition) continue
-            const target = animation.effect instanceof KeyframeEffect ? animation.effect.target : null
-            if (target) root.dataset.seen += ` animate:${target.getAttribute('class') ?? ''}`
-          }
-          requestAnimationFrame(watch)
-        }
-        requestAnimationFrame(watch)
-      })
-      const seen = async () => (await page.evaluate(() => document.documentElement.dataset.seen ?? '')).trim().split(/\s+/)
+      await watchAnimations(page)
+      const seen = () => seenAnimations(page)
       const send = async (prompt: string) => {
         const reply = new ControlledReply()
         replies.set(prompt, reply)
@@ -630,7 +640,7 @@ describe('streamed messages in the real workspace', () => {
       expect(await seen()).not.toEqual(expect.arrayContaining(['message-fade']))
       await page.emulateMedia({ reducedMotion: 'no-preference' })
 
-      // Switching to another session fades the conversation area in; nothing arrives, so nothing rises.
+      // A cached transcript is restored immediately. Its prior messages have already arrived.
       const other = await start(page, '检验切换会话的淡入')
       other.reply.append('另一个会话。')
       other.reply.finish()
@@ -641,7 +651,7 @@ describe('streamed messages in the real workspace', () => {
       await openSession(page, first.id)
       await page.locator(`[data-task-id="${first.id}"][aria-current="page"]`).waitFor({ state: 'attached' })
       await page.locator('[data-message-id]').filter({ hasText: '第一轮。' }).waitFor()
-      await expect.poll(seen, { interval: 20 }).toEqual(expect.arrayContaining(['animate:transcript-content']))
+      expect(await seen()).not.toContain('animate:transcript-content')
       expect(await page.locator('[data-arrived]').count()).toBe(0)
 
       // A reload draws the conversation as it is, without arrivals.
@@ -946,12 +956,126 @@ describe('streamed messages in the real workspace', () => {
     }
   })
 
+  it.each(['unchanged', 'partial', 'newer'] as const)('checks the selected detail when needed after a periodic %s listing', async kind => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
+    const page = await context.newPage()
+    try {
+      await page.clock.install()
+      await enrollBrowser(page, testHost, { name: `状态轮询 ${kind}` })
+      const { id, reply } = await start(page, `核对${kind}轮询`)
+      const answer = '会话详情收到。'
+      reply.append(answer)
+      reply.finish()
+      await expect.poll(async () => (await host.bridge.detail(id)).summary.status).toBe('idle')
+      await page.reload()
+      await connected(page)
+      await page.locator('.transcript').getByText(answer, { exact: true }).waitFor()
+
+      const counts = countProjectionRequests(page)
+      const marker = `已核对轮询 ${kind}`
+      await page.route(
+        '**/link/api/snapshot',
+        async route => {
+          const response = await route.fetch()
+          const listing = (await response.json()) as AppSnapshot
+          expect(response.ok()).toBe(true)
+          expect(listing.tasksComplete).toBe(true)
+          expect(listing.revision).toBeDefined()
+          if (kind === 'partial') delete listing.tasksComplete
+          if (kind === 'newer') listing.revision = listing.revision! + 1
+          await route.fulfill({ response, json: { ...listing, hostName: marker } })
+        },
+        { times: 1 },
+      )
+      await page.clock.fastForward(30_000)
+      await page.getByRole('button', { name: marker, exact: true }).waitFor()
+      expect(counts.snapshot).toBe(1)
+      if (kind === 'unchanged') expect(counts.detail).toBe(0)
+      else await expect.poll(() => counts.detail).toBe(1)
+    } finally {
+      await context.close()
+    }
+  })
+
+  it('reads a selected session alongside its listing and waits for the listing before showing an uncached reply', async () => {
+    const owner = await testHost.enroll({ listener: 'unix' })
+    const prompt = '核对切换时的并行读取'
+    const text = '本轮的已结算回复。'
+    const reply = new ControlledReply()
+    replies.set(prompt, reply)
+    const { sessionId: id } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt, mode: 'chat', requestId: randomUUID() },
+    })
+    reply.append(text)
+    reply.finish()
+    await expect.poll(async () => (await host.bridge.detail(id)).summary.status).toBe('idle')
+
+    // This page has never displayed the session: only the Host has its body.
+    const { page, context, counts } = await open(1440, 900)
+    const listing = pauseRequest()
+    try {
+      await watchAnimations(page)
+      const before = { ...counts }
+      await page.route('**/link/api/snapshot', async route => {
+        await listing.waiting
+        await route.continue().catch(() => {})
+      })
+      const read = page.waitForResponse(response => new URL(response.url()).pathname === `/link/api/tasks/${id}` && response.ok())
+      await page.locator(`[data-task-id="${id}"]`).filter({ visible: true }).click()
+      await read
+      expect(counts.snapshot - before.snapshot).toBe(1)
+      const answer = page.locator('.transcript').getByText(text, { exact: true })
+      expect(await answer.count()).toBe(0)
+      listing.release()
+      await answer.waitFor()
+      expect(await seenAnimations(page)).toContain('animate:transcript-content')
+      await connected(page)
+      expect(counts.detail - before.detail).toBe(1)
+      expect(counts.snapshot - before.snapshot).toBe(1)
+    } finally {
+      listing.release()
+      await context.close()
+    }
+  })
+
+  it('catches changes between the selection read and the new subscription', async () => {
+    const { page, context } = await open(1440, 900)
+    const subscription = pauseRequest()
+    try {
+      const owner = await testHost.enroll({ listener: 'unix' })
+      const { id, reply } = await start(page, '核对切换订阅空档')
+      reply.finish()
+      await expect.poll(async () => (await host.bridge.detail(id)).summary.status).toBe('idle')
+      await newDraft(page)
+      await connected(page)
+      await page.route(
+        url => url.pathname === '/link/api/events' && url.searchParams.get('sessionId') === id,
+        async route => {
+          await subscription.waiting
+          await route.continue().catch(() => {})
+        },
+      )
+      const read = page.waitForResponse(response => new URL(response.url()).pathname === `/link/api/tasks/${id}` && response.ok())
+      await openSession(page, id)
+      const before = (await (await read).json()) as TaskDetail
+      const title = '订阅建立前已更新'
+      await owner.json(`tasks/${id}`, { method: 'PATCH', body: { title } })
+      await expect.poll(async () => (await owner.json<AppSnapshot>('snapshot')).revision).toBeGreaterThan(before.sync!.revision)
+      const row = page.locator(`[data-task-id="${id}"]`).filter({ visible: true })
+      expect(await row.textContent()).not.toContain(title)
+      subscription.release()
+      await connected(page)
+      await expect.poll(() => row.textContent()).toContain(title)
+    } finally {
+      subscription.release()
+      await context.close()
+    }
+  })
+
   it('withdraws the open transcript when a new complete listing drops it and its detail cannot answer', async () => {
     const { context, page } = await open(1280, 820)
-    let releaseDetail = () => {}
-    const blockedDetail = new Promise<void>(resolve => {
-      releaseDetail = resolve
-    })
+    const blockedDetail = pauseRequest()
     try {
       const { id, reply } = await start(page, '检查完整列表撤下当前会话')
       const text = '最后读到的会话正文。'
@@ -965,7 +1089,7 @@ describe('streamed messages in the real workspace', () => {
         url => url.pathname === `/link/api/${task}`,
         async route => {
           if (route.request().method() !== 'GET') return route.continue()
-          await blockedDetail
+          await blockedDetail.waiting
           await route.abort('connectionreset').catch(() => {})
         },
       )
@@ -990,7 +1114,7 @@ describe('streamed messages in the real workspace', () => {
       await expect.poll(() => transcript.count(), { timeout: 3_000 }).toBe(0)
       await homeInput(page).waitFor()
     } finally {
-      releaseDetail()
+      blockedDetail.release()
       await context.close()
     }
   })

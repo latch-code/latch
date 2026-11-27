@@ -37,10 +37,16 @@ function measureRows(container: HTMLElement | null, previous: Map<string, number
   const tops = new Map<string, number>()
   if (!container) return tops
   const containerTop = container.getBoundingClientRect().top - container.scrollTop
+  const scopeTops = new Map<HTMLElement, number>()
   const moves: Array<() => void> = []
   for (const element of container.querySelectorAll<HTMLElement>('[data-flip-id]')) {
     const scope = element.parentElement?.closest<HTMLElement>('[data-flip-scope]')
-    const top = element.getBoundingClientRect().top - (scope ? scope.getBoundingClientRect().top : containerTop)
+    let scopeTop = containerTop
+    if (scope) {
+      scopeTop = scopeTops.get(scope) ?? scope.getBoundingClientRect().top
+      scopeTops.set(scope, scopeTop)
+    }
+    const top = element.getBoundingClientRect().top - scopeTop
     const id = `${scope?.dataset.flipId ?? ''}\u0000${element.dataset.flipId ?? ''}`
     tops.set(id, top)
     if (previous === null) continue

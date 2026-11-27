@@ -9,7 +9,7 @@ import { frameGate } from './frameGate.ts'
 import { connectionFailure, noticeOf, parseHostState, type ConnectionFailure, type HostNotice } from './hostState.ts'
 import { hostView } from './permissions.ts'
 import { observeHostTime } from './hostClock.ts'
-import { mergeTaskSnapshot, ProjectionGuard, type ProjectionTicket } from './projection.ts'
+import { detailOwnsSummary, mergeTaskSnapshot, ProjectionGuard, type ProjectionTicket } from './projection.ts'
 import { TaskStreamProjection } from './taskStream.ts'
 import type { EnrollmentReason } from './securityCopy.ts'
 import { currentShell } from './shell.ts'
@@ -17,7 +17,8 @@ import { readStorage } from './storageKeys.ts'
 import { forgetStoredDrafts } from './sessionDrafts.ts'
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'offline'
-type SyncMode = 'list' | 'all'
+type SyncMode = 'list' | 'poll' | 'all'
+const SYNC_PRIORITY: Record<SyncMode, number> = { list: 0, poll: 1, all: 2 }
 const streamAuthority = (snapshot: AppSnapshot) =>
   JSON.stringify([
     snapshot.instanceId,
@@ -43,6 +44,15 @@ export interface AuthState {
 export const missingMeansDeleted = (snapshot: Pick<AppSnapshot, 'tasksComplete'>): boolean => snapshot.tasksComplete === true
 export const isMissingTask = (cause: unknown) => cause instanceof ApiError && cause.status === 404 && cause.code === 'task-not-found'
 
+async function readTaskDetail(id: string, signal: AbortSignal): Promise<TaskDetail | null> {
+  try {
+    return await api<TaskDetail>(`tasks/${encodeURIComponent(id)}`, { signal })
+  } catch (cause) {
+    if (isMissingTask(cause)) return null
+    throw cause
+  }
+}
+
 const ENROLLMENT_CODES = new Set<string>(['unauthorized', 'device-revoked', 'credential-expired', 'listener-mismatch', 'legacy-reconfirm'])
 
 export { renewalFailureOf } from './credentials.ts'
@@ -64,7 +74,7 @@ const BODY_LIST_PACE_MS = 1000
  * HTTP establishes authority; streamed state replaces only the selected slice. A tab opens on the session it last showed
  * (a reload); a cold start opens on 新会话.
  */
-export function useHarness() {
+export function useHarness(startAtHome = false) {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null)
   const [detailView, setDetailView] = useState(EMPTY_DETAIL)
   const [confirmedDetailRead, setConfirmedDetailRead] = useState<{ sessionId: string; pass: number } | null>(null)
@@ -93,6 +103,7 @@ export function useHarness() {
   const latestSnapshot = useRef<AppSnapshot | null>(null)
   const latestDetail = useRef(EMPTY_DETAIL)
   const restoredDevice = useRef<string | null>(null)
+  const skipInitialSelection = useRef(startAtHome)
   const alive = useRef(true)
   const running = useRef<Promise<boolean> | null>(null)
   const syncPass = useRef(0)
@@ -101,9 +112,16 @@ export function useHarness() {
   /** Whether a queued synchronization re-establishes state instead of following a change; merged requests keep it. */
   const pendingResync = useRef(false)
   const request = useRef<AbortController | null>(null)
+  const readSelection = useRef<ProjectionTicket | null>(null)
+  const selectionSync = useRef<{ ticket: ProjectionTicket; done: Promise<boolean> } | null>(null)
   const detailRequest = useRef<AbortController | null>(null)
   const globalInvalidations = useRef(0)
-  const activeStream = useRef<{ stream: EventStreamConnection; ticket: ProjectionTicket; clear: () => void } | null>(null)
+  const activeStream = useRef<{
+    stream: EventStreamConnection
+    ticket: ProjectionTicket
+    clear: () => void
+    ready: () => boolean
+  } | null>(null)
   /** Renews and then reloads state; set once synchronize exists. */
   const retryRenewal = useRef<() => void>(() => {})
   /** `failure`: why the latest renewal attempt failed, when only re-enrollment fixes it; every snapshot clears it. */
@@ -215,9 +233,9 @@ export function useHarness() {
   const synchronize = useCallback(
     (mode: SyncMode, resync = false): Promise<boolean> => {
       pendingResync.current = (pending.current !== null && pendingResync.current) || resync
-      pending.current = pending.current === 'all' || mode === 'all' ? 'all' : 'list'
+      if (pending.current === null || SYNC_PRIORITY[mode] > SYNC_PRIORITY[pending.current]) pending.current = mode
       if (running.current) return running.current
-      const task = async () => {
+      const sync = async () => {
         let synchronized = false
         while (pending.current && alive.current) {
           const pass = ++syncPass.current
@@ -230,11 +248,22 @@ export function useHarness() {
           const controller = new AbortController()
           request.current = controller
           try {
-            const next = await api<AppSnapshot>('snapshot', { signal: controller.signal })
+            // Overlap a listed session's read with the listing. Only the fresh listing can authorize publication.
+            const prefetch = readSelection.current
+            readSelection.current = null
+            const listing = api<AppSnapshot>('snapshot', { signal: controller.signal })
+            const earlyDetail =
+              prefetch && ticket.sessionId !== null && guard.current.current(prefetch) && !currentResync
+                ? readTaskDetail(ticket.sessionId, controller.signal).catch(() => null)
+                : undefined
+            const next = await listing
             observeHostTime(next.hostTime)
             if (!alive.current || !guard.current.current(ticket)) continue
+            const previous = latestSnapshot.current
+            const sameAuthority = previous !== null && streamAuthority(previous) === streamAuthority(next)
+            const recovering = lastSyncFailure.current !== null
             guard.current.bind(next.instanceId)
-            if (latestSnapshot.current && streamAuthority(latestSnapshot.current) !== streamAuthority(next)) {
+            if (previous && !sameAuthority) {
               // Revoke the old reader/shadow before React commits the new permission projection and runs effect cleanup.
               guard.current.invalidate()
               activeStream.current?.clear()
@@ -251,7 +280,10 @@ export function useHarness() {
               guard.current.invalidate()
               restoredDevice.current = next.device.id
               // Selection still works without browser storage, which reads as nothing selected.
-              const restored = readStorage('sessionStorage', `latch.selected.${location.origin}.${next.device.id}`)
+              const skip = skipInitialSelection.current
+              skipInitialSelection.current = false
+              if (skip) storeSelection(null)
+              const restored = skip ? null : readStorage('sessionStorage', `latch.selected.${location.origin}.${next.device.id}`)
               const initial = restored !== null && next.tasks.some(task => task.id === restored) ? restored : null
               guard.current.select(initial)
               setSelectedId(initial)
@@ -260,21 +292,45 @@ export function useHarness() {
             const unlisted = guard.current.retain(next)
             if (unlisted !== null) publishRemoval(unlisted, next.device.dataScope === 'all')
             publishSnapshot(mergeTaskSnapshot(next, latestDetail.current.cached ? null : latestDetail.current.detail), currentResync)
+            const id = guard.current.sessionId
+            const listed = id !== null && next.tasks.some(task => task.id === id)
             // An incomplete or older listing still leaves the detail to confirm the selection.
-            if (currentMode === 'list' && guard.current.sessionId !== null && !next.tasks.some(task => task.id === guard.current.sessionId))
-              pending.current = 'all'
-            if (currentMode === 'all') {
+            if (currentMode === 'list' && id !== null && !listed) pending.current = 'all'
+            if (currentMode !== 'list') {
               const detailTicket = guard.current.capture()
-              if (detailTicket.sessionId !== null) {
+              const { cached, detail } = latestDetail.current
+              const tracked = activeStream.current
+              // A periodic listing may confirm exactly the already-accepted revision. Fetching that detail again would
+              // parse its full history only for the version gate to reject it.
+              const unchanged =
+                currentMode === 'poll'
+                && !currentResync
+                && !recovering
+                && earlyDetail === undefined
+                && sameAuthority
+                && tracked?.ready() === true
+                && navigator.onLine
+                && guard.current.current(tracked.ticket)
+                && listed
+                && previous.tasksComplete === true
+                && next.tasksComplete === true
+                && next.revision !== undefined
+                && previous.revision === next.revision
+                && !cached
+                && detail?.summary.id === id
+                && detail.sync?.instanceId === next.instanceId
+                && detail.sync.revision === next.revision
+              if (detailTicket.sessionId !== null && !unchanged) {
                 // The queued full sync will read this detail after rechecking that the device can still see it.
                 if (invalidationsAtStart !== globalInvalidations.current) continue
                 detailRequest.current = controller
-                const nextDetail = await api<TaskDetail>(`tasks/${encodeURIComponent(detailTicket.sessionId)}`, {
-                  signal: controller.signal,
-                }).catch((cause: unknown) => {
-                  if (isMissingTask(cause)) return null
-                  throw cause
-                })
+                const early = earlyDetail && guard.current.current(ticket) ? await earlyDetail : null
+                if (controller.signal.aborted || !guard.current.current(detailTicket)) continue
+                // Older Hosts, an earlier revision, a missing task, or changed authority need a read after the listing.
+                const nextDetail =
+                  early && detailOwnsSummary(next, early) && listed
+                    ? early
+                    : await readTaskDetail(detailTicket.sessionId, controller.signal)
                 if (!alive.current || !guard.current.current(detailTicket)) continue
                 // Missing while a Harness is off, starting or failed to list is not a deletion: only a whole listing
                 // proves the session is gone. Until then it stays selected with what was last read.
@@ -289,7 +345,7 @@ export function useHarness() {
                   setConfirmedDetailRead({ sessionId: detailTicket.sessionId, pass })
                   if (latestSnapshot.current) publishSnapshot(mergeTaskSnapshot(latestSnapshot.current, nextDetail), currentResync)
                 }
-              } else publishDetail(null)
+              } else if (detailTicket.sessionId === null) publishDetail(null)
               synchronized = true
               const active = activeStream.current
               if (active && guard.current.current(active.ticket) && active.stream.open && navigator.onLine) setConnection('connected')
@@ -307,6 +363,7 @@ export function useHarness() {
               setConnection(navigator.onLine ? 'reconnecting' : 'offline')
             }
           } finally {
+            controller.abort() // Also cancel an unused prefetched detail if the listing failed or removed the selection.
             if (detailRequest.current === controller) detailRequest.current = null
             if (request.current === controller) request.current = null
             if (alive.current) setLoading(false)
@@ -314,12 +371,12 @@ export function useHarness() {
         }
         return synchronized
       }
-      running.current = task().finally(() => {
+      running.current = sync().finally(() => {
         running.current = null
       })
       return running.current
     },
-    [publishDetail, publishRemoval, publishSnapshot, signOut, renewal],
+    [publishDetail, publishRemoval, publishSnapshot, signOut, renewal, storeSelection],
   )
 
   /** Reloads state after something this page did, as a change it follows. */
@@ -362,9 +419,13 @@ export function useHarness() {
         request.current?.abort()
         publishDetail(cached, cached !== null)
         setSelectedId(id)
-      }
+        const ticket = guard.current.capture()
+        if (listed) readSelection.current = ticket
+        const reuse = activeStream.current?.stream.open && navigator.onLine && noticeRef.current === null
+        const done = synchronize('all')
+        selectionSync.current = reuse ? { ticket, done } : null
+      } else void synchronize('all')
       storeSelection(id)
-      void synchronize('all')
     },
     [synchronize, publishDetail, storeSelection],
   )
@@ -438,14 +499,20 @@ export function useHarness() {
     let disposed = false
     let repairing = false
     let openGeneration = 0
+    let synchronizedOpen = -1
     const ticket = guard.current.capture()
     const shadow = ticket.sessionId === null ? null : new TaskStreamProjection(guard.current.instanceId!, ticket.sessionId)
     const query = ticket.sessionId === null ? '' : `?sessionId=${encodeURIComponent(ticket.sessionId)}`
     setConnection(navigator.onLine ? 'connecting' : 'offline')
-    const syncConnection = () => {
+    // Selection already requested a full read. The opening refresh carries the Host revision and will request another
+    // if anything changed while the subscription was rotating. Every later reconnect re-establishes state from scratch.
+    let openingRead = selectionSync.current && guard.current.current(selectionSync.current.ticket) ? selectionSync.current.done : undefined
+    selectionSync.current = null
+    const syncConnection = (done = synchronize('all', true)) => {
       const attempt = ++openGeneration
-      void synchronize('all', true).then(ok => {
+      void done.then(ok => {
         if (!disposed && attempt === openGeneration && guard.current.current(ticket) && ok && stream.open && navigator.onLine) {
+          synchronizedOpen = attempt
           setConnection('connected')
           publishNotice(null)
         }
@@ -493,7 +560,9 @@ export function useHarness() {
         onOpen: () => {
           shadow?.reset()
           repairing = false
-          syncConnection()
+          const selection = openingRead
+          openingRead = undefined
+          syncConnection(selection?.then(ok => (ok || disposed || !guard.current.current(ticket) ? ok : synchronize('all', true))))
         },
         onEvent: message => {
           if (disposed || repairing || !guard.current.current(ticket)) return
@@ -524,6 +593,7 @@ export function useHarness() {
         },
         onError: () => {
           if (disposed) return
+          openingRead = undefined
           shadow?.reset()
           openGeneration++
           setConnection(navigator.onLine ? 'reconnecting' : 'offline')
@@ -542,9 +612,15 @@ export function useHarness() {
       },
       { taskDelta: ticket.sessionId !== null && currentShell()?.remote !== true },
     )
-    activeStream.current = { stream, ticket, clear: () => shadow?.reset() }
+    activeStream.current = {
+      stream,
+      ticket,
+      clear: () => shadow?.reset(),
+      ready: () => !disposed && !repairing && stream.open && synchronizedOpen === openGeneration,
+    }
     // Offline emulation and some networks keep an open response streaming; the authority is fetched again on reconnect.
     const offline = () => {
+      openingRead = undefined
       openGeneration++
       setConnection('offline')
       request.current?.abort()
@@ -562,7 +638,7 @@ export function useHarness() {
       }
     }
     const metadataTimer = setInterval(() => {
-      if (!document.hidden && navigator.onLine) void synchronize('all')
+      if (!document.hidden && navigator.onLine) void synchronize('poll')
     }, 30_000)
     window.addEventListener('offline', offline)
     window.addEventListener('online', online)
@@ -581,6 +657,7 @@ export function useHarness() {
   }, [identity, selectedId, synchronize, publishDetail, publishSnapshot, publishBody, publishNotice, renew])
 
   return {
+    startAtHome,
     snapshot,
     detail: detailView.detail,
     cachedDetail: detailView.cached,

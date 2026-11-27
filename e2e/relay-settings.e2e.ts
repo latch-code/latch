@@ -73,6 +73,7 @@ async function scripted(page: Page, local: boolean, relays: Relay[], listening =
   const state = {
     relays,
     files,
+    infoReads: 0,
     fileReads: 0,
     dropAddResponse: false,
     failAddCode: undefined as string | undefined,
@@ -111,7 +112,10 @@ async function scripted(page: Page, local: boolean, relays: Relay[], listening =
     }
     await route.fulfill({ response, json: snapshot })
   })
-  await page.route('**/link/api/native/info', route => route.fulfill({ json: info() }))
+  await page.route('**/link/api/native/info', route => {
+    state.infoReads++
+    return route.fulfill({ json: info() })
+  })
   await page.route('**/link/api/native/relay-files', route => {
     state.fileReads++
     return route.fulfill({ json: { files: state.files.filter(file => !state.relays.some(relay => relay.relayId === file.relayId)) } })
@@ -186,6 +190,32 @@ describe('设置 › 连接转发', () => {
   afterAll(async () => {
     await browser.close()
     await host.close()
+  })
+
+  it('stops reading relay status behind the phone settings list and reads it again after reopening', async () => {
+    const page = await browser.newPage({ viewport: SIZES[0] })
+    try {
+      await page.clock.install()
+      await enrollBrowser(page, host, { name: '中继状态轮询', scopes: ['admin'] })
+      const state = await scripted(page, true, [])
+      await page.reload()
+      await connected(page)
+      await openEntry(page, '连接转发')
+      await page.getByTestId('relay-direct').waitFor()
+      expect(state.infoReads).toBeGreaterThan(0)
+
+      const settings = page.locator('.settings-page')
+      await settings.locator('.settings-panel').getByRole('button', { name: '返回', exact: true }).click()
+      await expect.poll(() => settings.locator('.settings-layout').getAttribute('data-level')).toBe('root')
+      const reads = state.infoReads
+      await page.clock.fastForward(10_100)
+      await page.waitForTimeout(100)
+      expect(state.infoReads).toBe(reads)
+      await openEntry(page, '连接转发')
+      await expect.poll(() => state.infoReads).toBeGreaterThan(reads)
+    } finally {
+      await page.close()
+    }
   })
 
   for (const size of SIZES)

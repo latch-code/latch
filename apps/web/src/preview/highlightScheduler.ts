@@ -30,6 +30,7 @@ interface Job {
 const CACHE_ENTRIES = 256
 const CACHE_CHARS = 2_000_000
 const NEGATIVE_ENTRIES = 256
+const IDLE_MS = 60_000
 /** Worker failures in a row, with no answer between them, after which the waiting jobs are given up. */
 const CRASH_LIMIT = 3
 /** A worker that has not answered yet is still loading: its first job waits on that too, on a busy machine or a slow phone. */
@@ -45,6 +46,8 @@ const RETRY_BUDGET = 4
  */
 export class HighlightScheduler {
   private worker: HighlightWorker | undefined
+  private idleTimer: unknown
+  private readonly streams = new Set<number>()
   private nextId = 0
   private active: { id: number; job: Job; timer: unknown } | undefined
   private crashes = 0
@@ -114,7 +117,10 @@ export class HighlightScheduler {
 
   /** The stream is over: the worker can forget its grammar state. */
   release(stream: number): void {
-    this.worker?.postMessage({ release: stream })
+    if (this.streams.delete(stream)) {
+      this.worker?.postMessage({ release: stream })
+      this.scheduleIdleStop()
+    }
   }
 
   private enqueue(job: Pick<Job, 'key' | 'chars' | 'message'>, listener: (answer: Answer | undefined) => void): Cancel {
@@ -137,12 +143,17 @@ export class HighlightScheduler {
   private pump(): void {
     if (this.active) return
     const job = this.waiting.pop()
-    if (!job) return
+    if (!job) {
+      this.scheduleIdleStop()
+      return
+    }
+    this.clearIdleTimer()
     try {
       this.worker ??= this.spawn()
       const id = ++this.nextId
       const budget = this.workerAnswered ? job.budget : Math.max(job.budget, FIRST_JOB_MS)
       this.active = { id, job, timer: this.setTimer(() => this.onTimeout(id), budget) }
+      if (job.message.stream !== undefined) this.streams.add(job.message.stream)
       this.worker.postMessage({ id, ...job.message })
     } catch {
       this.waiting.push(job)
@@ -191,8 +202,24 @@ export class HighlightScheduler {
     }
   }
 
+  private clearIdleTimer(): void {
+    if (this.idleTimer !== undefined) this.clearTimer(this.idleTimer)
+    this.idleTimer = undefined
+  }
+
+  private scheduleIdleStop(): void {
+    if (!this.worker || this.active || this.waiting.length || this.streams.size || this.idleTimer !== undefined) return
+    this.idleTimer = this.setTimer(() => this.stopWorker(), IDLE_MS)
+  }
+
   private stopWorker(): void {
-    this.worker?.terminate()
+    this.clearIdleTimer()
+    this.streams.clear()
+    if (this.worker) {
+      this.worker.onmessage = null
+      this.worker.onerror = null
+      this.worker.terminate()
+    }
     this.worker = undefined
   }
 

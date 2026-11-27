@@ -135,14 +135,16 @@ describe('a team’s rounds in the conversation', () => {
   const message = (id: string, role: Message['role'], text: string, requestId?: string): Message =>
     ({ id, role, text, createdAt: '2026-11-19T00:00:00.000Z', ...(requestId ? { requestId } : {}) }) as Message
 
-  it('reads a member’s reply to one round, not a later one', () => {
+  it('reads a member’s reply through steering without reading a later round', () => {
     const messages = [
       message('u1', 'user', '第一轮'),
+      { ...message('s1', 'user', '引导第一轮'), steered: true as const },
       message('a1', 'assistant', '第一轮的结果'),
       message('u2', 'user', '人插了一句'),
       message('a2', 'assistant', '回答插话'),
       message('u3', 'user', '第二轮', 'req-2'),
       message('a3', 'assistant', ''),
+      { ...message('s2', 'user', '引导第二轮'), steered: true as const },
       message('a4', 'assistant', '第二轮的结果'),
     ]
     expect(replyOf(messages)).toBe('第一轮的结果')

@@ -32,6 +32,7 @@ import {
   type ValuePickerProps,
 } from '../src/index.ts'
 import { keepsNativeMenu } from '../src/menu.tsx'
+import { PHONE_QUERY } from '../src/internal.ts'
 
 /** Ordered permission levels as a value picker, the way a page lists them: a consequence a line, 默认 on the default. */
 interface PermissionLevel<T extends string> {
@@ -780,6 +781,46 @@ const priorityMenu = (select: () => void): ActionMenuSection[] => [
 ]
 
 describe('action menu', () => {
+  it('shares one live breakpoint query across a list of menus and updates every trigger on resize', async () => {
+    const read = vi.spyOn(window, 'matchMedia')
+    try {
+      const screen = await render(
+        <>
+          {Array.from({ length: 60 }, (_, row) => (
+            <Menu key={row} label="Actions" sections={() => []} trigger={props => <button {...props}>Row {row}</button>} />
+          ))}
+        </>,
+      )
+      const last = screen.getByRole('button', { name: 'Row 59' })
+      await expect.element(last).toHaveAttribute('aria-haspopup', 'menu')
+      await page.viewport(390, 844)
+      await expect.element(last).toHaveAttribute('aria-haspopup', 'dialog')
+      expect(read.mock.calls.filter(([query]) => query === PHONE_QUERY)).toHaveLength(1)
+    } finally {
+      read.mockRestore()
+      await page.viewport(1280, 800)
+    }
+  })
+
+  it('builds a row menu when opened, updates it while open and releases its items after dismissal', async () => {
+    const select = vi.fn()
+    const items = vi.fn((label: string) => [{ id: 'row', items: [{ id: 'action', label, onSelect: select }] }])
+    const menu = (label: string) => (
+      <ActionMenu label="Actions" sections={() => items(label)} trigger={props => <button {...props}>More</button>} />
+    )
+    const screen = await render(menu('Pin'))
+    const trigger = screen.getByRole('button', { name: 'More' })
+    expect(items).not.toHaveBeenCalled()
+    await trigger.click()
+    await expect.element(screen.getByRole('menuitem', { name: 'Pin' })).toHaveFocus()
+    await screen.rerender(menu('Unpin'))
+    await screen.getByRole('menuitem', { name: 'Unpin' }).click()
+    expect(select).toHaveBeenCalledOnce()
+    await expect.poll(() => document.querySelector('[role="menuitem"]')).toBeNull()
+    await trigger.click()
+    await expect.element(screen.getByRole('menuitem', { name: 'Unpin' })).toHaveFocus()
+  })
+
   it('previews alternatives without taking the editor focus, and moves into the menu on ArrowDown', async () => {
     const screen = await render(
       <>

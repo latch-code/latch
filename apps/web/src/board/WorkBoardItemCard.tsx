@@ -206,7 +206,7 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
   const { item, sessions } = card
   const connected = shell.connection === 'connected'
   const live = sessions.some(task => task.status === 'running' || task.status === 'waiting-approval')
-  useTicker(connected && live ? 'second' : 'minute')
+  useTicker(shell.board && !shell.settings ? (connected && live ? 'second' : 'minute') : false)
   const now = hostNow()
   const state = itemState(card, connected, now)
   const harness = shell.catalog?.harnesses.find(entry => entry.id === item.harnessId)

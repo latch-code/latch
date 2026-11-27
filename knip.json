@@ -51,7 +51,7 @@
       // Static analysis only: running vite.config.ts as a dev-server config would read the default data directory. The
       // page's entry comes from index.html.
       "vite": { "config": [] },
-      "entry": ["vite.config.ts"]
+      "entry": ["vite.config.ts", "public/recovery.js"]
     },
     "e2e": {
       // Vitest reads the include pattern of e2e/vitest.config.ts from the working directory, the repository root; knip

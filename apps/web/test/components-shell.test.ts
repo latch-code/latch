@@ -5,7 +5,7 @@ import { settingsSectionsAt, visibleEntries } from '../src/shell/routes.ts'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppSnapshot, TaskSummary } from '@latch/protocol'
-import { scrollMovesAnchor } from '../src/components/overlays.tsx'
+import { scrollMovesAnchor, type MenuSection } from '../src/components/overlays.tsx'
 import { SessionHeader } from '../src/shell/ConversationHeader.tsx'
 import { placeName } from '../src/shell/SessionComposers.tsx'
 import { reservedLabel } from '../src/settings/devices/ReservedAttachments.tsx'
@@ -311,7 +311,7 @@ describe('the sidebar foot and the computer name', () => {
   beforeEach(() => {
     vi.stubGlobal('location', { origin: 'http://127.0.0.1:4317', host: '127.0.0.1:4317', pathname: '/link/' })
   })
-  const sidebar = (snapshot: AppSnapshot, onCreateProject?: () => void) =>
+  const sidebar = (snapshot: AppSnapshot, onCreateProject?: () => void, menu: () => MenuSection[] = () => []) =>
     renderToStaticMarkup(
       createElement(Sidebar, {
         snapshot,
@@ -327,7 +327,9 @@ describe('the sidebar foot and the computer name', () => {
         onClose: noop,
         connection: 'connected',
         onRefresh: noop,
-        sessionMenu: () => [],
+        sessionMenu: menu,
+        onPinSession: noop,
+        onArchiveSession: noop,
         now: 0,
         onSettings: noop,
         hostProblem: null,
@@ -355,6 +357,14 @@ describe('the sidebar foot and the computer name', () => {
         now: 0,
       }),
     )
+
+  it('draws the archive shortcut without building closed row menus', () => {
+    const menu = vi.fn(() => [{ id: 'row', items: [{ id: 'rename', label: 'Rename', onSelect: noop }] }])
+    const html = sidebar({ ...snapshotOf('unix'), tasks: [session(), session({ id: 'two' })] }, undefined, menu)
+    expect(menu).not.toHaveBeenCalled()
+    expect(html.match(/class="[^"]*session-item-archive[^"]*"/gu)).toHaveLength(2)
+    expect(html).not.toContain('data-label="Rename"')
+  })
 
   it('names the computer at the top for a browser, even one on this Mac over loopback', () => {
     const html = sidebar(snapshotOf('loopback-tcp'))
@@ -447,6 +457,8 @@ describe('the sidebar foot and the computer name', () => {
           connection: 'connected',
           onRefresh: noop,
           sessionMenu: menu,
+          onPinSession: noop,
+          onArchiveSession: noop,
           now: 0,
           onSettings: noop,
           hostProblem: null,

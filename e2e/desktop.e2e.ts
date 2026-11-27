@@ -538,6 +538,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
     })
     const { host } = testHost
     const counter = await connectionCounter()
+    const publicProbe = `https://outside.test:${counter.port}/`
     let application: ElectronApplication | undefined
     try {
       await writeHostState(testHost.dataDir, {
@@ -561,6 +562,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           `--latch-user-data=${userData}`,
           '--use-mock-keychain',
           ...SYSTEM_LANGUAGE,
+          // A failed network-isolation check still reaches only the local counter.
+          '--host-resolver-rules=MAP outside.test 127.0.0.1',
         ],
         cwd: process.cwd(),
         env: shellEnvironment(),
@@ -719,7 +722,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(rendererState.renew).toBe(403)
 
       // No network of its own: fetch, WebSocket and images outside latch: never leave the renderer.
-      const blocked = await page.evaluate(async port => {
+      const blocked = await page.evaluate(async target => {
+        const port = new URL(target).port
         const settle = (promise: Promise<unknown>) =>
           promise.then(
             () => 'loaded',
@@ -746,14 +750,14 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
             }
           })
         return {
-          https: await settle(fetch('https://example.com/')),
+          https: await settle(fetch(target)),
           loopback: await settle(fetch(`http://127.0.0.1:${port}/`)),
           loopbackTls: await settle(fetch(`https://127.0.0.1:${port}/`)),
           webSocket: await socket(`ws://127.0.0.1:${port}/`),
           image: await image(`https://127.0.0.1:${port}/pixel.png`),
           opened: window.open(`http://127.0.0.1:${port}/`) === null,
         }
-      }, counter.port)
+      }, publicProbe)
       expect(blocked).toEqual({
         https: 'blocked',
         loopback: 'blocked',
@@ -1668,7 +1672,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
 
       // Renderer-initiated navigation away from latch://app is refused in main. Playwright keeps treating a refused
       // navigation as pending, so this runs last and is triggered and observed from main.
-      const navigation = await application.evaluate(async ({ BrowserWindow }, port) => {
+      const navigation = await application.evaluate(async ({ BrowserWindow }, target) => {
+        const port = new URL(target).port
         const contents = BrowserWindow.getAllWindows()[0]!.webContents
         const attempts: string[] = []
         // Main's guard refuses these at will-frame-navigate, so will-navigate is never emitted for them.
@@ -1677,13 +1682,13 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         }
         contents.on('will-frame-navigate', record)
         await contents.executeJavaScript(
-          `setTimeout(() => { location.href = 'http://127.0.0.1:${port}/' }, 0); setTimeout(() => { location.href = 'https://example.com/' }, 200); true`,
+          `setTimeout(() => { location.href = 'http://127.0.0.1:${port}/' }, 0); setTimeout(() => { location.href = ${JSON.stringify(target)} }, 200); true`,
         )
         await new Promise(done => setTimeout(done, 1_000))
         contents.off('will-frame-navigate', record)
         return { attempts, url: contents.getURL() }
-      }, counter.port)
-      expect(navigation.attempts).toEqual([`http://127.0.0.1:${counter.port}/`, 'https://example.com/'])
+      }, publicProbe)
+      expect(navigation.attempts).toEqual([`http://127.0.0.1:${counter.port}/`, publicProbe])
       expect(navigation.url).toMatch(/^latch:\/\/app\/link\//)
       expect(page.url()).toMatch(/^latch:\/\/app\/link\//)
       expect(application.windows()).toHaveLength(1)

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import type { AppSnapshot, TaskSummary } from '@latch/protocol'
 import { readSpace, spaceKey, spaceOf, waitingCount, writeSpace, type Space } from '../sessions.ts'
 import type { MyAgentTarget, ShellEntry, ShellRoute } from './routes.ts'
@@ -137,17 +137,20 @@ export function useSpaces({
   leave: () => void
 }) {
   const key = spaceKey(snapshot.device.id)
-  const [remembered, setRemembered] = useState<Space>(() => readSpace(key))
+  const remembered = useRef<Space | null>(null)
+  if (remembered.current === null) remembered.current = readSpace(key)
   const space = currentSpace({
     agents,
     entry: route.entry,
     selectedId,
     selected,
-    remembered,
+    remembered: remembered.current,
     start: route.start,
   })
   // The place shown is the one to keep while a shared page or an unlisted session is open.
-  if (agents && space !== remembered) setRemembered(space)
+  useLayoutEffect(() => {
+    if (agents) remembered.current = space
+  }, [agents, space])
   useEffect(() => {
     if (agents) writeSpace(key, space)
   }, [agents, key, space])
@@ -169,7 +172,8 @@ export function useSpaces({
     setRoute(move.route)
     if (move.choose !== undefined) choose(move.choose)
   }
-  return { space, goSpace, waits: placeWaits(snapshot, agents) }
+  const waits = useMemo(() => placeWaits(snapshot, agents), [snapshot.tasks, snapshot.approvals, agents])
+  return { space, goSpace, waits }
 }
 
 /**

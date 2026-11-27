@@ -240,15 +240,16 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       if (isMarketplaceLink(location.href)) history.replaceState(history.state, '', marketplaceUrl(location.href, false))
     }
   }, [marketAvailable])
-  const [storedRoute, updateRoute] = useState<ShellRoute>(() =>
-    initialRoute(
+  const [storedRoute, updateRoute] = useState<ShellRoute>(() => {
+    if (harness.startAtHome) return { entry: 'sessions', start: true }
+    return initialRoute(
       snapshot.device.id,
       snapshot.catalog?.features?.customAgents === true,
       !phone,
       selectedId !== null,
       readHomeShown(snapshot.device.id),
-    ),
-  )
+    )
+  })
   // Code without an open session is its start screen: 新会话 is its input, not a page of its own. A phone keeps its list.
   const pageUnderMarket = useMemo<ShellRoute>(
     () =>
@@ -587,13 +588,13 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const sessionTerminal = hasTerminal && !!summary && !summary.archived && !summary.personal
   const workspaceId = choice.workspaceId ?? catalog?.defaults.workspaceId ?? 'default'
   const terminalWorkspace = catalog?.workspaces.find(item => item.id === workspaceId)
-  const terminalTarget: TerminalTarget | undefined = !hasTerminal
-    ? undefined
-    : hasStart || selectedId === null
-      ? { workspaceId }
-      : sessionTerminal && summary.id === selectedId
-        ? { sessionId: summary.id }
-        : undefined
+  const terminalWorkspaceId = hasTerminal && (hasStart || selectedId === null) ? workspaceId : undefined
+  const terminalSessionId = !hasStart && sessionTerminal && summary.id === selectedId ? summary.id : undefined
+  const terminalTarget = useMemo<TerminalTarget | undefined>(() => {
+    if (terminalWorkspaceId !== undefined) return { workspaceId: terminalWorkspaceId }
+    if (terminalSessionId !== undefined) return { sessionId: terminalSessionId }
+    return undefined
+  }, [terminalWorkspaceId, terminalSessionId])
   const terminalKey = terminalTarget && terminalPath(terminalTarget)
   const terminalUnavailable =
     terminalTarget?.workspaceId === undefined
@@ -1427,7 +1428,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   }
   const folders = shellFolders()
   const canEditProject = owner && connection === 'connected'
-  const openProjectEditor = canEditProject ? (id: string) => setProjectEditor({ id }) : undefined
+  const editProject = useCallback((id: string) => setProjectEditor({ id }), [])
+  const openProjectEditor = canEditProject ? editProject : undefined
   const canAddFolders = canEditProject && access.local && currentShell()?.remote !== true && folders !== null
   const editingProject = canEditProject && projectEditor ? catalog?.workspaces.find(project => project.id === projectEditor.id) : undefined
   // A reply from a dismissed editor must not close a project the person has since reopened.
@@ -1499,11 +1501,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
         void pickProject(false)
       }
     : undefined
-  const createProjectAndStart = pickProject
-    ? () => {
-        void pickProject(true)
-      }
-    : undefined
+  const pickAndStart = useStableCallback(() => {
+    void pickProject?.(true)
+  })
+  const createProjectAndStart = pickProject ? pickAndStart : undefined
   const newChoicesLocked =
     submission.pending !== null
     || submission.sending
@@ -2245,11 +2246,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     [catalog?.features?.filePreview, changesTabReads, openChanges],
   )
   // The title, its ⋯ and the sidebar row draw the one session menu; 同步最新状态 lives in the connection's notice.
-  const titleMenu = summary ? sessionMenu(summary) : []
+  const titleMenu = useMemo(() => (summary ? sessionMenu(summary) : []), [summary, sessionMenu])
   const handoffs = useSessionHandoffs({
     sessionId: selectedId,
     summaries: snapshot.handoffs,
-    enabled: catalog?.features?.handoffs === true,
+    enabled: conversationVisible && !settingsOpen && catalog?.features?.handoffs === true,
   })
   /** 结束交接: the target of a started handoff closes it; a close without an answer is retried with the same request. */
   const closing = useRef(new Map<string, string>())
@@ -2295,18 +2296,16 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
         ]
       : titleMenu
   const canStart = catalog !== undefined && (access.legacy || access.scopes.has('run'))
-  const startIn = canStart
-    ? (workspaceId: string) => {
-        startNew()
-        submission.updateChoice({ workspaceId })
-      }
-    : undefined
-  const startWithoutProject = canStart
-    ? () => {
-        startNew()
-        submission.updateChoice({ workspaceId: 'default', projectSkipped: true })
-      }
-    : undefined
+  const startInProject = useStableCallback((workspaceId: string) => {
+    startNew()
+    submission.updateChoice({ workspaceId })
+  })
+  const startUnassigned = useStableCallback(() => {
+    startNew()
+    submission.updateChoice({ workspaceId: 'default', projectSkipped: true })
+  })
+  const startIn = canStart ? startInProject : undefined
+  const startWithoutProject = canStart ? startUnassigned : undefined
   const connectionProblem = harness.error || connection === 'reconnecting' || connection === 'offline'
   // What is known about why the Host does not answer: main's own view on the desktop, else the Host's announcement.
   const shellHost = lifecycle.view?.host

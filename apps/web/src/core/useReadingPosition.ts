@@ -96,10 +96,10 @@ export class ReadingPositionController {
     this.changed(following)
   }
 
-  private capture(viewport: ReadingViewport): void {
+  private capture(viewport: ReadingViewport, top = viewport.measure().top): void {
     const position = this.position
     if (!position) return
-    position.top = viewport.measure().top
+    position.top = top
     if (position.mode === 'read') position.anchor = viewport.anchor()
     this.report(position.mode === 'follow')
   }
@@ -122,11 +122,11 @@ export class ReadingPositionController {
     const bounded = Math.max(0, Math.min(target, bottom(geometry)))
     if (!close(geometry.top, bounded)) {
       viewport.write(bounded)
-      this.writtenTop = viewport.measure().top
-    }
-    this.previous = viewport.measure()
+      this.previous = viewport.measure()
+      this.writtenTop = this.previous.top
+    } else this.previous = geometry
     // The anchor stands until the reader moves: what is at the top now may be a turn that has yet to take its height.
-    if (anchored === null) this.capture(viewport)
+    if (anchored === null) this.capture(viewport, this.previous.top)
     else position.top = this.previous.top
   }
 
@@ -179,7 +179,7 @@ export class ReadingPositionController {
     const delta = previous === null ? 0 : geometry.top - previous.top
     if (delta < -0.75) position.mode = 'read'
     else if (delta > 0.75 && bottom(geometry) - geometry.top <= 4) position.mode = 'follow'
-    this.capture(viewport)
+    this.capture(viewport, geometry.top)
   }
 
   jumpToLatest(viewport: ReadingViewport | null): void {
@@ -298,9 +298,20 @@ export function useReadingPosition({
         const top = container.getBoundingClientRect().top + container.clientTop
         const bottom = top + container.clientHeight
         // A turn's box can be measured while its content is skipped. Reading a far message forces that content to lay out.
-        for (const turn of content.querySelectorAll('[data-turn]')) {
+        const turns = content.querySelectorAll('[data-turn]')
+        // Turns appear in vertical order, including those whose content the browser has skipped.
+        let first = 0
+        let end = turns.length
+        while (first < end) {
+          const middle = Math.floor((first + end) / 2)
+          if (turns[middle]!.getBoundingClientRect().bottom <= top) first = middle + 1
+          else end = middle
+        }
+        for (let index = first; index < turns.length; index++) {
+          const turn = turns[index]!
           const bounds = turn.getBoundingClientRect()
-          if (bounds.bottom <= top || bounds.top >= bottom) continue
+          if (bounds.top >= bottom) break
+          if (bounds.bottom <= top) continue
           for (const message of turn.querySelectorAll<HTMLElement>('[data-message-id]')) {
             const rect = message.getBoundingClientRect()
             // Measuring a row can lay out its turn. The row only counts where the turn actually reaches the view.
@@ -315,19 +326,16 @@ export function useReadingPosition({
         const container = containerRef.current
         const content = contentRef.current
         if (!container || !content) return null
-        for (const message of content.querySelectorAll<HTMLElement>('[data-message-id]')) {
-          if (message.dataset.messageId !== anchor.messageId) continue
-          if (message.getClientRects().length === 0) return null
-          draw(message, message.getBoundingClientRect().top - anchor.offset + container.clientHeight)
-          return (
-            container.scrollTop
-            + message.getBoundingClientRect().top
-            - container.getBoundingClientRect().top
-            - container.clientTop
-            - anchor.offset
-          )
-        }
-        return null
+        const message = content.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(anchor.messageId)}"]`)
+        if (!message || message.getClientRects().length === 0) return null
+        draw(message, message.getBoundingClientRect().top - anchor.offset + container.clientHeight)
+        return (
+          container.scrollTop
+          + message.getBoundingClientRect().top
+          - container.getBoundingClientRect().top
+          - container.clientTop
+          - anchor.offset
+        )
       },
       write: top => {
         if (containerRef.current) containerRef.current.scrollTop = top

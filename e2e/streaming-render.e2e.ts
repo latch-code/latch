@@ -105,6 +105,7 @@ declare global {
     transcriptActions: string[]
     transcriptEdits: Array<{ messageId: string; before: string | undefined }>
     placedTurnKeys: string[]
+    bubbleHeightReads: number
   }
 }
 
@@ -659,6 +660,28 @@ describe('streaming render', () => {
     }
   })
 
+  it('clamps a long prompt and keeps its expand control in sync when the column resizes', async () => {
+    await open(320, 720)
+    const prompt = '在同一个输入框里继续编辑。'.repeat(14)
+    await show(detail([{ id: 'bubble', role: 'user', text: prompt }]))
+    const bubble = page.locator('.user-bubble')
+    const text = bubble.locator('.user-bubble-text')
+    const more = bubble.locator('.user-bubble-more')
+    await text.waitFor()
+    expect(await text.evaluate(el => el.clientHeight)).toBe(176)
+    await more.click()
+    expect(await text.evaluate(el => el.clientHeight)).toBeGreaterThan(176)
+    await more.click()
+    await expect.poll(() => text.evaluate(el => el.clientHeight)).toBe(176)
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await expect.poll(() => more.count()).toBe(0)
+    expect(await text.evaluate(el => getComputedStyle(el).overflow)).toBe('visible')
+    expect(await text.innerText()).toBe(prompt)
+    await page.setViewportSize({ width: 320, height: 720 })
+    await more.waitFor()
+    expect(await text.evaluate(el => el.clientHeight)).toBe(176)
+  })
+
   it('wraps a highlighted URL in a sent message and renders quoted bold in the reply', async () => {
     const url = 'https://review.example.org/regression/sets/00000000-1111-4222-8333-444444444444'
     const prompt = `请用 ${url} 重新评估界面。`
@@ -680,6 +703,12 @@ describe('streaming render', () => {
       const reply = page.locator('[data-message-id="reply-quote"] .message-content')
       expect(await link.getAttribute('href')).toBe(url)
       expect(await bubble.innerText()).toBe(prompt)
+      if (width === 1440) {
+        await link.focus()
+        expect(await link.evaluate(element => element.matches(':focus-visible'))).toBe(true)
+        expect(await bubble.evaluate(element => getComputedStyle(element).overflow)).toBe('visible')
+        await link.blur()
+      }
       expect(await reply.locator('strong').innerText()).toBe(quote)
       expect(await reply.innerText()).not.toContain('**')
       for (const colorScheme of ['light', 'dark'] as const) {
@@ -1543,26 +1572,40 @@ describe('streaming render', () => {
     })
   })
 
-  it('only reads message rectangles in visible turns when the reader starts scrolling up', async () => {
+  it('locates the visible turns in a long transcript without measuring every preceding turn', async () => {
     await open()
+    await page.evaluate(() => {
+      const height = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight')!
+      window.bubbleHeightReads = 0
+      Object.defineProperty(Element.prototype, 'scrollHeight', {
+        ...height,
+        get(this: Element) {
+          if (this.classList.contains('user-bubble-text')) window.bubbleHeightReads++
+          return height.get!.call(this)
+        },
+      })
+    })
     await show(detail(prose(300, 10)))
     await page.locator('[data-message-id="reply-299"]').waitFor()
+    expect(await page.evaluate(() => window.bubbleHeightReads)).toBe(0)
     const reads = await page.locator('.transcript').evaluate(view => {
       const measure = Element.prototype.getBoundingClientRect
-      let messages = 0
+      const reads = { messages: 0, turns: 0 }
       Element.prototype.getBoundingClientRect = function (this: Element) {
-        if (this.hasAttribute('data-message-id')) messages++
+        if (this.hasAttribute('data-message-id')) reads.messages++
+        if (this.hasAttribute('data-turn')) reads.turns++
         return measure.call(this)
       }
       try {
         view.dispatchEvent(new WheelEvent('wheel', { deltaY: -900, bubbles: true }))
-        return messages
+        return reads
       } finally {
         Element.prototype.getBoundingClientRect = measure
       }
     })
-    expect(reads).toBeGreaterThan(0)
-    expect(reads).toBeLessThan(32)
+    expect(reads.messages).toBeGreaterThan(0)
+    expect(reads.messages).toBeLessThan(32)
+    expect(reads.turns).toBeLessThan(32)
   })
 
   it('moves by what the wheel asks when scrolling up through turns not drawn yet, and prints every turn', async () => {
