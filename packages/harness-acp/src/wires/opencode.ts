@@ -279,8 +279,12 @@ interface Turn {
   cwd: string
   /** The inbox item that starts the run: Latch's own ID, or for a command the one the server queued for it. */
   startId?: string
+  /** Inbox items added while the run went on (`_session/steering`): the person's input, and the context sent with it. */
   steeredIds?: Set<string>
+  steeredContext?: Set<string>
+  /** Those of them the server reported delivered to the run, and the inputs Latch answered `injected` for. */
   deliveredSteers?: Set<string>
+  injectedSteers?: Set<string>
   started: boolean
   cancelled: boolean
   interrupted: boolean
@@ -1374,6 +1378,7 @@ export class OpencodeWire implements AgentWire {
         ).data,
       )
       syntheticId = str(sent.id)
+      if (syntheticId) (turn.steeredContext ??= new Set()).add(syntheticId)
     }
     await this.post(`${path}/prompt`, {
       id: steerId,
@@ -1382,11 +1387,12 @@ export class OpencodeWire implements AgentWire {
       delivery: 'steer',
       resume: false,
     })
-    if (this.turns.get(attached.id) !== turn && !turn.deliveredSteers?.has(steerId)) {
+    if ((this.turns.get(attached.id) !== turn || turn.cancelled) && !turn.deliveredSteers?.has(steerId)) {
       if (syntheticId) await this.call('DELETE', `${path}/inbox/${encodeURIComponent(syntheticId)}`).catch(() => {})
       await this.call('DELETE', `${path}/inbox/${encodeURIComponent(steerId)}`).catch(() => {})
       return { outcome: 'promptRequired' }
     }
+    ;(turn.injectedSteers ??= new Set()).add(steerId)
     const answer = { outcome: 'injected' as const }
     onResult?.(answer)
     return answer
@@ -1418,6 +1424,8 @@ export class OpencodeWire implements AgentWire {
     if (this.turns.get(sessionId) !== turn) return
     const path = `/api/session/${encodeURIComponent(sessionId)}`
     if (!turn.started && turn.startId) await this.call('DELETE', `${path}/inbox/${encodeURIComponent(turn.startId)}`).catch(() => {})
+    // Additions not yet taken would otherwise run in the next turn; the runtime tells the person the stop may have beaten them.
+    await this.withdrawSteers(turn)
     await this.interrupt(turn)
     if (turn.started || this.turns.get(sessionId) !== turn) return
     // Nothing of this turn started: ended once the server says the session runs nothing.
@@ -1428,6 +1436,21 @@ export class OpencodeWire implements AgentWire {
     }
   }
 
+  /**
+   * Withdraws the additions the server has not delivered to the run (`resume: false` leaves them queued when it ends).
+   * Says whether input Latch answered `injected` for was among them, by the server's delivery events, which precede the
+   * run's end; an addition still being sent answers `promptRequired` itself.
+   */
+  private async withdrawSteers(turn: Turn): Promise<boolean> {
+    const left = [...(turn.steeredIds ?? []), ...(turn.steeredContext ?? [])].filter(id => !turn.deliveredSteers?.has(id))
+    const input = left.some(id => turn.injectedSteers?.has(id))
+    turn.steeredIds?.clear()
+    turn.steeredContext?.clear()
+    const path = `/api/session/${encodeURIComponent(turn.sessionId)}`
+    await Promise.all(left.map(id => this.call('DELETE', `${path}/inbox/${encodeURIComponent(id)}`).catch(() => {})))
+    return input
+  }
+
   private async interrupt(turn: Turn): Promise<void> {
     turn.interrupted = true
     await this.post(`/api/session/${encodeURIComponent(turn.sessionId)}/interrupt`).catch(() => {})
@@ -1435,6 +1458,13 @@ export class OpencodeWire implements AgentWire {
 
   private async settle(turn: Turn, terminal: Terminal): Promise<void> {
     if (this.turns.get(turn.sessionId) === turn) this.turns.delete(turn.sessionId)
+    // Before the turn ends, so the next prompt cannot find them still queued.
+    if (await this.withdrawSteers(turn))
+      this.send(turn.sessionId, {
+        sessionUpdate: 'notice',
+        severity: 'warning',
+        title: '本轮结束前 OpenCode 没有读到最后追加的内容，已撤回；需要的话请重新发送',
+      })
     const error = turn.stepError ?? turn.executionError
     const type = str(error?.type)
     if (terminal !== 'interrupted' && type === 'provider.auth')
@@ -1571,7 +1601,12 @@ export class OpencodeWire implements AgentWire {
       turn.startId = str(data.inboxID)
       return
     }
-    if (!owner.child && type === 'session.inbox.delivered' && typeof data.inboxID === 'string' && turn.steeredIds?.has(data.inboxID)) {
+    if (
+      !owner.child
+      && type === 'session.inbox.delivered'
+      && typeof data.inboxID === 'string'
+      && (turn.steeredIds?.has(data.inboxID) || turn.steeredContext?.has(data.inboxID))
+    ) {
       ;(turn.deliveredSteers ??= new Set()).add(data.inboxID)
       return
     }
