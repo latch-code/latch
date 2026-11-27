@@ -23,6 +23,9 @@ it('turns the Linux server form into one Mac setup command across bare-IP, auto-
       domain: '',
     }).deploy,
   ).toEqual(['pnpm latch relay setup linux --server root@203.0.113.10'])
+  expect(relaySetupCommands('self', { server: 'root@[2001:db8::1]' }).deploy).toEqual([
+    "latch relay setup linux --server 'root@[2001:db8::1]'",
+  ])
 
   // SSH alias + explicit public IP in `domain` passes `--ip`:
   expect(

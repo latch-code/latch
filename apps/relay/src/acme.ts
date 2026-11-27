@@ -135,17 +135,8 @@ export function createTlsAlpn01Certificate(domain: string, keyAuthorization: str
   return { cert, key: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() }
 }
 
-/** PKCS#10 CSR (RFC 2986) for one DNS identifier with ECDSA P-256, reusing an existing key when available. */
-export function createCertificateRequest(
-  domain: string,
-  existingKeyPem?: string | Buffer,
-): { csrBase64Url: string; keyPem: string; publicKey: KeyObject; reusedKey: boolean } {
-  validDnsDomain(domain)
-  const reused = existingKeyPem ? createPrivateKey(existingKeyPem) : undefined
-  if (reused && (reused.asymmetricKeyType !== 'ec' || reused.asymmetricKeyDetails?.namedCurve !== 'prime256v1')) {
-    throw new Error('Invalid existing ACME TLS private key')
-  }
-  const privateKey = reused ?? generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey
+/** PKCS#10 CSR (RFC 2986) using the TLS key pinned by legacy relay profiles. */
+function createCertificateRequest(domain: string, privateKey: KeyObject): string {
   const publicKey = createPublicKey(privateKey)
   const spki = publicKey.export({ type: 'spki', format: 'der' })
   const san = extension('551d11', sequence(der(0x82, Buffer.from(domain, 'ascii'))))
@@ -153,12 +144,7 @@ export function createCertificateRequest(
   const cri = sequence(der(0x02, Buffer.from([0])), commonName(domain), spki, der(0xa0, extensionRequest))
   const signature = sign('sha256', cri, privateKey)
   const csrDer = sequence(cri, ecdsaSha256, der(0x03, Buffer.concat([Buffer.from([0]), signature])))
-  return {
-    csrBase64Url: csrDer.toString('base64url'),
-    keyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
-    publicKey,
-    reusedKey: reused !== undefined,
-  }
+  return csrDer.toString('base64url')
 }
 
 function accountThumbprint(accountKey: KeyObject): { jwk: { crv: string; kty: string; x: string; y: string }; thumbprint: string } {
@@ -202,6 +188,27 @@ export interface AcmeDeps {
   now?(): number
 }
 
+async function readAcmeResponse(response: Response): Promise<string> {
+  const reader = response.body?.getReader()
+  if (!reader) return ''
+  const chunks: Uint8Array[] = []
+  let size = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) return Buffer.concat(chunks, size).toString('utf8')
+      size += value.byteLength
+      if (size > 131_072) {
+        await reader.cancel()
+        throw new Error('ACME response limit')
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
 export async function issueAcmeCertificate(input: {
   dataDir: string
   config: AcmeConfig
@@ -215,26 +222,31 @@ export async function issueAcmeCertificate(input: {
   const fetchFn = input.deps?.fetchImpl ?? fetch
   const sleep = input.deps?.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)))
   const now = input.deps?.now ?? Date.now
+  const requestSignal = (ms: number) => {
+    const timeout = AbortSignal.timeout(ms)
+    return input.signal ? AbortSignal.any([input.signal, timeout]) : timeout
+  }
   validDnsDomain(input.config.domain)
 
   const existingKeyPem = await readPrivate(input.keyFile, 16_384)
   const existingCertPem = await readPrivate(input.certificateFile, 65_536)
-  if (existingKeyPem && existingCertPem) {
-    try {
-      const diskLeaf = new X509Certificate(existingCertPem)
-      const diskKeySpki = createPublicKey(createPrivateKey(existingKeyPem)).export({ type: 'spki', format: 'der' })
-      if (
-        !isAcmeBootstrapCertificate(diskLeaf)
-        && Boolean(diskLeaf.checkHost(input.config.domain))
-        && diskLeaf.publicKey.export({ type: 'spki', format: 'der' }).equals(diskKeySpki)
-        && Date.parse(diskLeaf.validTo) - now() >= RENEW_BEFORE_MS
-      ) {
-        await input.reloadTls()
-        return
-      }
-    } catch {
-      // Proceed with ACME order when disk certificate cannot be parsed.
-    }
+  if (!existingKeyPem || !existingCertPem) throw new Error('Missing ACME TLS identity')
+  const privateKey = createPrivateKey(existingKeyPem)
+  const diskLeaf = new X509Certificate(existingCertPem)
+  if (
+    privateKey.asymmetricKeyType !== 'ec'
+    || privateKey.asymmetricKeyDetails?.namedCurve !== 'prime256v1'
+    || !diskLeaf.checkPrivateKey(privateKey)
+  )
+    throw new Error('Invalid existing ACME TLS identity')
+  if (
+    !isAcmeBootstrapCertificate(diskLeaf)
+    && diskLeaf.checkHost(input.config.domain)
+    && Date.parse(diskLeaf.validFrom) <= now()
+    && Date.parse(diskLeaf.validTo) - now() >= RENEW_BEFORE_MS
+  ) {
+    await input.reloadTls()
+    return
   }
 
   const accountPath = join(input.dataDir, 'acme-account.pem')
@@ -250,10 +262,13 @@ export async function issueAcmeCertificate(input: {
 
   const dirRes = await fetchFn(input.config.directoryUrl ?? LETS_ENCRYPT_DIRECTORY, {
     headers: { Accept: 'application/json' },
-    signal: input.signal ?? AbortSignal.timeout(15_000),
+    signal: requestSignal(15_000),
   })
-  if (!dirRes.ok) throw new Error('ACME directory unavailable')
-  const directory = directorySchema.parse((await dirRes.json()) as unknown)
+  if (!dirRes.ok) {
+    await dirRes.body?.cancel()
+    throw new Error('ACME directory unavailable')
+  }
+  const directory = directorySchema.parse(JSON.parse(await readAcmeResponse(dirRes)) as unknown)
 
   let cachedNonce: string | undefined
   const freshNonce = async (): Promise<string> => {
@@ -262,7 +277,7 @@ export async function issueAcmeCertificate(input: {
       cachedNonce = undefined
       return value
     }
-    const res = await fetchFn(directory.newNonce, { method: 'HEAD', signal: input.signal ?? AbortSignal.timeout(10_000) })
+    const res = await fetchFn(directory.newNonce, { method: 'HEAD', signal: requestSignal(10_000) })
     const nonce = res.headers.get('replay-nonce')
     if (!nonce || !/^[A-Za-z0-9_-]{8,256}$/u.test(nonce)) throw new Error('ACME nonce unavailable')
     return nonce
@@ -287,12 +302,11 @@ export async function issueAcmeCertificate(input: {
         method: 'POST',
         headers: { 'Content-Type': 'application/jose+json', Accept: accept },
         body: JSON.stringify({ protected: protectedB64, payload: payloadB64, signature }),
-        signal: input.signal ?? AbortSignal.timeout(20_000),
+        signal: requestSignal(20_000),
       })
       const nextNonce = res.headers.get('replay-nonce')
       if (nextNonce && /^[A-Za-z0-9_-]{8,256}$/u.test(nextNonce)) cachedNonce = nextNonce
-      const text = await res.text()
-      if (text.length > 131_072) throw new Error('ACME response limit')
+      const text = await readAcmeResponse(res)
       if (res.status === 400 && attempt === 0 && text.includes('badNonce')) continue
       return { res, text }
     }
@@ -343,8 +357,7 @@ export async function issueAcmeCertificate(input: {
     }
   }
 
-  const { csrBase64Url, keyPem, publicKey, reusedKey } = createCertificateRequest(input.config.domain, existingKeyPem)
-  const finalResp = await signedPost(order.finalize, { csr: csrBase64Url })
+  const finalResp = await signedPost(order.finalize, { csr: createCertificateRequest(input.config.domain, privateKey) })
   if (!finalResp.res.ok) throw new Error('ACME order finalize failed')
   order = orderSchema.parse(JSON.parse(finalResp.text) as unknown)
   for (let poll = 0; poll < 30 && order.status !== 'valid'; poll++) {
@@ -363,12 +376,12 @@ export async function issueAcmeCertificate(input: {
   if (
     !leaf.checkHost(input.config.domain)
     || isAcmeBootstrapCertificate(leaf)
-    || !leaf.publicKey.export({ type: 'spki', format: 'der' }).equals(publicKey.export({ type: 'spki', format: 'der' }))
+    || !leaf.checkPrivateKey(privateKey)
+    || Date.parse(leaf.validFrom) > now()
     || Date.parse(leaf.validTo) <= now()
   )
     throw new Error('Issued ACME certificate failed verification')
 
-  if (!reusedKey) await writePrivate(input.keyFile, keyPem)
   await writePrivate(input.certificateFile, certResp.text.endsWith('\n') ? certResp.text : `${certResp.text}\n`)
   await input.reloadTls()
 }

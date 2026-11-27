@@ -4,24 +4,34 @@ import { createServer as createHttpsServer } from 'node:https'
 import { connect as tlsConnect } from 'node:tls'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { once } from 'node:events'
 import type { AddressInfo } from 'node:net'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { connectRelayTunnel, createTransportCertificate, nodeCrypto, RelayControl } from '@latch/link-client'
 import { holder, issuePass, routeKey, UTC_DAY } from '@latch/link-wire'
-import { createAcmeBootstrapCertificate, isAcmeBootstrapCertificate } from '../src/acme.ts'
+import { createAcmeBootstrapCertificate, isAcmeBootstrapCertificate, issueAcmeCertificate } from '../src/acme.ts'
+import { requestPrivateAdmin } from '../src/admin.ts'
+import * as memory from '../src/memory.ts'
+import { writePrivate } from '../src/private-store.ts'
 import { createSelfSignedRelayCertificate, startSelfSignedRenewalLoop } from '../src/self-tls.ts'
 import { startRelay } from '../src/server.ts'
 import { runLinuxAcceptance } from '../scripts/accept-linux.ts'
+import { buildTestGateway } from './build-gateway.ts'
 
 const cleanup: Array<() => void | Promise<void>> = []
 afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close()
 })
 
-const gatewayBinary = resolve(fileURLToPath(new URL('../../../dist/relay/latch-relay-tls', import.meta.url)))
+let gatewayDirectory: string, gatewayBinary: string
+beforeAll(async () => {
+  gatewayDirectory = await mkdtemp(join(tmpdir(), 'latch-acme-gateway-'))
+  gatewayBinary = await buildTestGateway(gatewayDirectory)
+}, 65_000)
+afterAll(async () => {
+  if (gatewayDirectory) await rm(gatewayDirectory, { recursive: true, force: true })
+})
 
 function der(tag: number, ...parts: readonly Uint8Array[]): Buffer {
   const value = Buffer.concat(parts),
@@ -120,7 +130,7 @@ function createTestCa() {
 }
 
 describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', () => {
-  it('issues a real TLS-ALPN-01 certificate through the Go gateway, rotates keys cleanly and passes full acceptance', async () => {
+  it('issues and renews a TLS-ALPN-01 certificate through the Go gateway while preserving the legacy pin', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'latch-acme-'))
     cleanup.push(() => rm(dir, { recursive: true, force: true }))
     const domain = 'relay.example.com'
@@ -128,7 +138,6 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
     const certFile = join(dir, 'cert.pem')
     const keyFile = join(dir, 'key.pem')
     const bootstrap = createAcmeBootstrapCertificate(domain)
-    const { writePrivate } = await import('../src/private-store.ts')
     await writePrivate(certFile, bootstrap.cert)
     await writePrivate(keyFile, bootstrap.key)
     expect(isAcmeBootstrapCertificate(new X509Certificate(bootstrap.cert))).toBe(true)
@@ -258,6 +267,7 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
     let simulatedNow = Date.now()
     const relay = await startRelay({
       dataDir: dir,
+      adminSocket: join(dir, 'admin.sock'),
       relayId,
       registrationToken: regToken,
       edgeIdentity: { seed: signingSeed },
@@ -277,6 +287,21 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
     expect((await stat(certFile)).mode & 0o777).toBe(0o600)
     expect((await stat(keyFile)).mode & 0o777).toBe(0o600)
     expect(isAcmeBootstrapCertificate(new X509Certificate(await readFile(certFile)))).toBe(false)
+    const fetchUnexpectedOrder = vi.fn<typeof fetch>()
+    await expect(
+      issueAcmeCertificate({
+        dataDir: dir,
+        config: { domain },
+        certificateFile: certFile,
+        keyFile,
+        setAcmeTls: async () => {},
+        reloadTls: async () => {
+          throw new Error('gateway busy')
+        },
+        deps: { fetchImpl: fetchUnexpectedOrder },
+      }),
+    ).rejects.toThrow('gateway busy')
+    expect(fetchUnexpectedOrder).not.toHaveBeenCalled()
     // Confirm the private key was preserved from `init` so `keyFile` is never rewritten and `--legacy-spki` stays stable!
     const bootstrapSpki = createPublicKey(createPrivateKey(bootstrap.key)).export({ type: 'spki', format: 'der' })
     expect(createPublicKey(createPrivateKey(await readFile(keyFile))).export({ type: 'spki', format: 'der' })).toEqual(bootstrapSpki)
@@ -314,7 +339,6 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
     expect(legacyResults.every(item => item.result === 'pass')).toBe(true)
 
     // Trigger a normal 60-day ACME renewal (`issueAcmeCertificate`) and verify `spkiHash` stays identical!
-    const { issueAcmeCertificate } = await import('../src/acme.ts')
     authzStatus = 'pending'
     orderStatus = 'pending'
     issuedChain = ''
@@ -333,10 +357,7 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
         }
       },
       reloadTls: async () => {
-        await fetch(`http://127.0.0.1:${relay.adminPort}/reload`, {
-          method: 'POST',
-          headers: { 'x-latch-relay-admin': '1' },
-        })
+        await requestPrivateAdmin(dir, '/reload')
       },
       deps: {
         sleep: async () => {},
@@ -355,6 +376,15 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
     })
     const renewedCert = new X509Certificate(await readFile(certFile))
     expect(renewedCert.serialNumber).not.toBe(firstCertSerial)
+    const servedCert = await new Promise<X509Certificate>((resolveCert, rejectCert) => {
+      const socket = tlsConnect({ host: '127.0.0.1', servername: domain, port: relayPort, ca: ca.caCertPem })
+      socket.once('error', rejectCert)
+      socket.once('secureConnect', () => {
+        resolveCert(new X509Certificate(socket.getPeerCertificate().raw))
+        socket.destroy()
+      })
+    })
+    expect(servedCert.raw).toEqual(renewedCert.raw)
     const renewedSpkiHash = createHash('sha256')
       .update(renewedCert.publicKey.export({ type: 'spki', format: 'der' }))
       .digest('hex')
@@ -371,6 +401,46 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
     expect(afterRenewalLegacy.every(item => item.result === 'pass')).toBe(true)
   })
 
+  it('keeps a deadline on directory requests alongside the shutdown signal and refuses a missing pinned key', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'latch-acme-deadline-'))
+    cleanup.push(() => rm(dir, { recursive: true, force: true }))
+    const domain = 'relay.example.com'
+    const identity = createAcmeBootstrapCertificate(domain)
+    const certificateFile = join(dir, 'cert.pem')
+    const keyFile = join(dir, 'key.pem')
+    await writePrivate(certificateFile, identity.cert)
+    const deadline = new AbortController()
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal)
+    try {
+      const fetchImpl = vi.fn<typeof fetch>(async (_url, init) => {
+        deadline.abort(new Error('directory timed out'))
+        init?.signal?.throwIfAborted()
+        throw new Error('deadline ignored')
+      })
+      const options = {
+        dataDir: dir,
+        config: { domain },
+        certificateFile,
+        keyFile,
+        signal: new AbortController().signal,
+        deps: { fetchImpl },
+        setAcmeTls: async () => {},
+        reloadTls: async () => {},
+      }
+      await expect(issueAcmeCertificate(options)).rejects.toThrow('Missing ACME TLS identity')
+      expect(fetchImpl).not.toHaveBeenCalled()
+      await writePrivate(keyFile, identity.key)
+      await expect(issueAcmeCertificate(options)).rejects.toThrow('directory timed out')
+      expect(timeout).toHaveBeenCalledWith(15_000)
+      const oversized = () => new Response('x'.repeat(131_073))
+      await expect(issueAcmeCertificate({ ...options, deps: { fetchImpl: async () => oversized() } })).rejects.toThrow(
+        'ACME response limit',
+      )
+    } finally {
+      timeout.mockRestore()
+    }
+  })
+
   it('starts behind a reverse proxy with self-calibrated relay quota and survives proxy certificate rotation', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'latch-proxy-'))
     cleanup.push(() => rm(dir, { recursive: true, force: true }))
@@ -383,7 +453,17 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
     const signingSeed = randomBytes(32)
     const relayKey = Buffer.from(await nodeCrypto.publicKey(signingSeed)).toString('hex')
 
-    let includesSockets = true
+    // A hosted runner shares its cgroup with other jobs; model the memory of a dedicated relay service here.
+    const measuredMemory = { used: 32 * 1024 * 1024, limit: 512 * 1024 * 1024, includesSockets: true }
+    class FixtureMemoryGuard extends memory.MemoryGuard {
+      constructor(options: ConstructorParameters<typeof memory.MemoryGuard>[0]) {
+        super({ ...options, read: async () => ({ ...measuredMemory }) })
+      }
+    }
+    const sampler = vi.spyOn(memory, 'MemoryGuard').mockImplementation(FixtureMemoryGuard)
+    cleanup.push(() => {
+      sampler.mockRestore()
+    })
     const relay = await startRelay({
       dataDir: dir,
       adminSocket: join(adminDir, 'admin.sock'),
@@ -406,15 +486,6 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
       },
       fairness: { prefixDailyShare: 0.5, overageFactor: 0.1 },
       memory: { bufferBytes: 16 * 1024 * 1024, limitBytes: 512 * 1024 * 1024 },
-      ...(process.platform === 'linux'
-        ? {}
-        : {
-            memoryReader: async () => ({
-              used: 32 * 1024 * 1024,
-              limit: 512 * 1024 * 1024,
-              includesSockets,
-            }),
-          }),
     })
     cleanup.push(() => relay.close())
 
@@ -494,6 +565,9 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
     // Same relay profile (`relayKey`) continues to pass without re-exporting!
     const afterRotation = await runLinuxAcceptance(profile, { ca: certPair.cert, address: '127.0.0.1' })
     expect(afterRotation.every(item => item.result === 'pass')).toBe(true)
+    measuredMemory.includesSockets = false
+    await expect.poll(() => relay.status().ready, { timeout: 3_000 }).toBe(false)
+    expect((await fetch(`http://127.0.0.1:${relay.port}/healthz`)).status).toBe(503)
   })
 
   it('runs zero-domain bare-IP mode with SPKI-pinned self-signed TLS, no custom CA, and key-preserving auto-renewal', async () => {
@@ -504,7 +578,6 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
 
     // Start with a 10-day self-signed IP SAN certificate (< 30-day renewal threshold) so `startRelay` immediately renews it!
     const initial = createSelfSignedRelayCertificate('127.0.0.1', { lifetimeDays: 10 })
-    const { writePrivate } = await import('../src/private-store.ts')
     await writePrivate(certFile, initial.cert)
     await writePrivate(keyFile, initial.key)
 
@@ -687,7 +760,6 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
     const certFile = join(dir, 'cert.pem')
     const keyFile = join(dir, 'key.pem')
     const initial = createSelfSignedRelayCertificate('203.0.113.10', { lifetimeDays: 5 })
-    const { writePrivate } = await import('../src/private-store.ts')
     await writePrivate(certFile, initial.cert)
     await writePrivate(keyFile, initial.key)
 

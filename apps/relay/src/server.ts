@@ -124,7 +124,8 @@ export async function startRelay(
       || !options.memory
       || !options.registrationWork
       || (isPublic && process.platform !== 'linux')
-      || ((isPublic || process.platform === 'linux') && (options.networkCounter || options.memoryReader)))
+      || options.networkCounter
+      || options.memoryReader)
   )
     throw new Error('Public relay requires measured Linux quota and memory configuration')
   if (options.registrationWork) {

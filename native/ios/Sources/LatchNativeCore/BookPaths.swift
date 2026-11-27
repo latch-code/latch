@@ -25,13 +25,9 @@ public enum NativeBookPathChange {
             return previous.discoveryKey != current.discoveryKey
         case .relay:
             guard let installedPathId,
-                  let next = current.relays.first(where: { LinkBytes.hex($0.relayId) == installedPathId }) else {
-                return true
-            }
-            if let prev = previous.relays.first(where: { LinkBytes.hex($0.relayId) == installedPathId }) {
-                return identity(of: prev) != identity(of: next)
-            }
-            return false
+                  let prior = previous.relays.first(where: { LinkBytes.hex($0.relayId) == installedPathId }),
+                  let next = current.relays.first(where: { LinkBytes.hex($0.relayId) == installedPathId }) else { return true }
+            return identity(of: prior) != identity(of: next)
         }
     }
     private struct RelayIdentity: Hashable {

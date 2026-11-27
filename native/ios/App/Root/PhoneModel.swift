@@ -261,7 +261,6 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     private var networkFilter = NativeNetworkChangeFilter()
     private var winners = NativeWinningPaths()
     private var upgradeTask: (id: UUID, task: Task<Void, Never>)?
-    private var pendingUpgrade = false
     /** A short background that keeps the connection; see `enterBackground`. */
     private let hold = NativeBackgroundHold()
     private var holdTask = UIBackgroundTaskIdentifier.invalid
@@ -497,10 +496,6 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             let next = try NativeWorkspace(device: host.device, keys: PhoneKeys.provider(host.keys, askOwner: { PhoneFaceID.isOn }), vault: vault,
                 onRevoked: { [weak self, store] proof in Task { @MainActor in await self?.retire(host, proof: proof, retiredStore: store) } },
                 onTransportInstalled: { [weak self] path in self?.adoptTransport(path, current: current) },
-                onIdle: { [weak self] in
-                    guard let self, self.generation == current, self.pendingUpgrade else { return }
-                    self.tryUpgrade()
-                },
                 prefetchChallenge: { !PhoneFaceID.isOn })
             workspace = next
             bookRefresher = NativeBookRefresher(workspace: next, persist: { device in
@@ -1256,13 +1251,9 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                 try? startDiscovery(saved)
             }
             if installedKind == .relay {
-                let hasDirects = !((try? await directCandidates(saved, browser: discovery)) ?? []).isEmpty
-                let firstRelay = NativeRelayOrder.available(newBook).first
-                if hasDirects || (firstRelay != nil && installedPathId != firstRelay.map { LinkBytes.hex($0.relayId) }) {
-                    pendingUpgrade = true
-                    cancelUpgrade(clearPending: false)
-                    tryUpgrade()
-                }
+                // A new book may put the installed relay first again while the previous choice is still dialing.
+                cancelUpgrade()
+                tryUpgrade()
             }
             return
         }
@@ -1316,37 +1307,29 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         guard generation == current else { return }
         if networkGeneration == network { winners.record(kind, gateway: gateway) }
         // The reads that follow a new connection go first; the upgrade waits for a quiet path anyway.
-        if kind == .relay {
-            pendingUpgrade = true
-            tryUpgrade(after: .seconds(1))
-        }
+        if kind == .relay { tryUpgrade(after: .seconds(1)) }
     }
     private func discoveryChanged() {
         timeline.recordOnce(.firstBrowse)
-        pendingUpgrade = true
         tryUpgrade()
     }
-    private func cancelUpgrade(clearPending: Bool = true) {
-        if clearPending { pendingUpgrade = false }
+    private func cancelUpgrade() {
         upgradeTask?.task.cancel()
         upgradeTask = nil
     }
     /**
-     * On a relay, a direct path or newly preferred #1 relay moves the connection in the background once the workspace is
-     * quiet. While a transfer or write holds the path busy, `pendingUpgrade` stays armed and `onIdle` resumes immediately.
+     * An upgrade waits for the installed path to become quiet. Only dial attempts count against its retry budget.
      */
     private func tryUpgrade(after delay: Duration = .zero) {
-        guard upgradeTask == nil, transportReady, !hold.holding, storageAvailable, let workspace, let host = selectedHost else { return }
+        guard upgradeTask == nil, transportReady, !hold.holding, storageAvailable, let workspace,
+              let transport = installedTransport, let host = selectedHost else { return }
         let current = generation, id = UUID()
         upgradeTask = (id, Task { [weak self] in
             defer { if self?.upgradeTask?.id == id { self?.upgradeTask = nil } }
             if delay > .zero { do { try await Task.sleep(for: delay) } catch { return } }
             for _ in 0..<5 {
-                guard let self, self.generation == current, self.transportReady, !self.hold.holding, self.storageAvailable,
-                      self.workspace === workspace, await workspace.installedPathKind() == .relay else {
-                    self?.pendingUpgrade = false
-                    return
-                }
+                guard let self, !Task.isCancelled, self.generation == current, self.transportReady, !self.hold.holding, self.storageAvailable,
+                      self.workspace === workspace, self.installedTransport === transport, await workspace.installedPathKind() == .relay else { return }
                 let latest = self.hosts.first { $0.id == host.id } ?? host
                 let directs = (try? await self.directCandidates(latest, browser: self.discovery)) ?? []
                 let installedId = await workspace.installedPathId()
@@ -1361,17 +1344,9 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                           )) != nil else { return nil }
                     return try? await workspace.relayCandidate(relayId: first.relayId)
                 }()
-                guard !directs.isEmpty || preferredRelay != nil else {
-                    self.pendingUpgrade = false
-                    return
-                }
-                if !(await workspace.quiet()) {
-                    self.pendingUpgrade = true
-                    do { try await Task.sleep(for: .seconds(3)) } catch { return }
-                    continue
-                }
+                guard !directs.isEmpty || preferredRelay != nil else { return }
+                do { try await workspace.waitUntilQuiet(on: transport) } catch { return }
                 if await self.paths.upgrade(directs, preferredRelay: preferredRelay, workspace: workspace) {
-                    self.pendingUpgrade = false
                     guard self.generation == current, self.workspace === workspace else { return }
                     let kind = await workspace.installedPathKind() ?? .direct
                     self.winners.record(kind, gateway: self.currentGateway())
@@ -1381,7 +1356,6 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                     if kind == .direct { self.scheduleProximity(workspace) }
                     return
                 }
-                self.pendingUpgrade = false
                 do { try await Task.sleep(for: .seconds(3)) } catch { return }
             }
         })

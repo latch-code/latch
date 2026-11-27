@@ -263,7 +263,12 @@ describe('latch relay setup linux core workflow', () => {
         async ssh(_target, script) {
           scripts.push(script)
           if (scripts.length === 5)
-            return { code: 0, stdout: '{"os":"Linux","arch":"x86_64","uid":0,"sudo":1,"systemd":1,"port443Busy":0}\n', stderr: '' }
+            return {
+              code: 0,
+              stdout:
+                '{"os":"Linux","arch":"x86_64","uid":0,"sudo":1,"systemd":1,"port443Busy":1,"existingPort":443,"existingMode":"self-ip"}\n',
+              stderr: '',
+            }
           return {
             code: 0,
             stdout: `---LATCH-RELAY-PROFILE-BEGIN---\n${JSON.stringify(bareProfile)}\n---LATCH-RELAY-PROFILE-END---\n`,
@@ -277,6 +282,42 @@ describe('latch relay setup linux core workflow', () => {
       },
     )
     expect(upgraded.out).toBe(outPath)
+
+    // A rebuilt machine may have the same endpoint but a different registration token.
+    await expect(
+      runLinuxSetup(
+        { server: 'root@203.0.113.10', upgrade: true, home },
+        {
+          async ssh(_target, _script, bundle) {
+            const profile = { ...bareProfile, profile: { ...bareProfile.profile, registrationKey: `lrt1.${'E'.repeat(43)}` } }
+            return {
+              code: 0,
+              stderr: '',
+              stdout: bundle
+                ? `---LATCH-RELAY-PROFILE-BEGIN---\n${JSON.stringify(profile)}\n---LATCH-RELAY-PROFILE-END---\n`
+                : JSON.stringify({
+                    os: 'Linux',
+                    arch: 'x86_64',
+                    uid: 1000,
+                    sudo: 1,
+                    systemd: 1,
+                    existingPort: 443,
+                    existingMode: 'self-ip',
+                  }),
+            }
+          },
+          buildBundle: async () => ({ tarball: fakeBundle, sha256: bundleSha }),
+          readBundle: async () => {
+            throw new Error('unexpected')
+          },
+          accept: async () => {
+            throw new Error('must not accept a different profile')
+          },
+          progress: () => {},
+        },
+      ),
+    ).rejects.toThrow('注册令牌')
+    expect(JSON.parse(await readFile(outPath, 'utf8'))).toEqual(bareProfile)
 
     // Remote status & uninstall:
     const statusLines = await runLinuxRemoteStatus({ server: 'root@203.0.113.10' }, async () => ({
@@ -296,6 +337,53 @@ describe('latch relay setup linux core workflow', () => {
     })
     expect(uninstallScript).toContain('rm -rf /srv/latch-relay /etc/latch-relay')
     expect(msg).toContain('清除 /srv/latch-relay')
+  })
+
+  it('reuses the saved public domain and external port for an upgrade through the SSH IP', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'latch-linux-upgrade-proxy-'))
+    cleanup.push(home)
+    const relaysDir = join(home, '.latch', 'relays')
+    await mkdir(relaysDir, { recursive: true, mode: 0o700 })
+    await chmod(join(home, '.latch'), 0o700)
+    const out = join(relaysDir, 'office.json')
+    const saved = { ...SAMPLE_PROFILE, profile: { ...SAMPLE_PROFILE.profile, url: 'https://relay.example.com:7443/' } }
+    await writeFile(out, JSON.stringify(saved), { mode: 0o600 })
+    const result = await runLinuxSetup(
+      { server: 'root@203.0.113.10', home, upgrade: true, skipAccept: true },
+      {
+        async ssh(_target, script, bundle) {
+          if (bundle) {
+            expect(script).toContain('--url https://relay.example.com:7443')
+            return {
+              code: 0,
+              stderr: '',
+              stdout: `---LATCH-RELAY-PROFILE-BEGIN---\n${JSON.stringify(saved)}\n---LATCH-RELAY-PROFILE-END---\n`,
+            }
+          }
+          return {
+            code: 0,
+            stderr: '',
+            stdout: JSON.stringify({
+              os: 'Linux',
+              arch: 'x86_64',
+              uid: 0,
+              systemd: 1,
+              existingId: saved.profile.relayId,
+              existingMode: 'behind-proxy',
+              existingPort: 18443,
+            }),
+          }
+        },
+        buildBundle: async () => ({ tarball: Buffer.from('bundle'), sha256: 'a'.repeat(64) }),
+        readBundle: async () => {
+          throw new Error('unexpected')
+        },
+        accept: async () => [],
+        progress: () => {},
+      },
+    )
+    expect(result.out).toBe(out)
+    expect(result.mode).toBe('behind-proxy')
   })
 
   it('installs custom TLS into root-owned /etc/latch-relay/tls (never inside /srv/latch-relay) and enforces TLS file permissions', async () => {
@@ -391,7 +479,7 @@ describe('latch relay setup linux core workflow', () => {
             return {
               code: 0,
               stdout:
-                '{"os":"Linux","arch":"x86_64","uid":0,"sudo":1,"systemd":1,"port443Busy":1,"existingPort":443,"existingBehindProxy":0}\n',
+                '{"os":"Linux","arch":"x86_64","uid":0,"sudo":1,"systemd":1,"port443Busy":1,"existingPort":443,"existingMode":"self-ip"}\n',
               stderr: '',
             }
           }
@@ -410,6 +498,7 @@ describe('latch relay setup linux core workflow', () => {
     )
 
     expect(res.profile.url).toBe('https://203.0.113.10/')
+    expect(upgradeScript).toContain('if run_relay test -f /srv/latch-relay/relay.json; then')
     expect(upgradeScript).toContain('--url https://203.0.113.10')
     expect(upgradeScript).toContain('AmbientCapabilities=CAP_NET_BIND_SERVICE')
     // Candidate `check` runs on `$release_dir` BEFORE switching `/opt/latch-relay/current`:
@@ -473,13 +562,14 @@ describe('latch relay setup linux core workflow', () => {
     await expect(stat(marker)).rejects.toThrow()
   })
 
-  it('rejects HTTP 200 /healthz responses whose body is an HTML page instead of ok\\n', async () => {
+  it('requires the relay health response and explicit credential rejection during acceptance', async () => {
     const certPair = createTransportCertificate(Date.now(), 3_600_000, 'relay.example.com')
+    let healthBody = '<!doctype html><html><body>default vhost</body></html>'
     const wrongServer = createHttpsServer(
       { cert: certPair.cert, key: certPair.key, minVersion: 'TLSv1.3', ALPNProtocols: ['http/1.1'] },
       (_req, res) => {
         res.writeHead(200, { 'Content-Type': 'text/html' })
-        res.end('<!doctype html><html><body>default vhost</body></html>')
+        res.end(healthBody)
       },
     )
     wrongServer.listen(0, '127.0.0.1')
@@ -496,6 +586,18 @@ describe('latch relay setup linux core workflow', () => {
         { ca: certPair.cert, address: '127.0.0.1' },
       )
       expect(items).toEqual([{ name: 'healthz', result: 'fail', detail: 'HTTP 200（响应正文不是中继健康检查）' }])
+      healthBody = 'ok\n'
+      const transportFailure = await runLinuxAcceptance(
+        {
+          relayId: 'a'.repeat(32),
+          url: `https://relay.example.com:${port}/`,
+          kind: 'edge',
+          relayKey: 'b'.repeat(64),
+          registrationKey: SAMPLE_PROFILE.profile.registrationKey,
+        },
+        { ca: certPair.cert, address: '127.0.0.1' },
+      )
+      expect(transportFailure.find(item => item.name === 'wrong-credentials')?.result).toBe('fail')
     } finally {
       wrongServer.closeAllConnections()
       await new Promise<void>(r => wrongServer.close(() => r()))

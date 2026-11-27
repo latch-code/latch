@@ -3008,6 +3008,15 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(
       await invoke({
         ...input,
+        installedKind: 'relay',
+        installedPathId: relay0Hex,
+        previous: encode({ relays: relays.slice(1) }),
+        current: encode({ generation: 2 }),
+      }),
+    ).toEqual({ migrate: true, invalidates: true })
+    expect(
+      await invoke({
+        ...input,
         installedKind: 'direct',
         installedPathId: 'lan',
         current: encode({ generation: 2, relays: relays.slice(1) }),
@@ -3395,6 +3404,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           builtBeforeTeardown: true,
           sameWindow: true,
           readNotInterrupted: true,
+          waitedForReadToSettle: true,
           unknownKept: true,
           directNotUpgradedAgain: true,
           installs: 2,

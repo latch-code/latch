@@ -204,8 +204,8 @@ export async function runLinuxAcceptance(
     const control = await RelayControl.connect({ ...endpointOf(profile, options, badKey), registrationToken: token })
     control.close()
     await control.closed
-  } catch {
-    wrongKeyRejected = true
+  } catch (error) {
+    wrongKeyRejected = error instanceof Error && ['Relay identity rejected', 'Relay certificate identity mismatch'].includes(error.message)
   }
 
   let wrongTokenRejected = token === undefined
@@ -218,7 +218,7 @@ export async function runLinuxAcceptance(
       control = await RelayControl.connect({ ...endpointOf(profile, options), registrationToken: randomBytes(32) })
       await control.register({ routeKey: key, day, alternate: false })
     } catch (error) {
-      wrongTokenRejected = error instanceof RelayClosed ? error.closeCode === 4100 : true
+      wrongTokenRejected = error instanceof RelayClosed && error.closeCode === 4100
     } finally {
       control?.close()
       await control?.closed.catch(() => {})

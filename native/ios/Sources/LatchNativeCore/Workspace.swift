@@ -151,7 +151,6 @@ public actor NativeWorkspace {
     private let verification: NativeVerification
     private let onRevoked: (@Sendable (VerifiedNativeRevocation) -> Void)?
     private let onTransportInstalled: (@MainActor @Sendable (NativeInstalledTransport) -> Void)?
-    private let onIdle: (@MainActor @Sendable () -> Void)?
     private var connection: NativeHTTPConnection?
     private var epoch = UUID()
     private var installedTransport: NativeTransportEpoch?
@@ -205,14 +204,13 @@ public actor NativeWorkspace {
     public init(device: PreparedNativeDevice, keys: any NativeIdentityProvider, vault: EncryptedVault,
         onRevoked: (@Sendable (VerifiedNativeRevocation) -> Void)? = nil,
         onTransportInstalled: (@MainActor @Sendable (NativeInstalledTransport) -> Void)? = nil,
-        onIdle: (@MainActor @Sendable () -> Void)? = nil,
         prefetchChallenge: @escaping @Sendable () -> Bool = { false }) throws {
         guard LinkBytes.base32(LinkBytes.hash(device.rootSpki)) == device.hostId,
               LinkBytes.matches(device.deviceId, "dev_[A-Za-z0-9_-]{22}"), device.knockKey.count == 32 else { throw NativeFailure.identityMismatch }
         self.device = device; self.keys = keys; self.vault = vault
         directoryResolver = NativeDirectoryResolver(vault: vault)
         bookDevice = device
-        self.onRevoked = onRevoked; self.onTransportInstalled = onTransportInstalled; self.onIdle = onIdle; self.prefetchChallenge = prefetchChallenge
+        self.onRevoked = onRevoked; self.onTransportInstalled = onTransportInstalled; self.prefetchChallenge = prefetchChallenge
         verification = NativeVerification(hostId: device.hostId, deviceId: device.deviceId)
     }
     public func install(_ candidate: @escaping @Sendable () async throws -> NativeHTTPConnection) async throws -> NativeJSON {
@@ -334,9 +332,14 @@ public actor NativeWorkspace {
         writes.isEmpty && !controlBusy && !uploading && bulk == nil && bulkRun == nil && !bulkBusy && uploadLane == nil && uploadRun == nil
             && !bookUpdating && connection?.idle != false
     }
-    private func notifyIfIdle() {
-        guard let onIdle, idle() else { return }
-        Task { await onIdle() }
+    /** Wait on the current path only. A read, verification or transfer may outlast all network retries. */
+    public func waitUntilQuiet(on expected: NativeTransportEpoch) async throws {
+        while installedTransport === expected, expected.valid {
+            try Task.checkCancellation()
+            if await quiet(), installedTransport === expected, expected.valid { return }
+            try await Task.sleep(for: .seconds(1))
+        }
+        throw CancellationError()
     }
     /**
      * After a short background: the Host rechecks the held window on the kept connection. It never extends the window;
@@ -451,7 +454,7 @@ public actor NativeWorkspace {
     public func refreshAddressBook(persist: @escaping @Sendable (PreparedNativeDevice) async throws -> Void) async throws -> PreparedNativeDevice {
         let (connection, current) = try transport()
         guard !bookUpdating else { throw NativeFailure.unavailable }
-        bookUpdating = true; defer { bookUpdating = false; notifyIfIdle() }
+        bookUpdating = true; defer { bookUpdating = false }
         guard let lease = await verification.currentLease() else { throw NativeFailure.expired }
         try lease.requireValid()
         let response = try await connection.request(.post, path: "/link/api/native/address-book", body: Data("{}".utf8))
@@ -678,7 +681,7 @@ public actor NativeWorkspace {
         let operation = Task { try await self.readBulk(handle: handle, etag: etag, offset: offset, count: count,
             epoch: current, lease: lease, progress: progress) }
         bulkRun = operation
-        defer { bulkRun = nil; bulkBusy = false; notifyIfIdle() }
+        defer { bulkRun = nil; bulkBusy = false }
         return try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
     }
     private func readBulk(handle: String, etag: String, offset: Int, count: Int, epoch current: UUID, lease: BodyLease,
@@ -757,7 +760,6 @@ public actor NativeWorkspace {
     }
     private func readFile(connection: NativeHTTPConnection, handle: String, etag: String, offset: Int, count: Int,
         epoch current: UUID, lease: BodyLease, attachment: Bool = false, progress: (@Sendable (Int, Int) -> Void)?) async throws -> Data {
-        defer { notifyIfIdle() }
         // The first bounded block can render before the rest. At most four independently checked ranges are in flight.
         let first = min(16_384, count)
         let initial = try await fileChunk(connection: connection, handle: handle, etag: etag, start: offset, amount: first, epoch: current, lease: lease, attachment: attachment)
@@ -834,7 +836,7 @@ public actor NativeWorkspace {
         let (connection, current) = try transport()
         guard !uploading else { throw NativeFailure.busy }
         guard let lease = await verification.currentLease() else { throw NativeFailure.expired }; try lease.requireValid()
-        uploading = true; defer { uploading = false; notifyIfIdle() }
+        uploading = true; defer { uploading = false }
         let body = try PhoneAttachStage.read(file, offset: 0, count: draft.size)
         let response = try await connection.upload(metadata: header, body: body, lease: lease, timeoutSeconds: 60, progress: progress)
         // A path replacement leaves this upload unknown; the same requestId tells the Host it is the same one.
@@ -865,13 +867,13 @@ public actor NativeWorkspace {
         let (connection, current) = try transport()
         guard !uploading else { throw NativeFailure.busy }
         guard let lease = await verification.currentLease() else { throw NativeFailure.expired }; try lease.requireValid()
-        uploading = true; defer { uploading = false; notifyIfIdle() }
+        uploading = true; defer { uploading = false }
         let bulk = connection.usesRelay && metadata["catalog"]["features"]["nativeBulkUpload"].bool
         uploadInterrupted = false
         let operation = Task { try await self.sendParts(draft, start: start, file: file, connection: connection, epoch: current,
             lease: lease, bulk: bulk, progress: progress, report: report) }
         uploadRun = operation
-        defer { uploadRun = nil; notifyIfIdle() }
+        defer { uploadRun = nil }
         return try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
     }
     private func sendParts(_ draft: PhoneAttachDraft, start: Data, file: PhoneStagedFile, connection: NativeHTTPConnection,
@@ -1084,7 +1086,6 @@ public actor NativeWorkspace {
         guard let previous else { return }
         let closing = Task { await previous.connection.close() }; uploadClosing = closing
         await closing.value; uploadClosing = nil
-        notifyIfIdle()
     }
     /** Aborts this device's unfinished chunked upload on the Host (a row removed before it finished); best effort. */
     public func abortAttachmentUpload(_ id: String) async {
@@ -1134,7 +1135,7 @@ public actor NativeWorkspace {
         if let expectedTransport, expectedTransport !== installedTransport || !expectedTransport.valid { throw CancellationError() }
         // In flight from before the first await, so settlePending refuses it for the whole of this attempt.
         guard writes.isEmpty else { throw NativeFailure.expired }
-        writes.insert(pending.requestId); defer { writes.remove(pending.requestId); notifyIfIdle() }
+        writes.insert(pending.requestId); defer { writes.remove(pending.requestId) }
         guard let lease = await verification.currentLease(), expectedLease?.sameWindow(as: lease) != false, let method = NativeHTTPMethod(rawValue: pending.method),
               method != .get && method != .head else { throw NativeFailure.expired }
         try lease.requireValid()
@@ -1312,7 +1313,7 @@ public actor NativeWorkspace {
         guard let id = fields["requestId"]?.string, LinkBytes.matches(id, "[A-Fa-f0-9-]{36}"), !controlBusy else { throw NativeFailure.invalidRecord }
         if let run = fields["runId"]?.string { guard LinkBytes.matches(run, "[A-Za-z0-9_-]{1,160}") else { throw NativeFailure.invalidRecord } }
         controlBusy = true
-        defer { controlBusy = false; notifyIfIdle() }
+        defer { controlBusy = false }
         let previous = try await pendingControl()
         if let previous {
             guard previous["fields"]["requestId"].string == fields["requestId"]?.string else { throw NativeFailure.resultUnknown }
@@ -1858,7 +1859,6 @@ public actor NativeWorkspace {
         guard let previous else { return }
         let closing = Task { await previous.connection.close() }; bulkClosing = closing
         await closing.value; bulkClosing = nil
-        notifyIfIdle()
     }
     private func transport() throws -> (NativeHTTPConnection, UUID) {
         guard revocation == nil else { throw NativeFailure.revoked }

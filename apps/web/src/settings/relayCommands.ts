@@ -97,6 +97,9 @@ export function relaySetupCommands(
   const explicitName = options.name && NAME.test(options.name) ? ` --name ${options.name}` : ''
 
   if (!server) return { login: [], deploy: [], fetch: [] }
+  // zsh treats the brackets of an IPv6 SSH target as a filename pattern.
+  const serverArg = server.includes('[') ? `'${server}'` : server
+  const setup = `${program} relay setup linux --server ${serverArg}`
 
   if (tlsMode === 'acme') {
     if (!domain) {
@@ -105,7 +108,7 @@ export function relaySetupCommands(
       const portArg = port === '8443' || port === '443' ? '' : ` --port ${port}`
       return {
         login: [],
-        deploy: [`${program} relay setup linux --server ${server}${portArg}${explicitName}`],
+        deploy: [`${setup}${portArg}${explicitName}`],
         fetch: [],
       }
     }
@@ -121,7 +124,7 @@ export function relaySetupCommands(
       const portArg = port === '8443' || port === '443' ? '' : ` --port ${port}`
       return {
         login: [],
-        deploy: [`${program} relay setup linux --server ${server}${ipArg}${portArg}${explicitName}`],
+        deploy: [`${setup}${ipArg}${portArg}${explicitName}`],
         fetch: [],
       }
     }
@@ -131,7 +134,7 @@ export function relaySetupCommands(
     const portArg = port === '443' ? '' : ` --port ${port}`
     return {
       login: [],
-      deploy: [`${program} relay setup linux --server ${server} --domain ${domain}${portArg}${explicitName}`],
+      deploy: [`${setup} --domain ${domain}${portArg}${explicitName}`],
       fetch: [],
     }
   }
@@ -151,7 +154,7 @@ export function relaySetupCommands(
     const portArg = listenPort === '18443' ? '' : ` --port ${listenPort}`
     return {
       login: [],
-      deploy: [`${program} relay setup linux --server ${server} --domain ${domain} --behind-proxy${portArg}${explicitName}`],
+      deploy: [`${setup} --domain ${domain} --behind-proxy${portArg}${explicitName}`],
       fetch: [],
     }
   }
@@ -166,7 +169,7 @@ export function relaySetupCommands(
   const portArg = port === '8443' ? '' : ` --port ${port}`
   return {
     login: [],
-    deploy: [`${program} relay setup linux --server ${server}${domainArg}${portArg} --cert ${cert} --key ${key}${explicitName}`],
+    deploy: [`${setup}${domainArg}${portArg} --cert ${cert} --key ${key}${explicitName}`],
     fetch: [],
   }
 }

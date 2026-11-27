@@ -3,10 +3,12 @@ import { constants } from 'node:fs'
 import { lstat, open } from 'node:fs/promises'
 import { isIP } from 'node:net'
 import { isAbsolute, join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { isRelayEndpoint } from '@latch/link-wire'
-import { prepareRelaysDir, RELAY_NAME, RELAYS_DISPLAY, RelayFilesError } from '@latch/link-client/relay-files'
+import { prepareRelaysDir, RELAY_NAME, RELAYS_DISPLAY, RelayFilesError, relayNames, relayFilePath } from '@latch/link-client/relay-files'
 import { publicOrigin } from '../src/init-config.ts'
+import { readPrivate } from '../src/private-store.ts'
 import type { LinuxArch } from './bundle-linux.ts'
 import type { AcceptedRelayProfile, LinuxAcceptanceItem } from './accept-linux.ts'
 
@@ -258,10 +260,20 @@ export function buildSshRemoteCommand(remoteScript: string): string {
   return `sh -c '${remoteScript.replaceAll("'", "'\\''")}'`
 }
 
+const runAsRelay = [
+  'run_relay() {',
+  '  if [ "$(id -u)" -eq 0 ]; then',
+  `    if command -v runuser >/dev/null 2>&1; then runuser -u latch-relay -- "$@"; else su -s /bin/sh -c 'exec "$@"' latch-relay sh "$@"; fi`,
+  '  else',
+  '    sudo -n -u latch-relay -- "$@"',
+  '  fi',
+  '}',
+].join('\n')
+
 function buildRemoteProbeScript(): string {
   return [
     'set -eu',
-    'run_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo -n "$@"; fi; }',
+    runAsRelay,
     'os_name=$(uname -s)',
     'arch_name=$(uname -m)',
     'uid_num=$(id -u)',
@@ -269,16 +281,21 @@ function buildRemoteProbeScript(): string {
     'has_systemd=0; if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then has_systemd=1; fi',
     'port443_busy=0; if command -v ss >/dev/null 2>&1 && ss -tlnH "( sport = :443 )" 2>/dev/null | grep -q .; then port443_busy=1; fi',
     'existing_port=0',
-    'existing_proxy=0',
+    'existing_mode=""',
+    'existing_id=""',
     'if [ "$uid_num" -eq 0 ] || [ "$has_sudo" -eq 1 ]; then',
-    '  if run_root test -f /srv/latch-relay/relay.json 2>/dev/null; then',
-    '    cfg_json=$(run_root cat /srv/latch-relay/relay.json 2>/dev/null || true)',
+    '  if id -u latch-relay >/dev/null 2>&1 && run_relay test -f /srv/latch-relay/relay.json; then',
+    '    cfg_json=$(run_relay cat /srv/latch-relay/relay.json)',
     '    parsed_port=$(printf \'%s\\n\' "$cfg_json" | sed -n \'s/.*"port"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p\' | head -n 1)',
+    `    existing_id=$(printf '%s\\n' "$cfg_json" | sed -n 's/.*"relayId"[[:space:]]*:[[:space:]]*"\\([a-f0-9]\\{32\\}\\)".*/\\1/p' | head -n 1)`,
     '    if [ -n "$parsed_port" ]; then existing_port="$parsed_port"; fi',
-    '    if printf \'%s\\n\' "$cfg_json" | grep -Eq \'"behindProxy"[[:space:]]*:[[:space:]]*true\'; then existing_proxy=1; fi',
+    `    if printf '%s' "$cfg_json" | grep -Eq '"behindProxy"[[:space:]]*:[[:space:]]*true'; then existing_mode=behind-proxy;`,
+    `    elif printf '%s' "$cfg_json" | grep -Eq '"acme"[[:space:]]*:'; then existing_mode=acme;`,
+    `    elif printf '%s' "$cfg_json" | grep -Eq '"selfSignedTls"[[:space:]]*:'; then existing_mode=self-ip;`,
+    '    else existing_mode=custom-tls; fi',
     '  fi',
     'fi',
-    'printf \'{"os":"%s","arch":"%s","uid":%s,"sudo":%s,"systemd":%s,"port443Busy":%s,"existingPort":%s,"existingBehindProxy":%s}\\n\' "$os_name" "$arch_name" "$uid_num" "$has_sudo" "$has_systemd" "$port443_busy" "$existing_port" "$existing_proxy"',
+    'printf \'{"os":"%s","arch":"%s","uid":%s,"sudo":%s,"systemd":%s,"port443Busy":%s,"existingPort":%s,"existingMode":"%s","existingId":"%s"}\\n\' "$os_name" "$arch_name" "$uid_num" "$has_sudo" "$has_systemd" "$port443_busy" "$existing_port" "$existing_mode" "$existing_id"',
   ].join('\n')
 }
 
@@ -326,20 +343,21 @@ function buildRemoteInstallScript(params: {
     'set -eu',
     'umask 077',
     'run_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo -n "$@"; fi; }',
-    'run_relay() {',
-    '  if [ "$(id -u)" -eq 0 ]; then',
-    '    if command -v runuser >/dev/null 2>&1; then runuser -u latch-relay -- "$@"; else su -s /bin/sh latch-relay -c "$*"; fi',
-    '  else',
-    '    sudo -n -u latch-relay -- "$@"',
-    '  fi',
-    '}',
+    runAsRelay,
     'tmp_tar=$(mktemp /tmp/latch-relay-bundle.XXXXXX.tar.gz)',
     'unit_backup=""',
+    'unit_tmp=""',
+    'extract_tmp=""',
     'prof_tmp=""',
+    'rollback_needed=0',
     'cleanup() {',
-    '  rm -f "$tmp_tar" "${unit_backup:-}"',
+    '  rc=$?',
+    '  trap - EXIT',
+    '  if [ "$rc" -ne 0 ] && [ "$rollback_needed" -eq 1 ]; then rollback_release; fi',
+    '  rm -f "$tmp_tar" "${unit_tmp:-}" "${unit_backup:-}" "${extract_tmp:-}"',
     '  if [ -n "${stage_dir:-}" ]; then run_root rm -rf "$stage_dir" 2>/dev/null || true; fi',
     '  if [ -n "${prof_tmp:-}" ]; then run_relay rm -f "$prof_tmp" 2>/dev/null || true; fi',
+    '  exit "$rc"',
     '}',
     'trap cleanup EXIT',
     'cat > "$tmp_tar"',
@@ -353,7 +371,7 @@ function buildRemoteInstallScript(params: {
     'if [ -L /opt/latch-relay/current ]; then prev_target=$(readlink -f /opt/latch-relay/current || true); fi',
     'if [ -f /etc/systemd/system/latch-relay.service ]; then',
     '  unit_backup=$(mktemp /tmp/latch-relay.unit.bak.XXXXXX)',
-    '  run_root cp -p /etc/systemd/system/latch-relay.service "$unit_backup"',
+    '  run_root cat /etc/systemd/system/latch-relay.service > "$unit_backup"',
     'fi',
     'was_active=0',
     'if systemctl is-active --quiet latch-relay.service 2>/dev/null; then was_active=1; fi',
@@ -373,24 +391,24 @@ function buildRemoteInstallScript(params: {
     'release_dir="/opt/latch-relay/releases/' + params.expectedTarSha256.slice(0, 16) + '"',
     'run_root rm -rf "$stage_dir"',
     'run_root install -d -m 0755 "$stage_dir"',
-    'run_root tar -xzf "$tmp_tar" -C "$stage_dir"',
-    'run_root chown -R root:root "$stage_dir"',
-    'run_root chmod 0755 "$stage_dir/node" "$stage_dir/latch-relay-tls"',
-    'run_root chmod 0644 "$stage_dir/latch-relay.mjs" "$stage_dir/build.json"',
+    'extract_tmp=$(mktemp /tmp/latch-relay-file.XXXXXX)',
+    'for artifact in node latch-relay-tls latch-relay.mjs build.json NODE-LICENSE latch-relay-tls.LICENSE; do',
+    '  tar -xzOf "$tmp_tar" -- "$artifact" > "$extract_tmp"',
+    '  test -s "$extract_tmp"',
+    '  case "$artifact" in node|latch-relay-tls) mode=0755 ;; *) mode=0644 ;; esac',
+    '  run_root install -m "$mode" -o root -g root "$extract_tmp" "$stage_dir/$artifact"',
+    'done',
     'if [ ! -d "$release_dir" ]; then run_root mv "$stage_dir" "$release_dir"; else run_root rm -rf "$stage_dir"; fi',
     'stage_dir=""',
-    '"$release_dir/latch-relay-tls" version >/dev/null',
+    'run_relay "$release_dir/latch-relay-tls" version >/dev/null',
     'if [ -L /srv/latch-relay ]; then echo "DATA_DIR_SYMLINK" >&2; exit 13; fi',
     'run_root install -d -m 0700 -o latch-relay -g latch-relay /srv/latch-relay',
     copyCustomTls,
-    'if [ -f /srv/latch-relay/relay.json ]; then',
+    'if run_relay test -f /srv/latch-relay/relay.json; then',
     '  run_relay "$release_dir/node" --disable-sigusr1 "$release_dir/latch-relay.mjs" check --data-dir /srv/latch-relay >/dev/null',
+    '  rollback_needed=1',
     '  run_root ln -sfn "$release_dir" /opt/latch-relay/current',
-    '  if ! run_relay /opt/latch-relay/current/node --disable-sigusr1 /opt/latch-relay/current/latch-relay.mjs check --data-dir /srv/latch-relay >/dev/null; then',
-    '    rollback_release',
-    '    echo "CANDIDATE_CHECK_FAILED" >&2',
-    '    exit 14',
-    '  fi',
+    '  run_relay /opt/latch-relay/current/node --disable-sigusr1 /opt/latch-relay/current/latch-relay.mjs check --data-dir /srv/latch-relay >/dev/null',
     'else',
     '  run_root ln -sfn "$release_dir" /opt/latch-relay/current',
     `  run_relay /opt/latch-relay/current/node --disable-sigusr1 /opt/latch-relay/current/latch-relay.mjs init --data-dir /srv/latch-relay ${effectiveInitArgs} >/dev/null`,
@@ -428,9 +446,8 @@ function buildRemoteInstallScript(params: {
     'run_root install -m 0644 "$unit_tmp" /etc/systemd/system/latch-relay.service',
     'rm -f "$unit_tmp"',
     'run_root systemctl daemon-reload',
-    'run_root systemctl enable latch-relay.service >/dev/null 2>&1 || true',
+    'run_root systemctl enable latch-relay.service >/dev/null',
     'if ! run_root systemctl restart latch-relay.service; then',
-    '  rollback_release',
     '  echo "SERVICE_NOT_READY" >&2',
     '  exit 14',
     'fi',
@@ -442,7 +459,6 @@ function buildRemoteInstallScript(params: {
     '  sleep 1',
     'done',
     'if [ "$ready" -ne 1 ]; then',
-    '  rollback_release',
     '  echo "SERVICE_NOT_READY" >&2',
     '  exit 14',
     'fi',
@@ -480,7 +496,17 @@ export async function runLinuxSetup(
   const resolvedIp = needsIpLookup ? await deps.resolveServerIp?.(sshTarget) : undefined
 
   const normalized = normalizeLinuxSetupInput(rawInput, resolvedIp)
-  const { out, shown, existed } = await resolveLinuxOutput(normalized.name, rawInput.out, rawInput.home, Boolean(rawInput.upgrade))
+  let { out, shown, existed } = await resolveLinuxOutput(normalized.name, rawInput.out, rawInput.home, Boolean(rawInput.upgrade))
+
+  let savedProfile: AcceptedRelayProfile | undefined
+  if (existed) {
+    try {
+      const contents = await readPrivate(out, 16_384)
+      savedProfile = exportedFileSchema.parse(JSON.parse(contents ?? '') as unknown).profile
+    } catch {
+      throw new LinuxSetupError(`无法核对原有私密连接配置 ${shown}；请检查文件格式与权限`)
+    }
+  }
 
   deps.progress(`连接服务器 ${normalized.server} 检查系统环境`)
   const probe = await deps.ssh(sshTarget, buildRemoteProbeScript())
@@ -495,7 +521,8 @@ export async function runLinuxSetup(
     systemd: number
     port443Busy?: number
     existingPort?: number
-    existingBehindProxy?: number
+    existingMode?: LinuxDeployMode
+    existingId?: string
   }
   try {
     hostInfo = JSON.parse(probe.stdout.trim().split('\n').at(-1) ?? '') as typeof hostInfo
@@ -522,20 +549,49 @@ export async function runLinuxSetup(
     && hostInfo.existingPort <= 65535
       ? hostInfo.existingPort
       : 0
-  if (existingPort > 0) {
-    if (hostInfo.existingBehindProxy === 1 && normalized.mode !== 'behind-proxy') {
-      normalized.mode = 'behind-proxy'
-      normalized.listenPort = rawInput.port ?? existingPort
-      normalized.publicPort = rawInput.publicPort ?? 443
-      normalized.origin = publicOrigin(normalized.target, normalized.publicPort)
-    } else if (rawInput.port === undefined) {
-      normalized.listenPort = existingPort
-      if (normalized.mode !== 'behind-proxy') {
-        normalized.publicPort = existingPort
-        normalized.origin = publicOrigin(normalized.target, existingPort)
+  if (rawInput.upgrade && !existingPort) throw new LinuxSetupError('远端没有可升级的中继配置；请核对服务器后重新部署')
+  // With SSH aliases and proxy addresses, the original filename need not match the SSH target.
+  if (rawInput.upgrade && !existed && !rawInput.out && !rawInput.name && !rawInput.ip && !rawInput.domain && hostInfo.existingId) {
+    for (const name of await relayNames(rawInput.home)) {
+      const candidate = relayFilePath(name, rawInput.home)
+      const contents = await readPrivate(candidate, 16_384).catch(() => undefined)
+      if (!contents) continue
+      let profile: AcceptedRelayProfile
+      try {
+        profile = exportedFileSchema.parse(JSON.parse(contents) as unknown).profile
+      } catch {
+        continue
       }
+      if (profile.relayId !== hostInfo.existingId) continue
+      if (savedProfile) throw new LinuxSetupError('本机有多份该节点的连接配置；请用 --name 指定要核对的文件')
+      out = candidate
+      shown = `${RELAYS_DISPLAY}/${name}.json`
+      existed = true
+      savedProfile = profile
     }
-  } else if (!rawInput.upgrade && normalized.mode === 'self-ip' && rawInput.port === undefined && hostInfo.port443Busy === 1) {
+  }
+  if (savedProfile && hostInfo.existingId && savedProfile.relayId !== hostInfo.existingId)
+    throw new LinuxSetupError(`远端节点身份与 ${shown} 不同；请核对服务器`)
+  if (existingPort > 0) {
+    if (rawInput.port !== undefined && rawInput.port !== existingPort)
+      throw new LinuxSetupError(`已有中继监听端口为 ${existingPort}；升级请沿用该端口`)
+    normalized.listenPort = existingPort
+    normalized.mode = z.enum(['self-ip', 'acme', 'behind-proxy', 'custom-tls']).parse(hostInfo.existingMode)
+    const proxy = normalized.mode === 'behind-proxy'
+    if (savedProfile && !rawInput.ip && !rawInput.domain) {
+      normalized.target = new URL(savedProfile.url).hostname
+    }
+    if (
+      (proxy || normalized.mode === 'acme' || (normalized.mode === 'custom-tls' && !rawInput.ip && !savedProfile))
+      && isIP(normalized.target.replace(/^\[|\]$/gu, ''))
+    )
+      throw new LinuxSetupError('升级请指定原 --domain 或 --ip，或用 --name 选中原有连接配置')
+    const savedPublicPort = savedProfile ? Number(new URL(savedProfile.url).port || 443) : 443
+    normalized.publicPort = proxy ? (rawInput.publicPort ?? savedPublicPort) : existingPort
+    normalized.origin = publicOrigin(normalized.target, normalized.publicPort)
+    if (savedProfile && normalized.origin !== savedProfile.url)
+      throw new LinuxSetupError(`升级地址与原连接配置 ${shown} 不同；请核对服务器与参数`)
+  } else if (normalized.mode === 'self-ip' && rawInput.port === undefined && hostInfo.port443Busy === 1) {
     // On a fresh bare-IP install without an explicit `--port`, prefer `:443` and fall back to `:8443` only when another service holds `:443`.
     normalized.listenPort = 8443
     normalized.publicPort = 8443
@@ -595,6 +651,8 @@ export async function runLinuxSetup(
     await writeNewPrivateFile(out, rawProfileJson)
     deps.progress(`已写入私密连接配置 ${shown}（0600，注册令牌只保存在本机文件中）`)
   } else {
+    if (!isDeepStrictEqual(savedProfile, exportedProfile))
+      throw new LinuxSetupError(`远端导出的节点身份、地址或注册令牌与 ${shown} 不同；原文件已保留，请核对服务器后重新导出`)
     deps.progress(`已平滑升级远端服务并保留现有配置 ${shown}（节点身份与已配对设备不变）`)
   }
   const keyHash =
@@ -648,13 +706,7 @@ export async function runLinuxRemoteStatus(input: { server: string; sshPort?: nu
   if (!server || server.startsWith('-') || !SSH_TARGET.test(server)) throw new LinuxSetupError('无效的 SSH 服务器目标')
   const script = [
     'set -eu',
-    'run_relay() {',
-    '  if [ "$(id -u)" -eq 0 ]; then',
-    '    if command -v runuser >/dev/null 2>&1; then runuser -u latch-relay -- "$@"; else su -s /bin/sh latch-relay -c "$*"; fi',
-    '  else',
-    '    sudo -n -u latch-relay -- "$@"',
-    '  fi',
-    '}',
+    runAsRelay,
     'svc=$(systemctl is-active latch-relay.service 2>/dev/null || true)',
     'printf "SVC=%s\\n" "$svc"',
     'if [ -x /opt/latch-relay/current/node ] && [ -d /srv/latch-relay ]; then',

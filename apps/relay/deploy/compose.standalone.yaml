@@ -1,4 +1,6 @@
 # Self-contained Docker Compose stack with sensible defaults for personal/team self-hosting.
+# From the directory containing this file, provision the private bind mount before initializing:
+#   sudo install -d -m 0700 -o 65532 -g 65532 "${LATCH_RELAY_DATA_DIR:-./data}"
 # For reverse-proxy mode behind Caddy/Nginx on :443, initialize once:
 #   docker compose -f compose.standalone.yaml run --rm relay init --data-dir /var/lib/latch-relay --domain relay.example.com --behind-proxy
 # Then start and export the connection file:
@@ -21,7 +23,11 @@ services:
     tmpfs:
       - /tmp:rw,nosuid,nodev,size=${LATCH_RELAY_TMPFS_BYTES:-67108864},mode=1777
     volumes:
-      - ${LATCH_RELAY_DATA_DIR:-./data}:/var/lib/latch-relay
+      - type: bind
+        source: ${LATCH_RELAY_DATA_DIR:-./data}
+        target: /var/lib/latch-relay
+        bind:
+          create_host_path: false
     healthcheck:
       test: [CMD, /opt/latch/node, --disable-sigusr1, /opt/latch/latch-relay.mjs, health, --data-dir, /var/lib/latch-relay]
       interval: ${LATCH_RELAY_HEALTH_INTERVAL:-30s}

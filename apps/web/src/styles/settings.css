@@ -2635,7 +2635,6 @@
   border-radius: var(--r-8);
   background: var(--sunken);
   box-shadow: var(--sh-pop);
-  opacity: 0.92;
   transition: none;
 }
 .relay-row[data-drop-position='before']::after,
@@ -2643,9 +2642,7 @@
   content: '';
   position: absolute;
   inset-inline: 0;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--accent);
+  border-top: 2px solid var(--accent);
   pointer-events: none;
 }
 .relay-row[data-drop-position='before']::after {
