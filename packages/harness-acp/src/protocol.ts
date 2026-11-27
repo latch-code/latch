@@ -339,8 +339,8 @@ export const promptResult = z.object({
   stopReason: z.string(),
   usage: turnTokens.nullish().catch(undefined),
 })
-/** The answer to `_session/steering`. `outcome` is an open set: anything but `injected` and `promptRequired` is a failure. */
-export const steerResult = z.object({ outcome: z.enum(['injected', 'promptRequired', 'failed']) })
+/** An uncertain or unrecognized steering reply keeps the request pending until there is evidence of delivery. */
+export const steerResult = z.object({ outcome: z.enum(['injected', 'promptRequired', 'failed', 'unknown']) })
 export const STEER_METHOD = '_session/steering'
 /**
  * Latch's own request to a wire that forks the agent's record (`AgentWire.forks`): a new session holding the source

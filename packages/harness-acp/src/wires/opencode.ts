@@ -197,6 +197,8 @@ const PERMISSION_OPTIONS = [
 ]
 /** A command's prompt is queued by the server after it answers; how long to wait for it to show up. */
 const COMMAND_QUEUE_MS = 5_000
+/** Bound inbox cleanup so a stalled local server cannot hold a stop or terminal event open. */
+const WITHDRAW_STEER_MS = 5_000
 /** A location's catalog may be empty while it starts its plugins and providers. */
 const CATALOG_POLL_MS = 25
 const CATALOG_WAIT_MS = 5_000
@@ -274,17 +276,24 @@ interface Tool {
 
 type Terminal = 'succeeded' | 'failed' | 'interrupted'
 
+type Withdrawal = 'withdrawn' | 'delivered' | 'unknown'
+
+interface SteerItem {
+  id: string
+  type: 'user' | 'synthetic'
+  delivered: boolean
+}
+
 interface Turn {
   sessionId: string
   cwd: string
   /** The inbox item that starts the run: Latch's own ID, or for a command the one the server queued for it. */
   startId?: string
-  /** Inbox items added while the run went on (`_session/steering`): the person's input, and the context sent with it. */
-  steeredIds?: Set<string>
-  steeredContext?: Set<string>
-  /** Those of them the server reported delivered to the run, and the inputs Latch answered `injected` for. */
-  deliveredSteers?: Set<string>
-  injectedSteers?: Set<string>
+  /** Track delivery events even when they arrive before the HTTP reply. */
+  steerItems?: Map<string, SteerItem>
+  /** Each accepted addition includes its synthetic context. In-flight writes settle their own receipt. */
+  injectedSteers?: SteerItem[][]
+  withdrawal?: Promise<void>
   started: boolean
   cancelled: boolean
   interrupted: boolean
@@ -767,7 +776,7 @@ export class OpencodeWire implements AgentWire {
   }
 
   /** One request to the server; its answer's JSON, or an error that never carries the password. */
-  private call(method: string, path: string, body?: unknown): Promise<unknown> {
+  private call(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<unknown> {
     const exit = this.process.exit
     if (exit) return Promise.reject(new ConnectionClosed(exit))
     const port = this.port
@@ -780,6 +789,7 @@ export class OpencodeWire implements AgentWire {
           port,
           method,
           path,
+          signal,
           agent: this.agent,
           headers: {
             authorization: this.authorization,
@@ -1346,7 +1356,7 @@ export class OpencodeWire implements AgentWire {
 
   /**
    * Adds input to a running turn (`delivery: 'steer', resume: false`), as `opencode acp` does: when the server reports no
-   * active run on the session, or the run finishes before the inbox item is delivered, nothing new starts (`promptRequired`).
+   * active run, or every submitted item was confirmed withdrawn, the caller can queue the input (`promptRequired`).
    */
   private async steer(params: Json, onResult?: (result: unknown) => void): Promise<unknown> {
     const attached = this.require(params.sessionId)
@@ -1362,37 +1372,31 @@ export class OpencodeWire implements AgentWire {
     const active = rec(rec(await this.get('/api/session/active')).data)
     if (this.turns.get(attached.id) !== turn || turn.cancelled || !Object.hasOwn(active, attached.id)) return { outcome: 'promptRequired' }
     const prepared = preparePrompt(blocks)
-    const steerId = messageId()
-    ;(turn.steeredIds ??= new Set()).add(steerId)
     const path = `/api/session/${encodeURIComponent(attached.id)}`
-    let syntheticId: string | undefined
-    if (prepared.synthetic.length) {
-      const sent = rec(
-        rec(
-          await this.post(`${path}/synthetic`, {
-            text: prepared.synthetic.join('\n\n'),
-            description: 'ACP embedded context',
-            delivery: 'steer',
-            resume: false,
-          }),
-        ).data,
-      )
-      syntheticId = str(sent.id)
-      if (syntheticId) (turn.steeredContext ??= new Set()).add(syntheticId)
+    const items: SteerItem[] = []
+    const postItem = async (type: SteerItem['type'], body: Json) => {
+      const item: SteerItem = { type, id: messageId(), delivered: false }
+      items.push(item)
+      ;(turn.steerItems ??= new Map()).set(item.id, item)
+      await this.post(`${path}/${type === 'user' ? 'prompt' : 'synthetic'}`, { ...body, id: item.id, delivery: 'steer', resume: false })
     }
-    await this.post(`${path}/prompt`, {
-      id: steerId,
-      text: prepared.text,
-      files: prepared.files,
-      delivery: 'steer',
-      resume: false,
-    })
-    if ((this.turns.get(attached.id) !== turn || turn.cancelled) && !turn.deliveredSteers?.has(steerId)) {
-      if (syntheticId) await this.call('DELETE', `${path}/inbox/${encodeURIComponent(syntheticId)}`).catch(() => {})
-      await this.call('DELETE', `${path}/inbox/${encodeURIComponent(steerId)}`).catch(() => {})
-      return { outcome: 'promptRequired' }
+    try {
+      if (prepared.synthetic.length)
+        await postItem('synthetic', { text: prepared.synthetic.join('\n\n'), description: 'ACP embedded context' })
+      await postItem('user', { text: prepared.text, files: prepared.files })
+    } catch (error) {
+      if (items.length === 1 && error instanceof ServerAnswer && error.status >= 400 && error.status < 500 && error.status !== 408)
+        throw error
+      // The write may still complete after its reply was lost. An empty inbox now cannot authorize another copy.
+      await this.withdrawSteer(path, items)
+      return { outcome: 'unknown' }
     }
-    ;(turn.injectedSteers ??= new Set()).add(steerId)
+    if (this.turns.get(attached.id) !== turn || turn.cancelled) {
+      const outcome = await this.withdrawSteer(path, items)
+      if (outcome !== 'delivered') return { outcome: outcome === 'withdrawn' ? 'promptRequired' : 'unknown' }
+    } else {
+      ;(turn.injectedSteers ??= []).push(items)
+    }
     const answer = { outcome: 'injected' as const }
     onResult?.(answer)
     return answer
@@ -1436,19 +1440,49 @@ export class OpencodeWire implements AgentWire {
     }
   }
 
-  /**
-   * Withdraws the additions the server has not delivered to the run (`resume: false` leaves them queued when it ends).
-   * Says whether input Latch answered `injected` for was among them, by the server's delivery events, which precede the
-   * run's end; an addition still being sent answers `promptRequired` itself.
-   */
-  private async withdrawSteers(turn: Turn): Promise<boolean> {
-    const left = [...(turn.steeredIds ?? []), ...(turn.steeredContext ?? [])].filter(id => !turn.deliveredSteers?.has(id))
-    const input = left.some(id => turn.injectedSteers?.has(id))
-    turn.steeredIds?.clear()
-    turn.steeredContext?.clear()
+  private async withdrawSteer(path: string, items: SteerItem[]): Promise<Withdrawal> {
+    const results = await Promise.all(items.map(item => this.withdrawItem(path, item)))
+    if (results.every(result => result === 'withdrawn')) return 'withdrawn'
+    if (results.every(result => result === 'delivered')) return 'delivered'
+    return 'unknown'
+  }
+
+  private async withdrawItem(path: string, item: SteerItem): Promise<Withdrawal> {
+    if (item.delivered) return 'delivered'
+    const id = encodeURIComponent(item.id)
+    const signal = AbortSignal.timeout(WITHDRAW_STEER_MS)
+    try {
+      await this.call('DELETE', `${path}/inbox/${id}`, undefined, signal)
+    } catch {
+      return item.delivered ? 'delivered' : 'unknown'
+    }
+    // DELETE also returns 204 for an already delivered item. Its original ID moves to message history on delivery.
+    try {
+      const message = rec(rec(await this.call('GET', `${path}/message/${id}`, undefined, signal)).data)
+      return message.id === item.id && message.type === item.type ? 'delivered' : 'unknown'
+    } catch (error) {
+      if (item.delivered) return 'delivered'
+      return error instanceof ServerAnswer && error.status === 404 && error.tag === 'MessageNotFoundError' ? 'withdrawn' : 'unknown'
+    }
+  }
+
+  /** A stop and the terminal event can race. Both wait for the same cleanup of already acknowledged additions. */
+  private withdrawSteers(turn: Turn): Promise<void> {
+    return (turn.withdrawal ??= this.withdrawInjectedSteers(turn))
+  }
+
+  private async withdrawInjectedSteers(turn: Turn): Promise<void> {
     const path = `/api/session/${encodeURIComponent(turn.sessionId)}`
-    await Promise.all(left.map(id => this.call('DELETE', `${path}/inbox/${encodeURIComponent(id)}`).catch(() => {})))
-    return input
+    const results = await Promise.all((turn.injectedSteers ?? []).map(items => this.withdrawSteer(path, items)))
+    const unknown = results.includes('unknown')
+    if (unknown || (!turn.cancelled && results.includes('withdrawn')))
+      this.send(turn.sessionId, {
+        sessionUpdate: 'notice',
+        severity: 'warning',
+        title: unknown
+          ? '无法确认 OpenCode 是否已撤回追加的内容，请核对会话记录。'
+          : '本轮结束前 OpenCode 没有读到最后追加的内容，已撤回；需要的话请重新发送',
+      })
   }
 
   private async interrupt(turn: Turn): Promise<void> {
@@ -1458,13 +1492,8 @@ export class OpencodeWire implements AgentWire {
 
   private async settle(turn: Turn, terminal: Terminal): Promise<void> {
     if (this.turns.get(turn.sessionId) === turn) this.turns.delete(turn.sessionId)
-    // Before the turn ends, so the next prompt cannot find them still queued.
-    if (await this.withdrawSteers(turn))
-      this.send(turn.sessionId, {
-        sessionUpdate: 'notice',
-        severity: 'warning',
-        title: '本轮结束前 OpenCode 没有读到最后追加的内容，已撤回；需要的话请重新发送',
-      })
+    // Report what happened to pending additions before the caller sees the terminal result.
+    await this.withdrawSteers(turn)
     const error = turn.stepError ?? turn.executionError
     const type = str(error?.type)
     if (terminal !== 'interrupted' && type === 'provider.auth')
@@ -1601,14 +1630,12 @@ export class OpencodeWire implements AgentWire {
       turn.startId = str(data.inboxID)
       return
     }
-    if (
-      !owner.child
-      && type === 'session.inbox.delivered'
-      && typeof data.inboxID === 'string'
-      && (turn.steeredIds?.has(data.inboxID) || turn.steeredContext?.has(data.inboxID))
-    ) {
-      ;(turn.deliveredSteers ??= new Set()).add(data.inboxID)
-      return
+    if (!owner.child && type === 'session.inbox.delivered' && typeof data.inboxID === 'string') {
+      const item = turn.steerItems?.get(data.inboxID)
+      if (item) {
+        item.delivered = true
+        return
+      }
     }
     if (!owner.child && type === 'session.inbox.delivered' && turn.startId !== undefined && data.inboxID === turn.startId) {
       turn.started = true

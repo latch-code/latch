@@ -24,9 +24,9 @@
 - 测试只用假 Agent、回放与假 SDK，不提示真实 Agent。
 - Cursor SDK 只用运行器环境的密钥登录（`test/cursor-sdk.test.ts`）。
 
-测试：`pnpm test --project @latch/harness-acp` 与 `e2e/permissions-ui.e2e.ts`。先读 [docs/HARNESSES.md](../../docs/HARNESSES.md)。
+`pnpm test --project @latch/harness-acp`、`e2e/permissions-ui.e2e.ts`。先读[文档](../../docs/HARNESSES.md)。
 
-- 附件按协商能力发内容或路径；追加附件须有 `_meta.steering.attachments` 或 `promptSteer`。Agent 图片存 Host 私有目录，只传引用；字节不进消息、快照或 stderr。
+- 撤回未确认不重发。附件按协商发内容或路径；追加附件须有 `_meta.steering.attachments` 或 `promptSteer`。Agent 图片存 Host 私有目录，只传引用，不向消息、快照或 stderr 写字节。
 - 文件产物只表示运行时间窗口中的观察；旧运行晚到的结算只更新原消息。范围与预算见 ARCHITECTURE。
 - 改配置在准备前和发 RPC 前调用 Host `authorize`。超时结果未知，核对时拒写。换档从准备到结算拒绝新输入。
 

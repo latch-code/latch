@@ -3677,7 +3677,7 @@ export class AgentRuntime implements Bridge {
       await this.flush()
       return 'prompt-required'
     }
-    let outcome = 'invalid'
+    let outcome = 'unknown'
     let added = false
     run.steers = (run.steers ?? 0) + 1
     run.steeredAt = this.clock()
@@ -3733,7 +3733,7 @@ export class AgentRuntime implements Bridge {
             userText === undefined ? undefined : { userText },
           )
       const answer = steerResult.safeParse(result)
-      outcome = answer.success ? answer.data.outcome : 'invalid'
+      outcome = answer.success ? answer.data.outcome : 'unknown'
       if (outcome === 'injected') add(result)
     } catch (error) {
       // No answer, or the process went away: the agent may have taken it. The receipt stays `sending`.
@@ -3745,10 +3745,9 @@ export class AgentRuntime implements Bridge {
           : `${this.agent.name} 没有接受追加：${clip(this.redact(message(error)), 300)}`,
       )
     } finally {
-      finishAuthority?.(added || outcome === 'invalid')
+      finishAuthority?.(added || outcome === 'unknown')
     }
-    // The agent may have taken the message before returning an unrecognizable acknowledgment.
-    if (outcome === 'invalid') throw steerUnknown()
+    if (outcome === 'unknown') throw steerUnknown()
     if (outcome !== 'injected') {
       run.steers--
       if (outcome === 'promptRequired')
