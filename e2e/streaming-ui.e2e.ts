@@ -967,26 +967,37 @@ describe('streamed messages in the real workspace', () => {
       reply.append(answer)
       reply.finish()
       await expect.poll(async () => (await host.bridge.detail(id)).summary.status).toBe('idle')
+
+      // Unrelated Host work can advance its revision between the HTTP reads on reload.
+      // Freeze the protocol version for this browser and vary only the listing returned by its clock's poll.
+      const revision = 100_000
+      const marker = `已核对轮询 ${kind}`
+      let polling = false
+      await page.route(`**/link/api/tasks/${id}`, async route => {
+        const response = await route.fetch()
+        const detail = (await response.json()) as TaskDetail
+        expect(response.ok()).toBe(true)
+        expect(detail.sync).toBeDefined()
+        await route.fulfill({ response, json: { ...detail, sync: { ...detail.sync!, revision } } })
+      })
+      await page.route('**/link/api/snapshot', async route => {
+        const response = await route.fetch()
+        const listing = (await response.json()) as AppSnapshot
+        expect(response.ok()).toBe(true)
+        expect(listing.tasksComplete).toBe(true)
+        listing.revision = polling && kind === 'newer' ? revision + 1 : revision
+        if (polling) {
+          if (kind === 'partial') delete listing.tasksComplete
+          listing.hostName = marker
+        }
+        await route.fulfill({ response, json: listing })
+      })
       await page.reload()
       await connected(page)
       await page.locator('.transcript').getByText(answer, { exact: true }).waitFor()
 
       const counts = countProjectionRequests(page)
-      const marker = `已核对轮询 ${kind}`
-      await page.route(
-        '**/link/api/snapshot',
-        async route => {
-          const response = await route.fetch()
-          const listing = (await response.json()) as AppSnapshot
-          expect(response.ok()).toBe(true)
-          expect(listing.tasksComplete).toBe(true)
-          expect(listing.revision).toBeDefined()
-          if (kind === 'partial') delete listing.tasksComplete
-          if (kind === 'newer') listing.revision = listing.revision! + 1
-          await route.fulfill({ response, json: { ...listing, hostName: marker } })
-        },
-        { times: 1 },
-      )
+      polling = true
       await page.clock.fastForward(30_000)
       await page.getByRole('button', { name: marker, exact: true }).waitFor()
       expect(counts.snapshot).toBe(1)
@@ -1040,18 +1051,25 @@ describe('streamed messages in the real workspace', () => {
   })
 
   it('catches changes between the selection read and the new subscription', async () => {
+    const owner = await testHost.enroll({ listener: 'unix' })
+    const prompt = '核对切换订阅空档'
+    const reply = new ControlledReply()
+    replies.set(prompt, reply)
+    const { sessionId: id } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt, mode: 'chat', requestId: randomUUID() },
+    })
+    reply.finish()
+    await expect.poll(async () => (await host.bridge.detail(id)).summary.status).toBe('idle')
+
     const { page, context } = await open(1440, 900)
     const subscription = pauseRequest()
+    const opening = pauseRequest()
     try {
-      const owner = await testHost.enroll({ listener: 'unix' })
-      const { id, reply } = await start(page, '核对切换订阅空档')
-      reply.finish()
-      await expect.poll(async () => (await host.bridge.detail(id)).summary.status).toBe('idle')
-      await newDraft(page)
-      await connected(page)
       await page.route(
         url => url.pathname === '/link/api/events' && url.searchParams.get('sessionId') === id,
         async route => {
+          opening.release()
           await subscription.waiting
           await route.continue().catch(() => {})
         },
@@ -1059,6 +1077,7 @@ describe('streamed messages in the real workspace', () => {
       const read = page.waitForResponse(response => new URL(response.url()).pathname === `/link/api/tasks/${id}` && response.ok())
       await openSession(page, id)
       const before = (await (await read).json()) as TaskDetail
+      await opening.waiting
       const title = '订阅建立前已更新'
       await owner.json(`tasks/${id}`, { method: 'PATCH', body: { title } })
       await expect.poll(async () => (await owner.json<AppSnapshot>('snapshot')).revision).toBeGreaterThan(before.sync!.revision)
