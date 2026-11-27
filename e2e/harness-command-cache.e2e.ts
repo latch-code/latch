@@ -50,6 +50,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
           FAKE_ACP_CONFIG: 'options',
           FAKE_ACP_SETUP_COMMANDS: '1',
           FAKE_ACP_COMMANDS_FILE: commandsFile,
+          FAKE_ACP_COMMANDS_CWD: projectPath,
         },
       },
     })
@@ -86,8 +87,8 @@ it('offers previous-session commands in a normal new draft after recovery withou
           ).catalogue?.commands[0]?.name,
       )
       .toBe('public-plan')
-    const before = await starts()
-    expect(before).toBe(1)
+    let before = await starts()
+    expect(before).toBeLessThanOrEqual(2)
     await context.close()
     currentPage = undefined
     await host.close()
@@ -153,6 +154,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
             await input.fill('/')
             await list.getByText('发送第一条消息后，可查看 Harness 返回的命令', { exact: true }).waitFor()
             expect(await list.getByText('/public-plan', { exact: true }).count()).toBe(0)
+            expect(await starts()).toBe(before)
             let enter!: () => void
             let release!: () => void
             let fail!: () => void
@@ -435,6 +437,126 @@ it('offers previous-session commands in a normal new draft after recovery withou
   } catch (error) {
     if (currentPage && !currentPage.isClosed()) await currentPage.screenshot({ path: `${output}/failure.png`, animations: 'disabled' })
     throw error
+  } finally {
+    try {
+      await browser?.close()
+    } finally {
+      try {
+        await host?.close()
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  }
+})
+
+it('loads Harness-own slash commands on opening / before any session, clips oversized descriptions, and reuses them across projects and restart', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'latch-own-commands-ui-'))
+  let host: TestHost | undefined
+  let browser: Browser | undefined
+  try {
+    const projectPath = join(root, 'project-a')
+    const otherPath = join(root, 'project-b')
+    await mkdir(projectPath)
+    await mkdir(otherPath)
+    const log = join(root, 'agent.jsonl')
+    const ownCommands = [
+      { name: 'bytedcli', description: `${'技'.repeat(999)}🙂extra` },
+      { name: 'plan', description: '先规划再执行', input: { hint: '[任务]' } },
+    ]
+    const options = {
+      dataDir: join(root, 'data'),
+      workspaceRoot: join(root, 'default'),
+      uiDir: resolve(process.env.LATCH_E2E_UI_DIR ?? 'dist/web'),
+    }
+    host = await startTestHost(options)
+    let owner = await host.enroll({ listener: 'unix' })
+    const project = ((await (await owner.addFolders({ paths: [projectPath], name: '初始项目' })).json()) as { workspace: WorkspaceInfo })
+      .workspace
+    const other = ((await (await owner.addFolders({ paths: [otherPath], name: '第二项目' })).json()) as { workspace: WorkspaceInfo })
+      .workspace
+    await owner.confirmedJson('agents', {
+      body: {
+        id: 'antigravity-own',
+        presetId: 'antigravity',
+        name: 'Antigravity',
+        command: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        env: {
+          FAKE_ACP_LOG: log,
+          FAKE_ACP_CONFIG: 'options',
+          FAKE_ACP_MODES: 'default,accept-edits,auto,turbo',
+          FAKE_ACP_SETUP_COMMANDS: 'delayed',
+          FAKE_ACP_COMMANDS: JSON.stringify(ownCommands),
+        },
+      },
+    })
+    await owner.json('preferences', {
+      method: 'PUT',
+      body: { defaults: { harnessId: 'antigravity-own', workspaceId: project.id, mode: 'agent', pinned: true } },
+    })
+    const starts = async () =>
+      (await readFile(log, 'utf8').catch(() => ''))
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line) as { event: string })
+        .filter(line => line.event === 'start').length
+
+    browser = await chromium.launch(browserLaunchOptions())
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' })
+    const page = await context.newPage()
+    let submissions = 0
+    page.on('request', request => {
+      if (request.method() === 'POST' && new URL(request.url()).pathname === '/link/api/tasks') submissions++
+    })
+    await enrollBrowser(page, host)
+    const modelChip = page
+      .getByRole('button', { name: /^模型：/u })
+      .filter({ visible: true })
+      .first()
+    await expect.poll(() => modelChip.innerText(), { timeout: 10_000 }).toContain('Small')
+    await expect.poll(() => modelChip.locator('.model-level').innerText()).toContain('Low')
+    await expect.poll(() => starts()).toBe(1)
+
+    const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
+    await input.fill('/')
+    const list = page.getByRole('listbox', { name: '命令与提示模板', exact: true })
+    const group = list.getByRole('group', { name: 'Antigravity', exact: true })
+    await group.getByText('/bytedcli', { exact: true }).waitFor({ timeout: 5_000 })
+    await group.getByText('/plan', { exact: true }).waitFor()
+    expect(await starts()).toBe(1)
+
+    await input.press('ArrowDown')
+    await input.press('Enter')
+    await expect.poll(() => promptValue(input)).toBe('/bytedcli ')
+    expect(submissions).toBe(0)
+    expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(0)
+
+    await page.getByRole('button', { name: /^项目：/u }).click()
+    await page
+      .getByRole('menuitemradio')
+      .filter({ has: page.getByText('第二项目', { exact: true }) })
+      .click()
+    await input.fill('/')
+    await group.getByText('/plan', { exact: true }).waitFor()
+    expect(await starts()).toBe(1)
+
+    await context.close()
+    await host.close()
+    host = await startTestHost(options)
+    owner = await host.enroll({ listener: 'unix' })
+    const restoredContext = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' })
+    const restoredPage = await restoredContext.newPage()
+    await enrollBrowser(restoredPage, host)
+    const restoredInput = restoredPage.getByRole('textbox', { name: '新会话消息', exact: true })
+    await restoredInput.fill('/')
+    await restoredPage
+      .getByRole('listbox', { name: '命令与提示模板', exact: true })
+      .getByRole('group', { name: 'Antigravity', exact: true })
+      .getByText('/bytedcli', { exact: true })
+      .waitFor()
+    expect(await starts()).toBe(1)
+    await restoredContext.close()
   } finally {
     try {
       await browser?.close()

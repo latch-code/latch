@@ -1044,7 +1044,7 @@ function useDraftBoard({
       accounts.length > 1 && accounts.some(account => account.account)
         ? accountModelBoard(board, harness, accounts, choice, onChoice, disabled)
         : board
-    return { ...scoped, ...(bySelf ? { effects: <ReadPickedModel harness={harness} model={pickedModel} /> } : {}) }
+    return { ...scoped, ...(bySelf ? { effects: <ReadPickedModel harness={harness} model={pickedModel} onRead={onRead} /> } : {}) }
   }
   const noService = !choice.model
   const groups = plain(modelGroups(catalog, preferences, choice.model, access))

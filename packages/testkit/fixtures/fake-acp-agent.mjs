@@ -8,7 +8,7 @@
 // Several processes may share FAKE_ACP_STATE (one per session), so every save merges into what is on disk.
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { zstdCompressSync } from 'node:zlib'
@@ -429,14 +429,24 @@ process.stdin.on('end', () => {
 const send = message => process.stdout.write(`${JSON.stringify(message)}\n`)
 const updateMessage = (sessionId, value) => ({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: value } })
 const update = (sessionId, value) => send(updateMessage(sessionId, value))
-const commandReport = () => ({
-  sessionUpdate: 'available_commands_update',
-  availableCommands: env.FAKE_ACP_COMMANDS_FILE
-    ? JSON.parse(readFileSync(env.FAKE_ACP_COMMANDS_FILE, 'utf8'))
-    : env.FAKE_ACP_COMMANDS
-      ? JSON.parse(env.FAKE_ACP_COMMANDS)
-      : [{ name: 'init', description: 'init' }],
-})
+const inConfiguredCommandCwd = () => {
+  if (!env.FAKE_ACP_COMMANDS_CWD) return true
+  try {
+    return realpathSync(process.cwd()) === realpathSync(env.FAKE_ACP_COMMANDS_CWD)
+  } catch {
+    return false
+  }
+}
+const commandList = () => {
+  if (env.FAKE_ACP_COMMANDS_FILE && inConfiguredCommandCwd()) return JSON.parse(readFileSync(env.FAKE_ACP_COMMANDS_FILE, 'utf8'))
+  if (env.FAKE_ACP_COMMANDS) return JSON.parse(env.FAKE_ACP_COMMANDS)
+  if (env.FAKE_ACP_COMMANDS_CWD) return undefined
+  return [{ name: 'init', description: 'init' }]
+}
+const commandReport = () => {
+  const availableCommands = commandList()
+  return availableCommands ? { sessionUpdate: 'available_commands_update', availableCommands } : undefined
+}
 /** Messages a result carries under this key go out in the same write as the response, right after it. */
 const TRAILING = Symbol('trailing')
 let nextId = 0 // Deliberately overlaps the client's own request IDs.
@@ -488,21 +498,31 @@ function receive(message) {
     .then(
       result => {
         const trailing = result?.[TRAILING] ?? []
-        if (env.FAKE_ACP_SETUP_COMMANDS && ['session/new', 'session/load', 'session/resume'].includes(message.method)) {
+        let delayedReport
+        if (
+          env.FAKE_ACP_SETUP_COMMANDS
+          && env.FAKE_ACP_SETUP_COMMANDS !== 'response'
+          && ['session/new', 'session/load', 'session/resume'].includes(message.method)
+        ) {
           const sessionId = result.sessionId ?? message.params.sessionId
           const report = commandReport()
-          if (env.FAKE_ACP_SETUP_COMMANDS === 'interleaved') {
-            if (message.method !== 'session/new')
-              for (let i = 0; i < 5; i++) update(`other-session-${i}`, { ...report, availableCommands: [{ name: 'unrelated' }] })
-            update(sessionId, { ...report, availableCommands: [{ name: 'before-response' }] })
-            trailing.push(
-              updateMessage(sessionId, report),
-              updateMessage(sessionId, { ...report, availableCommands: [{ name: 'invalid name' }] }),
-              updateMessage('another-session', { ...report, availableCommands: [{ name: 'wrong-session' }] }),
-            )
-          } else update(sessionId, report)
+          if (report) {
+            if (env.FAKE_ACP_SETUP_COMMANDS === 'interleaved') {
+              if (message.method !== 'session/new')
+                for (let i = 0; i < 5; i++) update(`other-session-${i}`, { ...report, availableCommands: [{ name: 'unrelated' }] })
+              update(sessionId, { ...report, availableCommands: [{ name: 'before-response' }] })
+              trailing.push(
+                updateMessage(sessionId, report),
+                updateMessage(sessionId, { ...report, availableCommands: [{ name: 'invalid name' }] }),
+                updateMessage('another-session', { ...report, availableCommands: [{ name: 'wrong-session' }] }),
+              )
+            } else if (env.FAKE_ACP_SETUP_COMMANDS === 'delayed') {
+              delayedReport = () => setTimeout(() => update(sessionId, report), 20)
+            } else update(sessionId, report)
+          }
         }
         process.stdout.write([{ jsonrpc: '2.0', id: message.id, result }, ...trailing].map(item => `${JSON.stringify(item)}\n`).join(''))
+        delayedReport?.()
         // As the adapters do: the first push comes after the answer to initialize.
         if (message.method === 'initialize') setTimeout(pushAuthStatus, Number(env.FAKE_ACP_AUTH_STATUS_DELAY ?? 0))
       },
@@ -859,6 +879,7 @@ async function handle(method, params) {
               agentInfo: { name: 'Fake ACP' },
               _meta: {
                 agentVersion: version,
+                ...(env.FAKE_ACP_GROK_COMMANDS ? { availableCommands: JSON.parse(env.FAKE_ACP_GROK_COMMANDS) } : {}),
                 modelState: {
                   currentModelId: 'small',
                   availableModels: [
@@ -912,6 +933,7 @@ async function handle(method, params) {
       return {
         sessionId,
         ...configState(sessions[sessionId]),
+        ...(env.FAKE_ACP_SETUP_COMMANDS === 'response' && commandList() ? { availableCommands: commandList() } : {}),
         // An agent claiming lines for Latch's permission panel, which only Latch's own OpenCode wire may write.
         ...(env.FAKE_ACP_PERMISSION_FACTS ? { _meta: { 'latch/permissionFacts': [env.FAKE_ACP_PERMISSION_FACTS] } } : {}),
       }
@@ -969,7 +991,12 @@ async function handle(method, params) {
       const session = restored(params.sessionId)
       await mountMcp(params.sessionId, params.mcpServers ?? [], params.cwd)
       processCreated(params.sessionId, session)
-      return resumeSilent ? {} : configState(session)
+      return resumeSilent
+        ? {}
+        : {
+            ...configState(session),
+            ...(env.FAKE_ACP_SETUP_COMMANDS === 'response' && commandList() ? { availableCommands: commandList() } : {}),
+          }
     }
     case 'session/prompt':
       return prompt(params)

@@ -90,44 +90,57 @@ const log = (event, data = {}) => {
 const effort = (reasoningEffort, description) => ({ reasoningEffort, description })
 const models = env.FAKE_CODEX_MODELS
   ? JSON.parse(env.FAKE_CODEX_MODELS)
-  : [
-      {
-        id: 'gpt-fake',
-        model: 'gpt-fake',
-        displayName: 'GPT Fake',
-        description: 'The default',
-        hidden: false,
-        isDefault: true,
-        defaultReasoningEffort: 'medium',
-        supportedReasoningEfforts: [effort('low', 'Fast'), effort('medium', 'Balanced'), effort('high', 'Deep')],
-        ...(env.FAKE_CODEX_TIERS === '1'
-          ? {
-              serviceTiers: [{ id: 'priority', name: 'Fast', description: '1.5x speed, increased usage' }],
-              additionalSpeedTiers: ['fast'],
-            }
-          : {}),
-      },
-      {
-        id: 'gpt-fake-mini',
-        model: 'gpt-fake-mini',
-        displayName: 'GPT Fake Mini',
-        description: 'Small',
-        hidden: false,
-        isDefault: false,
-        defaultReasoningEffort: 'low',
-        supportedReasoningEfforts: [effort('low', 'Fast'), effort('medium', 'Balanced')],
-      },
-      {
-        id: 'gpt-fake-hidden',
-        model: 'gpt-fake-hidden',
-        displayName: 'Hidden',
-        description: '',
-        hidden: true,
-        isDefault: false,
-        defaultReasoningEffort: 'low',
-        supportedReasoningEfforts: [],
-      },
-    ]
+  : env.FAKE_ACP_MODELS
+    ? env.FAKE_ACP_MODELS.split(',')
+        .filter(Boolean)
+        .map((id, index) => ({
+          id,
+          model: id,
+          displayName: id,
+          description: '',
+          hidden: false,
+          isDefault: index === 0,
+          defaultReasoningEffort: 'medium',
+          supportedReasoningEfforts: [effort('low', 'Fast'), effort('medium', 'Balanced'), effort('high', 'Deep')],
+        }))
+    : [
+        {
+          id: 'gpt-fake',
+          model: 'gpt-fake',
+          displayName: 'GPT Fake',
+          description: 'The default',
+          hidden: false,
+          isDefault: true,
+          defaultReasoningEffort: 'medium',
+          supportedReasoningEfforts: [effort('low', 'Fast'), effort('medium', 'Balanced'), effort('high', 'Deep')],
+          ...(env.FAKE_CODEX_TIERS === '1'
+            ? {
+                serviceTiers: [{ id: 'priority', name: 'Fast', description: '1.5x speed, increased usage' }],
+                additionalSpeedTiers: ['fast'],
+              }
+            : {}),
+        },
+        {
+          id: 'gpt-fake-mini',
+          model: 'gpt-fake-mini',
+          displayName: 'GPT Fake Mini',
+          description: 'Small',
+          hidden: false,
+          isDefault: false,
+          defaultReasoningEffort: 'low',
+          supportedReasoningEfforts: [effort('low', 'Fast'), effort('medium', 'Balanced')],
+        },
+        {
+          id: 'gpt-fake-hidden',
+          model: 'gpt-fake-hidden',
+          displayName: 'Hidden',
+          description: '',
+          hidden: true,
+          isDefault: false,
+          defaultReasoningEffort: 'low',
+          supportedReasoningEfforts: [],
+        },
+      ]
 
 log('start', { cwd: process.cwd(), argv: args, mode: 'app-server', codexPath: env.CODEX_PATH ?? null })
 

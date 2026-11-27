@@ -60,21 +60,19 @@ describe('the catalogue a phone receives with every snapshot', () => {
 })
 
 describe("when a draft reads a Harness's lists by itself", () => {
-  it("reads by selection only where the read runs no turn, no model call and none of the person's own hooks", () => {
+  it('prefetches once per confirmed definition across all built-in profiles, while honouring an explicit request-only rule', () => {
     const rule = (presetId: string) => catalogueReadOf(HARNESS_PROFILES.get(presetId))
     // Codex's model/list opens no thread, on its own app-server and through the adapter's; it reports no modes.
     expect(rule('codex')).toEqual({ when: 'select', modes: false })
     expect(catalogueReadOf(FALLBACK_PROFILES.get('codex'))).toEqual({ when: 'select', modes: false })
     // Grok Build's answer to initialize lists its models and thinking; that process opens no session.
     expect(rule('grok')).toEqual({ when: 'select', modes: false })
-    // An empty ACP session: no prompt, so no turn and no model call.
-    for (const presetId of ['dsh', 'cursor', 'opencode']) expect(rule(presetId)).toEqual({ when: 'select', modes: true })
-    // Starting these runs the person's own session hooks and extensions, so only a person asks.
-    expect(rule('goose')).toEqual({ when: 'request', modes: true })
-    expect(rule('qwen')).toEqual({ when: 'request', modes: true })
-    expect(rule('pi')).toEqual({ when: 'request', modes: true })
-    expect(rule('claude-agent')).toEqual({ when: 'request', modes: true })
-    expect(rule('antigravity')).toEqual({ when: 'request', modes: true })
+    // Empty private-folder reads with no prompt report models, thinking, modes and commands once per definition.
+    for (const presetId of ['dsh', 'cursor', 'opencode', 'goose', 'qwen', 'pi', 'claude-agent', 'antigravity'])
+      expect(rule(presetId)).toEqual({ when: 'select', modes: true })
+    expect(catalogueReadOf(FALLBACK_PROFILES.get('claude-agent'))).toEqual({ when: 'select', modes: true })
+    // An explicit request-only profile still stays manual until requested.
+    expect(catalogueReadOf({ catalogueRead: { when: 'request' } })).toEqual({ when: 'request', modes: true })
     // A command with no profile was confirmed as the program to run, and its empty session runs no turn either.
     expect(catalogueReadOf(undefined)).toEqual({ when: 'select', modes: true })
     // Every preset decides; none is left to the default.

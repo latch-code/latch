@@ -886,15 +886,10 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 
 **读取。** 还没有列表时可以不开始会话读一次：`POST /link/api/agents/:id/catalogue { auto?, model? }`（`HarnessInfo.catalogueRead`）。
 
-- 在 Host 临时目录的新空文件夹里启动 Agent，`session/new` 带空的 `mcpServers`，不发提示；Agent 声明 `sessionCapabilities.delete` 就 `session/delete`，profile 有自己的删除请求（Qwen Code 的 `deleteSession`）就用它，否则声明了 `close` 就 `session/close`；然后停止进程并删除文件夹，最多 20 秒。DeepSeek Harness 不能删会话，连这个空会话也写进它的历史，所以进程停下后由 Host 删掉（见「CLI 自己的存储」）。
-- Codex 不开会话：只发 `initialize`、`config/read` 与 `model/list`（最多 5 页）。经 codex-acp 时用定义的命令加 `cli app-server`。它不报告模式，`catalogueRead.modes` 是 `false`。
-- Grok Build 不开会话：它对 `initialize` 的回答 `_meta.modelState` 已有默认模型、模型列表与每个模型的思考档位（`reasoningEfforts`），Latch 照 `session/new` 报告的样子写成 `model` 与 `reasoning_effort` 两项（`profiles/grok.ts` 的 `grokStartCatalogue`，ID 与取值对真实 1.0.89 核对过）。这个进程不开会话，不启动人配置的 MCP 服务器与钩子（1.0.89 核对）。每个模型的思考都已知，选模型时不再读。`catalogueRead.modes` 是 `false`。
-- **打开模型面板。** 桌面端和浏览器在草稿中先显示已有的目录。当前 Harness 还没有目录和上次读取记录时，打开面板就读取；如果是本机待添加的预设，先保存定义。选中的自管模型还缺思考档位时，读取这个模型的选项。已知选项直接复用，读取失败可在面板里重试。
-- **选中 Harness 或打开权限菜单。** 草稿里选中已经添加的 Harness，或打开它能报告模式的权限菜单时，只为 `catalogueRead.when === 'select'` 的定义预读一次（`auto: true`，Host 复查）。`request` 型等人打开模型面板或手动读取。两类都不按时间轮询。
-
-  | 选中即可预读（`select`） | 打开模型面板或手动读取时启动（`request`） |
-  | --- | --- |
-  | Codex（`model/list`，不开线程）、Grok Build（`initialize`，不开会话）、DeepSeek Harness、Cursor、OpenCode、没有 profile 的自定义命令 | pi、Claude Agent、Antigravity：启动会话会加载人的扩展或插件、运行会话开始的钩子。goose：`session/new` 启动人在 goose 里启用的全部扩展（含 stdio MCP 程序）并等它们，1.57.0 实测一个不握手的扩展让它等了 20 秒。Qwen Code：`session/new` 连接人的 MCP 服务器并触发 `SessionStart` 钩子（0.27.4 源码），钩子没有开关能关 |
+- 在 Host 临时目录的新空文件夹里启动 Agent，`session/new` 带空的 `mcpServers`，不发提示；Agent 若在 `session/new` 返回后的下一事件循环才推送 `available_commands_update`，最多等 250 ms 收齐，再按声明用 `session/delete`、profile 的删除请求（Qwen Code 的 `deleteSession`）或 `session/close` 结束空会话，停止进程并删除文件夹，最多 20 秒。同一次读取一并把该定义自身的命令（及空目录里报告的技能）记入 `acp.json`（`AcpState.ownCommands`，`HarnessInfo.commandCatalogue` 的 `checked` 与 `reportedAt`），供草稿 `/` 菜单使用。DeepSeek Harness 不能删会话，连这个空会话也写进它的历史，所以进程停下后由 Host 删掉（见「CLI 自己的存储」）。
+- Codex 不开会话：只发 `initialize`、`config/read` 与 `model/list`（最多 5 页）；直连同时记下自身的 `/compact` 命令。经 codex-acp 时用定义的命令加 `cli app-server`。它不报告模式，`catalogueRead.modes` 是 `false`。
+- Grok Build 不开会话：它对 `initialize` 的回答 `_meta.modelState` 已有默认模型、模型列表与每个模型的思考档位（`reasoningEfforts`），Latch 照 `session/new` 报告的样子写成 `model` 与 `reasoning_effort` 两项（`profiles/grok.ts` 的 `grokStartCatalogue`，ID 与取值对真实 1.0.89 核对过），并一并收下 `_meta.availableCommands` 里的命令列表。这个进程不开会话，不启动人配置的 MCP 服务器与钩子（1.0.89 核对）。每个模型的思考都已知，选模型时不再读。`catalogueRead.modes` 是 `false`。
+- **草稿自动预取与按需补读。** 桌面端、浏览器与原生 iOS 在草稿中先显示已有的目录。展示草稿输入框、切换已添加的 Harness 或打开它能报告模式的权限菜单时，会为 `catalogueRead.when === 'select'` 的已确认定义自动预取一次（`auto: true`，Host 复查），在同一次读取里把模型、思考档位、权限模式与自身斜杠命令全部写入 `acp.json`；Codex、Grok Build 与 Claude Code 直连在首次预取时即记下全部模型的思考档位。支持命令但旧存储尚未核对过自身命令且没有命中项目缓存时，打开草稿 `/` 菜单也会补读一次；如果是本机待添加的预设，不随草稿自动保存，只在桌面或本机管理员浏览器打开模型面板、草稿 `/` 菜单或开始会话时先保存定义再读取。草稿选中的自管模型还缺思考档位时，自动为该模型预读一次档位；若插件显式声明 `when === 'request'`，则等打开模型面板或手动读取。均不按时间轮询，读取失败可在模型面板重试。
 
 - **命令核对。** 预读发现命令未经确认或已经指向别的程序时，Host 返回 `ran: false`。显式请求遇到相同情况返回原因（如 409 `harness-unconfirmed`）。仅选中待添加的预设不会保存定义或启动进程。
 - **谁能读。** 与开始会话同一道门：`run`，Harness 可以开始。同一定义同时只读一次；同一模型的请求共用结果。启动进程前写 `agent.catalogue.requested`（写不进就不启动），结束后 `agent.catalogue.read`。
@@ -905,7 +900,7 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 **草稿。**
 
 - 已知权限预设在草稿就给出全部档位（`permission.modes` 与 `startMode`，暂用 `~mode` ID），开始时再匹配 Agent 实际的模式 ID。之后到达的列表不能抹掉人的选择。
-- 草稿换自管模型后，缺少它的档位时可在私有空会话里切到该模型读选项，不发提示。选中即可预读的 Harness 可在草稿中读取，其他 Harness 在打开的模型面板中读取。读不到或失败时保持未知，不把别的模型的档位搬过来。OpenCode 与 DeepSeek Harness 按模型报告思考（`thinkingPerModel`），没有就是这个模型没有思考档位；Cursor 的思考在模型列表里选（`thinkingInModel`）。
+- 草稿换自管模型后，缺少它的档位时自动在私有空会话里切到该模型预读选项，不发提示（插件显式声明 `request` 时在打开的模型面板中读取）。读不到或失败时保持未知，不把别的模型的档位搬过来。OpenCode 与 DeepSeek Harness 按模型报告思考（`thinkingPerModel`），没有就是这个模型没有思考档位；Cursor 的思考在模型列表里选（`thinkingInModel`）。
 - 首轮设置未完成时，会话里的新选择取代对应的草稿项（相同值也算重新选择），并在恢复会话或应用其他草稿项之前持久化。
 
 **应用。**
@@ -1226,20 +1221,20 @@ AGENTS.md「CLI 目录与配置」允许读 CLI 自己的目录，只是尽量�
 
 **当前会话。**
 
-- Harness 可以在创建或恢复会话时报告命令，也可以在运行中更新。Latch 在等待会话建立时暂存 `available_commands_update`，拿到会话标识后只采用这个会话最后一份有效报告。命令随 `TaskDetail.commands` 发给客户端并持久化，空列表撤下旧命令。恢复时重放的聊天内容仍由已有历史提供。
-- 每份 ACP 报告按顺序检查至多 400 项，取前 200 条可公开的命令。检查到畸形项时保留上一份报告。名称最多 100 字符，不能含空白或控制字符，允许冒号。说明最多 1000 字符，输入提示最多 500 字符。
+- Harness 可以在创建或恢复会话时报告命令（`available_commands_update`、会话响应的 `availableCommands`，或 Grok Build `initialize._meta.availableCommands`），也可以在运行中更新。Latch 在等待会话建立时暂存 `available_commands_update` 与技能报告，拿到会话标识后采用这个会话最后一份有效报告。命令随 `TaskDetail.commands` 发给客户端并持久化，空列表撤下旧命令。恢复时重放的聊天内容仍由已有历史提供。
+- 每份 ACP 报告按顺序检查至多 400 项，取前 200 条可公开的命令。名称最多 100 字符，不能含空白或控制字符，允许冒号；名称畸形时整份报告丢弃并保留上一份报告。说明与输入提示先脱敏再分别截断到 1000 与 500 字符（空值省略），超长说明不会丢弃整份命令列表。
 - Harness 把本机 MCP 提示报告为 `mcp:服务器:提示` 一类的命令时，列在它的普通命令组里，发送时保留名称（见 [MCP.md](MCP.md#提示)）。
 - 点按与 Tab 只把命令插入草稿；键盘 Enter 的条件见 [DESIGN.md](DESIGN.md)。
 - Codex、pi、OpenCode 与 Claude 的直连在打开或恢复会话时就提供已知命令。打开输入框里的菜单只读已有目录。公开命令取决于接入方式和项目，比如 Codex 直连提供 `/compact`，pi 还会列出本项目加载的扩展命令。
 - 带 `idleOnly` 的命令在运行中置灰；排队、把排队的消息改成它或追加时 Host 以 409 `command-queued` 拒绝。
 
-**上次会话的目录（新草稿）。**
+**草稿目录（开始前）。**
 
-- 新会话可以读同项目、同真实目录身份、同启动指纹下，上次真实会话报告的命令目录。缓存是数据目录里的 `harness-commands.json`（0600，最多 64 份、2 MiB），原子写入；空报告有别于未报告。
-- 缓存只收已绑定进程的实际报告，不启动或探测 CLI，不读 CLI 自有存储。它只是建议，不授予执行能力，也不给当前结构化调用提供路径。
-- `POST /agents/:id/commands` 接受正常开始会话的选择项，不接受任意 cwd；要 `view`，异步查找后复查设备、项目、来源可见性、真实目录与完整启动指纹。新分配的文件夹、工作树与助手家没有真实目录时不命中，也不为此创建目录。
-- 响应只有 `commands`、`reportedAt`、`source=previous-session` 与可选的 `skills`、`skillsTruncated`。删除来源、改变启动配置或失去来源权限后不返回。
-- `HarnessInfo.commandCatalogue.generation`（每次挂载 Driver 生成）与 `TaskSummary.commandsVersion`（每次命令报告后更新）是不透明标识。可见集合或选择改变时页面立即撤下旧结果并取消在途查询，迟到的响应不回填。
+- 新会话优先读同项目、同真实目录身份、同启动指纹下上次真实会话报告的命令目录（`source=previous-session`，含项目扩展命令），未命中或来源对当前设备不可见时回退到该 Harness 定义在私有空目录读取到的自身命令目录（`source=harness`）。项目缓存是数据目录里的 `harness-commands.json`（0600，最多 64 份、2 MiB），定义自身命令随 `acp.json`（`ownCommands`）按 `definitionHash` 保存，均原子写入；空报告有别于未报告。
+- `POST /agents/:id/commands` 只读已保存的缓存与定义级目录，自身从不启动或探测 CLI，也不读 CLI 自有存储；目录只是建议，不授予执行能力，也不给当前结构化调用提供路径。还没有任何目录且当前定义尚未核对过自身命令时，打开草稿 `/` 菜单走统一的 `POST /agents/:id/catalogue` 按需读取一次。
+- `POST /agents/:id/commands` 接受正常开始会话的选择项，不接受任意 cwd；要 `view`。命中 `previous-session` 时异步查找后复查设备、项目、来源可见性、真实目录与完整启动指纹；新工作树、独立会话文件夹没有现成项目目录，或上次会话已转为私有时，只返回公开的 `source=harness` 目录，不创建目录、不泄露私有会话命令。
+- 响应只有 `commands`、`reportedAt`、`source`（`previous-session` 或 `harness`）与可选的 `skills`、`skillsTruncated`。删除来源、改变启动配置或失去来源权限后不再返回该来源的项目缓存；定义变化后旧的 `harness` 目录作废。
+- `HarnessInfo.commandCatalogue`（每次挂载 Driver 生成 `generation`，带可选的 `checked` 与 `reportedAt`）与 `TaskSummary.commandsVersion`（每次会话命令报告后更新）驱动客户端失效与重读。可见集合或选择改变时页面立即撤下旧结果并取消在途查询，迟到的响应不回填。
 - 可见草稿每 30 秒只读重验，后台暂停。没有公开通知的 public→private 变化可能让之前的公开提示保留到下次重验；HTTP 每次仍重新授权。
 
 **Codex 直连。**
@@ -1342,7 +1337,6 @@ Host 经 `HarnessInfo.extensionSupport` 给出当前适配器能报告的类别�
 | Antigravity、Cursor 经 Latch 使用模型服务 | Cursor 做不了：推理走它的后端。Antigravity 有 Gemini API key 路线（见「经 Latch 使用模型服务」），要先有网关的 Gemini 协议，地址是否生效未核对 |
 | Antigravity 接入已有会话 | 有内容的会话要发提示才造得出，列出与加载没有核对 |
 | Grok Build 的权限档位菜单 | 1.0.89 的 ACP 不报告模式；`plan` 能设能读回，`auto` 与 always-approve 只能在建会话、载入或恢复时经 `_meta` 设，设了读不回。要做成「重启并恢复会话」的启动设置，运行时还没有为不报告模式的 Harness 合成档位的路径 |
-| Grok Build 会话前的命令列表 | `initialize` 已报告命令，但草稿的命令列表按项目与上一个会话记录（`HarnessCommandCatalogue.source: 'previous-session'`），定义级的来源要改协议与三个客户端 |
 | Grok Build 的扩展页（`grok inspect --json` 的 MCP、技能、插件与钩子） | 没有接：它不开会话就能列出，但 MCP 的 `target` 可能带令牌，要先定脱敏；没有核对它在人自己的家里的耗时 |
 | Grok Build 记住的回答的内容 | `permission*.toml` 的格式没有文档，只说有没有 |
 | Cursor 的登录状态 | `cursor-agent status --format json` 的输出形状只读过源码，没有运行过，不做 |

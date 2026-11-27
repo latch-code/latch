@@ -9,6 +9,7 @@ import {
   readOnSelect,
   readsOnPermission,
   readsOnSelect,
+  slashCatalogueTarget,
 } from '../src/composer/harnessCatalogue.tsx'
 import { saveOfferedPreset } from '../src/core/offeredHarness.ts'
 
@@ -111,17 +112,20 @@ describe('reading a Harness by selection', () => {
 
 it('reads a model again after the Host replaces the catalogue for a changed definition', async () => {
   vi.mocked(api).mockClear().mockResolvedValue({ ran: true })
+  const onDone = vi.fn()
   const first = {
     ...harness({ when: 'select', modes: true }),
     id: 'per-model-agent',
     catalogue: { options: [], perModel: [], reportedAt: '2026-11-13T00:00:00Z', source: 'check' as const },
   }
-  readModelOnSelect(first, 'large')
-  await vi.waitFor(() => expect(api).toHaveBeenCalledTimes(1))
-  readModelOnSelect(first, 'large')
+  readModelOnSelect(first, 'large', onDone)
+  await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(1))
   expect(api).toHaveBeenCalledTimes(1)
-  readModelOnSelect({ ...first, catalogue: { ...first.catalogue, reportedAt: '2026-11-13T01:00:00Z' } }, 'large')
-  await vi.waitFor(() => expect(api).toHaveBeenCalledTimes(2))
+  readModelOnSelect(first, 'large', onDone)
+  expect(api).toHaveBeenCalledTimes(1)
+  readModelOnSelect({ ...first, catalogue: { ...first.catalogue, reportedAt: '2026-11-13T01:00:00Z' } }, 'large', onDone)
+  await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(2))
+  expect(api).toHaveBeenCalledTimes(2)
 })
 
 describe('a read refused for want of a login', () => {
@@ -145,5 +149,38 @@ describe('a read refused for want of a login', () => {
     expect(readNeedsLogin({ ...harness(refused), catalogue: list('2026-11-15T03:05:00.000Z') })).toBe(false)
     // A list from before the refusal says nothing about now.
     expect(readNeedsLogin({ ...harness(refused), catalogue: list('2026-11-14T00:00:00.000Z') })).toBe(true)
+  })
+})
+
+describe('reading Harness commands when opening a draft slash menu', () => {
+  const local = { ...access, local: true, admin: true }
+  const request = {
+    ...harness({ when: 'request', modes: true }),
+    capabilities: { permission: { enforcement: 'harness' } },
+    extensionSupport: { reports: ['commands'] },
+    commandCatalogue: { generation: 'g1' },
+  } as unknown as HarnessInfo
+
+  it('asks once for unread request or select Harnesses, including upgraded definitions with an older model catalogue', () => {
+    expect(slashCatalogueTarget(request, local)).toBe(true)
+    expect(
+      slashCatalogueTarget(
+        {
+          ...request,
+          catalogue: { options: [], perModel: [], reportedAt: '2026-11-08T00:00:00Z', source: 'session' },
+          catalogueRead: { when: 'request', modes: true, last: { at: '2026-11-08T00:00:00Z', ok: true } },
+        },
+        local,
+      ),
+    ).toBe(true)
+    expect(slashCatalogueTarget({ ...request, commandCatalogue: { generation: 'g1', checked: true } }, local)).toBe(false)
+    expect(
+      slashCatalogueTarget(
+        { ...request, catalogueRead: { when: 'request', modes: true, last: { at: '2026-11-08T00:00:00Z', ok: false } } },
+        local,
+      ),
+    ).toBe(false)
+    expect(slashCatalogueTarget({ ...request, extensionSupport: { reports: [] } }, local)).toBe(false)
+    expect(slashCatalogueTarget(request, { ...local, scopes: new Set(['view']) })).toBe(false)
   })
 })

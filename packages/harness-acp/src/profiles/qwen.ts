@@ -159,9 +159,8 @@ export const qwenProfile: HarnessProfile = {
       }
     },
   },
-  // Its `session/new` connects the person's MCP servers and fires their `SessionStart` hooks (0.27.4 `newSession` →
-  // `startChat` → `fireSessionStartHook`); no flag keeps the hooks from running.
-  catalogueRead: { when: 'request' },
+  // Prefetched once per definition in a private empty folder with no MCP servers and no prompt, then deleted.
+  catalogueRead: { when: 'select' },
   permission: {
     approvals: 'prompts',
     defaultEnv: {},

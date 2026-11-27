@@ -67,6 +67,7 @@ import type {
   MessageOrigin,
   SessionCommand,
   SessionConfigOption,
+  SessionSkill,
   RunEnd,
   RunLive,
   RoutedTurn,
@@ -161,7 +162,7 @@ import { buildGatewayCatalog } from './gateway-catalog.ts'
 import { readQuotaCommand } from './login.ts'
 import { commandMoved, commandUnconfirmed, harnessRetired, redactor, resolveCommand } from './command.ts'
 import { openWire, wireLaunch } from './wires/index.ts'
-import { ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } from './wires/process.ts'
+import { ConnectionClosed, ConnectionStopping, isRecord, RequestTimeout, type ExitInfo } from './wires/process.ts'
 import { ForkRefused, type AgentWire } from './wires/types.ts'
 import { accountEnvironment, agentEnvironment, assertAccountWorkspace, inheritedValues, programPaths } from './environment.ts'
 import { loginShellValues } from './login-shell.ts'
@@ -172,6 +173,7 @@ import {
   clip,
   configFromOptions,
   foldConfig,
+  truncateUnits,
   mergeTool,
   modelName,
   thinkingName,
@@ -346,7 +348,12 @@ interface Live {
    */
   sessions: Map<string, string>
   /** Only during a bind. A new session's ACP ID is known only when its setup request answers. */
-  openingCommands?: { sessionId?: string; reports: Map<string, SessionCommand[]> }
+  openingCommands?: {
+    sessionId?: string
+    reports: Map<string, SessionCommand[]>
+    skills?: Map<string, { skills?: SessionSkill[]; skillsTruncated?: true; plugins?: HarnessPluginReport }>
+    onReport?: (sessionId: string) => void
+  }
   /** Reports from the process-local permission service, including sessions not yet bound by their ACP response. */
   processModes?: Map<string, string>
   /** Dedicated to exactly one text-only consultation; its successor must spawn again. */
@@ -1444,15 +1451,41 @@ export class AgentRuntime implements Bridge {
     return { cwd, passed, launch }
   }
 
+  commandCatalogueState(): { checked?: true; reportedAt?: string } | undefined {
+    if (!this.loaded) return undefined
+    const stored = this.state.ownCommands
+    const definitionHash = this.definitionNow()
+    if (!stored || !definitionHash || stored.definitionHash !== definitionHash) return undefined
+    return { checked: true, ...(stored.commands !== null ? { reportedAt: stored.reportedAt } : {}) }
+  }
+
+  private ownCommandCatalogue(definitionHash = this.definitionNow(true)): { catalogue: HarnessCommandCatalogue } | undefined {
+    const stored = this.state.ownCommands
+    if (!stored || !definitionHash || stored.definitionHash !== definitionHash || stored.commands === null) return undefined
+    return {
+      catalogue: {
+        commands: structuredClone(stored.commands),
+        ...(stored.skills
+          ? { skills: structuredClone(stored.skills), ...(stored.skillsTruncated ? { skillsTruncated: true as const } : {}) }
+          : {}),
+        reportedAt: stored.reportedAt,
+        source: 'harness',
+      },
+    }
+  }
+
   async commandCatalogue(
-    input: Parameters<AgentRuntime['launchPreview']>[0],
-  ): Promise<{ sourceSessionId: string; catalogue: HarnessCommandCatalogue } | undefined> {
+    input: Parameters<NonNullable<Bridge['commandCatalogue']>>[0],
+  ): Promise<{ sourceSessionId?: string; catalogue: HarnessCommandCatalogue } | undefined> {
     await this.ready()
-    const { cwd, launch } = await this.draftLaunch(input)
+    this.assertOpen()
+    if (input.ownOnly || input.cwd === undefined) return this.ownCommandCatalogue()
+    const projectInput = { ...input, cwd: input.cwd }
+    const { cwd, launch } = await this.draftLaunch(projectInput)
     const directory = await commandDirectory(cwd)
     if (!directory) return undefined
     // Directory validation yields: neither a moved command nor changed project configuration may reuse the earlier key.
-    const current = await this.draftLaunch(input)
+    const current = await this.draftLaunch(projectInput)
     const currentDirectory = await commandDirectory(cwd)
     this.assertOpen()
     if (
@@ -1464,7 +1497,7 @@ export class AgentRuntime implements Bridge {
       return undefined
     this.commandCache.retainDefinition(launch.definitionHash)
     const record = this.commandCache.read(commandScope(directory, input.workspaceId), launch.hash, launch.definitionHash)
-    if (!record) return undefined
+    if (!record) return this.ownCommandCatalogue(launch.definitionHash)
     const source = this.state.tasks[record.sourceSessionId]
     if (
       !source?.acp.commandContext
@@ -1474,7 +1507,7 @@ export class AgentRuntime implements Bridge {
       || !isDeepStrictEqual(source.skills, record.skills)
       || source.skillsTruncated !== record.skillsTruncated
     )
-      return undefined
+      return this.ownCommandCatalogue(launch.definitionHash)
     return {
       sourceSessionId: record.sourceSessionId,
       catalogue: {
@@ -2645,7 +2678,16 @@ export class AgentRuntime implements Bridge {
       if (configured && 'codexModels' in configured) {
         const { own, ...listed } = await this.readCodexModels(key, cwd, configured.codexModels)
         if (!listed.options.length) throw new AppError(502, 'catalogue-empty', `${this.agent.name} 没有列出可选的模型。`)
-        this.state.catalogue = modelListCatalogue(this.state.catalogue, { ...listed, definitionHash, at: this.now() })
+        const at = this.now()
+        this.state.catalogue = modelListCatalogue(this.state.catalogue, { ...listed, definitionHash, at })
+        this.state.ownCommands = {
+          definitionHash,
+          reportedAt: at,
+          commands:
+            this.selection.profile?.wire === 'codex'
+              ? [{ name: 'compact', description: '把之前的对话总结成摘要，腾出上下文', idleOnly: true }]
+              : null,
+        }
         // Before any session: its MCP servers by name and its hooks, from the same read, starting none of them. What a
         // session or a 读取 reported stays.
         if (own && this.reportsOwnMcp() && this.definitionNow(true) === definitionHash && !this.ownMcp()?.last)
@@ -2660,24 +2702,63 @@ export class AgentRuntime implements Bridge {
       if (configured && 'fromInitialize' in configured) {
         // The process opened no session: its answer to initialize is the list.
         const listed = configured.fromInitialize(live.startMeta)
+        const commands =
+          isRecord(live.startMeta) && live.startMeta.availableCommands !== undefined
+            ? this.readCommands(live, live.startMeta.availableCommands)
+            : undefined
+        const at = this.now()
+        this.state.ownCommands = { definitionHash: launch.definitionHash, reportedAt: at, commands: commands ?? null }
         if (!listed?.options.length) throw new AppError(502, 'catalogue-empty', `${this.agent.name} 没有列出可选的模型。`)
         this.state.catalogue = modelListCatalogue(this.state.catalogue, {
           ...listed,
           definitionHash: launch.definitionHash,
-          at: this.now(),
+          at,
         })
         return
       }
       this.enter(this.holds, key)
       let result: unknown
       let switched: SessionConfigOption[] | undefined
+      let openingCommands: Live['openingCommands']
       try {
+        if (model === undefined) {
+          openingCommands = { reports: new Map() }
+          live.openingCommands = openingCommands
+        }
         // No MCP servers and no prompt: the session exists only to say what it offers.
         result = await live.wire.request('session/new', { cwd, mcpServers: [] }, this.readTimeout(), this.lifetime.signal)
-        sessionId = sessionState.safeParse(result).data?.sessionId
+        const created = sessionState.safeParse(result)
+        sessionId = created.data?.sessionId
         try {
           if (model !== undefined) switched = await this.switchReadModel(live, sessionId, result, model)
+          else if (
+            sessionId
+            && openingCommands
+            && !openingCommands.reports.has(sessionId)
+            && created.data?.availableCommands === undefined
+            && this.selection.profile?.presetId !== 'dsh'
+            && this.selection.profile?.wire !== 'cursor'
+          ) {
+            // Several ACP adapters push `available_commands_update` on the next turn of the event loop after `session/new`.
+            await new Promise<void>(resolve => {
+              const timer = setTimeout(done, 250)
+              function done() {
+                clearTimeout(timer)
+                if (openingCommands) delete openingCommands.onReport
+                resolve()
+              }
+              if (openingCommands!.reports.has(sessionId!) || this.lifetime.signal.aborted) {
+                done()
+                return
+              }
+              openingCommands!.onReport = reportedId => {
+                if (reportedId === sessionId) done()
+              }
+              this.lifetime.signal.addEventListener('abort', done, { once: true })
+            })
+          }
         } finally {
+          delete live.openingCommands
           const end = live.capabilities.delete ? this.deleteMethod() : live.capabilities.close ? 'session/close' : undefined
           if (sessionId && end)
             await live.wire.request(end, this.deleteParams(end, sessionId, cwd), Math.min(this.readTimeout(), 10_000)).catch(() => {})
@@ -2685,6 +2766,7 @@ export class AgentRuntime implements Bridge {
       } catch (error) {
         throw this.publicError(error, live)
       } finally {
+        delete live.openingCommands
         this.leave(this.holds, key)
       }
       if (model !== undefined) {
@@ -2698,18 +2780,36 @@ export class AgentRuntime implements Bridge {
         return
       }
       const parsed = sessionState.safeParse(result)
+      const commands =
+        (sessionId ? openingCommands?.reports.get(sessionId) : undefined)
+        ?? (parsed.success && parsed.data.availableCommands !== undefined
+          ? this.readCommands(live, parsed.data.availableCommands)
+          : undefined)
+      const openingSkills = sessionId ? openingCommands?.skills?.get(sessionId) : undefined
+      const at = this.now()
+      this.state.ownCommands = {
+        definitionHash: launch.definitionHash,
+        reportedAt: at,
+        commands: commands ?? null,
+        ...(openingSkills?.skills
+          ? { skills: openingSkills.skills, ...(openingSkills.skillsTruncated ? { skillsTruncated: true as const } : {}) }
+          : {}),
+      }
       const folded = parsed.success ? foldConfig(parsed.data, this.latchMarks()) : undefined
       if (!folded?.options.length) throw new AppError(502, 'catalogue-empty', `${this.agent.name} 没有报告可选的模型和设置。`)
-      this.state.catalogue = startCatalogue(this.state.catalogue, {
-        options: this.withLaunchThinking(this.withProcessMode(live, parsed.data?.sessionId, folded.options)),
-        isMode: option => option.category === 'mode' || (folded.source === 'legacy' && option.id === 'mode'),
-        startMode: this.profile?.expectedMode,
-        definitionHash: launch.definitionHash,
-        launchHash: launch.hash,
-        ...(live.agentVersion ? { agentVersion: live.agentVersion } : {}),
-        at: this.now(),
-        source: 'check',
-      })
+      this.state.catalogue = this.withWirePerModel(
+        startCatalogue(this.state.catalogue, {
+          options: this.withLaunchThinking(this.withProcessMode(live, parsed.data?.sessionId, folded.options)),
+          isMode: option => option.category === 'mode' || (folded.source === 'legacy' && option.id === 'mode'),
+          startMode: this.profile?.expectedMode,
+          definitionHash: launch.definitionHash,
+          launchHash: launch.hash,
+          ...(live.agentVersion ? { agentVersion: live.agentVersion } : {}),
+          at,
+          source: 'check',
+        }),
+        result,
+      )
     } finally {
       await this.discardProcess(key)
       // A harness that cannot delete one keeps even this empty session in its history: the Host removes it.
@@ -7177,10 +7277,22 @@ export class AgentRuntime implements Bridge {
     for (const note of live.heldNotes?.splice(0) ?? [])
       target.messages.push({ id: randomUUID(), role: 'system', text: clip(this.redact(note), 4000), createdAt: this.now() })
     target.acp.acpSessionId = acpSessionId
-    const commands = live.openingCommands?.reports.get(acpSessionId)
+    const parsed = sessionState.safeParse(result)
+    const opening = live.openingCommands
     delete live.openingCommands
-    if (commands && !signal.aborted && !this.closed && !wire.stopping && this.lives.get(live.key) === live) {
-      target.commands = commands
+    const configured = this.selection.profile?.catalogueRead
+    const commands =
+      opening?.reports.get(acpSessionId)
+      ?? (parsed.success && parsed.data.availableCommands !== undefined
+        ? this.readCommands(live, parsed.data.availableCommands)
+        : undefined)
+      ?? (configured && 'fromInitialize' in configured && isRecord(live.startMeta) && live.startMeta.availableCommands !== undefined
+        ? this.readCommands(live, live.startMeta.availableCommands)
+        : undefined)
+    const openingSkills = opening?.skills?.get(acpSessionId)
+    if ((commands || openingSkills) && !signal.aborted && !this.closed && !wire.stopping && this.lives.get(live.key) === live) {
+      if (commands) target.commands = commands
+      if (openingSkills) this.applySkillsUpdate(live, target, openingSkills)
       this.noteCommandCatalogue(live, target)
     }
     if (carried) {
@@ -7202,7 +7314,6 @@ export class AgentRuntime implements Bridge {
         said.map(note => clip(this.redact(note), 600)),
       )
     else this.settingsNotes.delete(taskId)
-    const parsed = sessionState.safeParse(result)
     const folded = parsed.success ? foldConfig(parsed.data, this.latchMarks()) : undefined
     if (folded || live.processModes?.has(acpSessionId)) {
       this.configReported(taskId)
@@ -7213,7 +7324,7 @@ export class AgentRuntime implements Bridge {
       this.applyModel(target)
       // What a session on a route offers is what the gateway's service has, not the harness's own list.
       if (!target.acp.route) {
-        if (!current) this.noteStartCatalogue(target, target.config)
+        if (!current) this.noteStartCatalogue(target, target.config, result)
         else this.noteModelOptions(target, target.config)
       } else if (!current) this.noteServiceOptions(target, target.config, live.gateway)
     }
@@ -8235,17 +8346,28 @@ export class AgentRuntime implements Bridge {
     if (!taskId || !task) {
       const child = live.children.get(envelope.data.sessionId)
       const opening = live.openingCommands
-      if (child) this.onChildUpdate(live, child, envelope.data.update)
-      else if (
-        opening
-        && envelope.data.update.sessionUpdate === 'available_commands_update'
+      const acceptsOpening =
+        opening !== undefined
         && (opening.sessionId === undefined
           ? opening.reports.size < 4 || opening.reports.has(envelope.data.sessionId)
           : opening.sessionId === envelope.data.sessionId)
+      if (child) this.onChildUpdate(live, child, envelope.data.update)
+      else if (
+        acceptsOpening
+        && envelope.data.update.sessionUpdate === 'available_commands_update'
         && !this.selection.profile?.readProjectedChild?.(envelope.data.update)
       ) {
         const commands = this.readCommands(live, envelope.data.update.availableCommands)
-        if (commands) opening.reports.set(envelope.data.sessionId, commands)
+        if (commands) {
+          opening.reports.set(envelope.data.sessionId, commands)
+          opening.onReport?.(envelope.data.sessionId)
+        }
+      } else if (acceptsOpening && envelope.data.update.sessionUpdate === SESSION_SKILLS_UPDATE) {
+        const skills = this.readSkillsUpdate(live, maskKnownSecretsIn(envelope.data.update))
+        if (skills) {
+          opening.skills ??= new Map()
+          opening.skills.set(envelope.data.sessionId, skills)
+        }
       }
       return
     }
@@ -8461,24 +8583,9 @@ export class AgentRuntime implements Bridge {
         break
       }
       case SESSION_SKILLS_UPDATE: {
-        if (this.closed || this.lives.get(live.key) !== live || live.wire.stopping) return
-        const reported = readSessionSkills(update.skills)
-        const visible = reported?.flatMap(skill => {
-          if (this.redact(skill.name) !== skill.name || this.redact(skill.invocation) !== skill.invocation) return []
-          return [{ ...skill, ...(skill.description === undefined ? {} : { description: clip(this.redact(skill.description), 1000) }) }]
-        })
-        const bounded = visible ? boundSessionSkills(visible) : undefined
-        const skills = bounded?.skills
-        if (skills === undefined) delete task.skills
-        else task.skills = skills
-        if (skills && (update.skillsTruncated === true || bounded?.skillsTruncated || reported?.length !== skills.length))
-          task.skillsTruncated = true
-        else delete task.skillsTruncated
-        if (this.selection.profile?.wire === 'pi' && live.commandCache) {
-          const plugins = readHarnessPluginReport(update.plugins)
-          if (plugins) live.commandCache.plugins = plugins
-          else delete live.commandCache.plugins
-        }
+        const parsedSkills = this.readSkillsUpdate(live, update)
+        if (!parsedSkills) return
+        this.applySkillsUpdate(live, task, parsedSkills)
         this.noteCommandCatalogue(live, task)
         break
       }
@@ -9405,15 +9512,58 @@ export class AgentRuntime implements Bridge {
       if (!parsed.success) return undefined
       const command = parsed.data
       if (modeCommands.includes(command.name) || this.redact(command.name) !== command.name) continue
+      const description = command.description ? truncateUnits(this.redact(command.description), 1000) : ''
+      const inputHint = command.input?.hint ? truncateUnits(this.redact(command.input.hint), 500) : ''
       commands.push({
         name: command.name,
-        ...(command.description ? { description: this.redact(command.description).slice(0, 1000) } : {}),
-        ...(command.input?.hint ? { inputHint: this.redact(command.input.hint).slice(0, 500) } : {}),
+        ...(description ? { description } : {}),
+        ...(inputHint ? { inputHint } : {}),
         ...(live.wire.idleCommands?.has(command.name) ? { idleOnly: true as const } : {}),
       })
       if (commands.length === SESSION_COMMAND_LIMIT) break
     }
     return commands
+  }
+
+  private readSkillsUpdate(
+    live: Live,
+    update: Record<string, unknown>,
+  ): { skills?: SessionSkill[]; skillsTruncated?: true; plugins?: HarnessPluginReport } | undefined {
+    if (this.closed || this.lives.get(live.key) !== live || live.wire.stopping) return undefined
+    const reported = readSessionSkills(update.skills)
+    const visible = reported?.flatMap(skill => {
+      if (this.redact(skill.name) !== skill.name || this.redact(skill.invocation) !== skill.invocation) return []
+      return [
+        { ...skill, ...(skill.description === undefined ? {} : { description: truncateUnits(this.redact(skill.description), 1000) }) },
+      ]
+    })
+    const bounded = visible ? boundSessionSkills(visible) : undefined
+    const skills = bounded?.skills
+    const skillsTruncated =
+      skills && (update.skillsTruncated === true || bounded?.skillsTruncated || reported?.length !== skills.length)
+        ? (true as const)
+        : undefined
+    const plugins = this.selection.profile?.wire === 'pi' ? readHarnessPluginReport(update.plugins) : undefined
+    return {
+      ...(skills !== undefined ? { skills } : {}),
+      ...(skillsTruncated ? { skillsTruncated } : {}),
+      ...(plugins ? { plugins } : {}),
+    }
+  }
+
+  private applySkillsUpdate(
+    live: Live,
+    task: AcpTask,
+    parsed: { skills?: SessionSkill[]; skillsTruncated?: true; plugins?: HarnessPluginReport },
+  ): void {
+    if (parsed.skills === undefined) delete task.skills
+    else task.skills = parsed.skills
+    if (parsed.skillsTruncated) task.skillsTruncated = true
+    else delete task.skillsTruncated
+    if (this.selection.profile?.wire === 'pi' && live.commandCache) {
+      if (parsed.plugins) live.commandCache.plugins = parsed.plugins
+      else delete live.commandCache.plugins
+    }
   }
 
   private noteCommandCatalogue(live: Live, task: AcpTask): Promise<void> | undefined {
@@ -9483,19 +9633,51 @@ export class AgentRuntime implements Bridge {
   }
 
   /** What a new session of this definition offered, for drafts; the definition it ran is the one it is kept under. */
-  private noteStartCatalogue(task: AcpTask, options: SessionConfigOption[]): void {
+  private noteStartCatalogue(task: AcpTask, options: SessionConfigOption[], result?: unknown): void {
     const definitionHash = task.acp.definitionHash ?? task.acp.launchHash
     if (!definitionHash || !task.acp.launchHash) return
-    this.state.catalogue = startCatalogue(this.state.catalogue, {
-      options,
-      isMode: option => this.isModeOption(task, option),
-      startMode: this.profile?.expectedMode,
-      definitionHash,
-      launchHash: task.acp.launchHash,
-      ...(task.acp.agentVersion ? { agentVersion: task.acp.agentVersion } : {}),
-      at: this.now(),
-      source: 'session',
-    })
+    this.state.catalogue = this.withWirePerModel(
+      startCatalogue(this.state.catalogue, {
+        options,
+        isMode: option => this.isModeOption(task, option),
+        startMode: this.profile?.expectedMode,
+        definitionHash,
+        launchHash: task.acp.launchHash,
+        ...(task.acp.agentVersion ? { agentVersion: task.acp.agentVersion } : {}),
+        at: this.now(),
+        source: 'session',
+      }),
+      result,
+    )
+  }
+
+  /** Per-model options reported up front by Latch's own Claude wire, so switching models needs no extra process. */
+  private withWirePerModel(catalogue: ReturnType<typeof startCatalogue>, result: unknown): ReturnType<typeof startCatalogue> {
+    if (this.selection.profile?.wire !== 'claude') return catalogue
+    const parsed = z
+      .object({
+        _meta: z.object({
+          latch: z.object({
+            perModel: z.array(z.object({ model: z.string().min(1).max(256), options: z.array(z.unknown()).max(16) })).max(32),
+          }),
+        }),
+      })
+      .safeParse(result)
+    if (!parsed.success) return catalogue
+    let perModel = catalogue.perModel
+    const current = catalogue.options.find(option => option.category === 'model')?.currentValue
+    for (const entry of parsed.data._meta.latch.perModel) {
+      if (entry.model === current) continue
+      const modelOption: SessionConfigOption = {
+        id: 'model',
+        name: 'Model',
+        category: 'model',
+        currentValue: entry.model,
+        options: [{ value: entry.model, name: entry.model }],
+      }
+      perModel = withModelOptions(perModel, [modelOption, ...this.withLaunchThinking(configFromOptions(entry.options))])
+    }
+    return { ...catalogue, perModel }
   }
 
   /** Thinking and the like as offered for the model a session runs on, so a draft that picks that model can show them. */

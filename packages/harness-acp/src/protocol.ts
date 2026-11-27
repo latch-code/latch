@@ -170,6 +170,7 @@ export const sessionState = z.object({
   modes: modeState.nullish().catch(undefined),
   models: modelState.nullish().catch(undefined),
   configOptions: z.array(z.unknown()).nullish().catch(undefined),
+  availableCommands: z.array(z.unknown()).nullish().catch(undefined),
 })
 export type SessionState = z.infer<typeof sessionState>
 
@@ -223,8 +224,8 @@ export const availableCommand = z.object({
     .min(1)
     .max(100)
     .regex(/^[^\s\u0000-\u001f\u007f]+$/u),
-  description: z.string().max(1000).optional(),
-  input: z.object({ hint: z.string().max(500) }).nullish(),
+  description: z.string().nullish(),
+  input: z.object({ hint: z.string().nullish() }).nullish(),
 })
 export type AvailableCommand = z.infer<typeof availableCommand>
 export const planUpdate = z.object({

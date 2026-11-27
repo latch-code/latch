@@ -1419,6 +1419,20 @@ public actor NativeWorkspace {
         try lease.requireValid()
     }
 
+    /** Draft slash commands for one Harness: a cached project session report or the Harness's own list. */
+    public func harnessCommands(_ harnessId: String, fields: [String: NativeJSON]) async throws -> NativeJSON {
+        guard LinkBytes.matches(harnessId, "[A-Za-z0-9_-]{1,64}"), fields["requestId"] == nil else { throw NativeFailure.invalidRecord }
+        let (connection, current) = try transport()
+        guard let lease = await verification.currentLease() else { throw NativeFailure.expired }
+        try lease.requireValid()
+        let response = try await connection.request(.post, path: "/link/api/agents/\(harnessId)/commands",
+            body: NativeJSON.object(fields).encoded(), maximum: 524_288)
+        guard epoch == current else { throw NativeFailure.unavailable }
+        guard response.status == 200 else { throw await responseFailure(response, lease: lease) }
+        try lease.requireValid()
+        return try NativeJSON.decode(response.body)
+    }
+
     /**
      * Asks the Host to read every Harness's limits again (`retry`: also those whose last read failed). What arrives comes
      * with the catalog; the answer only names the Harnesses it asked. The Host rechecks `run` and the window.

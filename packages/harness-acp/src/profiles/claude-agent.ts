@@ -242,9 +242,8 @@ export const claudeAgentProfile: HarnessProfile = {
       upgrade: 'npm i -g @agentclientprotocol/claude-agent-acp@latest',
     },
   },
-  // Starting Claude Code runs the person's SessionStart hooks and loads their plugins, so its lists are read only on
-  // request, as pi's are.
-  catalogueRead: { when: 'request' },
+  // Prefetched once per definition in a private empty folder with no MCP servers and no prompt.
+  catalogueRead: { when: 'select' },
   permission: {
     ...CLAUDE_PERMISSION,
     // Later 0.x adapters only; a new major version may start sessions or report modes differently.
@@ -298,7 +297,7 @@ export const claudeProfile: HarnessProfile = {
       source: CLAUDE_SOURCE,
     },
   },
-  catalogueRead: { when: 'request' },
+  catalogueRead: { when: 'select' },
   // The wire lists, replays and deletes Claude's sessions itself through the SDK Latch pins, where the Host lets it read
   // Claude's store (`cliStore`); an import goes on in the original session, as the terminal's `/resume` would.
   historyImport: { useUnknown: true, deletes: true },

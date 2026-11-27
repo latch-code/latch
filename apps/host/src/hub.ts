@@ -510,11 +510,11 @@ export class HarnessHub implements Bridge {
     })
   }
 
-  /** A previous real session's suggestions. The final guard is Host-only and grants no access to their source. */
+  /** Draft command suggestions: a previous real session's report or the Harness's own definition-level commands. */
   async commandCatalogueOf(
     harnessId: string,
     input: Parameters<NonNullable<Bridge['commandCatalogue']>>[0],
-  ): Promise<{ sourceSessionId: string; catalogue: HarnessCommandCatalogue; current(): boolean } | undefined> {
+  ): Promise<{ sourceSessionId?: string; catalogue: HarnessCommandCatalogue; current(): boolean } | undefined> {
     const member = this.member(harnessId)
     if (!member?.bridge.commandCatalogue) return undefined
     const { folders, ...context } = input
@@ -523,11 +523,19 @@ export class HarnessHub implements Bridge {
       ...(member.driver.projectFolders === 'all' && folders ? { folders } : {}),
     })
     if (!result) return undefined
-    const current = () =>
-      !this.closing
-      && this.member(harnessId) === member
-      && this.ownerOf(result.sourceSessionId) === harnessId
-      && this.meta.has(result.sourceSessionId)
+    const { sourceSessionId } = result
+    const current =
+      sourceSessionId !== undefined
+        ? () =>
+            !this.closing
+            && this.member(harnessId) === member
+            && this.ownerOf(sourceSessionId) === harnessId
+            && this.meta.has(sourceSessionId)
+        : () =>
+            !this.closing
+            && this.member(harnessId) === member
+            && result.catalogue.source === 'harness'
+            && member.bridge.commandCatalogueState?.()?.reportedAt === result.catalogue.reportedAt
     return current() ? { ...result, current } : undefined
   }
 
@@ -1867,7 +1875,9 @@ export class HarnessHub implements Bridge {
       ...(catalogue ? { catalogue: structuredClone(catalogue) } : {}),
       ...(serviceOptions?.length ? { serviceOptions: structuredClone(serviceOptions) } : {}),
       ...(catalogueRead ? { catalogueRead: structuredClone(catalogueRead) } : {}),
-      ...(entry.bridge?.commandCatalogue ? { commandCatalogue: { generation: entry.generation } } : {}),
+      ...(entry.bridge?.commandCatalogue
+        ? { commandCatalogue: { generation: entry.generation, ...entry.bridge.commandCatalogueState?.() } }
+        : {}),
       ...(entry.bridge?.latestCommandReport && driver.extensionSupport
         ? { extensionSupport: structuredClone(driver.extensionSupport) }
         : {}),

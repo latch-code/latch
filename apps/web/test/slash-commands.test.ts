@@ -107,6 +107,10 @@ describe('advertised slash commands', () => {
     })
     expect(harnessCommandSource(testHarness('standard', { kind: 'builtin' }), 'before-session')?.source).toBe('unsupported')
     expect(emptyCommandList('before-session', undefined)).toBe('发送第一条消息后，可查看 Harness 返回的命令')
+    expect(emptyCommandList('before-session', undefined, { reading: true, harnessName: 'Antigravity' })).toBe(
+      '正在读取 Antigravity 的命令列表…',
+    )
+    expect(emptyCommandList('harness', [])).toBe('当前 Harness 没有列出命令')
     expect(emptyCommandList('unsupported', undefined)).toBe('当前接入方式不提供 Harness 命令')
     expect(emptyCommandList('session', undefined)).toBe('当前连接尚未提供命令列表')
     expect(emptyCommandList('session', [])).toBe('当前会话没有可用的 Harness 命令')

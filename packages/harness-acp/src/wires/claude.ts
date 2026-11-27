@@ -16,7 +16,7 @@ import { EventEmitter } from 'node:events'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { redactKnownSecrets } from '@latch/core/node-kit'
-import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
+import { clip, TOOL_TEXT_LIMIT, truncateUnits } from '../mapping.ts'
 import { ClaudeStore, type ClaudeSettings } from '../claude-store.ts'
 import { CAPTURE_BYTES } from '../history.ts'
 import { claudeCompactionMetrics, claudeContextBreakdown } from '../context-telemetry.ts'
@@ -850,10 +850,20 @@ export class ClaudeWire implements AgentWire {
       rowFor(session.models, used)
       ?? (this.route?.model && session.models.some(item => item.value === this.route!.model) ? this.route.model : DEFAULT_MODEL)
     const notes = settingsNotes(settings)
+    const perModel = this.perModelOptions(session)
     return {
       sessionId: id,
       configOptions: this.options(session),
-      ...(notes.length ? { _meta: { latch: { permissionNotes: notes } } } : {}),
+      ...(notes.length || perModel.length
+        ? {
+            _meta: {
+              latch: {
+                ...(notes.length ? { permissionNotes: notes } : {}),
+                ...(perModel.length ? { perModel } : {}),
+              },
+            },
+          }
+        : {}),
     }
   }
 
@@ -898,8 +908,8 @@ export class ClaudeWire implements AgentWire {
       if (session.terminalCommands.has(name)) continue
       const parsed = availableCommand.safeParse({
         name,
-        ...(read.data.description ? { description: clip(read.data.description, 1000) } : {}),
-        ...(read.data.argumentHint ? { input: { hint: clip(read.data.argumentHint, 500) } } : {}),
+        ...(read.data.description ? { description: truncateUnits(read.data.description, 1000) } : {}),
+        ...(read.data.argumentHint ? { input: { hint: truncateUnits(read.data.argumentHint, 500) } } : {}),
       })
       if (parsed.success) commands.push(previous?.get(name) ?? parsed.data)
       if (commands.length === SESSION_COMMAND_LIMIT) break
@@ -937,6 +947,29 @@ export class ClaudeWire implements AgentWire {
     return cap < 0 ? levels : levels.filter(level => EFFORT_ORDER.indexOf(level) <= cap)
   }
 
+  private effortOption(session: Session, model: ModelInfo | undefined): Record<string, unknown> | undefined {
+    const levels = this.effortLevels(session, model)
+    if (!levels.length) return undefined
+    return {
+      type: 'select',
+      id: EFFORT,
+      category: 'thought_level',
+      name: 'Effort',
+      currentValue: levels.includes(session.effort) ? session.effort : DEFAULT_EFFORT,
+      options: [
+        { value: DEFAULT_EFFORT, name: 'Default' },
+        ...levels.map(level => ({ value: level, name: level.charAt(0).toUpperCase() + level.slice(1) })),
+      ],
+    }
+  }
+
+  private perModelOptions(session: Session): Array<{ model: string; options: unknown[] }> {
+    return session.models.map(model => {
+      const effort = this.effortOption(session, model)
+      return { model: model.value, options: effort ? [effort] : [] }
+    })
+  }
+
   private options(session: Session): unknown[] {
     const current = session.models.find(item => item.value === session.model)
     const options: unknown[] = []
@@ -960,19 +993,8 @@ export class ClaudeWire implements AgentWire {
     }))
     if (!models.some(item => item.value === session.model)) models.push({ value: session.model, name: session.model })
     options.push({ type: 'select', id: MODEL, category: 'model', name: 'Model', currentValue: session.model, options: models })
-    const levels = this.effortLevels(session, current)
-    if (levels.length)
-      options.push({
-        type: 'select',
-        id: EFFORT,
-        category: 'thought_level',
-        name: 'Effort',
-        currentValue: levels.includes(session.effort) ? session.effort : DEFAULT_EFFORT,
-        options: [
-          { value: DEFAULT_EFFORT, name: 'Default' },
-          ...levels.map(level => ({ value: level, name: level.charAt(0).toUpperCase() + level.slice(1) })),
-        ],
-      })
+    const effort = this.effortOption(session, current)
+    if (effort) options.push(effort)
     return options
   }
 

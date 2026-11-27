@@ -21,8 +21,10 @@ const COPY = defineCopy(
     templates: '提示模板',
     skills: '技能',
     previous: '（上次会话）',
+    reading: (value1: string) => `正在读取 ${value1} 的命令列表…`,
     afterStart: '发送第一条消息后，可查看 Harness 返回的命令',
     noPrevious: '上次会话没有列出命令',
+    noHarnessCommands: '当前 Harness 没有列出命令',
     unreported: '当前连接尚未提供命令列表',
     reportedEmpty: '当前会话没有可用的 Harness 命令',
     groupedElsewhere: '没有可单独列出的 Harness 命令',
@@ -41,8 +43,10 @@ const COPY = defineCopy(
     templates: 'Prompt templates',
     skills: 'Skills',
     previous: ' (previous session)',
+    reading: (value1: string) => `Reading commands from ${value1}…`,
     afterStart: 'Commands the Harness reports will appear after your first message',
     noPrevious: 'No commands were reported in the previous session',
+    noHarnessCommands: 'This Harness listed no commands',
     unreported: 'This connection has not supplied a command list',
     reportedEmpty: 'No Harness commands are available in this session',
     groupedElsewhere: 'No separate Harness commands to list',
@@ -57,7 +61,7 @@ const COPY = defineCopy(
 
 export { slashMatches, slashOptions, type SlashAction, type SlashOption } from './slash-options.ts'
 
-export type CommandListSource = 'before-session' | 'previous-session' | 'session' | 'unsupported'
+export type CommandListSource = 'before-session' | 'previous-session' | 'harness' | 'session' | 'unsupported'
 
 export function harnessCommandSource(
   harness: HarnessInfo | undefined,
@@ -71,9 +75,15 @@ export function harnessCommandSource(
   return { source, name: harnessName(harness), media: <HarnessTile harness={harness} size={16} /> }
 }
 
-export function emptyCommandList(source: CommandListSource, commands: readonly SessionCommand[] | undefined): string {
+export function emptyCommandList(
+  source: CommandListSource,
+  commands: readonly SessionCommand[] | undefined,
+  options?: { reading?: boolean; harnessName?: string },
+): string {
+  if (options?.reading && !commands?.length) return COPY.reading(options.harnessName ?? COPY.thisHarness)
   if (commands?.length) return COPY.groupedElsewhere
   if (source === 'previous-session') return COPY.noPrevious
+  if (source === 'harness') return COPY.noHarnessCommands
   if (source === 'unsupported') return COPY.unsupported
   if (source === 'before-session') return COPY.afterStart
   return commands ? COPY.reportedEmpty : COPY.unreported
@@ -103,6 +113,7 @@ export function useSlashCommands({
   harnessName = COPY.thisHarness,
   harnessMedia,
   running = false,
+  reading = false,
   firstTurn = false,
   session = false,
   source = 'session',
@@ -119,6 +130,7 @@ export function useSlashCommands({
   onCommand?(text: string): void
   harnessName?: string
   harnessMedia?: ReactNode
+  reading?: boolean
   source?: CommandListSource
   historyScope?: { deviceId: string; harnessId?: string }
 } & SlashContext) {
@@ -141,6 +153,7 @@ export function useSlashCommands({
     [historyScope?.deviceId],
   )
   const previousSession = source === 'previous-session'
+  const inSession = source === 'session'
   const available = slashOptions(word, commands ?? [], templates, actions, { running, firstTurn, session, skills })
   const recent =
     token && !token.query
@@ -196,7 +209,7 @@ export function useSlashCommands({
     if ((event.key !== 'Enter' && event.key !== 'Tab') || event.shiftKey || !option) return false
     event.preventDefault()
     event.stopPropagation()
-    if (event.key === 'Enter' && option.kind === 'command' && !needsInput(option.inputHint) && !running && !previousSession && onCommand) {
+    if (event.key === 'Enter' && option.kind === 'command' && !needsInput(option.inputHint) && !running && inSession && onCommand) {
       remember(option)
       dismiss()
       onCommand(option.text.trimEnd())
@@ -217,12 +230,10 @@ export function useSlashCommands({
     harnessName,
     harnessMedia,
     previousSession,
-    noCommands: emptyCommandList(source, commands),
+    noCommands: emptyCommandList(source, commands, { reading, harnessName }),
     skillsTruncated,
     enterLabel:
-      options[active]?.kind === 'command' && !needsInput(options[active]?.inputHint) && !running && !previousSession
-        ? COPY.run
-        : COPY.choose,
+      options[active]?.kind === 'command' && !needsInput(options[active]?.inputHint) && !running && inSession ? COPY.run : COPY.choose,
     setActive: (index: number) => {
       const option = options[index]
       if (option && !option.unavailable) setSelection({ word, optionId: option.id })

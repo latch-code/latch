@@ -1,5 +1,5 @@
 import { SHELL_COPY } from './copy.ts'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { FAILURE_ACTION_LABEL, failureAction, type FailureStep } from '../conversation/failureAction.ts'
 import { Eraser, GitFork } from 'lucide-react'
 import { NOT_ACCEPTED_5XX, type ModelRef, type QueuedPromptContent, type SessionConfigOption, type TaskSummary } from '@latch/protocol'
@@ -25,7 +25,7 @@ import { projectOf } from '../sessions.ts'
 import { seedWaiting } from '../history/model.ts'
 import { basename } from '../format.ts'
 import { scopedTemplates } from '../hooks/usePromptTemplates.ts'
-import { useHarnessCommands } from '../hooks/useHarnessCommands.ts'
+import { useHarnessCommandsState } from '../hooks/useHarnessCommands.ts'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
 import { ConversationReferencePicker, REFERENCE_COPY } from '../conversation/ConversationReferencePicker.tsx'
 import { Composer } from '../composer/Composer.tsx'
@@ -49,7 +49,14 @@ import { ConfigFeedback } from '../composer/ThinkingControl.tsx'
 import { composerOptions, configUnknownBar, ownModelName } from '../composer/modelReasoning.ts'
 import { draftPermission, draftRead, permissionView } from '../composer/permission.ts'
 import { helperPermissionBlocked } from '../agents/personWords.ts'
-import { readOnSelect, readsOnPermission, useReading } from '../composer/harnessCatalogue.tsx'
+import {
+  readHarnessCatalogue,
+  readOnSelect,
+  readsOnPermission,
+  readsOnSelect,
+  slashCatalogueTarget,
+  useReading,
+} from '../composer/harnessCatalogue.tsx'
 import { QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
 import { QueueEditForm } from '../composer/QueueEditForm.tsx'
 import { QueueDrawer } from '../composer/QueueDrawer.tsx'
@@ -263,33 +270,34 @@ function useDraftHarnessCommands(shell: ShellState, enabled: boolean) {
   const cacheEnabled =
     enabled
     && !!chosenHarness
-    && !!chosenHarness.commandCatalogue
+    && (!!chosenHarness.commandCatalogue || !!chosenHarness.offer)
     && chosenHarness.status === 'ready'
     && access.scopes.has('view')
     && shell.connection === 'connected'
     && submission.pending === null
     && submission.fork === null
-    && !submission.worktree
-  const service = cacheEnabled ? servicePick(catalog, chosenHarness, choice.config) : undefined
+  const queryEnabled = cacheEnabled && !!chosenHarness?.commandCatalogue
+  const service = queryEnabled ? servicePick(catalog, chosenHarness, choice.config) : undefined
   const model = service ?? choice.model
-  const picks = cacheEnabled
+  const picks = queryEnabled
     ? startConfig(chosenHarness, choice.config).filter(
         pick => !service || chosenHarness?.catalogue?.options.find(option => option.id === pick.configId)?.category !== 'model',
       )
     : []
-  const project = cacheEnabled ? catalog?.workspaces.find(item => item.id === (choice.workspaceId ?? 'default')) : undefined
-  const provider = cacheEnabled && model ? catalog?.providers.find(item => item.id === model.providerId) : undefined
-  return useHarnessCommands(
-    cacheEnabled
+  const project = queryEnabled ? catalog?.workspaces.find(item => item.id === (choice.workspaceId ?? 'default')) : undefined
+  const provider = queryEnabled && model ? catalog?.providers.find(item => item.id === model.providerId) : undefined
+  return useHarnessCommandsState(
+    queryEnabled
       ? {
           harnessId: chosenHarness.id,
           workspaceId: choice.workspaceId,
           mode: choice.mode,
           ...(model ? { model } : {}),
           ...(picks.length ? { config: picks } : {}),
+          ...(submission.worktree ? { worktree: true } : {}),
         }
       : undefined,
-    cacheEnabled
+    queryEnabled
       ? JSON.stringify([
           shell.snapshot.instanceId,
           shell.snapshot.host.hostId,
@@ -297,6 +305,9 @@ function useDraftHarnessCommands(shell: ShellState, enabled: boolean) {
           shell.snapshot.device.dataScope,
           shell.snapshot.device.scopes,
           chosenHarness.commandCatalogue?.generation,
+          chosenHarness.commandCatalogue?.checked,
+          chosenHarness.commandCatalogue?.reportedAt,
+          Boolean(submission.worktree),
           project && [project.id, project.path, project.unavailable, project.folders],
           provider && [provider.id, provider.kind, model && provider.modelCapabilities?.[model.model]],
           shell.snapshot.tasks
@@ -391,7 +402,12 @@ export function SessionComposer({
     cancelling,
     choose,
   } = shell
-  const cachedCommands = useDraftHarnessCommands(shell, selectedId === null && (!home || shell.route.start === true))
+  const draftCommandsEnabled = selectedId === null && (!home || shell.route.start === true)
+  const draftPrefetchEnabled = visible && draftCommandsEnabled && !newChoicesLocked && shell.connection === 'connected'
+  useEffect(() => {
+    if (draftPrefetchEnabled && readsOnSelect(chosenHarness, access)) readOnSelect(chosenHarness, refresh)
+  }, [draftPrefetchEnabled, chosenHarness, access, refresh])
+  const { catalogue: cachedCommands, loading: commandsLoading } = useDraftHarnessCommands(shell, draftCommandsEnabled)
   const commandHarness = selectedId === null ? chosenHarness : harnessInfo
   const manageEngines = owner ? () => openSettings('engines') : undefined
   // A refusal the new session's own block already says (a Harness found too old once sent) is said there once.
@@ -878,11 +894,18 @@ export function SessionComposer({
   const commands = selectedId === null ? cachedCommands?.commands : current?.commands
   const skills = selectedId === null ? cachedCommands?.skills : current?.skills
   const firstTurn = !!seedService || (!!summary?.agent && !current?.messages.some(message => message.role === 'user'))
-  const source = cachedCommands
-    ? 'previous-session'
-    : commands === undefined && (selectedId === null || firstTurn)
-      ? 'before-session'
-      : 'session'
+  const source = cachedCommands?.source ?? (commands === undefined && (selectedId === null || firstTurn) ? 'before-session' : 'session')
+  const readingDraftCommands = selectedId === null && !firstTurn && commands === undefined && draftReading
+  const requestDraftCommands =
+    draftCommandsEnabled && !firstTurn && !newChoicesLocked && submission.fork === null
+      ? () => {
+          if (commandsLoading || commands !== undefined || !slashCatalogueTarget(chosenHarness, access)) return
+          void readHarnessCatalogue(chosenHarness, false).then(
+            () => refresh(),
+            () => {},
+          )
+        }
+      : undefined
   const actions = composerActions(shell, 'slash', sendSideQuestion)
   const templates = scopedTemplates(
     promptTemplates,
@@ -1023,6 +1046,8 @@ export function SessionComposer({
         skills={skills}
         skillsTruncated={selectedId === null ? cachedCommands?.skillsTruncated : current?.skillsTruncated}
         commandSource={harnessCommandSource(commandHarness, source, commands)}
+        readingCommands={readingDraftCommands}
+        {...(requestDraftCommands ? { onSlashOpen: requestDraftCommands } : {})}
         firstTurn={firstTurn}
         actions={actions}
         historyScope={{ deviceId: shell.snapshot.device.id, harnessId: selectedId === null ? choice.harnessId : summary?.harnessId }}

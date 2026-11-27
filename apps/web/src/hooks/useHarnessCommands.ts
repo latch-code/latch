@@ -8,13 +8,23 @@ interface DraftCommands {
   mode: TaskMode
   model?: ModelRef
   config?: Array<{ configId: string; value: string }>
+  worktree?: boolean
 }
 
-/** Previous-session suggestions live only in memory, scoped to this Host, device authority and exact draft selection. */
-export function useHarnessCommands(input: DraftCommands | undefined, scope: string): HarnessCommandCatalogue | undefined {
+/** Draft command suggestions live only in memory, scoped to this Host, device authority and exact draft selection. */
+export function useHarnessCommandsState(
+  input: DraftCommands | undefined,
+  scope: string,
+): { catalogue: HarnessCommandCatalogue | undefined; loading: boolean } {
   const path = input ? `agents/${encodeURIComponent(input.harnessId)}/commands` : undefined
   const body = input
-    ? JSON.stringify({ workspaceId: input.workspaceId, mode: input.mode, model: input.model, config: input.config })
+    ? JSON.stringify({
+        workspaceId: input.workspaceId,
+        mode: input.mode,
+        model: input.model,
+        config: input.config,
+        ...(input.worktree ? { worktree: true } : {}),
+      })
     : undefined
   const key = path && body ? JSON.stringify([scope, path, body]) : undefined
   const [result, setResult] = useState<{ key: string; catalogue: HarnessCommandCatalogue | null }>()
@@ -54,5 +64,13 @@ export function useHarnessCommands(input: DraftCommands | undefined, scope: stri
     }
   }, [path, body, key])
   // Effect cleanup follows rendering: an old selection must already be hidden in the first render of its successor.
-  return key && result?.key === key ? (result.catalogue ?? undefined) : undefined
+  const settled = key !== undefined && result?.key === key
+  return {
+    catalogue: settled ? (result.catalogue ?? undefined) : undefined,
+    loading: key !== undefined && !settled,
+  }
+}
+
+export function useHarnessCommands(input: DraftCommands | undefined, scope: string): HarnessCommandCatalogue | undefined {
+  return useHarnessCommandsState(input, scope).catalogue
 }

@@ -16,6 +16,20 @@ extension PhoneModel {
               !Task.isCancelled else { throw CancellationError() }
         _ = await refresh(includeSelectedBody: false)
     }
+    func readHarnessCommands(_ id: String, fields: [String: NativeJSON]) async -> NativeJSON? {
+        #if LATCH_SCREENS
+        if staged { return nil }
+        #endif
+        guard let workspace, connected, hasScope("view") else { return nil }
+        let current = generation, content = privateSnapshot.epoch
+        let lease = await workspace.lease()
+        guard current == generation, privateSnapshot.accepts(content), !Task.isCancelled,
+              let lease, lease.valid else { return nil }
+        guard let value = try? await workspace.harnessCommands(id, fields: fields),
+              current == generation, privateSnapshot.accepts(content), !Task.isCancelled,
+              lease.valid, verifiedUntil != nil else { return nil }
+        return value["catalogue"] == .null ? nil : value["catalogue"]
+    }
     func engineInfo(_ harnessId: String?) -> NativeJSON {
         snapshot["catalog"]["harnesses"].array.first { $0["id"].string == harnessId } ?? .null
     }

@@ -7,7 +7,7 @@ import { useFileMentions, type FileMentionChoice, type MentionMembers } from '..
 import type { AttachmentDraftController } from '../hooks/useAttachments.ts'
 import type { MenuSection } from '../components/overlays.tsx'
 import { AttachmentButton, AttachmentDrafts, pasteAttachments, dropAttachments } from './AttachmentDrafts.tsx'
-import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { AtSign, ListPlus, Slash } from 'lucide-react'
 import type { PromptTemplate, SessionCommand, SessionSkill } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
@@ -170,6 +170,8 @@ export function Composer({
   skills,
   skillsTruncated,
   commandSource,
+  readingCommands = false,
+  onSlashOpen,
   firstTurn,
   historyScope,
   templates,
@@ -255,6 +257,8 @@ export function Composer({
   skills?: SessionSkill[]
   skillsTruncated?: boolean
   commandSource?: { name: string; media?: ReactNode; source: CommandListSource }
+  readingCommands?: boolean
+  onSlashOpen?: () => void
   firstTurn?: boolean
   historyScope?: { deviceId: string; harnessId?: string }
   /** What Latch itself does from the slash menu in this session. */
@@ -496,8 +500,9 @@ export function Composer({
     harnessName: commandSource?.name,
     harnessMedia: commandSource?.media,
     running: !!run,
+    reading: readingCommands,
     firstTurn,
-    session: commands !== undefined && commandSource?.source !== 'previous-session',
+    session: commands !== undefined && commandSource?.source === 'session',
     source: commandSource?.source,
     ...(historyScope ? { historyScope } : {}),
     ...(actions ? { actions } : {}),
@@ -513,6 +518,12 @@ export function Composer({
       refreshSlashSend(revision => revision + 1)
     },
   })
+  const notifySlashOpen = useStableCallback(() => {
+    onSlashOpen?.()
+  })
+  useEffect(() => {
+    if (slash.open) notifySlashOpen()
+  }, [slash.open, commands, readingCommands, commandSource?.source, notifySlashOpen])
   /** The input's keys before its own: the menus, then the command's Backspace, Esc, ↑ and the send keys. */
   const keydown = (event: KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.getModifierState('AltGraph')) return
