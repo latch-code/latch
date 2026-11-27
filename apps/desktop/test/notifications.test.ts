@@ -430,7 +430,9 @@ describe('Host-authorized notifications', () => {
       approvals: [],
     }
     await controller.poll()
-    expect(badge).toHaveBeenLastCalledWith(4)
+    expect(badge).toHaveBeenLastCalledWith(3)
+    expect(show).toHaveBeenCalledTimes(3)
+    expect(show.mock.calls.at(-1)?.[0]).toMatchObject({ body: '有一个问题等你回答。' })
   })
   it('tells of a new question from the agent under the approval preference, once, and opens its session', async () => {
     const snapshot = {
@@ -494,8 +496,7 @@ describe('what waits, from Host snapshots', () => {
     const { waits } = JSON.parse(await readFile('packages/testkit/vectors/board-v1.json', 'utf8')) as {
       waits: Array<{ name: string; task: { id: string; updatedAt: string }; approval: boolean; wait: string | null }>
     }
-    // The desktop says `stuck` for both kinds of a run that may have stopped.
-    const kinds: Record<string, string> = { approval: 'approval', question: 'question', unrecognized: 'stuck', silent: 'stuck' }
+    const kinds: Record<string, string> = { approval: 'approval', question: 'question', unrecognized: 'stuck' }
     for (const { name, task, approval, wait } of waits) {
       const approvals = approval ? [{ id: 'a-1', sessionId: task.id, requestedAt: task.updatedAt }] : []
       expect(attentionOf({ tasks: [task], approvals }).items[0]?.kind ?? null, name).toBe(wait === null ? null : kinds[wait])
@@ -507,8 +508,8 @@ describe('what waits, from Host snapshots', () => {
     tasks: [
       { id: 'approve', title: '添加币种筛选', status: 'waiting-approval', updatedAt: at(1), live: { lastEventAt: at(1) } },
       { id: 'ask', title: '问题\u202e反转', status: 'running', pendingQuestions: 2, updatedAt: at(2), live: { lastEventAt: at(2) } },
-      { id: 'silent', title: 'x'.repeat(200), status: 'running', updatedAt: at(3), live: { silent: true, lastEventAt: at(3) } },
-      { id: 'odd', title: '', status: 'running', updatedAt: at(4), live: { lastEventAt: at(4), unrecognized: { at: at(5) } } },
+      { id: 'silent', title: '安静', status: 'running', updatedAt: at(3), live: { silent: true, lastEventAt: at(3) } },
+      { id: 'odd', title: 'x'.repeat(200), status: 'running', updatedAt: at(4), live: { lastEventAt: at(4), unrecognized: { at: at(5) } } },
       { id: 'stopping', title: '停', status: 'waiting-approval', updatedAt: at(6), live: { activity: 'cancelling' } },
       { id: 'run', title: '跑', status: 'running', updatedAt: at(7), live: { lastEventAt: at(7) } },
       { id: 'done', title: '完', status: 'idle', updatedAt: at(8) },
@@ -524,18 +525,17 @@ describe('what waits, from Host snapshots', () => {
   it('lists the sessions the Dock counts, by kind and when each began to wait, with titles cut to one line of 80', () => {
     const result = attentionOf(snapshot, { now: Date.UTC(2026, 10, 12, 9) })
     expect(result.count).toBe(waitingCount(snapshot))
-    expect(result.count).toBe(5)
-    expect(result.running).toBe(1)
+    expect(result.count).toBe(4)
+    expect(result.running).toBe(2)
     expect(result.items).toEqual([
       { taskId: 'elsewhere', title: '', kind: 'approval', since: at(10) },
-      { taskId: 'odd', title: '', kind: 'stuck', since: at(5) },
-      { taskId: 'silent', title: 'x'.repeat(80), kind: 'stuck', since: at(3) },
+      { taskId: 'odd', title: 'x'.repeat(80), kind: 'stuck', since: at(5) },
       { taskId: 'ask', title: '问题反转', kind: 'question', since: at(2) },
       { taskId: 'approve', title: '添加币种筛选', kind: 'approval', since: at(1) },
     ])
     expect(JSON.stringify(result)).not.toContain('/secret')
     expect(attentionOf(snapshot, { limit: 2 }).items.map((item: { taskId: string }) => item.taskId)).toEqual(['elsewhere', 'odd'])
-    expect(attentionOf(snapshot, { limit: 2 }).count).toBe(5)
+    expect(attentionOf(snapshot, { limit: 2 }).count).toBe(4)
     // A question holds the session at waiting-approval: it is listed as a question, not a request.
     const held = { tasks: [{ id: 'held', title: 't', status: 'waiting-approval', pendingQuestions: 1 }], approvals: [] }
     expect(attentionOf(held, { now: Date.UTC(2026, 10, 12, 9) }).items).toEqual([
@@ -637,6 +637,6 @@ describe('what waits, from Host snapshots', () => {
     })
     cleanup.push(() => controller.close())
     await controller.poll()
-    expect(badge).toHaveBeenCalledWith(5)
+    expect(badge).toHaveBeenCalledWith(4)
   })
 })

@@ -613,20 +613,12 @@ private struct RunStatusLine: View {
                     ? PhoneHelperSpeech.status(model.detail, stopping: model.stoppingCurrent, engine: model.engineName(model.currentSummary["harnessId"].string), hostNow: model.hostNow())
                     : PhoneConversation.runStatus(model.detail, stopping: model.stoppingCurrent, engine: model.engineName(model.currentSummary["harnessId"].string), hostNow: model.hostNow())
                 if status.tone != .quiet {
-                    VStack(alignment: .leading, spacing: 8) {
-                        let phase = model.detail["activity"]["phase"].string ?? model.currentSummary["live"]["activity"].string
-                        let thinking = waitingForReply && phase == "model" && !model.stoppingCurrent && status.tone == .plain
-                        HStack(spacing: 6) {
-                            if thinking { ProgressView().controlSize(.mini).accessibilityHidden(true) }
-                            (Text(thinking && !person ? "思考中" : status.text) + Text(status.clock.map { " · " + $0 } ?? "").monospacedDigit())
-                        }.font(PhoneTheme.caption).foregroundStyle(status.tone == .amber ? PhoneTheme.amber : PhoneTheme.muted)
-                        if !status.actions.isEmpty {
-                            HStack(spacing: 8) {
-                                if status.actions.contains(.keepWaiting) { Button("继续等") { Task { await model.keepWaiting() } } }
-                                if status.actions.contains(.stop) { Button("停止") { Task { await model.stop() } } }
-                            }.buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.small).tint(PhoneTheme.ink).disabled(model.busy)
-                        }
-                    }.accessibilityElement(children: .contain)
+                    let phase = model.detail["activity"]["phase"].string ?? model.currentSummary["live"]["activity"].string
+                    let thinking = waitingForReply && phase == "model" && !model.stoppingCurrent && status.tone == .plain
+                    HStack(spacing: 6) {
+                        if thinking { ProgressView().controlSize(.mini).accessibilityHidden(true) }
+                        (Text(thinking && !person ? "思考中" : status.text) + Text(status.clock.map { " · " + $0 } ?? "").monospacedDigit())
+                    }.font(PhoneTheme.caption).foregroundStyle(status.tone == .amber ? PhoneTheme.amber : PhoneTheme.muted)
                 }
             }
         }

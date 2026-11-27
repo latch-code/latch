@@ -1,5 +1,6 @@
 import {
   escapeSecurityText,
+  waitKindOf,
   type AppSnapshot,
   type BoardGroup,
   type RunLive,
@@ -99,8 +100,6 @@ export function inSpace<T extends Pick<TaskSummary, 'agent' | 'generalChat'>>(ta
  */
 export type RowStatus =
   | { kind: 'waiting' }
-  /** The Host says the run has gone quiet past its threshold. It waits on the person too: 继续等 or 停止. */
-  | { kind: 'silent' }
   | { kind: 'stopping' }
   | { kind: 'running' }
   | { kind: 'failed' }
@@ -113,22 +112,9 @@ export type RowStatus =
 
 const liveNow = (task: TaskSummary) => (task.status === 'running' || task.status === 'waiting-approval' ? task.live : undefined)
 
-/** The engine has done nothing since a request Latch could not answer: it may have stopped on it. */
-function stuckOnRequest(live: RunLive | undefined): boolean {
-  const asked = parseTime(live?.unrecognized?.at)
-  const last = parseTime(live?.lastEventAt)
-  return asked !== undefined && last !== undefined && asked >= last
-}
-
-/**
- * Waits on the person: an approval, a question, a request Latch did not recognise and nothing since, or a run the Host
- * calls silent. A stop already asked for answers all of these. A question leaves the status at running, so only its count says so.
- */
+/** Waits on the person for an approval, a question, or an unsupported request the run is stuck on. */
 export function waitsOnYou(task: TaskSummary): boolean {
-  const live = liveNow(task)
-  if (live?.activity === 'cancelling') return false
-  if (task.status === 'waiting-approval') return true
-  return task.status === 'running' && (Boolean(task.pendingQuestions) || live?.silent === true || stuckOnRequest(live))
+  return waitKindOf(task) !== undefined
 }
 
 /** The Host puts the session in 等你处理: something waits on the person, a failure not yet opened, or results not yet checked. */
@@ -168,12 +154,8 @@ export function rowStatus(task: TaskSummary, { unread = false, stopping = false,
   const running = task.status === 'running' || task.status === 'waiting-approval'
   if (running && frozen) return { kind: 'frozen' }
   if (running && (stopping || liveNow(task)?.activity === 'cancelling')) return { kind: 'stopping' }
-  if (task.status === 'waiting-approval') return { kind: 'waiting' }
-  if (task.status === 'running') {
-    const live = liveNow(task)
-    if (task.pendingQuestions || stuckOnRequest(live)) return { kind: 'waiting' }
-    return { kind: live?.silent ? 'silent' : 'running' }
-  }
+  if (waitsOnYou(task)) return { kind: 'waiting' }
+  if (running) return { kind: 'running' }
   const outcome = task.status === 'idle' ? task.runOutcome : undefined
   if (task.status === 'failed' || outcome === 'failed') return { kind: 'failed' }
   const unknown = task.runEnd?.unknownResultCount ?? 0
@@ -186,10 +168,10 @@ export function rowStatus(task: TaskSummary, { unread = false, stopping = false,
 
 /**
  * The state mark on a sidebar row's Harness icon: running work spins, what waits on the person is amber (an approval or
- * a question, silence, results nobody can vouch for), a failure is red, a new answer is a quiet check. Nothing at rest,
+ * a question, results nobody can vouch for), a failure is red, a new answer is a quiet check. Nothing at rest,
  * after a stop, or while the connection is down, where the row's words still say it.
  */
-type RowMark = 'running' | 'waiting' | 'silent' | 'unknown' | 'failed' | 'unread'
+type RowMark = 'running' | 'waiting' | 'unknown' | 'failed' | 'unread'
 export function rowMark(status: RowStatus): RowMark | undefined {
   switch (status.kind) {
     case 'running':
@@ -197,8 +179,6 @@ export function rowMark(status: RowStatus): RowMark | undefined {
       return 'running'
     case 'waiting':
       return 'waiting'
-    case 'silent':
-      return 'silent'
     case 'failed':
       return 'failed'
     case 'ended':
@@ -277,23 +257,18 @@ export const rowGateway = (task: Pick<TaskSummary, 'modelRoute'>): boolean =>
   task.modelRoute !== undefined && task.modelRoute.bypassed !== true
 
 /**
- * What a row in 等你处理 waits on, from the summary alone: an approval, how many questions, a request Latch could not
- * read, or silence. Never what a request would do or where: the list holds no session content.
+ * What a row in 等你处理 waits on, from the summary alone. The list holds no request content.
  */
-export type WaitKind = { kind: 'asks'; words: string } | { kind: 'silent' }
-
-export function waitKind(task: TaskSummary): WaitKind | undefined {
-  const live = liveNow(task)
-  if (live?.activity === 'cancelling') return undefined
-  if (task.status !== 'running' && task.status !== 'waiting-approval') return undefined
-  const asks = [
-    // A question also holds the session at waiting-approval: that alone is no approval.
-    ...(task.status === 'waiting-approval' && !task.pendingQuestions ? [COPY.approval] : []),
-    ...(task.pendingQuestions ? [COPY.questions(task.pendingQuestions)] : []),
-  ]
-  if (asks.length > 0) return { kind: 'asks', words: asks.join(' · ') }
-  if (stuckOnRequest(live)) return { kind: 'asks', words: COPY.unsupported }
-  return live?.silent ? { kind: 'silent' } : undefined
+export function waitWords(task: TaskSummary): string | undefined {
+  switch (waitKindOf(task)) {
+    case 'approval':
+      return COPY.approval
+    case 'question':
+      return COPY.questions(task.pendingQuestions ?? 1)
+    case 'unrecognized':
+      return COPY.unsupported
+  }
+  return undefined
 }
 
 export interface WorkStatus {
@@ -317,13 +292,7 @@ export function workStatus(
     return { tone: 'neutral', words: COPY.last(words) }
   }
   if (status.kind === 'stopping') return { tone: 'running', words: COPY.stopping }
-  if (status.kind === 'waiting' || status.kind === 'silent') {
-    const wait = waitKind(task)
-    return {
-      tone: 'waiting',
-      words: wait?.kind === 'asks' ? wait.words : wait?.kind === 'silent' ? silentWords(task.live, now) : COPY.attention,
-    }
-  }
+  if (status.kind === 'waiting') return { tone: 'waiting', words: waitWords(task) ?? COPY.attention }
   if (status.kind === 'running') return { tone: 'running', words: runningWords(task.live, now) }
   if (status.kind === 'failed') return { tone: 'failed', words: unknown > 0 ? COPY.failedUnknown(unknown) : COPY.failed }
   if (unknown > 0) return { tone: 'warn', words: COPY.unknown(unknown) }

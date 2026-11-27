@@ -422,7 +422,7 @@ iOS 在团队关系到达前展示可读的会话摘要。点选缓存行时，�
 
 ### 取消的请求 ID 与回执
 
-`POST /link/api/tasks/:id/cancel` 的请求体为 `{ requestId?, runId? }`，两项都可选。页面总是带 `requestId`，并带它显示的那次运行的 `runId`（摘要里有时）。同一会话同一次运行的停止在结果未知时重用同一个 `requestId`，明确回答之后丢弃；运行变了就用新的。
+`POST /link/api/tasks/:id/cancel` 的请求体为 `{ requestId?, runId? }`，两项都可选。页面总是带 `requestId`，并带它显示的那次运行的 `runId`（摘要里有时）。同一会话同一次运行的停止在结果未知时重用同一个 `requestId`，明确回答之后丢弃；运行变了就用新的。旧运行的迟到回执只结算对应请求。
 
 - **只停止指名的运行。** `runId` 与会话当前的运行不同时，Host 不停止任何东西，回答 `ended` 且不带 `status`；相同但已结束时回答 `ended` 与它结束时的状态。不带 `runId` 的请求停止正在进行的运行，没有时回答 `ended`。
 - **先审计，再核对，再停止。** 指名的运行仍在进行时（Driver 列不出该会话、Host 无从判断时也一样），Host 先审计 `task.cancelled`（detail 含 `runId`），再把 `runId` 交给 Driver。Driver 在开始取消的同一步核对它，所以审计期间结束、又开始的新一轮不会被停止。
@@ -635,11 +635,13 @@ Codex 的原生委派在同一会话的详情里沿用 `Message.subagent`。
 
 - Host 只有一个定时器，等最早到期的阈值；只在有运行可能越过阈值或正在沉默时存在，读的是 `Bridge.liveRuns()`（内存里的运行）。
 - 越过时只发一次普通的会话变化。沉默中的运行每 30 秒复查一次（Driver 不必为每个动静都通知），发现恢复时同样发一次变化。
-- 没有 `liveRuns` 的 Driver 仍在读取时算出沉默、可以继续等，但 Host 不主动宣布越过。
+- 没有 `liveRuns` 的 Driver 在读取会话时同样会得到沉默状态，Host 只对支持此方法的 Driver 主动通报越过阈值。
 - 客户端用 `lastEventAt` 与 Host 时钟自己算分钟数，不需要 Host 持续推送。
 - `lastEventAt` 的变化本身不让其他设备重读列表，只有活动、阈值、沉默或 `unrecognized` 计数的变化才会。所以列表里的 `lastEventAt` 可以落后于详情：判断沉默以 `silent` 为准，比较 `unrecognized.at` 与 `lastEventAt` 只在详情里做。
 
-**继续等。** `POST /link/api/tasks/:id/keep-waiting`，权限 `view`，请求体 `{ runId, thresholdMs }`，`thresholdMs` 是页面看到的阈值。回答 `{ accepted: true, outcome, thresholdMs? }`：
+新客户端自动等待。仅仅没有输出的会话留在「运行中」，详情显示已等待的时间。人可以从输入框主动停止，等待本身不产生写请求。
+
+**兼容旧客户端的「继续等」。** `POST /link/api/tasks/:id/keep-waiting`，权限 `view`，请求体 `{ runId, thresholdMs }`，`thresholdMs` 是页面看到的阈值。回答 `{ accepted: true, outcome, thresholdMs? }`：
 
 | `outcome` | 含义 |
 | --- | --- |

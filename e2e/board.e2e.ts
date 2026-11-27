@@ -453,16 +453,13 @@ it('lays the Host’s groups out as a board that reflows by its own width, and w
       for (const task of body.tasks)
         if (task.id === running && task.live) {
           task.live = { ...task.live, silent: true, lastEventAt: quiet }
-          task.board = { ...task.board!, group: 'attention', reason: 'silent' }
         }
       await route.fulfill({ response, json: body })
     })
     await page.reload()
     await connected(page)
-    await column(page, 'attention')
-      .locator(`.work-board-card[data-work-session="${running}"]`)
-      .getByText(/^没有动静/u)
-      .waitFor()
+    await column(page, 'running').locator(`.work-board-card[data-work-session="${running}"]`).waitFor()
+    expect(await column(page, 'attention').locator(`[data-work-session="${running}"]`).count()).toBe(0)
     await shot(page, 'board-silent', 1440, 'light')
     await shot(page, 'board-silent', 1440, 'dark')
     await page.unroute('**/link/api/snapshot')

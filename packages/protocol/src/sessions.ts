@@ -350,7 +350,7 @@ export interface DriverTaskSummary {
 
 /**
  * The live run as the Host reads it. The driver reports what the engine is doing and when it last did anything; the
- * Host adds `silenceThresholdMs` and `silent`. Silence only ever asks: nothing stops a run because of it.
+ * Host adds `silenceThresholdMs` and `silent`. A silent run keeps running without user input.
  */
 export interface RunLive {
   runId: string

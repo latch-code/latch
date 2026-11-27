@@ -784,7 +784,7 @@ describe('the live run', () => {
     expect(status({ activity: { phase: 'starting', since: at(71_000) } })).toEqual({ tone: 'plain', text: '正在启动 Codex…' })
   })
 
-  it('asks when a run has gone quiet, in the words of what it waits on, and only then', () => {
+  it('reports a lull in output as ordinary running feedback and keeps unsupported requests distinct', () => {
     const base = detail([user('u')], { runStartedAt: at(0) }, 'running')
     const quiet = (live: RunLive, now: number) =>
       runStatus({ ...base, summary: { ...base.summary, live } }, { cancelling: false, approvals: 0, hostNow: T0 + now, harness: 'Codex' })
@@ -792,7 +792,7 @@ describe('the live run', () => {
       { runId: 'r', activity: 'model', since: at(0), lastEventAt: at(0), silent: true, silenceThresholdMs: 120_000 },
       180_000,
     )
-    expect(model).toMatchObject({ tone: 'amber', text: '等模型回应 · 3 分钟没有新内容', actions: ['keep-waiting', 'stop'] })
+    expect(model).toEqual({ tone: 'plain', text: '等模型回应 · 3 分钟没有新内容', noOutput: true })
     const command = quiet(
       {
         runId: 'r',
@@ -805,7 +805,7 @@ describe('the live run', () => {
       },
       720_000,
     )
-    expect(command).toMatchObject({ tone: 'amber', text: 'pnpm test · 12 分钟没有输出' })
+    expect(command).toEqual({ tone: 'plain', text: 'pnpm test · 12 分钟没有输出', noOutput: true })
     const unknown = quiet(
       {
         runId: 'r',
@@ -816,7 +816,7 @@ describe('the live run', () => {
       },
       5000,
     )
-    expect(unknown).toEqual({ tone: 'amber', text: 'Codex 发来不支持的请求 terminal/create', actions: ['stop'], viewMessageId: 'n1' })
+    expect(unknown).toEqual({ tone: 'amber', text: 'Codex 发来不支持的请求 terminal/create', viewMessageId: 'n1' })
     // The engine went on after the request it did not get an answer to: nothing is stuck on it.
     const wentOn = quiet(
       { runId: 'r', activity: 'model', since: at(0), lastEventAt: at(2000), unrecognized: { count: 1, at: at(1000) } },
@@ -832,7 +832,7 @@ describe('the live run', () => {
         harness: 'Codex',
       })
     expect(older(119_000).tone).toBe('plain')
-    expect(older(121_000)).toMatchObject({ tone: 'amber', text: '2 分钟没有新输出' })
+    expect(older(121_000)).toEqual({ tone: 'plain', text: '2 分钟没有新输出', noOutput: true })
   })
 
   it('keeps one clock format', () => {
@@ -1349,7 +1349,7 @@ describe('stable turns', () => {
         live: { runId: 'new-run', activity: 'model' as const, since: at(0), lastEventAt: at(0), silent: true as const },
       },
     }
-    expect(runStatus(silent, { ...opts, hostNow: T0 + 121_000 })).toMatchObject({ tone: 'amber', text: '等模型回应 · 2 分钟没有新内容' })
+    expect(runStatus(silent, { ...opts, hostNow: T0 + 121_000 })).toMatchObject({ tone: 'plain', text: '等模型回应 · 2 分钟没有新内容' })
   })
 })
 

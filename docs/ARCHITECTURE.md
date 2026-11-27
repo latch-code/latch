@@ -589,15 +589,15 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 
 | # | 条件 | 组 | `reason` |
 | --- | --- | --- | --- |
-| 1–4 | 运行中且没有在停止：审批（状态 `waiting-approval` 且没有提问，或 Host 列出它的审批）、提问、未识别的请求之后再无动静、沉默 | `attention` | `approval`、`question`、`unrecognized`、`silent` |
-| 5 | 不在运行，最近一次运行有无人能担保的结果，且这次结算未被核对 | `attention` | `unknown` |
-| 6 | 不在运行，失败（`failed`，或 `idle` 而 `runOutcome` 为 `failed`），且这次结算未被打开 | `attention` | `failed` |
-| 7 | 运行中（含正在停止） | `running` | |
-| 8 | 绑定的 PR 最近一次被读到已合并或已关闭 | `done` | |
-| 9 | Host 读到的本地交付事实为真且归这个会话（见下「交付事实」），或绑定了 PR 而它开着或还没读过 | `deliver` | |
-| 10 | 其余 | `done` | |
+| 1–3 | 运行中且没有在停止，正在等审批（状态 `waiting-approval` 且没有提问，或 Host 列出它的审批）、等回答，或未识别的请求之后再无动静 | `attention` | `approval`、`question`、`unrecognized` |
+| 4 | 不在运行，最近一次运行有无人能担保的结果，且这次结算未被核对 | `attention` | `unknown` |
+| 5 | 不在运行，失败（`failed`，或 `idle` 而 `runOutcome` 为 `failed`），且这次结算未被打开 | `attention` | `failed` |
+| 6 | 运行中（含暂时没有输出、正在停止） | `running` | |
+| 7 | 绑定的 PR 最近一次被读到已合并或已关闭 | `done` | |
+| 8 | Host 读到的本地交付事实为真且归这个会话（见下「交付事实」），或绑定了 PR 而它开着或还没读过 | `deliver` | |
+| 9 | 其余 | `done` | |
 
-- 1–4 与网页的 `waitsOnYou`、桌面端的 `attentionOf` 是同一判定（`packages/protocol` 的 `waitKindOf`，共用向量 `packages/testkit/vectors/board-v1.json`）。
+- 1–3 与网页的 `waitsOnYou`、桌面端的 `attentionOf` 是同一判定（`packages/protocol` 的 `waitKindOf`，共用向量 `packages/testkit/vectors/board-v1.json`）。
 - `settle` 是结算的名字：`runId`，否则 `runEnd.at`，否则 `updatedAt`。`POST /tasks/:id/attend { settle, opened?, checked? }` 只记在当前结算上，不同就 409 `attend-stale`；下一次运行有新的 `settle`，又会进入等你处理。`opened` 要 `view`，是阅读记号，不写审计；`checked` 要 `run`，先写 `task.unknown.checked`（只有会话 ID 与数目），写不进就不记。它只决定看板上的位置，不改变各请求「结果未知」的核对与放弃。网页在失败的会话真正显示在主区时发 `opened`，运行结束行的「已核对」发 `checked`（[DESIGN.md](DESIGN.md)）；iOS 尚未发送。
 - `card`：不是归档、旧助手会话，我的 Agent 的会话只有定时运行。不是卡的会话也有组。
 - **交付事实。** `BoardDelivery` 只在内存中：一次运行结算后、交付的提交、推送或建 PR 之后、任何设备调 `workbench/delivery` 时各读一次，Host 启动约 2 秒后对最近 7 天、空闲、每个目录一个的会话最多读 48 个。只读 Code 会话（不归档、不在运行）的工作目录，经受限运行器只读本地 Git，从不调用 `gh`、不访问网络；常规 PR 状态来自设备发起的读与人按下的交付；人对已绑定 PR 显式开启后台跟进时，Host 另行检查该 PR。后台同时只读一个，且有两个读取在跑时不开始；设备的读取仍各自最多两批。目录的改动只归一个会话：自己的工作树或会话文件夹、或绑定了 PR 的会话归它自己；几个会话共用一个目录时，归改动记录（`TurnChanges`：已结算、未撤销、`files > 0` 的一轮）里自己改过文件的会话中最近变化的那个。没有会话自己改过文件（例如人手改的），看板上就没有会话认领这个目录的改动。私有会话只与私有会话比，从不让可见的会话进出可交付。结论变了才通知客户端。

@@ -5,7 +5,7 @@ import { hostNow, useTicker } from '../core/hostClock.ts'
 import { currentLocale, defineCopy, plural, useLocale } from '../core/i18n.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { useSteady } from '../hooks/useSteady.ts'
-import { activityWords, rowMark, runningWords, silentWords, type RowStatus, type WaitKind } from '../sessions.ts'
+import { activityWords, rowMark, runningWords, type RowStatus } from '../sessions.ts'
 import { runClock, runElapsed } from '../conversation.ts'
 import { MarkTile } from './BrandTile.tsx'
 import { personActivity, THOUGHT_WORDS } from '../agents/personWords.ts'
@@ -62,19 +62,8 @@ export function ThinkingLine({ live, person = false }: { live: RunLive | undefin
   )
 }
 
-function SilentWords({ live }: { live: RunLive | undefined }) {
-  useTicker('second')
-  return <>{silentWords(live, hostNow())}</>
-}
-
-/** What a row in 等你处理 waits on, on its second line; silence counts its minutes there. */
-export function WaitWords({ wait, live }: { wait: WaitKind; live: RunLive | undefined }) {
-  return wait.kind === 'silent' ? <SilentWords live={live} /> : <>{wait.words}</>
-}
-
 const SLOT: Record<RowStatus['kind'], SlotStatus> = {
   waiting: 'waiting',
-  silent: 'attention',
   stopping: 'running',
   running: 'running',
   failed: 'failed',
@@ -136,14 +125,13 @@ export function SessionStatus({
   className?: string
 }) {
   const shown = useSteady(status, statusKey(status))
-  const shelved = inWaitingShelf && (shown.kind === 'waiting' || shown.kind === 'silent')
-  const attention = shown.kind === 'ended' ? shown.word : <SilentWords live={live} />
+  const shelved = inWaitingShelf && shown.kind === 'waiting'
   return (
     <StatusSlot
       className={className}
       status={shelved ? 'time' : shown.kind === 'ended' && shown.unknown > 0 ? 'attention' : SLOT[shown.kind]}
       running={shown.kind === 'stopping' ? COPY.stopping : <RunningWords live={live} person={person} />}
-      attention={attention}
+      attention={shown.kind === 'ended' ? shown.word : undefined}
       ended={shown.kind === 'ended' ? shown.word : undefined}
       time={time}
       dateTime={dateTime}
@@ -156,8 +144,6 @@ export function statusLabel(status: RowStatus, live: RunLive | undefined, person
   switch (status.kind) {
     case 'waiting':
       return COPY.waiting
-    case 'silent':
-      return silentWords(live, hostNow())
     case 'stopping':
       return COPY.stopping
     case 'running':

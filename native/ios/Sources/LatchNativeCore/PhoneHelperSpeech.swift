@@ -40,7 +40,7 @@ public enum PhoneHelperSpeech {
     }
     public static func status(_ detail: NativeJSON, stopping: Bool, engine: String, hostNow: Date) -> PhoneRunStatus {
         let original = PhoneConversation.runStatus(detail, stopping: stopping, engine: engine, hostNow: hostNow)
-        guard original.tone != .amber else { return original }
+        guard original.tone == .plain || original.tone == .quiet else { return original }
         let phase = detail["activity"]["phase"].string ?? detail["summary"]["live"]["activity"].string
         let text: String
         if stopping || phase == "cancelling" { text = "在停下" }
@@ -52,7 +52,7 @@ public enum PhoneHelperSpeech {
         } else if !(detail["liveText"].string ?? "").isEmpty { text = "在回复" }
         else if phase == "model" || !(detail["liveReasoning"].string ?? "").isEmpty { text = "在想" }
         else { text = original.text }
-        return PhoneRunStatus(tone: original.tone, text: text, clock: original.clock, actions: original.actions)
+        return PhoneRunStatus(tone: original.tone, text: text, clock: original.clock)
     }
     public static func permission(_ detail: NativeJSON, harness: NativeJSON) -> PhoneHelperPermission? {
         guard (detail["permission"]["level"].string ?? harness["level"].string) == "L3", detail["summary"]["mode"].string != "chat" else { return nil }

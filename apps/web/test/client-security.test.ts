@@ -1192,18 +1192,24 @@ describe('approval decisions (idempotent retries)', () => {
   it('reuses one stop request per run while its outcome is unknown, and starts a new one for another run', () => {
     let next = 0
     const requests = new CancelRequests(() => `stop-${++next}`)
-    const first = requests.bodyFor('s', 'run-1')
+    const first = requests.begin('s', 'run-1')!
     expect(first).toEqual({ requestId: 'stop-1', runId: 'run-1' })
-    requests.settle('s', new ApiTimeoutError())
-    expect(requests.bodyFor('s', 'run-1')).toEqual(first)
-    requests.settle('s', new ApiError(503, 'request-failed', 'x'))
-    expect(requests.bodyFor('s', 'run-1')).toEqual(first)
-    expect(requests.bodyFor('s', 'run-2')).toEqual({ requestId: 'stop-2', runId: 'run-2' })
-    requests.settle('s', new ApiError(404, 'task-not-found', 'x'))
-    expect(requests.bodyFor('s', 'run-2')).toEqual({ requestId: 'stop-3', runId: 'run-2' })
-    requests.settle('s')
-    expect(requests.bodyFor('s', undefined)).toEqual({ requestId: 'stop-4' })
-    expect(requests.bodyFor('other', undefined)).toEqual({ requestId: 'stop-5' })
+    expect(requests.begin('s', 'run-1')).toBeUndefined()
+    expect(requests.settle('s', first, new ApiTimeoutError())).toBe(true)
+    expect(requests.begin('s', 'run-1')).toBe(first)
+    expect(requests.settle('s', first, new ApiError(503, 'request-failed', 'x'))).toBe(true)
+    expect(requests.begin('s', 'run-1')).toBe(first)
+    const second = requests.begin('s', 'run-2')!
+    expect(second).toEqual({ requestId: 'stop-2', runId: 'run-2' })
+    expect(requests.settle('s', first)).toBe(false)
+    expect(requests.settle('s', first, new ApiTimeoutError())).toBe(false)
+    expect(requests.begin('s', 'run-2')).toBeUndefined()
+    expect(requests.settle('s', second, new ApiError(404, 'task-not-found', 'x'))).toBe(true)
+    const retry = requests.begin('s', 'run-2')!
+    expect(retry).toEqual({ requestId: 'stop-3', runId: 'run-2' })
+    expect(requests.settle('s', retry)).toBe(true)
+    expect(requests.begin('s', undefined)).toEqual({ requestId: 'stop-4' })
+    expect(requests.begin('other', undefined)).toEqual({ requestId: 'stop-5' })
   })
 
   it('reads whether a stop stopped its run, found it ended, or found a later run', () => {

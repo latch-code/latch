@@ -529,10 +529,10 @@ private struct RowMarkTile: View {
     }
     private var color: Color? {
         switch state {
-        case .waiting, .silent, .unknown: PhoneTheme.amberIcon
+        case .waiting, .unknown: PhoneTheme.amberIcon
         case .failed: PhoneTheme.red
         case .unread: PhoneTheme.accent
-        case .running, nil: nil
+        case .running, .silent, nil: nil
         }
     }
 }
@@ -544,7 +544,7 @@ private struct RowTrailing: View {
     let status: PhoneRowStatus
     var body: some View {
         switch status {
-        case .running, .stopping:
+        case .running, .stopping, .silent:
             // The ring sits on the clock's line, so the row keeps the height of a row at rest.
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
@@ -582,7 +582,7 @@ private struct RowSecondLine: View {
         switch status {
         case .waiting: said(PhoneSessions.waitWords(task).map { "等你处理 · " + $0 } ?? "等你处理", PhoneTheme.amber)
         case .silent:
-            TimelineView(.periodic(from: .now, by: 30)) { _ in said(PhoneSessions.silentWords(task["live"], hostNow: model.hostNow()), PhoneTheme.amber) }
+            TimelineView(.periodic(from: .now, by: 30)) { _ in said(PhoneSessions.silentWords(task["live"], hostNow: model.hostNow()), PhoneTheme.muted) }
         case .stopping: said("正在停止", PhoneTheme.ink2)
         case .running: said(PhoneSessions.activityWords(task["live"]), PhoneTheme.ink2)
         case .failed: said("失败", PhoneTheme.red)

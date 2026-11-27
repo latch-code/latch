@@ -25,7 +25,7 @@ import {
   steppedSession,
   type SessionFilter,
   unknownNote,
-  waitKind,
+  waitWords,
   writeFolded,
   showsUnread,
 } from '../src/sessions.ts'
@@ -197,10 +197,13 @@ describe('session row status', () => {
     expect(showsUnread(of({ status: 'idle' }, { unread: true }))).toBe(true)
   })
 
-  it('calls a run silent only when the Host does, never from elapsed time alone', () => {
+  it('keeps a quiet run running in the session list', () => {
     const old = live({ lastEventAt: at(10).toISOString() })
     expect(of({ status: 'running', live: old })).toEqual({ kind: 'running' })
-    expect(of({ status: 'running', live: { ...old, silent: true } })).toEqual({ kind: 'silent' })
+    const quiet = task('quiet', at(21), { status: 'running', live: { ...old, silent: true } })
+    expect(rowStatus(quiet)).toEqual({ kind: 'running' })
+    expect(rowMark(rowStatus(quiet))).toBe('running')
+    expect(waitsOnYou(quiet)).toBe(false)
   })
 
   it('waits on the person after a request Latch did not recognise, until the engine goes on', () => {
@@ -212,7 +215,7 @@ describe('session row status', () => {
     expect(of({ status: 'running', live: wentOn })).toEqual({ kind: 'running' })
     expect(waitsOnYou(task('a', at(21), { status: 'running', live: wentOn }))).toBe(false)
     // It went on and then went quiet: that is the silence, not the request.
-    expect(of({ status: 'running', live: { ...wentOn, silent: true } })).toEqual({ kind: 'silent' })
+    expect(of({ status: 'running', live: { ...wentOn, silent: true } })).toEqual({ kind: 'running' })
   })
 
   it('waits on the person while a question is open, ahead of silence and behind a stop', () => {
@@ -275,7 +278,6 @@ describe('session row status', () => {
     expect(rowMark({ kind: 'running' })).toBe('running')
     expect(rowMark({ kind: 'stopping' })).toBe('running')
     expect(rowMark({ kind: 'waiting' })).toBe('waiting')
-    expect(rowMark({ kind: 'silent' })).toBe('silent')
     expect(rowMark({ kind: 'failed' })).toBe('failed')
     expect(rowMark({ kind: 'ended', word: '已强制停止', unknown: 2 })).toBe('unknown')
     expect(rowMark({ kind: 'ended', word: '已停止', unknown: 0 })).toBeUndefined()
@@ -290,7 +292,6 @@ describe('session row status', () => {
     expect(failed).toContain('session-row-state')
     expect(failed).toContain('codex')
     expect(tone(glyph({ kind: 'waiting' }, 'claude-agent'))).toBe('waiting')
-    expect(tone(glyph({ kind: 'silent' }, 'claude-agent'))).toBe('waiting')
     expect(tone(glyph({ kind: 'ended', word: '已中断', unknown: 1 }, 'qwen'))).toBe('waiting')
     const running = glyph({ kind: 'running' }, 'opencode')
     expect(tone(running)).toBe('running')
@@ -367,14 +368,11 @@ describe('session row status', () => {
 describe('等你处理', () => {
   const quiet: RunLive = { runId: 'r', activity: 'model', since: at(20).toISOString(), lastEventAt: at(20).toISOString(), silent: true }
   it('says what a row waits on from the summary alone: the kind and how many, never what or where', () => {
-    expect(waitKind(task('a', at(21), { status: 'waiting-approval' }))).toEqual({ kind: 'asks', words: '审批' })
-    expect(waitKind(task('a', at(21), { status: 'running', pendingQuestions: 2 }))).toEqual({ kind: 'asks', words: '2 个问题' })
+    expect(waitWords(task('a', at(21), { status: 'waiting-approval' }))).toBe('审批')
+    expect(waitWords(task('a', at(21), { status: 'running', pendingQuestions: 2 }))).toBe('2 个问题')
     // A question holds the session at waiting-approval too; it is no approval, built-in or an agent's.
-    expect(waitKind(task('a', at(21), { status: 'waiting-approval', pendingQuestions: 1 }))).toEqual({
-      kind: 'asks',
-      words: '1 个问题',
-    })
-    expect(waitKind(task('a', at(21), { status: 'running', live: quiet }))).toEqual({ kind: 'silent' })
+    expect(waitWords(task('a', at(21), { status: 'waiting-approval', pendingQuestions: 1 }))).toBe('1 个问题')
+    expect(waitWords(task('a', at(21), { status: 'running', live: quiet }))).toBeUndefined()
     const stuck: RunLive = {
       runId: 'r',
       activity: 'tool',
@@ -382,18 +380,18 @@ describe('等你处理', () => {
       lastEventAt: at(20).toISOString(),
       unrecognized: { count: 1, at: at(20).toISOString() },
     }
-    expect(waitKind(task('a', at(21), { status: 'running', live: stuck }))).toEqual({ kind: 'asks', words: '不支持的请求' })
-    expect(waitKind(task('a', at(21), { status: 'running' }))).toBeUndefined()
-    expect(waitKind(task('a', at(21), { status: 'idle', pendingQuestions: 1 }))).toBeUndefined()
+    expect(waitWords(task('a', at(21), { status: 'running', live: stuck }))).toBe('不支持的请求')
+    expect(waitWords(task('a', at(21), { status: 'running' }))).toBeUndefined()
+    expect(waitWords(task('a', at(21), { status: 'idle', pendingQuestions: 1 }))).toBeUndefined()
     // A stop already asked for answers it.
     const stopping: RunLive = { ...quiet, activity: 'cancelling', silent: undefined }
-    expect(waitKind(task('a', at(21), { status: 'waiting-approval', live: stopping }))).toBeUndefined()
+    expect(waitWords(task('a', at(21), { status: 'waiting-approval', live: stopping }))).toBeUndefined()
   })
 
   it('gathers what the Host puts in 等你处理 ahead of the projects, and leaves it there when nothing else asks', () => {
     const tasks = [
       task('approval', at(21), { status: 'waiting-approval', board: { group: 'attention', reason: 'approval' } }),
-      task('silent', at(22), { status: 'running', live: quiet, board: { group: 'attention', reason: 'silent' } }),
+      task('silent', at(22), { status: 'running', live: quiet, board: { group: 'running' } }),
       task('running', at(23), { status: 'running', board: { group: 'running' } }),
       task('failed', at(20), { status: 'failed', board: { group: 'attention', reason: 'failed' } }),
       task('opened', at(18), { status: 'failed', board: { group: 'done' } }),
@@ -402,8 +400,8 @@ describe('等你处理', () => {
     const groups = groupSessions(tasks, [], { waitingFrom: tasks })
     // A failure stays in 等你处理 until it is opened; then the Host moves it, and the row follows.
     expect(groups.map(group => [group.id, group.tasks.map(item => item.id)])).toEqual([
-      ['waiting', ['silent', 'approval', 'failed']],
-      ['other', ['running', 'done', 'opened']],
+      ['waiting', ['approval', 'failed']],
+      ['other', ['running', 'silent', 'done', 'opened']],
     ])
     // A search shows every match where it belongs.
     expect(groupSessions(tasks, []).map(group => group.id)).toEqual(['other'])
@@ -424,13 +422,13 @@ describe('等你处理', () => {
     const approval = (sessionId: string) => ({ sessionId }) as AppSnapshot['approvals'][number]
     const tasks = [
       task('a', at(21), { status: 'waiting-approval', board: { group: 'attention', reason: 'approval' } }),
-      task('b', at(21), { status: 'running', live: quiet, board: { group: 'attention', reason: 'silent' } }),
+      task('b', at(21), { status: 'running', live: quiet, board: { group: 'running' } }),
       task('c', at(21), { status: 'running', board: { group: 'running' } }),
       task('d', at(21), { status: 'idle', board: { group: 'done' } }),
       task('e', at(21), { status: 'running', pendingQuestions: 2, board: { group: 'attention', reason: 'question' } }),
       task('f', at(21), { status: 'failed', board: { group: 'attention', reason: 'failed' } }),
     ]
-    expect(waitingCount({ tasks, approvals: [approval('a'), approval('a')] })).toBe(4)
+    expect(waitingCount({ tasks, approvals: [approval('a'), approval('a')] })).toBe(3)
     expect(waitingCount({ tasks: [], approvals: [approval('outside')] })).toBe(1)
     expect(waitingCount({ tasks: tasks.slice(2, 4), approvals: [] })).toBe(0)
     // A stop already asked for answers it: the row says 正在停止 and has left the shelf.

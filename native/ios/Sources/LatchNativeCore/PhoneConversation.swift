@@ -85,12 +85,10 @@ public struct PhoneTurnSummary: Equatable, Sendable {
     public let del: Int?
 }
 public struct PhoneRunStatus: Equatable, Sendable {
-    public enum Tone: Sendable { case plain, amber, quiet }
-    public enum Action: Sendable { case keepWaiting, stop }
+    public enum Tone: Sendable { case plain, passive, amber, quiet }
     public let tone: Tone
     public let text: String
     public let clock: String?
-    public let actions: [Action]
 }
 public struct PhoneRunEnd: Equatable, Sendable {
     public let failed: Bool
@@ -523,30 +521,30 @@ public enum PhoneConversation {
     public static func runStatus(_ detail: NativeJSON, stopping: Bool, engine: String, hostNow: Date) -> PhoneRunStatus {
         let live = detail["summary"]["live"], activity = detail["activity"]["phase"].string
         if stopping || activity == "cancelling" || live["activity"].string == "cancelling" {
-            return PhoneRunStatus(tone: .plain, text: "正在停止…", clock: nil, actions: [])
+            return PhoneRunStatus(tone: .plain, text: "正在停止…", clock: nil)
         }
-        if !detail["questions"].array.isEmpty { return PhoneRunStatus(tone: .quiet, text: "等你回答", clock: nil, actions: []) }
+        if !detail["questions"].array.isEmpty { return PhoneRunStatus(tone: .quiet, text: "等你回答", clock: nil) }
         if !detail["approvals"].array.isEmpty || detail["summary"]["status"].string == "waiting-approval" || activity == "approval" {
-            return PhoneRunStatus(tone: .quiet, text: "需要你允许", clock: nil, actions: [])
+            return PhoneRunStatus(tone: .quiet, text: "需要你允许", clock: nil)
         }
-        if PhoneSessions.stuckOnRequest(live) { return PhoneRunStatus(tone: .amber, text: engine + " 发来不支持的请求", clock: nil, actions: [.stop]) }
+        if PhoneSessions.stuckOnRequest(live) { return PhoneRunStatus(tone: .amber, text: engine + " 发来不支持的请求", clock: nil) }
         if live["silent"].bool {
             let quiet = hostNow.timeIntervalSince(PhoneTime.parse(live["lastEventAt"]) ?? hostNow)
             let commandLike = ["command", "tool"].contains(live["activity"].string ?? "")
             let text = commandLike ? (live["commandName"].string ?? "命令") + " · \(minutes(quiet))没有输出" : "等模型回应 · \(minutes(quiet))没有新内容"
-            return PhoneRunStatus(tone: .amber, text: text, clock: nil, actions: [.keepWaiting, .stop])
+            return PhoneRunStatus(tone: .passive, text: text, clock: nil)
         }
         if activity == "starting" {
             let slow = PhoneTime.parse(detail["activity"]["since"]).map { hostNow.timeIntervalSince($0) >= 10 } ?? false
-            return PhoneRunStatus(tone: .plain, text: slow ? engine + " 启动较慢，仍在等待进程就绪…" : "正在启动 " + engine + "…", clock: nil, actions: [])
+            return PhoneRunStatus(tone: .plain, text: slow ? engine + " 启动较慢，仍在等待进程就绪…" : "正在启动 " + engine + "…", clock: nil)
         }
         if live == .null, let last = PhoneTime.parse(detail["lastOutputAt"]), hostNow.timeIntervalSince(last) > 120 {
-            return PhoneRunStatus(tone: .amber, text: minutes(hostNow.timeIntervalSince(last)) + "没有新输出", clock: nil, actions: [.stop])
+            return PhoneRunStatus(tone: .passive, text: minutes(hostNow.timeIntervalSince(last)) + "没有新输出", clock: nil)
         }
         let elapsed = PhoneSessions.runElapsed(started: detail["runStartedAt"], waited: detail["runWaitMs"], waiting: detail["runWaitingSince"], hostNow: hostNow)
         let running = detail["messages"].array.last { $0["role"].string == "tool" && $0["state"].string == "running" && $0["subagent"] == .null }
         let command = running.flatMap { toolKind($0) == "execute" ? toolLabel($0).object : nil } ?? (live["activity"].string == "command" ? live["commandName"].string : nil)
-        return PhoneRunStatus(tone: .plain, text: command.map { "命令运行中 · " + $0 } ?? "运行中", clock: elapsed.map { PhoneTime.runClock(seconds: $0) }, actions: [])
+        return PhoneRunStatus(tone: .plain, text: command.map { "命令运行中 · " + $0 } ?? "运行中", clock: elapsed.map { PhoneTime.runClock(seconds: $0) })
     }
     public static func runEnd(_ summary: NativeJSON, engine: String) -> PhoneRunEnd? {
         let end = summary["runEnd"]

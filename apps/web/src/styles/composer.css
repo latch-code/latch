@@ -1286,9 +1286,6 @@
   flex-wrap: wrap;
 }
 
-.composer-slot[data-queue-draft] {
-  gap: var(--sp-8);
-}
 .prompt-queue {
   font-size: var(--fs-ui);
   line-height: var(--lh-ui-para);

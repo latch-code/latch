@@ -124,7 +124,6 @@ export function ConversationView({
     harnessInfo,
     harnessName,
     reading,
-    run,
     frozenAt,
     changesLink,
     openToolDiff,
@@ -555,7 +554,6 @@ export function ConversationView({
                                       // As the 改动 tab reads it: nothing can be written until the connection is back.
                                       offline: connection === 'reconnecting' || connection === 'offline',
                                     }}
-                                    {...(run ? { onStop: run.onCancel } : {})}
                                     {...(current.summary.personal
                                       ? {}
                                       : {

@@ -3,7 +3,7 @@ import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import { useRef, type ReactNode, type RefObject } from 'react'
 import { appRef, listedApps, originTitle } from '../plugin-pages/model.ts'
 import { FolderGit2, GitCompare, ListTodo } from 'lucide-react'
-import { escapeSecurityText, type ChangeTotals, type HarnessInfo, type RunLive, type TaskSummary } from '@latch/protocol'
+import { escapeSecurityText, type ChangeTotals, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { harnessName, usesDemoModel } from '../composerChoice.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import type { SendingMessage } from '../core/sendingMessage.ts'
@@ -32,8 +32,7 @@ import {
   Icon,
 } from '@latch/ui'
 import { importedMark } from '../history/model.ts'
-import { hostNow, useTicker } from '../core/hostClock.ts'
-import { rowStatus, runningWords, silentWords } from '../sessions.ts'
+import { rowStatus } from '../sessions.ts'
 import { BranchName } from '../components/MiddleEllipsis.tsx'
 import { BranchSwitch, canSwitchBranch } from '../composer/BranchSwitch.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -75,30 +74,18 @@ const HEADER_COPY = defineCopy(
   },
 )
 
-function SilentWords({ live }: { live: RunLive | undefined }) {
-  useTicker('second')
-  return <>{silentWords(live, hostNow())}</>
-}
-
 /**
- * The title row's state, in the sidebar's words: running with its clock, waiting on the person, gone quiet, stopping,
+ * The title row's state, in the sidebar's words: waiting on the person, stopping,
  * failed or how a run ended. A session at rest says nothing; while the connection is down nothing live is drawn (the
  * connection says so on the right).
  */
 function TitleStatus({ summary, cancelling, frozen }: { summary: TaskSummary; cancelling: boolean; frozen: boolean }) {
   const status = rowStatus(summary, { stopping: cancelling, frozen })
-  const live = summary.live
   switch (status.kind) {
     case 'stopping':
       return <StatusPill tone="neutral">{SHELL_COPY.stopping}</StatusPill>
     case 'waiting':
       return <StatusWord tone="waiting">{SHELL_COPY.attention}</StatusWord>
-    case 'silent':
-      return (
-        <StatusWord tone="warn">
-          <SilentWords live={live} />
-        </StatusWord>
-      )
     // What a running turn waits on is said in the conversation, beside the reply's author.
     case 'running':
       return null

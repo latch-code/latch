@@ -826,7 +826,6 @@ interface TranscriptProps {
   /** Opens the session a fork came from. */
   onSource?: (sessionId: string) => void
   onCopyError?: (error: unknown) => void
-  onStop?: () => void
   /** Stops one subagent that can be stopped alone, by its row's ID; rejects when that failed, after saying so. */
   onStopSubagent?: (subagentId: string) => Promise<void>
   /** Brings a row into view, for what the status line points at. */
@@ -868,7 +867,6 @@ export function Transcript(props: TranscriptProps) {
     onEditFrom,
     onSource,
     onCopyError,
-    onStop,
     onStopSubagent,
     onReveal,
     contextToolMessageId,
@@ -964,9 +962,7 @@ export function Transcript(props: TranscriptProps) {
     approvals: approvals.length,
     ...(fallbackElapsed !== undefined ? { fallbackElapsed } : {}),
     ...(frozenAt !== undefined ? { frozenAt } : {}),
-    ...(onStop ? { onStop } : {}),
     ...(onReveal ? { onView: onReveal } : {}),
-    onError: changesError,
   }
   const renderTurn = (turn: Turn, index: number, latest: boolean) => {
     // A resumed run is announced before its prompt is recorded. Its predecessor keeps its settled reply and footer.
@@ -1071,7 +1067,6 @@ export function Transcript(props: TranscriptProps) {
     onEditFrom: !!onEditFrom,
     onSource: !!onSource,
     onCopyError: !!onCopyError,
-    onStop: !!onStop,
     onStopSubagent: !!onStopSubagent,
     onReveal: !!onReveal,
     onHandoff: !!onHandoff,

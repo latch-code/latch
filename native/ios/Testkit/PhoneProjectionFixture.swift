@@ -70,6 +70,15 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
         }
         return ["answers": answers]
     }
+    if case let .array(cases) = value["runStatusCases"], let now = PhoneTime.parse(value["hostNow"]) {
+        return ["answers": cases.map { item -> [String: Any] in
+            let detail = item["detail"], stopping = item["stopping"].bool
+            let status = PhoneConversation.runStatus(detail, stopping: stopping, engine: "Codex", hostNow: now)
+            let helper = PhoneHelperSpeech.status(detail, stopping: stopping, engine: "Codex", hostNow: now)
+            return ["text": status.text, "helper": helper.text, "tone": "\(status.tone)",
+                    "topic": PhoneAgentChat.topicWords(detail["summary"], frozen: false) ?? ""]
+        }]
+    }
     if let readings = input["transcriptFrames"] as? [[String: Int]] {
         var prior: PhoneTranscriptFrame?, away = false
         let positions = try readings.map { reading -> [Bool] in
@@ -180,7 +189,7 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
         "dividers": turns.map { PhoneConversation.divider($0) ?? "" },
         "switches": PhoneConversation.switches(PhoneConversation.turns(value["switching"].array)),
         "cleared": [detail, value["delivered"]].map { PhoneConversation.clearedNote($0, engine: "Codex").map { [$0.title, $0.line] } ?? [] },
-        "status": ["text": status.text, "clock": status.clock ?? "", "tone": "\(status.tone)", "actions": status.actions.map { "\($0)" }],
+        "status": ["text": status.text, "clock": status.clock ?? "", "tone": "\(status.tone)"],
         "subtitle": subtitle.parts, "neverAsks": subtitle.neverAsks,
         "judged": PhoneConversation.rendered(detail).compactMap { PhoneConversation.judgement($0).map { "\($0.review):\($0.words)" } },
         "blocked": PhoneConversation.rendered(detail).compactMap { PhoneConversation.blocked($0).map { "\($0.model):\($0.line)" } },

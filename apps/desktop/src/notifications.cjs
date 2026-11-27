@@ -120,7 +120,7 @@ function attentionTitle(value, limit = TITLE_LIMIT) {
 }
 /**
  * What 等你处理 lists, as items: sessions with a request or a question (`approval`, `question`), a request Latch did not
- * recognise and nothing since, and runs the Host calls silent (`stuck`); a stop already asked for answers all of these.
+ * recognise and nothing since (`stuck`); a stop already asked for answers all of these.
  * Unread results and running work do not count. `count` is every such session, `items` the newest `limit` of them with
  * the title and when it began to wait, and `running` the sessions running without waiting on the person. Nothing else
  * of the snapshot is kept: no message, path, argument or project.
@@ -150,14 +150,12 @@ function attentionOf(snapshot, { limit = ATTENTION_LIMIT, now = Date.now() } = {
     if (stopped.has(task.id) || waiting.has(task.id)) continue
     const asked = stamp(task.live?.unrecognized?.at)
     const stuck = asked !== undefined && asked >= (stamp(task.live?.lastEventAt) ?? Infinity)
-    const quiet = task.live?.silent === true || stuck
     // A question also holds a session at waiting-approval; a real request is in the approvals above.
     if (task.status === 'waiting-approval' && !(task.pendingQuestions > 0))
       waiting.set(task.id, { kind: 'approval', since: stamp(task.live?.lastEventAt) })
     else if ((task.status === 'running' || task.status === 'waiting-approval') && task.pendingQuestions > 0)
       waiting.set(task.id, { kind: 'question', since: stamp(task.live?.lastEventAt) })
-    else if (task.status === 'running' && quiet)
-      waiting.set(task.id, { kind: 'stuck', since: stuck ? asked : stamp(task.live?.lastEventAt) })
+    else if (task.status === 'running' && stuck) waiting.set(task.id, { kind: 'stuck', since: asked })
   }
   const items = [...waiting].map(([taskId, item]) => {
     const task = byId.get(taskId)

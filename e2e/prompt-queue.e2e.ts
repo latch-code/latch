@@ -91,6 +91,7 @@ describe('queued follow-ups', () => {
         if (width === 390) await openSession(page, created.sessionId)
         const enqueue = async (text: string, byKeyboard = false) => {
           await input.fill(text)
+          expect(await page.locator('form.composer:visible').getByRole('button', { name: '停止', exact: true }).count()).toBe(0)
           const reply = page.waitForResponse(
             response =>
               response.request().method() === 'POST'

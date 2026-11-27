@@ -5,9 +5,9 @@ import type { RunLive, TaskSummary } from './sessions.ts'
  * `deliver`: its folder holds work not yet delivered, or its pull request is open. `done`: everything else.
  */
 export type BoardGroup = 'attention' | 'running' | 'deliver' | 'done'
-/** Why a session waits on the person, in the order the Host checks them. */
+/** Why a session waits on the person. Older Hosts could report `silent`. */
 export type BoardReason = 'approval' | 'question' | 'unrecognized' | 'silent' | 'unknown' | 'failed'
-/** What a live run waits on the person for: the first four reasons, the ones only a live run has. */
+/** Reasons a live run may report, including `silent` from older Hosts. */
 export type WaitKind = Extract<BoardReason, 'approval' | 'question' | 'unrecognized' | 'silent'>
 
 /** The Host's group for a session, derived from its own facts each time the summary is read; never set by a client. */
@@ -68,7 +68,6 @@ export function waitKindOf(
   if ((task.status === 'waiting-approval' && !(questions > 0)) || facts.approval) return 'approval'
   if (liveStatus(task) && questions > 0) return 'question'
   if (task.status === 'running' && stuckOnRequest(live)) return 'unrecognized'
-  if (task.status === 'running' && live?.silent === true) return 'silent'
   return undefined
 }
 

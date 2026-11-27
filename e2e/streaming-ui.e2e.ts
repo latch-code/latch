@@ -26,6 +26,7 @@ class ControlledReply {
   private queue: ModelDelta[] = []
   private waiting: ((delta: ModelDelta) => void) | undefined
   private finished = false
+  stopSettlement?: Promise<void>
 
   private push(delta: ModelDelta): void {
     if (this.waiting) this.waiting(delta)
@@ -76,6 +77,7 @@ class ControlledReply {
       }
     } finally {
       this.waiting = undefined
+      if (signal.aborted) await this.stopSettlement
     }
   }
 }
@@ -107,6 +109,8 @@ describe('streamed messages in the real workspace', () => {
   let host: TestHost['host']
   let browser: Browser
   const replies = new Map<string, ControlledReply>()
+  let clockOffset = 0
+  const clock = () => Date.now() + clockOffset
 
   beforeAll(async () => {
     const plugin: HarnessPlugin = {
@@ -132,6 +136,8 @@ describe('streamed messages in the real workspace', () => {
       uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
       demo: false,
       hostName: '验收电脑',
+      clock,
+      now: clock,
       plugins: [plugin],
       providerId: 'controlled-fixture',
     })
@@ -194,6 +200,81 @@ describe('streamed messages in the real workspace', () => {
     await row.waitFor()
     return { row, messageId }
   }
+
+  it('continues a quiet run on its own and switches from sending to a one-click stop when the draft clears', async () => {
+    const { context, page } = await open(1440, 900)
+    let releaseStop: (() => void) | undefined
+    try {
+      const { id, reply } = await start(page, '核对安静运行中的停止')
+      reply.append('开始检查。')
+      await page.locator('.turn-reply').getByText('开始检查。', { exact: true }).waitFor()
+      const runId = (await host.bridge.detail(id)).summary.runId!
+      const writes: string[] = []
+      page.on('request', request => {
+        if (request.method() === 'POST') writes.push(new URL(request.url()).pathname)
+      })
+      const quiet = page.locator('.status-line').filter({ hasText: '没有新内容' })
+      const goQuiet = async () => {
+        clockOffset += 3 * 60_000
+        // A new reader gets the Host's current silence decision without waiting for a real two-minute timer.
+        expect((await host.bridge.detail(id)).summary.live?.silent).toBe(true)
+        await page.reload()
+        await connected(page)
+        await openSession(page, id)
+        await quiet.waitFor()
+        expect(await quiet.getByRole('button').count()).toBe(0)
+      }
+      await goQuiet()
+      reply.append('模型自行继续输出')
+      await page
+        .locator('.turn-reply')
+        .getByText(/模型自行继续输出/u)
+        .waitFor()
+      await quiet.waitFor({ state: 'hidden' })
+      await goQuiet()
+      const draft = page.getByRole('textbox', { name: '继续对话', exact: true })
+      reply.stopSettlement = new Promise<void>(resolve => {
+        releaseStop = resolve
+      })
+      const composer = page.locator('form.composer:visible')
+      const stop = composer.getByRole('button', { name: '停止', exact: true })
+      const send = composer.getByRole('button', { name: '立即发送', exact: true })
+      for (const [width, theme] of [
+        [390, 'dark'],
+        [900, 'light'],
+        [1440, 'dark'],
+      ] as const) {
+        await page.setViewportSize({ width, height: 900 })
+        await page.emulateMedia({ colorScheme: theme })
+        await draft.fill('核对这段未发送的草稿')
+        await send.waitFor()
+        expect(await stop.count()).toBe(0)
+        expect(await quiet.getByRole('button').count()).toBe(0)
+        await composer.screenshot({ path: `test-results/streaming/quiet-draft-${width}-${theme}.png`, animations: 'disabled' })
+        await draft.fill('')
+        await stop.waitFor()
+        expect(await send.count()).toBe(0)
+        await page.screenshot({ path: `test-results/streaming/quiet-empty-${width}-${theme}.png`, animations: 'disabled' })
+      }
+      const path = `/link/api/tasks/${id}/cancel`
+      const [request] = await Promise.all([
+        page.waitForRequest(request => new URL(request.url()).pathname === path && request.method() === 'POST'),
+        stop.click(),
+      ])
+      expect(request.postDataJSON()).toMatchObject({ runId, requestId: expect.any(String) })
+      await expect.poll(() => stop.getAttribute('aria-busy')).toBe('true')
+      expect((await host.bridge.detail(id)).summary.status).toBe('running')
+      releaseStop!()
+      await expect.poll(async () => (await host.bridge.detail(id)).summary.status).toBe('cancelled')
+      await stop.waitFor({ state: 'hidden' })
+      expect(writes.filter(url => url === path)).toHaveLength(1)
+      expect(writes.some(url => url.endsWith('/keep-waiting'))).toBe(false)
+    } finally {
+      releaseStop?.()
+      clockOffset = 0
+      await context.close()
+    }
+  })
 
   it('pauses the Code backdrop for a visible live reply and releases the pause when that reply is covered', async () => {
     const { context, page } = await open(1440, 900)

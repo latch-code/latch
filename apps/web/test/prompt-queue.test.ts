@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { PromptQueueItem } from '@latch/protocol'
 import { Composer } from '../src/composer/Composer.tsx'
+import { promptInputOf } from '../src/composer/PromptEditor.tsx'
 import { QueueDrawer } from '../src/composer/QueueDrawer.tsx'
 import { MessageRow } from '../src/components/MessageRow.tsx'
 import { submissionRequest } from '../src/core/api.ts'
@@ -60,12 +61,52 @@ const tray = (items: PromptQueueItem[], canSend: boolean, options: Partial<Compo
     }),
   )
 describe('queued follow-up presentation', () => {
-  it('offers queue and stop together only when the Host supports it', () => {
+  it('puts a queued draft in the stop slot on desktop and touch', () => {
     const capable = renderComposer(true)
     expect(capable).toContain('aria-label="排队发送"')
-    // Esc stops on a keyboard; touch keeps the button beside 排队.
     expect(capable).not.toContain('aria-label="停止"')
-    expect(renderComposer(false)).not.toContain('aria-label="排队发送"')
+    const touch = renderToStaticMarkup(composer({ queueable: true, coarse: true }))
+    expect(touch).toContain('aria-label="排队发送"')
+    expect(touch).not.toContain('aria-label="停止"')
+    const regular = renderComposer(false)
+    expect(regular).not.toContain('aria-label="排队发送"')
+    expect(regular.match(/aria-label="停止"/g)).toHaveLength(1)
+  })
+  it('restores stop when the draft is cleared and stops once while waiting for the receipt', () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const onCancel = vi.fn(),
+      onDraft = vi.fn(),
+      onSubmit = vi.fn(),
+      onQueue = vi.fn()
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    const render = (draft: string, cancel: 'idle' | 'cancelling' = 'idle') =>
+      act(() =>
+        root.render(composer({ draft, queueable: true, steerable: true, onDraft, onSubmit, onQueue, run: { ...run, cancel, onCancel } })),
+      )
+    const stop = () => host.querySelector<HTMLButtonElement>('button[aria-label="停止"]')
+    try {
+      render('Next')
+      expect(stop()).toBeNull()
+      expect(host.querySelector('button[aria-label="立即发送"]')).not.toBeNull()
+      render('')
+      expect(host.querySelector('button[aria-label="立即发送"]')).toBeNull()
+      act(() => stop()!.click())
+      render('', 'cancelling')
+      expect(stop()?.getAttribute('aria-busy')).toBe('true')
+      act(() => stop()!.click())
+      expect(onCancel).toHaveBeenCalledTimes(1)
+      expect(onDraft).not.toHaveBeenCalled()
+      expect(onSubmit).not.toHaveBeenCalled()
+      expect(onQueue).not.toHaveBeenCalled()
+      expect(promptInputOf(host)?.value).toBe('')
+      expect(promptInputOf(host)?.disabled).toBe(false)
+    } finally {
+      act(() => root.unmount())
+      host.remove()
+      vi.unstubAllGlobals()
+    }
   })
   it('labels one submit button with the available default and offers both actions in its menu', () => {
     const html = renderComposer(true, true)

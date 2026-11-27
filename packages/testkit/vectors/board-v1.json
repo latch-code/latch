@@ -81,7 +81,7 @@
       "wait": "unrecognized"
     },
     {
-      "name": "the engine went on after the request",
+      "name": "the engine went on after the request before going quiet",
       "task": {
         "id": "s-1",
         "title": "t",
@@ -93,6 +93,7 @@
           "activity": "model",
           "since": "2026-11-16T08:00:00.000Z",
           "lastEventAt": "2026-11-16T08:00:05.000Z",
+          "silent": true,
           "unrecognized": {
             "count": 1,
             "at": "2026-11-16T08:00:00.000Z"
@@ -103,7 +104,7 @@
       "wait": null
     },
     {
-      "name": "silent past the threshold",
+      "name": "a run stays running past the silence threshold",
       "task": {
         "id": "s-1",
         "title": "t",
@@ -120,7 +121,7 @@
         }
       },
       "approval": false,
-      "wait": "silent"
+      "wait": null
     },
     {
       "name": "stuck and silent: the request first",

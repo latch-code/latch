@@ -971,7 +971,7 @@ export function useSessionController({
     }
   }, [openBlocking, stopBlocking, snapshot])
   const { reveal, jumpToLatest } = reading
-  /** The session that waits longest: its oldest request, or else a run that has gone quiet. */
+  /** The session that waits longest: its oldest request, or a run still waiting for another kind of input. */
   const openApprovals = () => {
     const oldest = [...snapshot.approvals].sort((a, b) => a.requestedAt.localeCompare(b.requestedAt))[0]
     if (oldest) {
@@ -979,12 +979,12 @@ export function useSessionController({
       reading.show(oldest.sessionId, toolRowId(oldest))
       return
     }
-    const quiet = snapshot.tasks
+    const awaiting = snapshot.tasks
       .filter(waitsOnYou)
       .toSorted((a, b) => (a.live?.lastEventAt ?? '').localeCompare(b.live?.lastEventAt ?? ''))[0]
     // Else the newest session the Host keeps in 等你处理: a failure not yet opened, results not yet checked.
     const settled = snapshot.tasks.filter(inAttention).toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
-    const next = quiet ?? settled
+    const next = awaiting ?? settled
     if (next) choose(next.id)
   }
 
@@ -1144,27 +1144,28 @@ export function useSessionController({
     [refresh, approvalStatuses],
   )
 
+  const cancelTarget = useStableCallback((id: string) =>
+    current?.summary.id === id ? current.summary : snapshot.tasks.find(task => task.id === id),
+  )
   const cancelSession = useStableCallback(async (id: string) => {
-    if (cancelling.has(id) && !cancelUncertain.has(id)) return
     // The run on screen: a stop that arrives after it ended must not stop the next one.
-    const runId = (current?.summary.id === id ? current.summary : snapshot.tasks.find(task => task.id === id))?.runId
+    const runId = cancelTarget(id)?.runId
+    if (stoppedRuns.current.get(id) === runId && cancelling.has(id) && !cancelUncertain.has(id)) return
+    const body = cancels.current.begin(id, runId)
+    if (!body) return
     if (runId === undefined) stoppedRuns.current.delete(id)
     else stoppedRuns.current.set(id, runId)
     setCancelling(previous => new Set(previous).add(id))
     setCancelUncertain(previous => without(previous, id))
     clearAction(id)
+    const matches = (task: TaskSummary | undefined) => runId === undefined || task?.runId === undefined || task.runId === runId
+    let answer: ReturnType<typeof cancelAnswer>
     try {
-      const answer = cancelAnswer(
-        await api<unknown>(`tasks/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: cancels.current.bodyFor(id, runId) }),
-      )
-      cancels.current.settle(id)
-      if (answer === 'ended' || answer === 'newer') {
-        setCancelling(previous => without(previous, id))
-        setToast({ text: answer === 'newer' ? COPY.newerTurn : COPY.alreadyEnded, tone: 'ok' })
-      }
-      await refresh()
+      answer = cancelAnswer(await api<unknown>(`tasks/${encodeURIComponent(id)}/cancel`, { method: 'POST', body }))
     } catch (cause) {
-      cancels.current.settle(id, cause)
+      if (!cancels.current.settle(id, body, cause)) return
+      const latest = cancelTarget(id)
+      if (!matches(latest) || (latest && !isActive(latest.status))) return
       // An unknown outcome is said once, in the bar above the input with its 重试; it is not a failure.
       if (isUncertain(cause)) setCancelUncertain(previous => new Set(previous).add(id))
       else {
@@ -1173,6 +1174,12 @@ export function useSessionController({
       }
       throw cause
     }
+    if (!cancels.current.settle(id, body) || !matches(cancelTarget(id))) return
+    if (answer === 'ended' || answer === 'newer') {
+      setCancelling(previous => without(previous, id))
+      setToast({ text: answer === 'newer' ? COPY.newerTurn : COPY.alreadyEnded, tone: 'ok' })
+    }
+    await refresh().catch(() => {})
   })
 
   /** The Harness's own name for a value of one of the open session's options. */

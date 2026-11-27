@@ -56,6 +56,7 @@ struct ApprovalDrawer: View {
         let id = approval["id"].string
         let rejecting = id.map { model.controlsInFlight.contains(PhoneModel.approvalPath($0)) } ?? false
         let stopping = context.map { model.controlsInFlight.contains(PhoneModel.cancelPath($0.sessionId)) } ?? model.stoppingCurrent
+        let stopContext = context ?? model.currentStopContext
         DrawerCard {
             HStack(spacing: 6) {
                 Image(systemName: "shield").font(.system(size: 14)).foregroundStyle(gate.riskClause == nil ? PhoneTheme.amberIcon : PhoneTheme.red)
@@ -148,7 +149,8 @@ struct ApprovalDrawer: View {
                             ForEach(gate.more) { choice in
                                 Button(choice.label) { Task { await model.decide(id, option: choice.id, allows: choice.allows, context: context) } }
                             }
-                            Button("停止这一轮") { Task { await model.stop(context: context) } }
+                            Button("停止这一轮") { Task { if let stopContext { await model.stop(context: stopContext) } } }
+                                .disabled(stopContext == nil || stopping)
                         } label: {
                             Text("更多").font(.system(size: 15, weight: .medium)).foregroundStyle(PhoneTheme.ink).padding(.horizontal, 14).frame(height: 40)
                                 .overlay(Capsule().stroke(PhoneTheme.lineStrong)).contentShape(Capsule())
@@ -159,7 +161,9 @@ struct ApprovalDrawer: View {
                     if gate.canAllow {
                         button(gate.allowLabel, prominent: !gate.hidden) { if let id { Task { await model.allow(id, option: gate.allowOption, context: context) } } }.disabled(stopping)
                     } else {
-                        button(stopping ? "正在停止…" : "停止", prominent: false) { Task { await model.stop(context: context) } }.disabled(stopping)
+                        button(stopping ? "正在停止…" : "停止", prominent: false) {
+                            Task { if let stopContext { await model.stop(context: stopContext) } }
+                        }.disabled(stopping || stopContext == nil)
                     }
                 }.disabled(model.busy)
             }

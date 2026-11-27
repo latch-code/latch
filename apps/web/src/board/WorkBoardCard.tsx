@@ -10,7 +10,7 @@ import { hostNow, useTicker } from '../core/hostClock.ts'
 import { harnessName } from '../core/harnessName.ts'
 import { defineCopy, plural, useLocale } from '../core/i18n.ts'
 import { relativeTime } from '../format.ts'
-import { projectOf, workStatus } from '../sessions.ts'
+import { projectOf, silentWords, workStatus } from '../sessions.ts'
 import { sessionSource } from '../sessionSource.ts'
 import { deliveryCheckSummary } from '../shell/useWorkbenchEvidence.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
@@ -65,8 +65,15 @@ export function cardState(
     if (reason === 'failed' || (reason === 'unknown' && workStatus(task, { connected, now, stopping }).tone === 'failed'))
       return { tone: 'failed', words: workStatus(task, { connected, now, stopping }).words }
     if (reason === 'unknown') return { tone: 'warn', words: reasonWords(task) }
-    // Silence counts its minutes from the run's last sign of life, as everywhere else.
-    if (reason === 'silent') return { tone: 'waiting', words: workStatus(task, { connected, now, stopping }).words }
+    // An older Host may still put a silent run here.
+    if (reason === 'silent')
+      return {
+        tone: 'waiting',
+        words:
+          stopping || task.live?.activity === 'cancelling'
+            ? workStatus(task, { connected, now, stopping }).words
+            : silentWords(task.live, now),
+      }
     return { tone: 'waiting', words: reasonWords(task) }
   }
   const status = workStatus(task, { connected, now, stopping })

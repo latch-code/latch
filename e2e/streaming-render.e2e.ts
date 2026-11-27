@@ -1622,7 +1622,7 @@ describe('streaming render', () => {
     await page.emulateMedia({ colorScheme: 'light' })
   })
 
-  it('asks when a run goes quiet, says what it cannot read, and says what is unknown when the engine dies', async () => {
+  it('shows silence without a decision, identifies unsupported requests, and reports unknown results after exit', async () => {
     await open()
     const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
     const live = { runId: 'r', activity: 'model', since: ago(5), lastEventAt: ago(3) }
@@ -1634,14 +1634,15 @@ describe('streaming render', () => {
     await show(withSummary({ live: { ...live, silent: true, silenceThresholdMs: 120_000 } }, true))
     const line = page.locator('.status-line')
     await line.filter({ hasText: /等模型回应 · 3 分钟没有新内容/ }).waitFor()
-    await line.getByRole('button', { name: '继续等', exact: true }).waitFor()
+    expect(await line.getByRole('button').count()).toBe(0)
+    expect(await line.getAttribute('class')).toContain('is-plain')
 
     await show(
       withSummary({ live: { ...live, unrecognized: { count: 1, at: ago(0), method: 'terminal/create', messageId: 'user-0' } } }, true),
     )
     await line.filter({ hasText: '发来不支持的请求 terminal/create' }).waitFor()
     await line.getByRole('button', { name: '查看', exact: true }).waitFor()
-    expect(await line.getByRole('button', { name: '继续等', exact: true }).count()).toBe(0)
+    expect(await line.getByRole('button').allTextContents()).toEqual(['查看'])
 
     await show(withSummary({ runEnd: { reason: 'process-exited', unknownResultCount: 1, unknownResults: [{ name: 'pnpm test' }] } }, false))
     const end = page.locator('.run-end')

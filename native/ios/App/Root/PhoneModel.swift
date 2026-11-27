@@ -592,8 +592,9 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         do {
             guard let saved = try await workspace.pendingControl(), let path = saved["path"].string else { await refreshControlPending(); return }
             guard generation == current, transportReady, whileCurrent(), expectedPath.map({ path == $0 }) != false,
-                  expectedRun.map({ saved["fields"]["runId"].string == $0 }) != false else { return }
-            controlsInFlight.insert(path); defer { controlsInFlight.remove(path) }
+                  expectedRun.map({ saved["fields"]["runId"].string == $0 }) != false,
+                  !path.hasSuffix("/cancel") || !controlsInFlight.contains(path) else { return }
+            controlsInFlight.insert(path); defer { if generation == current { controlsInFlight.remove(path) } }
             _ = try await workspace.freeAction(path: path, fields: saved["fields"].object)
             guard generation == current else { return }
             await refreshControlPending(); _ = await refresh()

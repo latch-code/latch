@@ -68,9 +68,10 @@ struct CodexTeamView: View {
                                 if model.detail["summary"]["modelRoute"] != .null { note("成员走当前会话的模型服务，调用量合计在此会话。") }
                                 if chosen != nil, model.connected, model.hasScope("view"), model.detail["activity"] != .null,
                                    ["running", "waiting-approval"].contains(model.currentSummary["status"].string ?? "") {
+                                    let context = model.currentStopContext
                                     Button(model.stoppingCurrent ? "正在停止本轮…" : "停止本轮", role: .destructive) {
-                                        Task { await model.stop() }
-                                    }.buttonStyle(.bordered).disabled(model.stoppingCurrent)
+                                        Task { if let context { await model.stop(context: context) } }
+                                    }.buttonStyle(.bordered).disabled(context == nil || model.stoppingCurrent)
                                 }
                                 if canAdd {
                                     note(conflict ? "输入框里已有斜杠命令，先发送或移除它。" : "把分工请求放入输入框，写清目标后亲自发送。")

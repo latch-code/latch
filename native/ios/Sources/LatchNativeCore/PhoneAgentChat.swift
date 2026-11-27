@@ -46,8 +46,8 @@ public enum PhoneAgentChat {
     /** A topic's state in the session list's words; a topic at rest says nothing. */
     public static func topicWords(_ task: NativeJSON, frozen: Bool) -> String? {
         switch PhoneSessions.rowStatus(task, frozen: frozen) {
-        case .waiting, .silent: "等你处理"
-        case .running: "运行中"
+        case .waiting: "等你处理"
+        case .running, .silent: "运行中"
         case .stopping: "正在停止"
         case .failed: "失败"
         case let .ended(word, _): word

@@ -1,25 +1,36 @@
 import { isUncertain, newRequestId } from './api.ts'
 
+type CancelBody = { requestId: string; runId?: string }
+
 /**
  * One stop request per run keeps one `requestId` until the Host has answered definitively, so a retry after a timeout
  * or a dropped connection is the same request: the Host answers it from its receipt, also after it restarted. A stop
  * aimed at a different run (the one that named it ended and another began) is a new request.
  */
 export class CancelRequests {
-  private readonly pending = new Map<string, { runId: string | undefined; requestId: string }>()
+  private readonly pending = new Map<string, { body: CancelBody; sending: boolean }>()
   constructor(private readonly makeId: () => string = newRequestId) {}
 
-  /** The body for stopping `runId` in this session: the same request while an earlier one is unanswered. */
-  bodyFor(sessionId: string, runId: string | undefined): { requestId: string; runId?: string } {
+  /** Starts one write at a time for the run, reusing its body after an unconfirmed result. */
+  begin(sessionId: string, runId: string | undefined): CancelBody | undefined {
     const previous = this.pending.get(sessionId)
-    const requestId = previous && previous.runId === runId ? previous.requestId : this.makeId()
-    this.pending.set(sessionId, { runId, requestId })
-    return { requestId, ...(runId === undefined ? {} : { runId }) }
+    if (previous && previous.body.runId === runId) {
+      if (previous.sending) return undefined
+      previous.sending = true
+      return previous.body
+    }
+    const body = { requestId: this.makeId(), ...(runId === undefined ? {} : { runId }) }
+    this.pending.set(sessionId, { body, sending: true })
+    return body
   }
 
-  /** Keep the request only when the outcome is unknown (network error, timeout, 408, ≥ 500). */
-  settle(sessionId: string, error?: unknown): void {
-    if (error === undefined || !isUncertain(error)) this.pending.delete(sessionId)
+  /** An old run's answer cannot settle a newer run's request or update its stop state. */
+  settle(sessionId: string, body: CancelBody, error?: unknown): boolean {
+    const pending = this.pending.get(sessionId)
+    if (pending?.body !== body) return false
+    if (error !== undefined && isUncertain(error)) pending.sending = false
+    else this.pending.delete(sessionId)
+    return true
   }
 }
 

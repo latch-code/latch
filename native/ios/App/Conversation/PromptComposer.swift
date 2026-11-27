@@ -356,11 +356,11 @@ struct PromptComposer: View {
     }
     /** While a drawer waits on you, stop steps back without going away. */
     private func stopButton(quiet: Bool) -> some View {
-        let host = model.generation, run = model.currentSummary["runId"].string
+        let context = model.currentStopContext
         return Button {
             Task {
-                guard let draftId, model.generation == host, model.sessionId == draftId, model.currentSummary["runId"].string == run else { return }
-                await model.stop()
+                guard let draftId, let context, context.sessionId == draftId else { return }
+                await model.stop(context: context)
             }
         } label: {
             Group {
@@ -368,7 +368,8 @@ struct PromptComposer: View {
                 else { RoundedRectangle(cornerRadius: 2).fill(quiet ? PhoneTheme.muted : PhoneTheme.canvas).frame(width: 12, height: 12) }
             }.frame(width: 36, height: 36).background(quiet ? PhoneTheme.bubble : PhoneTheme.ink, in: Circle())
                 .frame(width: 44, height: 44).contentShape(Rectangle())
-        }.buttonStyle(.plain).disabled(sending || model.stoppingCurrent || !model.transportReady).accessibilityLabel(model.stoppingCurrent ? "正在停止" : "停止")
+        }.buttonStyle(.plain).disabled(context == nil || sending || model.stoppingCurrent || !model.transportReady)
+            .accessibilityLabel(model.stoppingCurrent ? "正在停止" : "停止")
     }
     private func dispatch(_ round: PhoneMemberMentions.Round) {
         guard let target = draftId, round == memberRound, round.reason == nil, canSend else { return }

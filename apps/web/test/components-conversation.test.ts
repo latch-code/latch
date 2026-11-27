@@ -284,26 +284,28 @@ describe('with the connection down', () => {
 })
 
 describe('a run that has gone quiet', () => {
-  const quiet = (live: NonNullable<TaskSummary['live']>) =>
+  const quiet = (live: NonNullable<TaskSummary['live']>, person = false) =>
     renderToStaticMarkup(
       createElement(StatusLine, {
         detail: { summary: { id: 's', status: 'running', live }, messages: [], liveText: '' } as unknown as TaskDetail,
         harness: 'Codex',
+        person,
         cancelling: false,
         approvals: 0,
-        onStop: noop,
       }),
     )
   const base = { runId: 'r', activity: 'model' as const, since: localIso(0), lastEventAt: localIso(0) }
 
-  it('asks whether to keep waiting, and a request it cannot read stops the question', () => {
+  it('reports silence without controls and still lets a user inspect an unsupported request', () => {
     const silent = quiet({ ...base, silent: true, silenceThresholdMs: 120_000 })
-    expect(silent).toContain('继续等')
-    expect(silent).toContain('停止')
-    const unknown = quiet({ ...base, unrecognized: { count: 1, at: localIso(0), messageId: 'n' } })
+    expect(silent).toContain('status-line is-plain')
+    expect(silent).toContain('没有新内容')
+    expect(silent).not.toContain('继续等')
+    expect(silent).not.toContain('<button')
+    const unknown = quiet({ ...base, silent: true, unrecognized: { count: 1, at: localIso(0), messageId: 'n' } }, true)
     expect(unknown).toContain('Codex 发来不支持的请求')
     expect(unknown).toContain('查看')
-    expect(unknown).not.toContain('继续等')
+    expect(unknown.match(/<button/g)).toHaveLength(1)
   })
 })
 

@@ -17,7 +17,7 @@ export type ComputerState =
   | 'cert-changed'
   | 'outdated'
 
-/** What waits on the person in a session of another computer: a request, a question, or a run stuck or silent. */
+/** What waits on the person in a session of another computer: an approval, a question, or a run stuck on an unsupported request. */
 export type AttentionKind = 'approval' | 'question' | 'stuck'
 
 /**

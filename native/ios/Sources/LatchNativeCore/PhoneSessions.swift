@@ -215,7 +215,7 @@ public enum PhoneSessions {
         if live["activity"].string == "cancelling" { return false }
         if task["status"].string == "waiting-approval" { return true }
         guard task["status"].string == "running" else { return false }
-        return (task["pendingQuestions"].integer ?? 0) > 0 || live["silent"].bool || stuckOnRequest(live)
+        return (task["pendingQuestions"].integer ?? 0) > 0 || stuckOnRequest(live)
     }
     public static func rowStatus(_ task: NativeJSON, frozen: Bool = false) -> PhoneRowStatus {
         let status = task["status"].string, running = status == "running" || status == "waiting-approval", live = live(task)

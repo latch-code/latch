@@ -1392,12 +1392,10 @@ export function runClock(ms: number): string {
   return minutes < 60 ? `${minutes}:${pad(seconds % 60)}` : `${Math.floor(minutes / 60)}:${pad(minutes % 60)}:${pad(seconds % 60)}`
 }
 
-type StatusAction = 'keep-waiting' | 'stop'
-
 /**
  * The status under a running turn: what is really happening, never only that time passes. `tone`: `plain` is the
- * ordinary line (drawn only for what the title row does not say: an agent that is starting); `amber` asks the person, because nothing else would tell them the run went quiet; `quiet` is a phase
- * with no line of its own, since the card that waits on the person already says so.
+ * ordinary line, including a lull in output. `amber` calls out a request Latch could not handle. `quiet` is a
+ * phase with no line of its own, since the card that waits on the person already says so.
  */
 export type RunStatus = {
   tone: 'plain' | 'amber' | 'quiet'
@@ -1407,12 +1405,20 @@ export type RunStatus = {
   clock?: string
   /** The session's title row already says this (the activity with its clock, or 正在停止): the line draws nothing. */
   inHeader?: true
-  actions?: StatusAction[]
+  noOutput?: true
   /** The system message recording a request Latch did not recognise. */
   viewMessageId?: string
 }
 
 const minutesText = (ms: number) => COPY.minutes(Math.max(1, Math.floor(ms / 60_000)))
+
+/** New Hosts judge silence themselves. Older Hosts can only report the last visible output. */
+function quietRunMs(detail: Pick<TaskDetail, 'summary' | 'lastOutputAt'>, now: number): number | undefined {
+  const live = detail.summary.live
+  if (live) return live.silent ? now - (parseTime(live.lastEventAt) ?? now) : undefined
+  const lastOutput = parseTime(detail.lastOutputAt)
+  return lastOutput !== undefined && now - lastOutput > 120_000 ? now - lastOutput : undefined
+}
 
 export function runStatus(detail: TaskDetail, opts: LivePhaseOptions & { harness: string; fallbackElapsed?: number }): RunStatus {
   const phase = livePhase(detail, opts)
@@ -1427,28 +1433,25 @@ export function runStatus(detail: TaskDetail, opts: LivePhaseOptions & { harness
       tone: 'amber',
       // The method, when the detail names it: what was asked is what the person looks up.
       text: unknown.method ? COPY.unsupportedMethod(opts.harness, unknown.method) : COPY.unsupported(opts.harness),
-      actions: ['stop'],
       ...(unknown.messageId ? { viewMessageId: unknown.messageId } : {}),
     }
   }
-  if (live?.silent) {
-    const quiet = opts.hostNow - (parseTime(live.lastEventAt) ?? opts.hostNow)
+  const quiet = quietRunMs(detail, opts.hostNow)
+  if (quiet !== undefined && live) {
     const commandLike = live.activity === 'command' || live.activity === 'tool'
     return {
-      tone: 'amber',
+      tone: 'plain',
+      noOutput: true,
       text: commandLike
         ? COPY.quietCommand(live.commandName ? shownToolTitle(live.commandName) : COPY.command, minutesText(quiet))
         : COPY.quietModel(minutesText(quiet)),
-      actions: ['keep-waiting', 'stop'],
     }
   }
   // The header writes the Host's own activity word, 正在启动 included; without one (an older Host) the line says it here.
   if (phase.kind === 'starting')
     return { tone: 'plain', text: phaseText(phase, opts.harness), ...(live ? { inHeader: true as const } : {}) }
   // An older Host says nothing about silence; the time since its last output is all there is to go on.
-  const lastOutput = live ? undefined : parseTime(detail.lastOutputAt)
-  if (lastOutput !== undefined && opts.hostNow - lastOutput > 120_000)
-    return { tone: 'amber', text: COPY.quiet(minutesText(opts.hostNow - lastOutput)), actions: ['stop'] }
+  if (quiet !== undefined) return { tone: 'plain', text: COPY.quiet(minutesText(quiet)), noOutput: true }
   const elapsed = runElapsed(detail, opts.hostNow) ?? opts.fallbackElapsed
   const clock = elapsed === undefined ? undefined : runClock(elapsed)
   const running = opts.messageFacts

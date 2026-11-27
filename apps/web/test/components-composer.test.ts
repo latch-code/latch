@@ -961,7 +961,7 @@ describe('composer', () => {
     expect(waiting).toContain('data-step-back')
   })
 
-  it('keeps a way to stop while a question waits: stop until text is written, and beside send on touch', () => {
+  it('replaces stop with send when an answer is written on desktop or touch', () => {
     const asking = {
       ...base,
       variant: 'session' as const,
@@ -970,7 +970,7 @@ describe('composer', () => {
       run: { cancel: 'idle' as const, onCancel: noop },
     }
     const empty = renderToStaticMarkup(createElement(Composer, { ...asking, draft: '' }))
-    expect(empty).toContain('aria-label="停止"')
+    expect(empty.match(/aria-label="停止"/gu)).toHaveLength(1)
     expect(empty).toContain('data-step-back')
     expect(empty).not.toContain('aria-label="发送"')
     const written = renderToStaticMarkup(createElement(Composer, asking))
@@ -978,7 +978,7 @@ describe('composer', () => {
     expect(written).not.toContain('aria-label="停止"')
     const touch = renderToStaticMarkup(createElement(Composer, { ...asking, coarse: true }))
     expect(touch).toContain('aria-label="发送"')
-    expect(touch).toContain('aria-label="停止"')
+    expect(touch).not.toContain('aria-label="停止"')
   })
 
   it('says a stop whose outcome is unknown once, in the bar with 重试, and leaves the stop button a square', () => {

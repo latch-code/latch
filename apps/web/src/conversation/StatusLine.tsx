@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { HarnessLogin, KeepWaitingResult, TaskDetail } from '@latch/protocol'
+import type { HarnessLogin, TaskDetail } from '@latch/protocol'
 import { Button, ICON_STROKE, Icon, AlertGlyph, CircleCheckGlyph, WarningGlyph } from '@latch/ui'
 import { phaseText, runEndLine, runStatus, type LivePhaseOptions, type RunMessageFacts, type RunStatus } from '../conversation.ts'
-import { api, ApiError, isUncertain } from '../core/api.ts'
+import { ApiError, isUncertain } from '../core/api.ts'
 import { defineCopy } from '../core/i18n.ts'
 import { RECOVERY_COPY } from '../core/securityCopy.ts'
 import { attend, checkSettle } from '../core/attend.ts'
@@ -14,10 +14,7 @@ import { personStatus } from '../agents/personWords.ts'
 import { silentWords } from '../sessions.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 
-const COPY = defineCopy(
-  { view: '查看', keepWaiting: '继续等', stop: '停止', checked: '已核对', retry: '重试' },
-  { view: 'View', keepWaiting: 'Keep waiting', stop: 'Stop', checked: 'Checked', retry: 'Retry' },
-)
+const COPY = defineCopy({ view: '查看', checked: '已核对', retry: '重试' }, { view: 'View', checked: 'Checked', retry: 'Retry' })
 
 /** The words change at most once a second; waiting on a person and stopping do not wait for that. */
 function useHeldStatus(status: RunStatus): RunStatus {
@@ -47,9 +44,8 @@ function useHeldStatus(status: RunStatus): RunStatus {
  * 没有动静, and the rest (a request it does not support, a stop) as they are.
  */
 export function personRunStatus(status: RunStatus, detail: TaskDetail, opts: LivePhaseOptions): RunStatus {
+  if (status.noOutput) return detail.summary.live ? { ...status, text: silentWords(detail.summary.live, opts.hostNow) } : status
   if (status.tone === 'plain' || status.tone === 'quiet') return { ...status, text: personStatus(detail, opts).words }
-  const live = detail.summary.live
-  if (live?.silent) return { ...status, text: silentWords(live, opts.hostNow) }
   return status
 }
 
@@ -64,14 +60,12 @@ export interface StatusLineProps {
   fallbackElapsed?: number
   /** The connection is down: nothing is known to move, so the line says when it last knew. */
   frozenAt?: number
-  onStop?: () => void
   onView?: (messageId: string) => void
-  onError?: (error: unknown) => void
 }
 
 /**
  * The line under a running turn, drawn only for what the title row does not say: an agent that is starting, and a run
- * that has gone quiet with what can be done about it. Running and stopping are the title row's; waiting on the person
+ * that continues without new output. Running and stopping are the title row's; waiting on the person
  * is the card's.
  */
 export function StatusLine({
@@ -83,9 +77,7 @@ export function StatusLine({
   messageFacts,
   fallbackElapsed,
   frozenAt,
-  onStop,
   onView,
-  onError,
 }: StatusLineProps) {
   useTicker(frozenAt === undefined ? 'second' : false)
   const now = hostNow()
@@ -100,7 +92,6 @@ export function StatusLine({
   const status = useHeldStatus(
     person ? personRunStatus(said, detail, { cancelling, approvals, hostNow: now, ...(messageFacts ? { messageFacts } : {}) }) : said,
   )
-  const [waiting, setWaiting] = useState(false)
   // Offline, the banner says so and the sidebar row has 上次确认: nothing about the run is claimed here meanwhile.
   if (frozenAt !== undefined) return null
   // The title row says the running state once, with its clock; here it is only announced.
@@ -113,7 +104,6 @@ export function StatusLine({
       </p>
     )
   }
-  const live = detail.summary.live
   return (
     <div className={`status-line is-${status.tone}`}>
       {status.tone === 'amber' && <Icon icon={WarningGlyph} size={14} />}
@@ -129,33 +119,6 @@ export function StatusLine({
           }}>
           {COPY.view}
         </button>
-      )}
-      {status.actions?.includes('keep-waiting') && live && live.silenceThresholdMs !== undefined && (
-        <Button
-          size="xs"
-          variant="secondary"
-          loading={waiting}
-          onClick={() => {
-            setWaiting(true)
-            // A retry is safe: the Host answers `unchanged` once the threshold has moved.
-            void api<KeepWaitingResult>(`tasks/${encodeURIComponent(detail.summary.id)}/keep-waiting`, {
-              method: 'POST',
-              body: { runId: live.runId, thresholdMs: live.silenceThresholdMs },
-            })
-              .catch((error: unknown) => {
-                onError?.(error)
-              })
-              .finally(() => {
-                setWaiting(false)
-              })
-          }}>
-          {COPY.keepWaiting}
-        </Button>
-      )}
-      {status.actions?.includes('stop') && onStop && (
-        <Button size="xs" variant="secondary" onClick={onStop}>
-          {COPY.stop}
-        </Button>
       )}
     </div>
   )

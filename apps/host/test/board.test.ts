@@ -51,7 +51,6 @@ describe('the board rule table', () => {
         {},
         { group: 'attention', reason: 'unrecognized' },
       ],
-      ['4 silent', task('running', { live: live({ silent: true }) }), {}, { group: 'attention', reason: 'silent' }],
       [
         '5 results nobody can vouch for',
         task('interrupted', { runEnd: { reason: 'forced-stop', at: T1, unknownResultCount: 2 } }),
@@ -61,6 +60,7 @@ describe('the board rule table', () => {
       ['6 failed', task('failed'), {}, { group: 'attention', reason: 'failed' }],
       ['6 idle after a failed run', task('idle', { runOutcome: 'failed' }), {}, { group: 'attention', reason: 'failed' }],
       ['7 running', task('running', { live: live() }), {}, { group: 'running' }],
+      ['7 running quietly', task('running', { live: live({ silent: true }) }), {}, { group: 'running' }],
       ['7 stopping', task('running', { live: live({ activity: 'cancelling' }) }), { approval: true }, { group: 'running' }],
       ['8 pull request merged', task('idle'), { pr: { state: 'merged' }, delivery: true }, { group: 'done' }],
       ['8 pull request closed', task('idle'), { pr: { state: 'closed' } }, { group: 'done' }],

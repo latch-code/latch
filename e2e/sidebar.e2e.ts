@@ -298,7 +298,7 @@ describe('session panel', () => {
       title: '没有动静的会话',
       status: 'running',
       live: { runId: 'r3', activity: 'model', since: ago(180_000), lastEventAt: ago(180_000), silent: true },
-      board: attention('silent'),
+      board: { group: 'running' },
     },
     { ...base, id: 'waiting', title: '等你的会话', status: 'waiting-approval', board: attention('approval') },
   ]
@@ -329,8 +329,8 @@ describe('session panel', () => {
 
   // The 总览 home's request list went in cae787a4 (看板 shows the Host's groups now, board.e2e); the rows keep what waits.
   it('keeps what waits on the rows while keeping every session in the project tree', async () => {
-    // The tab counts the Host's 等你处理: the approval, the silent run, the failure and the unknown results.
-    expect(await page.title()).toBe('(4) Latch')
+    // The tab counts the Host's 等你处理: the approval, the failure and the unknown results.
+    expect(await page.title()).toBe('(3) Latch')
     expect(await row('forced').locator('.session-item-main').ariaSnapshot()).toContain('2 条结果未知')
     expect(await row('failed').locator('.session-row-glyph').getAttribute('data-tone')).toBe('failed')
     const project = page.locator('nav.session-list .session-group[data-shelf="other"]')
@@ -370,7 +370,7 @@ describe('session panel', () => {
     for (const id of ['running', 'stopping', 'failed', 'waiting', 'silent', 'forced'])
       expect(await row(id).locator('.session-row-state').isVisible()).toBe(true)
     expect(await row('waiting').locator('.session-row-glyph').getAttribute('data-tone')).toBe('waiting')
-    expect(await row('silent').locator('.session-row-glyph').getAttribute('data-tone')).toBe('waiting')
+    expect(await row('silent').locator('.session-row-glyph').getAttribute('data-tone')).toBe('running')
     expect(await row('forced').locator('.session-row-glyph').getAttribute('data-tone')).toBe('waiting')
     expect(await row('failed').locator('.session-row-glyph').getAttribute('data-tone')).toBe('failed')
     const red = await row('failed').evaluate(item => {

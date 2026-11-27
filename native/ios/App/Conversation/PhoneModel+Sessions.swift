@@ -23,7 +23,7 @@ extension PhoneModel {
         #if LATCH_SCREENS
         if staged, ScreensStage.finishConsultationApproval(path, fields: fields, model: self) { return }
         #endif
-        guard let workspace, transportReady else { return }
+        guard let workspace, transportReady, !path.hasSuffix("/cancel") || !controlsInFlight.contains(path) else { return }
         let current = generation, previous = controlTail
         controlsInFlight.insert(path)
         let turn = Task { @MainActor in
@@ -371,11 +371,28 @@ extension PhoneModel {
         }
         catch { report(error); return false }
     }
-    func stop(context: PhoneDecisionContext? = nil) async {
-        guard let id = context?.sessionId ?? sessionId, context?.isCurrent() != false else { return }
+    /** Captures the run the stop button was drawn for, including a newer body than the session list. */
+    var currentStopContext: PhoneDecisionContext? {
+        guard let id = sessionId, Self.canStop(currentSummary) else { return nil }
+        let host = generation, run = Self.stopRun(currentSummary)
+        return PhoneDecisionContext(sessionId: id, runId: run) { [weak self] in
+            guard let self, generation == host, sessionId == id else { return false }
+            let summary = currentSummary
+            return Self.canStop(summary) && Self.stopRun(summary) == run
+        }
+    }
+    private static func stopRun(_ summary: NativeJSON) -> String? {
+        summary["runId"].string ?? summary["live"]["runId"].string
+    }
+    private static func canStop(_ summary: NativeJSON) -> Bool {
+        ["running", "waiting-approval"].contains(summary["status"].string ?? "") && summary["live"]["activity"].string != "cancelling"
+    }
+    func stop(context: PhoneDecisionContext) async {
+        guard context.isCurrent() else { return }
+        let id = context.sessionId
         var fields: [String: NativeJSON] = ["requestId": .string(UUID().uuidString)]
-        let summary = snapshot["tasks"].array.first { $0["id"].string == id } ?? detail["summary"]
-        if let run = context?.runId ?? summary["runId"].string { fields["runId"] = .string(run) }
+        let summary = id == sessionId ? currentSummary : (snapshot["tasks"].array.first { $0["id"].string == id } ?? .null)
+        if let run = context.runId ?? Self.stopRun(summary) { fields["runId"] = .string(run) }
         await performControl(path: Self.cancelPath(id), fields: fields, context: context)
     }
     func reject(_ id: String, context: PhoneDecisionContext? = nil) async {
@@ -389,15 +406,6 @@ extension PhoneModel {
     /** One of 更多's choices: the option the Host named, kept with its requestId until it is answered. */
     func decide(_ id: String, option: String, allows: Bool, context: PhoneDecisionContext? = nil) async {
         await mutate(.post, path: Self.approvalPath(id), fields: ["decision": .string(allows ? "allow" : "reject"), "optionId": .string(option)], context: context)
-    }
-    /** 继续等 only ever asks the Host for a longer threshold; it doubles what the request saw. */
-    func keepWaiting() async {
-        let live = currentSummary["live"]
-        guard transportReady, let id = sessionId, let run = live["runId"].string, let threshold = live["silenceThresholdMs"].integer, let workspace else { return }
-        do {
-            _ = try await workspace.keepWaiting(sessionId: id, runId: run, thresholdMs: threshold)
-            await refresh()
-        } catch { if !wentAway(error) { report(error) } }
     }
 }
 

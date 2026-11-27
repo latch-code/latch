@@ -5,6 +5,7 @@
 isomorphic：用 ECMAScript 标准库，禁用 `node:*`、DOM 与 Node 全局变量（`tsconfig.isomorphic.json`、`.oxlintrc.json`）。没有依赖，不使用其他 workspace 包；模块没有副作用。入口 `@latch/protocol` 导出类型与值；`@latch/protocol/types`（`src/types.ts`）只有类型。
 
 不变量：
+- 沉默仍算运行中。
 - 工作电脑只含 Host 与助手 ID，缺省本机。协作按 Agent ID，收发分别授权，缺省关。
 
 - `@latch/sdk` 的类型只用 `@latch/protocol/types`，见兼容用例（`tests/plugin-sdk.test.ts#type-check in an outside TypeScript project that does not allow .ts import extensions`）。外部项目只接受仅含类型的 .ts 路径导入与导出，所以 `src/types.ts` 只写 `export type`，值由 `src/index.ts` 导出；新模块两处都要加。

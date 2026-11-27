@@ -23,7 +23,7 @@ import {
   rowStatus,
   showsUnread,
   unknownNote,
-  waitKind,
+  waitWords,
   waitsOnYou,
   foldMembers,
   teamFoldKey,
@@ -36,7 +36,7 @@ import type { ComputersView } from '../core/shell.ts'
 import { MarkTile } from './BrandTile.tsx'
 import { TeamFold, useFoldedShelves } from './TeamFold.tsx'
 import { Menu, rowOf, type MenuSection } from './overlays.tsx'
-import { SessionRowGlyph, SessionStatus, statusLabel, useLastConfirmed, WaitWords } from './SessionStatus.tsx'
+import { SessionRowGlyph, SessionStatus, statusLabel, useLastConfirmed } from './SessionStatus.tsx'
 import {
   Collapse,
   ICON_STROKE,
@@ -140,13 +140,12 @@ const SessionItem = memo(function SessionItem({
   const named = harnessArt(harness.mark).kind === 'glyph'
   const model = rowModel(task)
   const gateway = model !== undefined && rowGateway(task)
-  const wait = inWaitingShelf && (status.kind === 'waiting' || status.kind === 'silent') ? waitKind(task) : undefined
+  const wait = inWaitingShelf && status.kind === 'waiting' ? waitWords(task) : undefined
   const note = unknownNote(task, status)
   // While the connection is down the row says less, not that what it last knew stopped mattering.
   const strong =
     handoffWaits
     || status.kind === 'waiting'
-    || status.kind === 'silent'
     || status.kind === 'failed'
     || showsUnread(status)
     || (status.kind === 'frozen' && waitsOnYou(task))
@@ -161,7 +160,7 @@ const SessionItem = memo(function SessionItem({
   const branch = task.branch === undefined ? undefined : escapeSecurityText(task.branch)
   const details = [
     engine,
-    wait?.kind === 'asks' ? wait.words : model,
+    wait ?? model,
     wait && (project ?? COPY.noProject),
     said,
     note,
@@ -222,13 +221,7 @@ const SessionItem = memo(function SessionItem({
               <span className="session-mark">
                 <MarkTile mark={harness.mark} size={14} />
               </span>
-              {wait ? (
-                <span className="session-wait">
-                  <WaitWords wait={wait} live={task.live} />
-                </span>
-              ) : (
-                model !== undefined && <span className="session-model">{model}</span>
-              )}
+              {wait ? <span className="session-wait">{wait}</span> : model !== undefined && <span className="session-model">{model}</span>}
               {named && <span className="session-harness">{engine}</span>}
               {wait && <span className="session-meta-rest">{`· ${project ?? COPY.noProject}`}</span>}
               {note && <span className="session-meta-rest">{`· ${note}`}</span>}

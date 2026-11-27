@@ -175,11 +175,7 @@ const PhoneRow = memo(function PhoneRow({
     .join(' · ')
   // While the connection is down the row says less, not that what it last knew stopped mattering.
   const strong =
-    status.kind === 'waiting'
-    || status.kind === 'silent'
-    || status.kind === 'failed'
-    || showsUnread(status)
-    || (status.kind === 'frozen' && waitsOnYou(task))
+    status.kind === 'waiting' || status.kind === 'failed' || showsUnread(status) || (status.kind === 'frozen' && waitsOnYou(task))
   const said = statusLabel(status, task.live)
   const details = [engine, said, handoffWaits && COPY.returnPending, time]
     .filter(Boolean)

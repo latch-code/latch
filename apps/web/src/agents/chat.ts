@@ -14,8 +14,8 @@ import type { MyAgentTab, MyAgentTarget, ShellRoute } from '../shell/routes.ts'
 import { AGENT_SPACE_COPY } from './spaceCopy.ts'
 
 const COPY = defineCopy(
-  { silent: '没有动静', running: '运行中', stopping: '正在停止', failed: '失败' },
-  { silent: 'No activity', running: 'Running', stopping: 'Stopping', failed: 'Failed' },
+  { running: '运行中', stopping: '正在停止', failed: '失败' },
+  { running: 'Running', stopping: 'Stopping', failed: 'Failed' },
 )
 
 /**
@@ -112,8 +112,6 @@ export function topicWords(task: TaskSummary, frozen: boolean): string | undefin
   switch (status.kind) {
     case 'waiting':
       return WAITS_ON_YOU.words
-    case 'silent':
-      return COPY.silent
     case 'running':
       return personActivity(task.live)?.words ?? COPY.running
     case 'stopping':

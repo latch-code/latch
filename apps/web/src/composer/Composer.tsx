@@ -601,19 +601,19 @@ export function Composer({
     ?? round?.reason
     ?? (locked ? COPY.waitForSubmit : empty ? COPY.writeFirst : queueDraft && !steerable ? COPY.sendAfterTurn : undefined)
 
-  // The slot's control swaps in (from 90%, fading in) when the page sees it change: a run starting or ending.
+  // The toolbar has one action slot. A draft replaces Stop with its send action until it is cleared.
   const answering = answer?.kind === 'question' && !empty
   const choosing = typedAction !== undefined
-  const slot =
-    answering || choosing || rounding
-      ? 'send'
-      : run && !queueDraft
-        ? 'stop'
-        : queueDraft
-          ? 'queue'
-          : readOnly !== undefined
-            ? 'none'
-            : 'send'
+  const stopInSlot = !!run && !queueDraft && !answering && !choosing && !rounding
+  const slot = attachments?.preparing
+    ? 'cancel-prepare'
+    : stopInSlot
+      ? 'stop'
+      : queueDraft
+        ? 'queue'
+        : readOnly !== undefined
+          ? 'none'
+          : 'send'
   useLiveChange(slot, (_previous, live) => {
     const element = box.current?.querySelector<HTMLElement>('.composer-slot > *')
     if (live && element)
@@ -698,14 +698,12 @@ export function Composer({
   )
   const action = (
     <div className="composer-slot" data-queue-draft={queueDraft ? '' : undefined}>
-      {/* Touch has no Esc: stop stays beside 排队 and an answer's send there. */}
-      {(queueDraft || answering || choosing || rounding) && run && coarse && <StopButton run={run} stepBack={stepBack} />}
       {attachments?.preparing ? (
         <Button size="sm" onClick={attachments.cancel}>
           <Spinner size={14} />
           {COPY.cancelSend}
         </Button>
-      ) : run && !queueDraft && !answering && !choosing && !rounding ? (
+      ) : slot === 'stop' && run ? (
         <StopButton run={run} stepBack={stepBack} />
       ) : chords ? (
         <FollowUpButton

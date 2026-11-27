@@ -2563,6 +2563,43 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       ],
     })
   })
+  it('lets quiet phone runs keep going without a decision, including on an older Host', async () => {
+    const now = '2026-11-01T10:30:00Z'
+    const lastEventAt = '2026-11-01T10:27:00Z'
+    const live = { activity: 'model', lastEventAt, silent: true }
+    const running = { status: 'running', live }
+    const modelText = '等模型回应 · 3 分钟没有新内容'
+    const commandText = '检查构建 · 3 分钟没有输出'
+    const oldHostText = '3 分钟没有新输出'
+    const unsupported = 'Codex 发来不支持的请求'
+    expect(
+      await invoke({
+        operation: 'phoneProjection',
+        hostNow: now,
+        runStatusCases: [
+          { detail: { summary: running } },
+          { detail: { summary: { ...running, live: { ...live, activity: 'command', commandName: '检查构建' } } } },
+          { detail: { summary: { status: 'running' }, lastOutputAt: lastEventAt } },
+          { detail: { summary: { ...running, pendingQuestions: 1 }, questions: [{}] } },
+          { detail: { summary: { ...running, status: 'waiting-approval' }, approvals: [{}] } },
+          { detail: { summary: { ...running, live: { ...live, unrecognized: { at: lastEventAt } } } } },
+          { detail: { summary: { ...running, live: { ...live, activity: 'cancelling' } } } },
+          { detail: { summary: running }, stopping: true },
+        ],
+      }),
+    ).toEqual({
+      answers: [
+        { text: modelText, helper: modelText, tone: 'passive', topic: '运行中' },
+        { text: commandText, helper: commandText, tone: 'passive', topic: '运行中' },
+        { text: oldHostText, helper: oldHostText, tone: 'passive', topic: '运行中' },
+        { text: '等你回答', helper: '等你点头', tone: 'quiet', topic: '等你处理' },
+        { text: '需要你允许', helper: '等你点头', tone: 'quiet', topic: '等你处理' },
+        { text: unsupported, helper: unsupported, tone: 'amber', topic: '等你处理' },
+        { text: '正在停止…', helper: '在停下', tone: 'plain', topic: '正在停止' },
+        { text: '正在停止…', helper: '在停下', tone: 'plain', topic: '运行中' },
+      ],
+    })
+  })
   it('projects Host sessions for the phone: shelves, frozen words, turns, approvals and what it may start', async () => {
     const at = (minute: number) => `2026-11-01T10:${String(minute).padStart(2, '0')}:00.000Z`
     const result = (await invoke({
@@ -2843,9 +2880,9 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     // A list that may be stale draws nothing live; a run that has already ended still says how.
     expect(result.frozen).toEqual(['frozen', 'frozen', 'frozen', 'frozen', 'frozen', 'ended:已强制停止:2', 'failed', 'read', 'read'])
     expect(result.shelves).toEqual([
-      { label: '等你处理', ids: ['d', 'b', 'a'] },
+      { label: '等你处理', ids: ['b', 'a'] },
       // What is at work comes next, across projects, newest first; a stop being asked for is still at work.
-      { label: '运行中', ids: ['e', 'c'] },
+      { label: '运行中', ids: ['e', 'd', 'c'] },
       // A session an assistant ran stays listed, to be read.
       { label: '对话', ids: ['i', 'g', 'f'] },
     ])
@@ -2899,7 +2936,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       '7': '模型 small → other',
     })
     expect(result.cleared).toEqual([[], ['下一条消息开始新的上下文', '上下文已经清空，Codex 看不到之前的消息，记录仍留在这里。']])
-    expect(result.status).toEqual({ text: '命令运行中 · pnpm test', clock: '1:00', tone: 'plain', actions: [] })
+    expect(result.status).toEqual({ text: '命令运行中 · pnpm test', clock: '1:00', tone: 'plain' })
     expect(result.subtitle).toEqual(['Codex', '不再询问', 'main', '62%'])
     expect(result.neverAsks).toBe(true)
     expect(result.judged).toEqual(['true:拦下', 'false:没有问你', 'false:拦下'])
@@ -4368,13 +4405,13 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(new Set(result.items.map(item => item.id))).toEqual(
       new Set((result.sessionsWaiting as string[]).filter(id => id !== 'bad id!').slice(0, 50)),
     )
-    expect(result.items.slice(0, 5).map(item => [item.id, item.kind, item.words])).toEqual([
+    expect(result.items.slice(0, 4).map(item => [item.id, item.kind, item.words])).toEqual([
       ['h', 'approval', '审批'],
       ['d', 'stuck', '没有动静'],
       ['b', 'question', '问题'],
       ['a', 'approval', '审批'],
-      ['c', 'stuck', '没有动静'],
     ])
+    expect(result.items.map(item => item.id)).not.toContain('c')
     expect(result.items.map(item => item.id)).not.toContain('e')
     expect(Math.max(...result.titleLengths)).toBe(80)
     expect((result.items[0] as unknown as { title: string }).title).toBe(`${'长'.repeat(79)}尾`)
