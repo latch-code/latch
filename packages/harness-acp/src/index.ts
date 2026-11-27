@@ -70,7 +70,7 @@ export function outdatedCommand(record: AgentRecord, path: string | undefined): 
 /**
  * Where to ask whether a newer release of a found command that is new enough is out, the way it was installed (npm, or
  * Homebrew for a formula or cask its profile names), the version it printed, and the command that updates such an install
- * (undefined when its layout says nothing). Only a version already read, by `minimumVersion` or `releases`; reads nothing.
+ * (undefined when its layout says nothing). Uses a version already read by `minimumVersion` or `releases`.
  */
 export function updateSource(
   record: AgentRecord,

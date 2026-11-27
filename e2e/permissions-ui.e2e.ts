@@ -481,6 +481,8 @@ describe('permission states in a browser', () => {
     await expect.poll(() => foot.getByRole('radio', { name: /auto/iu }).getAttribute('aria-checked')).toBe('true')
     expect(await foot.isVisible()).toBe(true)
     await expect.poll(() => permissionWords(page)).toBe('权限：auto')
+    // The Agent can report its new mode before the Host has finished recording the change.
+    await expect.poll(() => permissionControl(page).getAttribute('aria-busy')).toBeNull()
     await page.keyboard.press('Escape')
     await foot.waitFor({ state: 'hidden' })
     expect(testHost.presence.requests).toHaveLength(before)

@@ -1,7 +1,13 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
 import { OFFICIAL_PLUGIN_CATALOG_REPOSITORY } from '@latch/protocol'
 import type { AppCapabilities, PluginExternalSource, PluginPackageReview } from '@latch/protocol'
-import { Button, Dialog, InlineNotice } from '@latch/ui'
+import { Button, CheckGlyph, Dialog, Icon, InlineNotice } from '@latch/ui'
+import { BlockedLine, ConfirmationContent } from '../components/InlineConfirm.tsx'
+import { activeFullAccess } from '../core/blocking.ts'
+import { useInlineConfirmation, type Blocked } from '../core/confirmations.ts'
+import { useSessionLinks } from '../core/sessionLinks.ts'
+import { CONFIRMATION_COPY } from '../core/securityCopy.ts'
+import { pluginChangeCopy } from './pluginAssets.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { api, inlineError, newRequestId, type ApiOptions } from '../core/api.ts'
 import { defineCopy, formatNumber, listText } from '../core/i18n.ts'
@@ -10,18 +16,24 @@ import { Loading, SettingsGroup, SettingsRow } from './common.tsx'
 const COPY = defineCopy(
   {
     risk: '运行权限与风险',
+    done: '完成',
+    appliedStatus: {
+      install: (version: string) => `已安装 v${version}`,
+      update: (version: string) => `已更新至 v${version}`,
+      edit: (version: string) => `本地修改已生效 · v${version}`,
+    },
     version: '目标版本',
-    versionChange: '已应用版本 → 目标版本',
+    versionChange: '已安装版本 → 目标版本',
     source: '来源',
     catalog: '随 Latch 附带',
     officialCatalog: 'Latch 官方插件目录',
     npm: 'npm 仓库',
     creator: '创作会话',
-    local: '本地草稿或导入文件',
+    local: '本地创建或导入',
     github: 'GitHub 仓库',
     folder: '这台 Mac 上的文件夹',
     bundle: '这台 Mac 上的插件包',
-    modified: (version: string) => `从 ${version} 版修改的本地草稿`,
+    modified: (version: string) => `在 ${version} 版基础上的本地修改`,
     host: '工作台代码',
     hostWarning: '此插件的代码会获得这台 Mac 上 Latch 工作台进程的权限。',
     panelWarning: '此插件会在能看会话的设备上运行拥有 Latch 页面权限的代码。',
@@ -40,26 +52,31 @@ const COPY = defineCopy(
     storage: '读写应用数据',
     scopes: { plugin: '插件', project: '项目', session: '会话' },
     noCapabilities: '未声明工作台能力',
-    added: '较已应用版本新增或放宽',
+    added: '较已安装版本新增或放宽',
     unapproved: '需要在这台 Mac 确认的能力',
     skills: '技能指令',
     skillsRisk: 'Agent 选用技能时会按其中的文字指令工作。',
     dataPanels: '静态面板',
     dataPanelsInfo: '在会话中展示静态内容。',
     covered: '风险提示基于包声明与有限的源码检查。请核对来源和文件后再决定。',
-    changes: '与已应用版本的差异',
+    changes: '与已安装版本的差异',
     changedFiles: (count: number) => `${formatNumber(count)} 个文件有变化`,
     changedExecution: '可信执行内容已变化',
     manifestChanged: '插件声明有改动',
-    previousSource: '已应用版本的来源',
+    previousSource: '已安装版本的来源',
     expanded: '应用页面能力新增或放宽',
     noExpanded: '应用页面能力未扩大',
     onMac: '继续后需在这台 Mac 上完成确认。',
-    review: { apply: '审阅并应用插件', rollback: '审阅并回退插件', enable: '审阅并启用插件' },
-    confirm: { install: '确认安装', apply: '确认应用', rollback: '确认回退', enable: '确认启用' },
+    review: { apply: '审阅插件', rollback: '审阅并回退插件', enable: '审阅并启用插件' },
+    confirm: { apply: '确认', rollback: '确认回退', enable: '确认启用' },
     loading: '正在读取这个版本的审阅信息…',
     retry: '重新读取',
     cancel: '取消',
+    retrySame: '重试同一请求',
+    uncertain: '尚未收到操作结果，可以重试同一请求。',
+    submitting: '正在提交…',
+    replacesInstalled: '确认后会切换到这个版本并启用插件。',
+    close: '关闭',
     changed: '无法读取此版本的完整审阅信息，请刷新后重试。',
     unknownFinding: (kind: string) => `未识别的风险类型 · ${kind}`,
     findings: '需要留意的源码',
@@ -78,18 +95,24 @@ const COPY = defineCopy(
   },
   {
     risk: 'Access and risks',
+    done: 'Done',
+    appliedStatus: {
+      install: (version: string) => `Installed v${version}`,
+      update: (version: string) => `Updated to v${version}`,
+      edit: (version: string) => `Local changes are active · v${version}`,
+    },
     version: 'Target version',
-    versionChange: 'Applied version → target version',
+    versionChange: 'Installed version → target version',
     source: 'Source',
     catalog: 'Bundled with Latch',
     officialCatalog: 'Latch official plugin catalog',
     npm: 'npm registry',
     creator: 'Creator chat',
-    local: 'Local draft or imported file',
+    local: 'Created or imported locally',
     github: 'GitHub repository',
     folder: 'Folder on this Mac',
     bundle: 'Plugin bundle on this Mac',
-    modified: (version: string) => `Local draft edited from version ${version}`,
+    modified: (version: string) => `Locally edited from version ${version}`,
     host: 'Workbench code',
     hostWarning: 'This plugin runs code with the permissions of the Latch workbench process on this Mac.',
     panelWarning: 'This plugin runs code with the Latch page’s permissions on devices that can view sessions.',
@@ -108,26 +131,31 @@ const COPY = defineCopy(
     storage: 'Read and write app data',
     scopes: { plugin: 'plugin', project: 'project', session: 'session' },
     noCapabilities: 'No declared workbench capabilities',
-    added: 'Added or expanded from the applied version',
+    added: 'Added or expanded from the installed version',
     unapproved: 'Capabilities requiring confirmation on this Mac',
     skills: 'Skill instructions',
     skillsRisk: 'Agents use these written instructions when the skill is selected.',
     dataPanels: 'Static panels',
     dataPanelsInfo: 'Display static content in a session.',
     covered: 'These findings use the manifest and limited source checks. Review the source and files before deciding.',
-    changes: 'Changes from the applied version',
+    changes: 'Changes from the installed version',
     changedFiles: (count: number) => `${formatNumber(count)} files changed`,
     changedExecution: 'Trusted executable contents changed',
     manifestChanged: 'The plugin manifest changed',
-    previousSource: 'Source of the applied version',
+    previousSource: 'Source of the installed version',
     expanded: 'App page capabilities were added or expanded',
     noExpanded: 'App page capabilities did not expand',
     onMac: 'Continue to confirm on this Mac.',
-    review: { apply: 'Review and apply plugin', rollback: 'Review and roll back plugin', enable: 'Review and enable plugin' },
-    confirm: { install: 'Confirm installation', apply: 'Confirm application', rollback: 'Confirm rollback', enable: 'Confirm enabling' },
+    review: { apply: 'Review plugin', rollback: 'Review and roll back plugin', enable: 'Review and enable plugin' },
+    confirm: { apply: 'Confirm', rollback: 'Confirm rollback', enable: 'Confirm enabling' },
     loading: 'Reading the review for this version…',
     retry: 'Read again',
     cancel: 'Cancel',
+    retrySame: 'Retry same request',
+    uncertain: 'The result is unknown. You can retry the same request.',
+    submitting: 'Submitting…',
+    replacesInstalled: 'Confirming switches to this version and enables the plugin.',
+    close: 'Close',
     changed: 'Couldn’t read the complete review for this version. Refresh and try again.',
     unknownFinding: (kind: string) => `Unrecognized risk type · ${kind}`,
     findings: 'Source findings',
@@ -456,10 +484,28 @@ export function PluginRiskFacts({ review, extra }: { review: PluginPackageReview
   )
 }
 
+export interface AppliedPluginChange {
+  name: string
+  version: string
+  kind: ReturnType<typeof pluginChangeCopy>['kind']
+}
+
+export function PluginAppliedResult({ change }: { change: AppliedPluginChange }) {
+  return (
+    <div className="plugin-applied-result" role="status">
+      <Icon icon={CheckGlyph} size={20} />
+      <span>
+        <VisibleText text={COPY.appliedStatus[change.kind](change.version)} />
+      </span>
+    </div>
+  )
+}
+
 export type PluginMutationTarget = {
   id: string
   name: string
   operation: 'apply' | 'rollback' | 'enable'
+  done?: AppliedPluginChange
   revision: string
 }
 
@@ -494,6 +540,9 @@ type PluginMutationDialogProps = {
   target: PluginMutationTarget
   onConfirm: (review: InstalledPluginReview) => void
   onClose: () => void
+  busy?: boolean
+  failure?: string
+  retryRequest?: (() => void) | undefined
 }
 
 export function PluginMutationDialog(props: PluginMutationDialogProps) {
@@ -541,12 +590,14 @@ export function PluginMutationReviewBody({
   name,
   review,
   fallback,
+  submitting = false,
   error,
   onRetry,
 }: {
   name?: string
   review: InstalledPluginReview | null
   fallback?: PluginPackageReview | undefined
+  submitting?: boolean
   error: string
   onRetry: () => void
 }) {
@@ -561,7 +612,7 @@ export function PluginMutationReviewBody({
       {shown ? (
         <>
           <PluginRiskFacts review={shown} />
-          {shown.confirmationRequired && <InlineNotice tone="warn">{COPY.onMac}</InlineNotice>}
+          {shown.confirmationRequired && !submitting && <InlineNotice tone="warn">{COPY.onMac}</InlineNotice>}
         </>
       ) : error ? (
         <InlineNotice tone="error" action={<Button onClick={onRetry}>{COPY.retry}</Button>}>
@@ -574,34 +625,141 @@ export function PluginMutationReviewBody({
   )
 }
 
-function MutationReview({ target, onConfirm, onClose }: PluginMutationDialogProps) {
-  const { review, error, retry } = usePluginMutationReview(target)
-  const { operation } = target
+export function reviewedPluginChange(review: PluginPackageReview) {
+  const source = review.source
+  if (review.baseAppliedRevision === null) return pluginChangeCopy('install')
+  return pluginChangeCopy('version' in source && !source.modified ? 'update' : 'edit')
+}
+
+/**
+ * The sessions this page's snapshot shows holding a plugin's confirmation back, while the change needs one: the Host
+ * refuses it until they end, so the dialog says so before the person asks and keeps its action off. The Host decides;
+ * a snapshot that lags leaves the action on and the Host's refusal says the same in the same place.
+ */
+export function usePluginConfirmationHold(required: boolean): Blocked | undefined {
+  const links = useSessionLinks()
+  if (!required || !links) return undefined
+  const tasks = activeFullAccess(links.snapshot)
+  return tasks.length > 0 ? { action: 'plugin.package.apply', tasks } : undefined
+}
+
+export function PluginWriteFeedback({
+  busy,
+  failure,
+  uncertain,
+  unknownMessage = COPY.uncertain,
+  replacesInstalled = false,
+  held,
+}: {
+  busy: boolean
+  failure?: string | undefined
+  uncertain: boolean
+  unknownMessage?: string
+  replacesInstalled?: boolean
+  /** Sessions holding the confirmation back, named before the person asks (`usePluginConfirmationHold`). */
+  held?: Blocked | undefined
+}) {
+  const flow = useInlineConfirmation(useId(), busy, 3)
+  const view = flow?.view
+  // The line stays after its sessions end, saying so, until the person answers it or asks again: a footer that
+  // shrinks by itself moves the action out from under the pointer.
+  const [kept, setKept] = useState<Blocked>()
+  const sameTasks = (a: Blocked | undefined, b: Blocked | undefined) =>
+    a?.tasks.map(task => task.id).join('\n') === b?.tasks.map(task => task.id).join('\n')
+  if (held && !sameTasks(held, kept)) setKept(held)
+  if (kept && !held && view) setKept(undefined)
+  const hold = held ?? kept
+  if (hold && !view && !failure && !uncertain)
+    return (
+      <div className="plugin-write-feedback">
+        {busy && (
+          <span role="status" className="sr-only">
+            {COPY.submitting}
+          </span>
+        )}
+        <BlockedLine blocked={hold} canOpen={false} onDismiss={held || busy ? undefined : () => setKept(undefined)} />
+      </div>
+    )
+  if (!busy && !flow && !failure && !uncertain)
+    return replacesInstalled ? <div className="plugin-write-feedback">{COPY.replacesInstalled}</div> : null
+  // A request that did not run leaves its line until the next answer replaces it: asking again must not move the dialog.
+  const settled = view !== undefined && (view.phase === 'paused' || view.phase === 'failed')
+  return (
+    <div className="plugin-write-feedback">
+      {busy && (
+        <span role="status" className={settled ? 'sr-only' : undefined}>
+          {view?.phase === 'waiting' ? CONFIRMATION_COPY.waiting : COPY.submitting}
+        </span>
+      )}
+      {flow && view && (busy || view.phase === 'waiting' || view.phase === 'sending' || (!failure && !uncertain)) && (
+        <>
+          {view.phase === 'paused' && view.reason === 'blocked' ? (
+            <BlockedLine blocked={view.blocked} canOpen={false} onDismiss={busy ? undefined : flow.actions.dismiss} />
+          ) : (
+            <ConfirmationContent view={view} actions={flow.actions} />
+          )}
+        </>
+      )}
+      {failure && <InlineNotice tone="error">{failure}</InlineNotice>}
+      {uncertain && !busy && <InlineNotice tone="warn">{unknownMessage}</InlineNotice>}
+    </div>
+  )
+}
+
+function MutationReview({ target, onConfirm, onClose, busy = false, failure, retryRequest }: PluginMutationDialogProps) {
+  const { operation, done } = target
+  const { review, error, retry } = usePluginMutationReview(done ? null : target)
+  const change = operation === 'apply' && review ? reviewedPluginChange(review) : null
+  // An unknown write is never held: sending the same request again is how it gets resolved.
+  const held = usePluginConfirmationHold(!done && !retryRequest && review?.confirmationRequired === true)
+  const close = () => {
+    if (done || !busy) onClose()
+  }
   return (
     <Dialog
       open
       size="lg"
       secure
       className="plugin-mutation-dialog"
-      title={COPY.review[operation]}
-      onClose={onClose}
+      title={done ? <VisibleText text={done.name} /> : (change?.review ?? COPY.review[operation])}
+      dismissible={!!done || !busy}
+      onClose={close}
       footer={
-        <>
-          <Button size="md" onClick={onClose}>
-            {COPY.cancel}
+        done ? (
+          <Button size="md" variant="primary" onClick={close}>
+            {COPY.done}
           </Button>
-          <Button
-            variant="primary"
-            size="md"
-            disabled={review === null}
-            onClick={() => {
-              if (review) onConfirm(review)
-            }}>
-            {COPY.confirm[operation === 'apply' && review?.baseAppliedRevision === null ? 'install' : operation]}
-          </Button>
-        </>
+        ) : (
+          <>
+            <PluginWriteFeedback
+              busy={busy}
+              failure={failure}
+              uncertain={!!retryRequest}
+              replacesInstalled={!!review && review.baseAppliedRevision !== null && operation !== 'enable'}
+              held={held}
+            />
+            <Button size="md" disabled={busy} onClick={close}>
+              {retryRequest && !busy ? COPY.close : COPY.cancel}
+            </Button>
+            <Button
+              variant="primary"
+              size="md"
+              disabled={!retryRequest && (review === null || held !== undefined)}
+              loading={busy}
+              onClick={() => {
+                if (retryRequest) retryRequest()
+                else if (review) onConfirm(review)
+              }}>
+              {retryRequest && !busy ? COPY.retrySame : (change?.confirm ?? COPY.confirm[operation])}
+            </Button>
+          </>
+        )
       }>
-      <PluginMutationReviewBody name={target.name} review={review} error={error} onRetry={retry} />
+      {done ? (
+        <PluginAppliedResult change={done} />
+      ) : (
+        <PluginMutationReviewBody name={target.name} submitting={!busy && !!retryRequest} review={review} error={error} onRetry={retry} />
+      )}
     </Dialog>
   )
 }

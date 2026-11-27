@@ -327,14 +327,14 @@ interface ProfileQuota {
 
 /**
  * Where a preset's own program is published (`update-command.ts`). The install's real path picks the source: a Homebrew
- * formula or cask named in `brew` is asked of Homebrew, a global copy of `npm` (or any other layout) of npm. `native`: path
- * fragments of the program's own installer's layout and the command that updates such an install. `channel`: the Host
+ * formula or cask named in `brew` is asked of Homebrew, a global copy of `npm` (or any other layout) of npm. `native`
+ * recognises the program's own installer layout and names the command that updates it. `channel`: the Host
  * reads which npm dist-tag the program follows from its own settings (`claude`: `autoUpdatesChannel`).
  */
 export interface ReleaseSource {
   readonly npm?: string
   readonly brew?: readonly string[]
-  readonly native?: { readonly markers: readonly string[]; readonly command: string }
+  readonly native?: { readonly matches: (file: string) => boolean; readonly command: string }
   readonly channel?: 'claude'
 }
 

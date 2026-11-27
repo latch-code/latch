@@ -13,6 +13,7 @@ import {
 } from '@latch/protocol'
 import { PluginMarketplace } from '../src/plugin-marketplace/PluginMarketplace.tsx'
 import { useInstalledPluginSwitch } from '../src/plugin-marketplace/InstalledPluginSwitch.tsx'
+import { provideSessionLinks } from '../src/core/sessionLinks.ts'
 
 const catalogManifests = {
   'shift-handoff': { name: 'Shift handoff', version: '1.0.0' },
@@ -69,6 +70,7 @@ afterEach(() => {
 const render = (props: {
   snapshot: AppSnapshot
   access: Parameters<typeof PluginMarketplace>[0]['access']
+  connected?: boolean
   source?: Parameters<typeof PluginMarketplace>[0]['source']
   onManage?: (id: string) => void
 }) =>
@@ -77,6 +79,7 @@ const render = (props: {
       createElement(PluginMarketplace, {
         open: true,
         showBundled: true,
+        connected: props.connected ?? true,
         source: props.source ?? 'bundled',
         onSourceChange: vi.fn(),
         onManage: props.onManage ?? vi.fn(),
@@ -194,7 +197,7 @@ it('opens a bundled plugin in a dialog without install actions or package reads 
   expect(dialog().textContent).toContain('运行权限')
   expect(dialog().textContent).toContain('请在这台 Mac 的 Latch 桌面端安装插件。')
   expect(buttons(dialog(), '审阅并安装')).toHaveLength(0)
-  expect(buttons(dialog(), '应用')).toHaveLength(0)
+  expect(buttons(dialog(), '确认安装')).toHaveLength(0)
   expect(buttons(element, '检查更新')).toHaveLength(0)
   // The list stays underneath, with its cards' versions free of the old prefix.
   expect(element.querySelector('.plugin-market-gallery')).not.toBeNull()
@@ -371,20 +374,27 @@ it.each([true, false])(
     await settle()
     await act(async () => card('交接清单').click())
     expect(dialog().textContent).toContain(applied ? '已安装 v2.0.0' : '已安装 v1.0.0')
-    expect(dialog().textContent).toContain(applied ? '没有可用更新' : '草稿 v2.0.0')
-    expect(buttons(dialog(), '审阅更新')).toHaveLength(0)
-    expect(buttons(dialog(), '审阅草稿')).toHaveLength(applied ? 0 : 1)
+    expect(dialog().textContent).toContain(applied ? '没有可用更新' : '待更新 v2.0.0')
+    expect(buttons(dialog(), '审阅更新')).toHaveLength(applied ? 0 : 1)
     expect(dialog().textContent?.includes('没有可用更新')).toBe(applied)
   },
 )
 
-it('saves a draft, shows the files and the Host review before Apply, and applies the reviewed revision in the dialog', async () => {
+it('keeps the installation review open through Mac confirmation, refusal and a lost receipt', async () => {
   const detail: PluginPackageDetail = { ...summary, bundle, review }
   let packages: PluginPackageSummary[] = []
   let releaseReview!: () => void
   const reviewHeld = new Promise<void>(resolve => {
     releaseReview = resolve
   })
+  const ticket = {
+    id: 'sample-ticket',
+    status: 'pending',
+    action: 'plugin.package.apply',
+    expiresAt: new Date(Date.now() + 120_000).toISOString(),
+  }
+  let releaseTicket!: () => void
+  let writes = 0
   const calls: Array<{ method: string; path: string; body?: unknown }> = []
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     const path = new URL(url, 'http://host.test').pathname.replace(/^.*\/plugin-packages/u, 'plugin-packages')
@@ -402,7 +412,16 @@ it('saves a draft, shows the files and the Host review before Apply, and applies
       await reviewHeld
       return Response.json({ review: { ...review, installId } })
     }
+    if (url.endsWith('/confirmations/sample-ticket')) return Response.json({ confirmation: { ...ticket, status: 'denied' } })
     if (path === `plugin-packages/${id}/apply`) {
+      writes++
+      if (writes === 1) {
+        await new Promise<void>(resolve => {
+          releaseTicket = resolve
+        })
+        return Response.json({ error: 'stepup-required', confirmation: ticket }, { status: 403 })
+      }
+      if (writes === 2) return new Response(null, { status: 502 })
       packages = [{ ...summary, state: 'applied', appliedRevision: revision, appliedVersion: summary.version, enabled: true }]
       return Response.json({ package: { ...detail, ...packages[0] } })
     }
@@ -422,16 +441,21 @@ it('saves a draft, shows the files and the Host review before Apply, and applies
   expect(enabled(install)).toBe(true)
   // The catalog revision's risk facts come before saving anything.
   expect(dialog().textContent).toContain('运行权限与风险')
-  expect(dialog().querySelector('.ui-dialog-footer')?.textContent).toContain('先保存草稿，应用后才会启用。')
+  expect(dialog().querySelector('.ui-dialog-footer')?.textContent).toContain('下一步核对来源和权限，确认后安装。')
   await act(async () => install.click())
   await settle()
   expect(calls.find(call => call.path === 'plugin-packages/catalog/stage')?.body).toMatchObject({ pluginId: id, revision })
   // The draft's files are readable while the Host's review is still on its way, and Apply waits for it.
   expect(dialog().open).toBe(true)
   expect(dialog().getAttribute('data-secure')).toBe('')
-  expect(dialog().querySelector('.creator-plugin-source')?.textContent).toBe(bundle.files[0]!.content)
+  const files = dialog().querySelector<HTMLDetailsElement>('details.plugin-asset-details')!
+  expect(files.open).toBe(false)
+  expect(files.querySelector('pre')).toBeNull()
+  await act(async () => files.querySelector('summary')!.click())
+  expect(files.open).toBe(true)
+  expect(files.querySelector('.creator-plugin-source')?.textContent).toBe(bundle.files[0]!.content)
   expect(dialog().textContent).toContain('在哪里运行')
-  const apply = () => buttons(dialog(), '应用')[0]!
+  const apply = () => buttons(dialog(), '确认安装')[0]!
   expect(enabled(apply())).toBe(false)
   // A click on the waiting button sends nothing.
   await act(async () => apply().click())
@@ -440,15 +464,127 @@ it('saves a draft, shows the files and the Host review before Apply, and applies
   expect(dialog().textContent).toContain('运行权限与风险')
   expect(enabled(apply())).toBe(true)
   expect(calls.some(call => call.path === `plugin-packages/${id}/apply`)).toBe(false)
+  const originalDialog = dialog()
+  const footer = originalDialog.querySelector('.ui-dialog-footer')!
   await act(async () => apply().click())
+  await act(async () => releaseTicket())
+  expect(footer.textContent).toContain('在系统窗口中确认')
+  await expect
+    .poll(
+      async () => {
+        await settle()
+        return footer.textContent
+      },
+      { timeout: 5000 },
+    )
+    .toContain('确认没有通过')
+  expect(dialog()).toBe(originalDialog)
+  expect(dialog().open).toBe(true)
+  expect(enabled(apply())).toBe(true)
+  await act(async () => apply().click())
+  expect(footer.textContent).toContain('重试同一请求')
+  expect(buttons(footer, '取消')).toHaveLength(0)
+  expect(buttons(footer, '返回')).toHaveLength(0)
+  await act(async () => originalDialog.querySelector<HTMLButtonElement>('[data-layer-close]')!.click())
+  expect(dialog().open).toBe(true)
+  expect(dialog().getAttribute('data-secure')).toBe('')
+  await act(async () => buttons(footer, '重试同一请求')[0]!.click())
   await settle()
   const applied = calls.filter(call => call.path === `plugin-packages/${id}/apply`)
-  expect(applied).toHaveLength(1)
+  expect(applied).toHaveLength(3)
+  expect(applied[2]?.body).toEqual(applied[1]?.body)
   expect(applied[0]).toMatchObject({ method: 'POST', body: { revision, reviewedInstallId: installId, baseAppliedRevision: null } })
   expect(dialog().textContent).toContain('已安装 v1.0.0')
   expect(onManage).not.toHaveBeenCalled()
   await act(async () => buttons(dialog(), '完成')[0]!.click())
   expect(dialog().open).toBe(false)
+})
+
+it('holds a confirmation back while a full-access session runs without moving or re-reading the review', async () => {
+  const needsMac = { ...review, confirmationRequired: true }
+  const detail: PluginPackageDetail = { ...summary, bundle, review: needsMac }
+  const task = {
+    id: 'session-1',
+    title: '修复设置页',
+    harnessId: 'codex',
+    level: 'L3',
+    status: 'running',
+    updatedAt: '2026-01-01T00:00:00Z',
+  }
+  let releaseApply!: () => void
+  const calls: string[] = []
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    const path = new URL(url, 'http://host.test').pathname.replace(/^.*\/plugin-packages/u, 'plugin-packages')
+    calls.push(path)
+    if (path === 'plugin-packages') return Response.json({ packages: [summary] })
+    if (path === 'plugin-packages/catalog/preview') return Response.json({ bundle, review: needsMac } satisfies PluginCatalogPreview)
+    if (path === 'plugin-packages/catalog/stage') return Response.json({ package: summary })
+    if (path === `plugin-packages/${id}`) return Response.json({ package: detail })
+    if (path === `plugin-packages/${id}/review`) return Response.json({ review: { ...needsMac, installId } })
+    if (path === `plugin-packages/${id}/apply`) {
+      await new Promise<void>(resolve => {
+        releaseApply = resolve
+      })
+      const { id: taskId, title, harnessId } = task
+      return Response.json(
+        { error: 'presence-blocked', action: 'plugin.package.apply', blockingTasks: [{ id: taskId, title, harnessId }] },
+        { status: 409 },
+      )
+    }
+    return new Response(null, { status: 404 })
+  })
+  vi.stubGlobal('fetch', fetch)
+  const stop = vi.fn(async () => undefined)
+  const links = (tasks: unknown[]) => act(async () => provideSessionLinks({ snapshot: { tasks } as AppSnapshot, open: vi.fn(), stop }))
+  try {
+    await links([])
+    await render(admin('hold-host'))
+    await act(async () => card('交接清单').click())
+    await settle()
+    await act(async () => buttons(dialog(), '审阅并安装')[0]!.click())
+    await settle()
+    await settle()
+    const footer = dialog().querySelector('.ui-dialog-footer')!
+    const apply = () => buttons(dialog(), '确认安装')[0]!
+    const applies = () => calls.filter(path => path.endsWith('/apply')).length
+    const reads = () => calls.filter(path => path === `plugin-packages/${id}` || path.endsWith('/review')).length
+    // The snapshot lags: the Host refuses, names the session, and the review it described stays as it was.
+    expect(enabled(apply())).toBe(true)
+    const readBefore = reads()
+    await act(async () => apply().click())
+    expect(dialog().textContent).toContain('继续后需在这台 Mac 上完成确认。')
+    await act(async () => releaseApply())
+    await settle()
+    expect(footer.textContent).toContain('正在运行「修复设置页」，结束后才能应用插件。')
+    expect(buttons(footer, '停止')).toHaveLength(1)
+    expect(buttons(footer, '查看')).toHaveLength(0)
+    expect(reads()).toBe(readBefore)
+    expect(dialog().textContent).toContain('运行权限与风险')
+    // Asking again keeps the same line in place while the request is out.
+    await act(async () => apply().click())
+    expect(applies()).toBe(2)
+    expect(footer.textContent).toContain('正在运行「修复设置页」')
+    expect(dialog().textContent).toContain('继续后需在这台 Mac 上完成确认。')
+    await act(async () => releaseApply())
+    await settle()
+    expect(dialog().open).toBe(true)
+    // Once the page knows the session, the action is off before anyone asks, and comes back when it ends.
+    await links([task])
+    expect(enabled(apply())).toBe(false)
+    expect(footer.textContent).toContain('正在运行「修复设置页」，结束后才能应用插件。')
+    await act(async () => apply().click())
+    expect(applies()).toBe(2)
+    await act(async () => buttons(footer, '停止')[0]!.click())
+    expect(stop).toHaveBeenCalledWith('session-1')
+    await links([{ ...task, status: 'cancelled' }])
+    expect(enabled(apply())).toBe(true)
+    // The line stays to say so, where the action is, until the person answers it.
+    expect(footer.textContent).toContain('「修复设置页」已经结束，可以再试一次了。')
+    await act(async () => buttons(footer, '好')[0]!.click())
+    expect(footer.textContent).not.toContain('修复设置页')
+  } finally {
+    provideSessionLinks(null)
+  }
 })
 
 it('keeps the open dialog steady across update checks, draft review transitions and closing', async () => {
@@ -556,14 +692,14 @@ it('keeps the open dialog steady across update checks, draft review transitions 
   await act(async () => releasePreview())
   await settle()
 
-  // Clicking 审阅草稿 reads the draft and its apply review in parallel without collapsing the dialog to 正在读取草稿…
+  // Clicking 审阅更新 reads the draft and its apply review in parallel without collapsing the dialog to 正在读取待审阅版本…
   holdDraft = true
   holdMutationReview = true
-  await act(async () => buttons(dialog(), '审阅草稿')[0]!.click())
+  await act(async () => buttons(dialog(), '审阅更新')[0]!.click())
   await settle()
   expect(draftReads).toBe(1)
   expect(mutationReads).toBe(1)
-  expect(dialog().textContent).not.toContain('正在读取草稿')
+  expect(dialog().textContent).not.toContain('正在读取待审阅版本')
   expect(dialog().textContent).toContain('文件与源码')
   holdDraft = false
   holdMutationReview = false
@@ -577,9 +713,46 @@ it('keeps the open dialog steady across update checks, draft review transitions 
   expect(dialog().textContent).toContain('运行权限与风险')
   expect(draftReads).toBe(1)
 
+  expect(dialog().querySelector('.ui-dialog-footer')?.textContent).toContain('确认后会切换到这个版本并启用插件')
+
   // Closing from the secure review step keeps data-secure for immediate dismissal and never renders a stray 完成 footer.
   await act(async () => buttons(dialog(), '取消')[0]!.click())
   expect(dialog().open).toBe(false)
   expect(dialog().getAttribute('data-secure')).toBe('')
   expect(buttons(dialog(), '完成')).toHaveLength(0)
+})
+
+it('can explicitly stop checking a lost installation receipt while offline without resending it', async () => {
+  let writes = 0
+  vi.stubGlobal('fetch', async (url: string) => {
+    if (url.endsWith('/plugin-packages')) return Response.json({ packages: [summary] })
+    if (url.endsWith('/catalog/preview'))
+      return Response.json({
+        bundle,
+        review,
+        installed: { id, installId, revision, version: summary.version, modified: false },
+        updateStatus: 'current',
+      } satisfies PluginCatalogPreview)
+    if (url.endsWith('/' + id)) return Response.json({ package: { ...summary, bundle, review } })
+    if (url.includes('/review?')) return Response.json({ review: { ...review, installId } })
+    if (url.endsWith('/apply')) {
+      writes++
+      return new Response(null, { status: 502 })
+    }
+    return Response.json({})
+  })
+  const owner = admin('offline')
+  await render(owner)
+  await act(async () => card('交接清单').click())
+  await act(async () => buttons(dialog(), '审阅安装')[0]!.click())
+  await act(async () => buttons(dialog(), '确认安装')[0]!.click())
+  await render({ ...owner, connected: false })
+  const footer = dialog().querySelector('.ui-dialog-footer')!
+  expect(footer.textContent).toContain('已提交的操作仍可能完成')
+  expect(enabled(buttons(footer, '重试同一请求')[0]!)).toBe(false)
+  await act(async () => buttons(footer, '放弃查询并关闭')[0]!.click())
+  expect(dialog().open).toBe(false)
+  await render(owner)
+  await settle()
+  expect(writes).toBe(1)
 })

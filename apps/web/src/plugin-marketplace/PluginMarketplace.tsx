@@ -9,7 +9,6 @@ import type {
 } from '@latch/protocol'
 import {
   Button,
-  CheckGlyph,
   Collapse,
   Dialog,
   EmptyState,
@@ -33,8 +32,8 @@ import { describeFailure } from '../core/securityCopy.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { Loading } from '../settings/common.tsx'
 import { PluginFileViewer } from '../settings/CreatorPluginReview.tsx'
-import { PluginRiskFacts } from '../settings/PluginMutationReview.tsx'
-import { canEditPluginPackages, needsPageBuild } from '../settings/pluginAssets.ts'
+import { PluginAppliedResult, PluginRiskFacts, type AppliedPluginChange } from '../settings/PluginMutationReview.tsx'
+import { canEditPluginPackages, needsPageBuild, pendingPluginChange } from '../settings/pluginAssets.ts'
 import { SHELL_COPY } from '../shell/copy.ts'
 import { BundledPluginPreview } from './BundledPluginPreview.tsx'
 import { InstalledPluginList } from './InstalledPluginList.tsx'
@@ -62,7 +61,7 @@ const COPY = defineCopy(
     checked: '已检查官方目录。',
     noUpdates: '已检查官方目录，已添加的插件没有可用更新。',
     checkPluginFailed: '检查更新失败，请重试。',
-    savedDraft: '已检查官方目录，有已保存的草稿待审阅。',
+    savedDraft: '已检查官方目录，已下载的版本可继续审阅。',
     available: (count: number) => `有 ${formatNumber(count)} 个官方插件可更新。`,
     officialSaved: '已保存这个官方版本，可在插件设置中管理。',
     addResults: '添加插件结果',
@@ -85,12 +84,11 @@ const COPY = defineCopy(
     files: '文件与源码',
     review: '审阅并安装',
     reviewUpdate: '审阅更新',
-    reviewDraft: '审阅草稿',
-    apply: '应用',
+    reviewVersion: '审阅插件',
+    confirm: '确认',
     buildInSettings: '在插件设置中构建',
     manage: '查看已有插件',
     installedVersion: (version: string) => `已安装 v${version}`,
-    draftVersion: (version: string) => `草稿 v${version}`,
     availableVersion: (version: string) => `可更新到 v${version}`,
     installed: '已安装',
     installedCount: (count: number) => `已安装（${formatNumber(count)}）`,
@@ -105,7 +103,9 @@ const COPY = defineCopy(
     },
     uncertain: '暂时不知道这次操作是否完成。可重试同一请求。',
     retrySame: '重试同一请求',
-    stageHint: '先保存草稿，应用后才会启用。',
+    abandon: '放弃查询并关闭',
+    stageHint: '下一步核对来源和权限，确认后安装。',
+    updateHint: '下一步核对版本和权限，确认后更新。',
     local: '请在这台 Mac 的 Latch 桌面端安装插件。',
     offline: '连上工作台所在的电脑后即可查找和添加插件。',
     loading: '正在读取已安装的插件…',
@@ -129,7 +129,7 @@ const COPY = defineCopy(
     checked: 'Official catalog checked.',
     noUpdates: 'Official catalog checked. No updates are available for your plugins.',
     checkPluginFailed: 'Update check failed. Try again.',
-    savedDraft: 'Official catalog checked. A saved draft is ready for review.',
+    savedDraft: 'Official catalog checked. A downloaded version is ready to review.',
     available: (count: number) => plural(count, { one: '{n} official plugin has an update.', other: '{n} official plugins have updates.' }),
     officialSaved: 'This official version is already saved. Manage it in plugin settings.',
     addResults: 'Add plugin results',
@@ -152,12 +152,11 @@ const COPY = defineCopy(
     files: 'Files and source',
     review: 'Review and install',
     reviewUpdate: 'Review update',
-    reviewDraft: 'Review draft',
-    apply: 'Apply',
+    reviewVersion: 'Review plugin',
+    confirm: 'Confirm',
     buildInSettings: 'Build in plugin settings',
     manage: 'View local plugin',
     installedVersion: (version: string) => `Installed v${version}`,
-    draftVersion: (version: string) => `Draft v${version}`,
     availableVersion: (version: string) => `Update to v${version} available`,
     installed: 'Installed',
     installedCount: (count: number) => `Installed (${formatNumber(count)})`,
@@ -172,7 +171,9 @@ const COPY = defineCopy(
     },
     uncertain: 'The outcome is unknown. You can retry the same request.',
     retrySame: 'Retry same request',
-    stageHint: 'Save a draft first. The plugin takes effect when you apply it.',
+    abandon: 'Stop checking and close',
+    stageHint: 'Review the source and permissions before confirming installation.',
+    updateHint: 'Review the version and permissions before confirming the update.',
     local: 'Install plugins in the desktop app on the host Mac.',
     offline: 'Connect to the computer running Latch to find and add plugins.',
     loading: 'Reading local plugins…',
@@ -234,7 +235,7 @@ function CatalogVersions({
   status: PluginCatalogUpdateStatus | undefined
 }) {
   const applied = record?.appliedVersion ?? (record?.revision === record?.appliedRevision ? record?.version : undefined)
-  const draft = record && record.revision !== record.appliedRevision ? record.version : undefined
+  const pending = record && pendingPluginChange(record)
   const local = applied ?? record?.version
   return (
     <div className="plugin-market-versions">
@@ -244,7 +245,11 @@ function CatalogVersions({
       ) : (
         <>
           {record?.appliedRevision && <span>{applied ? COPY.installedVersion(applied) : COPY.installed}</span>}
-          {draft && <span>{COPY.draftVersion(draft)}</span>}
+          {record && pending && (
+            <span>
+              {pending.status} v{record.version}
+            </span>
+          )}
         </>
       )}
     </div>
@@ -394,11 +399,9 @@ export function PluginMarketplace({
   const showFeatured = showBundled && !showAdd && !showInstalled
   const [selected, setSelected] = useState<CatalogEntry | null>(null)
   // The saved draft the dialog reviews, then what was applied.
-  const [review, setReview] = useState<{ id: string; revision?: string; done?: { name: string; version: string } } | null>(null)
+  const [review, setReview] = useState<{ id: string; revision?: string; done?: AppliedPluginChange } | null>(null)
   const [closingView, setClosingView] = useState<
-    | { kind: 'overview'; entry: CatalogEntry; preview: PluginCatalogPreview | null }
-    | { kind: 'done'; done: { name: string; version: string } }
-    | null
+    { kind: 'overview'; entry: CatalogEntry; preview: PluginCatalogPreview | null } | { kind: 'done'; done: AppliedPluginChange } | null
   >(null)
   const [query, setQuery] = useState('')
   const [facet, setFacet] = useState<Facet>('all')
@@ -487,9 +490,9 @@ export function PluginMarketplace({
     records: records ?? [],
     onStage: reloadRecords,
     onManage,
-    onReview: id => {
+    onReview: (id, revision) => {
       setSelected(null)
-      setReview({ id })
+      setReview({ id, revision })
     },
   })
   const appPages = snapshot.catalog?.features?.appPages === 1
@@ -503,6 +506,7 @@ export function PluginMarketplace({
         : reviewRecord !== undefined && !reviewRecord.capabilities.some(item => item.startsWith('app:'))))
   const installReview = usePluginInstallReview({
     id: review?.id,
+    scope: storageKey,
     active: open && canEdit && connected && review !== null && review.done === undefined,
     revisionHint: reviewRevisionHint,
     nameHint: reviewRecord?.name,
@@ -562,7 +566,14 @@ export function PluginMarketplace({
     const contributionNames = pluginFacets(item).flatMap(value => [FACET_NAMES[value], FILTER_NAMES[value]])
     return [item.id, ...Object.values(item[lang]), ...contributionNames].join(' ').toLowerCase().includes(search)
   })
-  const preparingReview = selected !== null && review !== null && review.done === undefined && !installReview.loaded
+  const preparingReview =
+    connected
+    && canEdit
+    && !installReview.locked
+    && selected !== null
+    && review !== null
+    && review.done === undefined
+    && !installReview.loaded
   const step = review ? (review.done ? 'done' : preparingReview ? 'overview' : 'review') : selected && selected[lang] ? 'overview' : null
   const { leaving: dialogLeaving } = usePresence(open && (step === 'overview' || step === 'done'), MOTION.sheetExit)
   if (step === 'overview' && selected) {
@@ -649,6 +660,16 @@ export function PluginMarketplace({
   )
   const closeDialog = () => {
     if (dialogLocked) return
+    if (review && !selected) {
+      // Staging removes the preview button that opened this review. Return to its plugin in the list.
+      const results = showAdd ? addResults.current : installedResults.current
+      requestAnimationFrame(() => {
+        if (document.activeElement !== document.body || !results?.isConnected) return
+        const action = results.querySelector<HTMLElement>(`[data-review-return="${CSS.escape(review.id)}"]`)
+        const target = action ?? results
+        target.focus({ preventScroll: true })
+      })
+    }
     setSelected(null)
     setReview(null)
   }
@@ -666,7 +687,7 @@ export function PluginMarketplace({
     ) : reviewName ? (
       <VisibleText text={reviewName} />
     ) : (
-      COPY.reviewDraft
+      COPY.reviewVersion
     )
   const cancel = (
     <Button size="md" disabled={dialogLocked} onClick={closeDialog}>
@@ -689,7 +710,7 @@ export function PluginMarketplace({
             loading={bundledView.stageBusy || preparingReview}
             disabled={!connected || checking || !bundledView.previewReady || bundledView.stagePending !== null || preparingReview}
             onClick={bundledView.stageSelected}>
-            {catalogPreview.installed ? COPY.reviewUpdate : COPY.review}
+            {shownLocal?.appliedRevision ? COPY.reviewUpdate : COPY.review}
           </Button>
         )}
         {canEdit && savedDraft && (
@@ -699,31 +720,47 @@ export function PluginMarketplace({
             loading={preparingReview}
             disabled={!connected || dialogLocked}
             onClick={() => setReview({ id: savedDraft.id, revision: savedDraft.revision })}>
-            {COPY.reviewDraft}
+            {pendingPluginChange(savedDraft)?.review}
           </Button>
         )}
       </>
     ) : shownStep === 'review' && review ? (
       <>
-        {selected && (
-          <Button size="md" variant="ghost" disabled={dialogLocked} onClick={() => setReview(null)}>
-            {COPY.back}
+        {installReview.feedback}
+        {installReview.retrying ? (
+          <Button
+            size="md"
+            onClick={() => {
+              installReview.abandon()
+              setSelected(null)
+              setReview(null)
+              reloadRecords()
+            }}>
+            {COPY.abandon}
           </Button>
+        ) : (
+          <>
+            {selected && (
+              <Button size="md" variant="ghost" disabled={dialogLocked} onClick={() => setReview(null)}>
+                {COPY.back}
+              </Button>
+            )}
+            {cancel}
+          </>
         )}
-        {cancel}
         {installReview.pageBuild ? (
           <Button size="md" variant="primary" disabled={!connected} onClick={() => manage(review.id)}>
             {COPY.buildInSettings}
           </Button>
         ) : (
-          !installReview.applied && (
+          (installReview.retrying || !installReview.applied) && (
             <Button
               size="md"
               variant="primary"
               loading={installReview.busy}
               disabled={!connected || !installReview.ready}
               onClick={installReview.apply}>
-              {installReview.retrying ? COPY.retrySame : COPY.apply}
+              {installReview.retrying ? COPY.retrySame : (installReview.confirmLabel ?? COPY.confirm)}
             </Button>
           )
         )}
@@ -742,7 +779,7 @@ export function PluginMarketplace({
       dismissible={!dialogLocked}
       title={dialogTitle}
       onClose={closeDialog}
-      {...(shownStep === 'overview' && canEdit && canStage ? { note: COPY.stageHint } : {})}
+      {...(shownStep === 'overview' && canEdit && canStage ? { note: shownLocal?.appliedRevision ? COPY.updateHint : COPY.stageHint } : {})}
       footer={dialogFooter}>
       {shownStep === 'overview' && shownSelected ? (
         <CatalogOverview
@@ -783,10 +820,7 @@ export function PluginMarketplace({
           {installReview.body}
         </div>
       ) : shownDone ? (
-        <div className="plugin-market-dialog-done" role="status">
-          <Icon icon={CheckGlyph} size={20} />
-          <span>{COPY.installedVersion(shownDone.version)}</span>
-        </div>
+        <PluginAppliedResult change={shownDone} />
       ) : null}
     </Dialog>
   )

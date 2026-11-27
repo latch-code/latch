@@ -371,22 +371,6 @@ export const CONFIRMATION_COPY = defineCopy(
   },
 )
 
-/** The confirmations a refusal may name; anything else is dropped from the details (`core/blocking.ts`). */
-export const BLOCKED_VERBS = defineCopy<Record<'device.enroll' | 'device.grant' | 'policy.change' | 'provider.confirm-origin', string>>(
-  {
-    'device.enroll': '配对新设备',
-    'device.grant': '为设备增加权限',
-    'policy.change': '放宽设置',
-    'provider.confirm-origin': '确认模型服务地址',
-  },
-  {
-    'device.enroll': 'Pair a new device',
-    'device.grant': 'Add device permissions',
-    'policy.change': 'Relax settings',
-    'provider.confirm-origin': 'Confirm a model service address',
-  },
-)
-
 /** What the request does once the confirmation passes, for 「已确认，正在…」. */
 export const CONFIRMATION_VERBS = defineCopy<Record<PresenceAction, string>>(
   {
@@ -414,7 +398,7 @@ export const CONFIRMATION_VERBS = defineCopy<Record<PresenceAction, string>>(
 /** What a confirmation held back by a running agent was for, in 「…，结束后才能放宽设置。」. */
 export const BLOCKED_ACTION_TEXT = defineCopy<Record<PresenceAction, string>>(
   {
-    'plugin.package.apply': '应用自定义插件',
+    'plugin.package.apply': '应用插件',
     'device.enroll-native': '配对手机',
     'device.enroll': '配对新设备',
     'device.grant': '为设备增加权限',
@@ -424,7 +408,7 @@ export const BLOCKED_ACTION_TEXT = defineCopy<Record<PresenceAction, string>>(
     'harness.command.apply': '确认 Harness 命令',
   },
   {
-    'plugin.package.apply': 'apply custom plugins',
+    'plugin.package.apply': 'apply plugins',
     'device.enroll-native': 'pair a phone',
     'device.enroll': 'pair a new device',
     'device.grant': 'add device permissions',

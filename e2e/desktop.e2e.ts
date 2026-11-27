@@ -1922,7 +1922,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
     }
   })
 
-  it('confirms a moved Harness from its settings row before probing it and displaying redacted diagnostics', async () => {
+  it('confirms a moved Harness in settings before probing it and displaying redacted diagnostics', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-probe-'))
     const original = join(root, 'old-bin'),
       moved = join(root, 'new-bin'),
@@ -2008,39 +2008,75 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await refused.waitFor()
       expect(await refused.count()).toBe(1)
       expect(await bound()).toBe(join(original, command))
-      await confirm.click()
-      await waiting.waitFor({ state: 'attached' })
-      const request = await testHost.presence.waitForRequest()
-      expect(request.preview.lines).toContainEqual({ label: '命令', value: join(moved, command) })
-      testHost.presence.approveNext()
-      await expect.poll(bound).toBe(join(moved, command))
-      await confirm.waitFor({ state: 'detached' })
       await settings.getByRole('button', { name: '编辑 Probe fixture', exact: true }).click()
-      const probe = settings.locator('.settings-group', { has: page.getByRole('heading', { name: '测试启动', exact: true }) })
-      for (const [width, height] of [
-        [1440, 1000],
-        [768, 1024],
-        [390, 844],
-      ]) {
-        await application.evaluate(
+      const detection = settings.getByRole('region', { name: '检测', exact: true })
+      const confirmProgram = detection.getByRole('button', { name: '确认新程序', exact: true })
+      const pending = () => confirmProgram.getAttribute('aria-busy')
+      const app = application
+      const resize = async (width: number, height: number) => {
+        await app.evaluate(
           ({ BrowserWindow }, size) => {
             const window = BrowserWindow.getAllWindows()[0]!
             window.setMinimumSize(320, 480)
             window.setContentSize(size.width, size.height)
           },
-          { width: width!, height: height! },
+          { width, height },
         )
         await expect.poll(() => page.evaluate(() => innerWidth)).toBe(width)
+      }
+      await resize(1440, 1000)
+      await confirmProgram.click()
+      await testHost.presence.waitForRequest()
+      await expect.poll(pending).toBe('true')
+      const waitingLine = detection.locator('.inline-confirm[data-confirmation-phase="waiting"]')
+      const waitingInView = () =>
+        waitingLine.evaluate(
+          element =>
+            new Promise<number>(done => {
+              const observer = new IntersectionObserver(([entry]) => {
+                observer.disconnect()
+                done(entry!.intersectionRatio)
+              })
+              observer.observe(element)
+            }),
+        )
+      await waitingLine.waitFor({ state: 'attached' })
+      await captureThemes(page, 'harness-confirm-waiting-desktop')
+      testHost.presence.denyNext()
+      await detection.getByText('没有执行：确认没有通过。', { exact: true }).waitFor()
+      expect(await refused.count()).toBe(1)
+      expect(await pending()).toBeNull()
+      expect(await bound()).toBe(join(original, command))
+      await resize(768, 1024)
+      await detection.getByText('没有执行：确认没有通过。', { exact: true }).scrollIntoViewIfNeeded()
+      await captureThemes(page, 'harness-confirm-denied-tablet')
+      await resize(390, 844)
+      await confirmProgram.click()
+      const request = await testHost.presence.waitForRequest()
+      await expect.poll(pending).toBe('true')
+      expect(request.preview.lines).toContainEqual({ label: '命令', value: join(moved, command) })
+      // On a phone the details open below the fold; the page reveals them after the fold animation.
+      await expect.poll(waitingInView).toBeGreaterThan(0.99)
+      await captureThemes(page, 'harness-confirm-waiting-phone')
+      testHost.presence.approveNext()
+      await expect.poll(bound).toBe(join(moved, command))
+      await detection.getByText('已找到命令', { exact: true }).waitFor()
+      expect(await detection.getByText('原先确认的', { exact: true }).count()).toBe(0)
+      expect(await confirmProgram.count()).toBe(0)
+      const probe = settings.locator('.settings-group', { has: page.getByRole('heading', { name: '测试启动', exact: true }) })
+      for (const [width, height] of [
+        [390, 844],
+        [768, 1024],
+        [1440, 1000],
+      ] as const) {
+        await resize(width, height)
         await probe.getByRole('button', { name: '测试启动', exact: true }).click()
         await probe.getByText('启动握手成功', { exact: true }).waitFor()
         await probe.getByText('登录状态与模型访问尚未验证。', { exact: true }).waitFor()
         await probe.getByText('声明支持：图片、恢复会话、附加文件夹', { exact: true }).waitFor()
         expect(await probe.getByText('需要先登录', { exact: true }).count()).toBe(0)
+        if (width === 390) await captureThemes(page, 'agent-probe-ready-phone')
       }
-      await captureThemes(page, 'agent-probe-ready-phone')
-      await application.evaluate(({ BrowserWindow }) => {
-        BrowserWindow.getAllWindows()[0]!.setContentSize(1440, 1000)
-      })
       const secret = 'test-only-probe-diagnostic-value'
       const changed = await local.confirmed('agents/probe-fixture', {
         method: 'PUT',

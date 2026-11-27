@@ -510,8 +510,20 @@
   max-height: 92dvh;
 }
 
-.ui-sheet.plugin-market-dialog .ui-dialog-footer {
+.plugin-mutation-dialog .ui-dialog-footer,
+.plugin-market-dialog .ui-dialog-footer {
   flex-wrap: wrap;
+}
+
+/* Keep the result beside the action even when someone is reading a long source file. */
+.plugin-write-feedback {
+  flex-basis: 100%;
+  min-width: 0;
+  max-height: 30dvh;
+  overflow: auto;
+  display: grid;
+  gap: var(--sp-8);
+  font-size: var(--fs-ui);
 }
 
 .ui-sheet.plugin-market-dialog .ui-dialog-note {
@@ -623,7 +635,7 @@
   min-width: 0;
 }
 
-.plugin-market-dialog-done {
+.plugin-applied-result {
   display: flex;
   align-items: center;
   gap: var(--sp-8);
@@ -632,7 +644,7 @@
   line-height: var(--lh-ui);
 }
 
-.plugin-market-dialog-done .ui-icon {
+.plugin-applied-result .ui-icon {
   color: var(--accent-ink);
 }
 

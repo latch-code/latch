@@ -119,7 +119,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 
 桌面插件市场用例也会打开「设置 › 插件」，核对应用过的会话面板和技能草稿在同一份列表中，且多种能力的插件只出现一次。用例检查简介和「查看详情」的可见性，从卡片直接停用并重新启用面板，对照 Host 状态，再打开详情。不同窗口宽度的真实截图在 `test-results/plugin-registry/settings-cards-*.png`。
 
-`apps/host/test/plugin-authoring.test.ts` 检查引导确实抵达模型、专用目录与进入条件。`apps/host/test/app-build.test.ts` 检查草稿读取与代码信任。浏览器与隔离 Electron 的实际动线在 `e2e/app-build.e2e.ts`、`e2e/desktop-plugins.e2e.ts`、`e2e/release-check.e2e.ts`。官网市场下载从真实 Astro 产物检查文件版本与 SHA-256。假 Agent 的确定性产物验证交付路径；模型理解需求、选择插件类型和产物实用性需要人工任务评测。
+`apps/host/test/plugin-authoring.test.ts` 检查引导确实抵达模型、专用目录与进入条件。`apps/host/test/app-build.test.ts` 检查草稿读取与代码信任。隔离 Electron 用手动确认夹具检查等待与拒绝期间同一个审阅窗保持打开，并在该窗内重试。设置详情、编辑器和构建预览也覆盖无需系统确认的快速更新或修改：Host 回执显示在原来的窗口，点「完成」后核对实际版本或可用能力。浏览器与隔离 Electron 的实际动线在 `e2e/app-build.e2e.ts`、`e2e/desktop-plugins.e2e.ts`、`e2e/release-check.e2e.ts`。官网市场下载从真实 Astro 产物检查文件版本与 SHA-256。假 Agent 的确定性产物验证交付路径；模型理解需求、选择插件类型和产物实用性需要人工任务评测。
 
 `apps/host/test/plugin-npm.test.ts` 用注入的 npm 版本响应与 USTAR 压缩包覆盖来源、出站限制、压缩包与修订校验、精确更新和改动冲突。`apps/host/test/plugin-assets.test.ts` 验证未知结果的下载只凭原设备和原请求结算。测试不登录或发布到仓库。
 
@@ -127,7 +127,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 
 `apps/host/test/plugin-external-api.test.ts` 用临时插件文件验证外部来源只限本机完整管理权限、预览与暂存之间的内容复查、来源和安装冲突、持久化回执及带内容摘要文件名的目录更新。
 
-`e2e/app-build.e2e.ts` 验证只读电脑与 Android 浏览器的工作区市场、关键词和贡献类型筛选、在对话框里查看详情后关闭以及未发送草稿保留。用 iPhone 与桌面模式的 iPad 浏览器身份检查导航、输入框、设置和市场深链接均不提供入口，仍可接续会话。`e2e/desktop-plugin-registry.e2e.ts` 从桌面侧栏打开完整市场页，验证左栏可继续操作，停用和重新启用工作区插件可撤回和恢复入口，再经测试确认设置带路径的 HTTPS npm 源，下载并应用草稿，然后用已安装条目检查更新。测试在临时目录生成版本归档，经 `ServerOptions.pluginRegistryFetch` 提供 npm 元数据和归档。更新草稿保存后模拟回执丢失，重载页面并原样重试，请求沿用原编号和 Host 的回执。测试也检查窄窗预览的版本与下载按钮，以及本地草稿有改动时的导出入口和替换确认。下载和重试期间旧版继续运行，审阅后点应用才切换到新版本。精选插件、npm 和文件夹来源的草稿都在市场的对话框里审阅文件（`.syn-*` 着色）与 Host 审阅后应用，不进入设置；`apps/web/test/plugin-market-dialog.test.ts` 检查对话框在 Host 审阅返回前不发应用请求、应用请求与设置里的相同，只读设备没有安装操作。
+`e2e/app-build.e2e.ts` 验证只读电脑与 Android 浏览器的工作区市场、关键词和贡献类型筛选、在对话框里查看详情后关闭以及未发送草稿保留。用 iPhone 与桌面模式的 iPad 浏览器身份检查导航、输入框、设置和市场深链接均不提供入口，仍可接续会话。`e2e/desktop-plugin-registry.e2e.ts` 从桌面侧栏打开完整市场页，验证左栏可继续操作，停用和重新启用工作区插件可撤回和恢复入口，再经测试确认设置带路径的 HTTPS npm 源，下载并应用草稿，然后用已安装条目检查更新。测试在临时目录生成版本归档，经 `ServerOptions.pluginRegistryFetch` 提供 npm 元数据和归档。更新草稿保存后模拟回执丢失，重载页面并原样重试，请求沿用原编号和 Host 的回执。测试也检查窄窗预览的版本与下载按钮，以及本地草稿有改动时的导出入口和替换确认。下载和重试期间旧版继续运行，收到 Host 的更新回执后才显示完成。精选插件、npm 和文件夹来源保存后自动进入确认窗，用例检查默认收起的源码、展开后的语法着色与 Host 的修订审阅；`apps/web/test/plugin-market-dialog.test.ts` 检查对话框在 Host 审阅返回前不发应用请求、应用请求与设置里的相同，只读设备没有安装操作。
 
 官方更新用例先应用随附的「上下文」，模拟 GitHub 首次限流，再从已安装卡片和详情手动检查。注入的响应覆盖公开 Git 分支查询、固定提交归档与 raw 文件，检查请求只访问这三个来源且不带凭据。用例核对卡片开关与 Host 的启停状态、纯草稿不会列入、新版先暂存后应用，并在不同窗口宽度检查更新按钮可达。任意 GitHub 仓库的添加与更新另用 REST 响应验证。
 
@@ -568,6 +568,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 - 原生对话框、`shell.openExternal`、`shell.showItemInFolder`、通知与剪贴板在主进程中替换成记录调用的内存实现：不打开真实面板，不投递系统通知，不读写系统剪贴板。系统剪贴板、原生粘贴快捷键、通知授权与专注模式要实机验证。
 - `desktop-recovery.e2e.ts` 终止隔离 Electron 的真实渲染进程，核对原窗口、原分区重新连上同一 Host，且读回已保存的草稿。主文档加载失败时检查原生重载，连续退出时检查「回到起始页」保留未确认的请求且没有重发。两台临时 Host 的用例覆盖主窗口内的远端视图、单独打开的远端窗口及恢复后的设备撤销。
 - `desktop-first-use.e2e.ts` 用临时的假 DeepSeek Harness 验证首次打开模型面板会添加已安装的预设，读到模型与思考档位，重开复用同一份结果。
+- `desktop.e2e.ts` 用移动后的假 Harness 验证列表取消、详情等待（手机宽度下确认详情滚入视图）、拒绝与重试后读回新路径。`shell.e2e.ts` 用两份假 pi 验证升级命令适用官方安装方式，以及重新检测会读同一入口的新版。
 - 模型服务用例阻断外部 DNS，只用本地假服务；终端用例用假终端组件，登录用例运行夹具里的假 `codex login`，从不运行真实 CLI 的登录。
 - 拒绝导航的检查放在用例最后：Playwright 把被拒绝的导航一直当作进行中，所以由主进程触发并监听 `will-frame-navigate`，之后只读取地址、不再驱动页面。
 - 常规用例以开发模式运行（`devMode: true`）。正式打包模式拒绝调试参数与 mock keychain，不能为 Playwright 放宽这条规则。`desktop-cli.e2e.ts` 可通过 `LATCH_PACKAGE_APP` 指向本机应用包，使用复制出的主进程与 preload、临时用户目录和 mock keychain，验证命令行链接与布局；这不等于真实签名应用或钥匙串验收。

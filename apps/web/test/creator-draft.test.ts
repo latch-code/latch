@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { createPluginPackageTemplate, type PluginPackageSummary } from '@latch/protocol'
 import { creatorDrafts } from '../src/plugin-pages/AppDraftEntry.tsx'
-import { CreatorPluginReview } from '../src/settings/CreatorPluginReview.tsx'
+import { CreatorPluginReview, PluginFileViewer } from '../src/settings/CreatorPluginReview.tsx'
 
 const noop = () => {}
 
@@ -42,14 +42,16 @@ describe('drafts delivered by a creator chat', () => {
       createElement(CreatorPluginReview, { bundle, record, locked: false, error: '', onApply: noop, onUpdate: noop, onOpenSession: noop }),
     )
   }
-  it('presents the tool entry as inert text before the human can apply it', () => {
+  it('keeps source out of the initial installation view', () => {
     const page = review('tool')
-    expect(page).toContain('&lt;script&gt;inspectOnly()&lt;/script&gt;')
-    expect(page).not.toContain('<script>inspectOnly()')
-    expect(page).toContain('应用此草稿')
+    expect(page).not.toContain('inspectOnly')
+    expect(page).not.toContain('creator-plugin-source')
+    expect(page).toContain('审阅安装')
+    expect(page.indexOf('审阅安装')).toBeLessThan(page.indexOf('<details'))
+    expect(page).toMatch(/<details[^>]*><summary>文件与源码/u)
     expect(page).toContain('返回创作会话')
   })
-  it('shows the local source for an external draft and offers to apply its reviewed files', () => {
+  it('offers to install a saved external package even when it has no creator chat', () => {
     const { source: _creator, ...draft } = summary
     const page = review('tool', {
       ...draft,
@@ -61,9 +63,7 @@ describe('drafts delivered by a creator chat', () => {
         version: draft.version,
       },
     })
-    expect(page).toContain('文件夹中的插件内容')
-    expect(page).toContain('&lt;script&gt;inspectOnly()&lt;/script&gt;')
-    expect(page).toContain('应用此草稿')
+    expect(page).toContain('审阅安装')
     expect(page).not.toContain('返回创作会话')
   })
   it('marks hidden characters in reviewed source and filenames while preserving source layout', () => {
@@ -73,7 +73,7 @@ describe('drafts delivered by a creator chat', () => {
     const marked = plain + '\n\t// Inspect \u202Ethis comment'
     bundle.manifest.host = [path]
     bundle.files[0] = { path, content: plain }
-    const render = () => renderToStaticMarkup(createElement(CreatorPluginReview, { bundle, record: summary, locked: false, error: '' }))
+    const render = () => renderToStaticMarkup(createElement(PluginFileViewer, { bundle }))
     // The highlighter reads line endings as \n; every other character is shown as written.
     const shown = plain.replace('\r\n', '\n')
     expect(render()).toContain('>' + shown + '</pre>')
@@ -85,10 +85,27 @@ describe('drafts delivered by a creator chat', () => {
     expect(page).toContain('>\\u{202E}</span>this comment')
     expect(page).not.toMatch(/[\u200B\u202E]/u)
     expect(bundle.files[0]).toEqual({ path, content: marked })
+    bundle.files[0].content = '<script>inspectOnly()</script>'
+    expect(render()).toContain('&lt;script&gt;inspectOnly()&lt;/script&gt;')
   })
   it('describes how to use the applied skill, without offering to apply the same draft', () => {
     const page = review('skill', { ...summary, state: 'applied', enabled: true, appliedRevision: summary.revision })
     expect(page).toContain('为支持 Latch 技能的 Agent 选用')
-    expect(page).not.toContain('应用此草稿')
+    expect(page).not.toContain('审阅安装')
+  })
+  it('distinguishes a saved release from edits to that release even if the version number is unchanged', () => {
+    const installed: PluginPackageSummary = {
+      ...summary,
+      state: 'update-available',
+      appliedRevision: 'old',
+      appliedVersion: '0.9',
+      catalog: { revision: summary.revision, version: summary.version },
+    }
+    const update = review('tool', installed)
+    expect(update).toContain('审阅更新')
+    expect(update).toContain('并启用插件')
+    const edited = review('tool', { ...installed, revision: 'edited' })
+    expect(edited).toContain('审阅修改')
+    expect(edited).not.toContain('审阅更新')
   })
 })

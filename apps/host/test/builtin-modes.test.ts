@@ -134,11 +134,22 @@ describe('Latch 内置 levels through the Host', () => {
     expect(t.host.bridge.approvals()).toHaveLength(0)
   })
 
-  it('runs a protected write unasked at 不再询问, with its record first', async () => {
+  it('uses the newly selected level for protected writes after a cancelled turn', async () => {
     const t = await host({ path: '.git/config', content: '[core]\n' })
     await mkdir(join(t.workspaceRoot, '.git'), { recursive: true })
     const device = await t.enroll({ scopes: ['view', 'run', 'approve:standard', 'approve:elevated'] })
-    const sessionId = await idle(t, device)
+    const sessionId = await started(t, device, { config: [{ configId: '~mode', value: 'rule' }] })
+    await status(t, sessionId, 'waiting-approval')
+    const stopped = await device.json(`tasks/${sessionId}/cancel`, { method: 'POST', body: { requestId: randomUUID() } })
+    expect(stopped).toMatchObject({ receipt: { outcome: 'stopped', status: 'cancelled' } })
+
+    expect(await (await setMode(device, sessionId, 'plan')).json()).toEqual({ accepted: true })
+    await device.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'try the write', requestId: randomUUID() } })
+    await status(t, sessionId, 'idle')
+    const detail = await device.json<TaskDetail>(`tasks/${sessionId}`)
+    expect(detail.messages.some(message => message.tool?.blocked?.source === 'rule')).toBe(true)
+    await expect(readFile(join(t.workspaceRoot, '.git', 'config'))).rejects.toMatchObject({ code: 'ENOENT' })
+
     expect(await (await setMode(device, sessionId, 'never')).json()).toEqual({ accepted: true })
     await device.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'again', requestId: randomUUID() } })
     await status(t, sessionId, 'idle')

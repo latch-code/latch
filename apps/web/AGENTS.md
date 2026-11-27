@@ -19,12 +19,12 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 - 正文滚动仅 `useReadingPosition` 写，消息和工具行用 `data-message-id`。工具输出到边缘后滚动正文。刻度列独立滚动，定位（含待办回合）走 `reveal`。缓存见 STREAMING。
 - 预览凭授权句柄，项目预览不伪造会话。文件树懒加载，产物、改动收起，编辑行看本次差异。不透明框与可信插件分开。 `src/preview/AGENTS.md`
 - 面板随会话清理，可信代码无隔离，`compose` 只追加草稿。创建直达创造模式，草稿独立于目录，重试保留模式。
-- 市场随插件启停，iOS 隐藏，留侧栏原页，列表独滚。已安装按应用修订。查源暂存限本机完整管理；审阅绑来源与修订，未知写绑 Host、设备。
+- 市场随插件启停，iOS 隐藏。已装按应用修订，查源暂存限本机完整管理。原窗审阅绑来源修订，成功留到点完成，未知写绑 Host、设备。
 - 安全错误文案按码取自 `src/core/securityCopy.ts`。
 - `permissions.ts` 只是展示，Host 再查；事件流用 `eventStream.ts`（fetch），不用 `EventSource`。
 - 本机按 `isLocalListener`；回环浏览器算远程。缺邀请或用掉后重领（ARCHITECTURE）。
 - 仅链 http(s)、mailto，行内代码继承链接。路径无 href，正文与 @ 共用文件图标，目录开树。网址输入可改、发出可点；闭合围栏保留原文。
-- 确认走 `withConfirmation`；未知留原请求，确认后解锁设置。草稿只存文字，按设备与会话存浏览器，14 天过期；像凭据的只存内存，摘录要 `all`；删会话、撤权或退出即清。项目失效保留草稿供显式继续（`composer/WorkspaceRecovery.tsx`）。
+- 确认走 `withConfirmation`，在发起处反馈。未知留原请求，确认后解锁设置。换权限成功再发。草稿只存文字，按设备与会话存浏览器，14 天过期，像凭据的只存内存，摘录要 `all`。删会话、撤权或退出即清。项目失效留草稿供显式继续（`composer/WorkspaceRecovery.tsx`）。
 - 用 `@latch/ui` 令牌、层、原语。对话/看板同底，分列滚动。
 - 图标在 `src/assets/brands/`，许可在 `public/licenses/brands/`，用 `?no-inline`，缺图用中性图形。草稿与模型面板按账号 Harness ID 预取和补读缺失选项，旧会话固定账号。
 - 读 `HarnessInfo.capabilities` 与 `level`，不判 Driver；共享编码与 Host、测试向量一致。

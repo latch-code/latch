@@ -487,11 +487,11 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('发布检查 dra
       await window.screenshot({ path: `${OUTPUT}/desktop-preview-dark-1440.png` })
       await window.emulateMedia({ colorScheme: 'light' })
 
-      await card.getByRole('button', { name: '应用', exact: true }).click()
-      await window
-        .getByRole('dialog', { name: '审阅并应用插件', exact: true })
-        .getByRole('button', { name: '确认安装', exact: true })
-        .click()
+      await card.getByRole('button', { name: '审阅安装', exact: true }).click()
+      const review = window.locator('dialog.plugin-mutation-dialog[open]')
+      await review.getByRole('button', { name: '确认安装', exact: true }).click()
+      await review.getByRole('status').filter({ hasText: '已安装 v1.0.1' }).waitFor()
+      await review.getByRole('button', { name: '完成', exact: true }).click()
       await expect.poll(() => card.getAttribute('data-phase'), SLOW).toBe('applied')
       expect((await owner.json<AppSnapshot>('snapshot')).tasks.length).toBe(before)
       await card.getByRole('button', { name: '打开' }).click()

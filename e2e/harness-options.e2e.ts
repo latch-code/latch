@@ -8,7 +8,7 @@ import { AGENT_PRESETS, type AppSnapshot, type TaskDetail } from '@latch/protoco
 import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, permissionControl, permissionWords } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSession, permissionControl, permissionWords } from './helpers/layout.ts'
 import { promptValue } from './helpers/prompt.ts'
 
 const OUTPUT = 'test-results/harness-options'
@@ -454,6 +454,189 @@ describe("choosing a Harness's own options before the first message", () => {
     await page.context().close()
   })
 
+  it.each(['unsupported', 'error-after-take'])(
+    'keeps the next message as a draft if tightening permissions after a stop fails (%s)',
+    async outcome => {
+      const page = await open(1440, 'light')
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: {
+          harnessId: 'codex',
+          requestId: randomUUID(),
+          prompt: 'steerable hold',
+          config: [{ configId: '~mode', value: 'agent-full-access' }],
+        },
+      })
+      await openSession(page, sessionId)
+      await page.locator('.transcript').getByText('working', { exact: true }).waitFor()
+      await expect.poll(() => permissionWords(page)).toContain('不再询问')
+      await owner.json(`tasks/${sessionId}/prompt`, {
+        method: 'POST',
+        body: { requestId: randomUUID(), prompt: '排队的消息', queue: true },
+      })
+      await page.getByRole('button', { name: '停止', exact: true }).filter({ visible: true }).click()
+      await expect.poll(async () => (await latest()).summary.status).toBe('cancelled')
+      const queue = page.getByRole('region', { name: '排队发送', exact: true })
+      const resume = queue.getByRole('button', { name: '发送', exact: true })
+      await expect.poll(() => resume.isEnabled()).toBe(true)
+
+      const answer = join(directory, 'config-answer')
+      let release!: () => void
+      const waiting = new Promise<void>(resolve => {
+        release = resolve
+      })
+      const sent: string[] = []
+      page.on('request', request => {
+        if (request.method() === 'POST' && request.url().endsWith(`/tasks/${sessionId}/prompt`)) sent.push('prompt')
+      })
+      try {
+        await writeFile(answer, outcome)
+        await page.route(
+          `**/tasks/${sessionId}/config`,
+          async route => {
+            await waiting
+            await route.continue()
+          },
+          { times: 1 },
+        )
+        await openEntry(page)
+        const response = page.waitForResponse(`**/tasks/${sessionId}/config`)
+        await row(page, /先问你/u).click()
+        await page.keyboard.press('Escape')
+        expect(await resume.isEnabled()).toBe(false)
+        expect(await queue.getByRole('button', { name: '编辑', exact: true }).isEnabled()).toBe(true)
+        expect(await queue.getByRole('button', { name: '移除', exact: true }).isEnabled()).toBe(true)
+        const next = page.getByRole('textbox', { name: '继续对话', exact: true })
+        await next.fill('切换权限后继续')
+        await next.press('Meta+Enter')
+        release()
+        expect((await response).ok()).toBe(false)
+        await rm(answer)
+        if (outcome === 'unsupported') {
+          await openEntry(page)
+          await expect.poll(() => permissionControl(page).getAttribute('aria-busy')).toBeNull()
+          await row(page, /先问你/u).click()
+          await page.keyboard.press('Escape')
+        } else {
+          const check = page.locator('[data-config-unknown]').getByRole('button', { name: '核对', exact: true })
+          await check.waitFor()
+          expect(await resume.isEnabled()).toBe(false)
+          await shot(page, 'permission-unconfirmed-after-stop-1440-light')
+          await next.press('Meta+Enter')
+          await check.click()
+          await check.waitFor({ state: 'hidden' })
+        }
+        await expect.poll(() => permissionWords(page)).toContain('先问你')
+        await expect.poll(() => resume.isEnabled()).toBe(true)
+        expect(sent).toEqual([])
+        expect(await promptValue(next)).toBe('切换权限后继续')
+        await next.press('Meta+Enter')
+        await page.locator('.transcript').getByText('echo: 切换权限后继续', { exact: true }).waitFor()
+        expect(sent).toEqual(['prompt'])
+        const turns = (await readFile(log, 'utf8'))
+          .trim()
+          .split('\n')
+          .map(line => JSON.parse(line) as { event: string; mode?: string })
+        expect(turns.findLast(turn => turn.event === 'prompt-mode')?.mode).toBe('read-only')
+      } finally {
+        release()
+        await rm(answer, { force: true })
+      }
+    },
+  )
+
+  it.each(['unsupported', 'error-after-take'])(
+    'keeps the attachment and draft when a permission change fails while sending waits for the upload (%s)',
+    async outcome => {
+      const page = await open(1440, 'light')
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: {
+          harnessId: 'codex',
+          requestId: randomUUID(),
+          prompt: '第一轮',
+          config: [{ configId: '~mode', value: 'agent-full-access' }],
+        },
+      })
+      await openSession(page, sessionId)
+      await page.locator('.transcript').getByText('echo: 第一轮', { exact: true }).waitFor()
+      await expect.poll(() => permissionWords(page)).toContain('不再询问')
+
+      const answer = join(directory, 'config-answer')
+      let release!: () => void
+      const uploading = new Promise<void>(resolve => {
+        release = resolve
+      })
+      const prompts: string[][] = []
+      page.on('request', request => {
+        if (request.method() === 'POST' && request.url().endsWith(`/tasks/${sessionId}/prompt`))
+          prompts.push(request.postDataJSON().attachmentIds ?? [])
+      })
+      try {
+        await page.route(
+          '**/link/api/attachments',
+          async route => {
+            await uploading
+            await route.continue()
+          },
+          { times: 1 },
+        )
+        const composer = page.locator('form.composer:visible')
+        const next = composer.getByRole('textbox', { name: '继续对话', exact: true })
+        await composer.getByLabel('选择附件', { exact: true }).setInputFiles({
+          name: 'notes.txt',
+          mimeType: 'text/plain',
+          buffer: Buffer.from('permission test'),
+        })
+        await next.fill('带附件继续')
+        await composer.getByRole('button', { name: '发送', exact: true }).click()
+        const cancel = composer.getByRole('button', { name: '取消发送', exact: true })
+        await cancel.waitFor()
+
+        await writeFile(answer, outcome)
+        await openEntry(page)
+        const changed = page.waitForResponse(`**/tasks/${sessionId}/config`)
+        await row(page, /先问你/u).click()
+        await page.keyboard.press('Escape')
+        const check = composer.locator('[data-config-unknown]').getByRole('button', { name: '核对', exact: true })
+        expect((await changed).ok()).toBe(false)
+        if (outcome === 'error-after-take') await check.waitFor()
+        else await expect.poll(() => permissionControl(page).getAttribute('aria-busy')).toBeNull()
+        const response = page.waitForResponse('**/link/api/attachments')
+        release()
+        const uploaded = await response
+        expect(uploaded.ok()).toBe(true)
+        const { attachment } = (await uploaded.json()) as { attachment: { id: string } }
+        await cancel.waitFor({ state: 'hidden' })
+        await rm(answer)
+        if (outcome === 'error-after-take') {
+          await check.click()
+          await check.waitFor({ state: 'hidden' })
+        } else {
+          await openEntry(page)
+          await row(page, /先问你/u).click()
+          await page.keyboard.press('Escape')
+        }
+        await expect.poll(() => permissionWords(page)).toContain('先问你')
+        expect(prompts).toEqual([])
+        expect(await promptValue(next)).toBe('带附件继续')
+        expect(
+          await composer.locator('.attachment-draft[data-state="ready"]').getByRole('button', { name: 'notes.txt', exact: true }).count(),
+        ).toBe(1)
+        await next.press('Meta+Enter')
+        await expect.poll(() => prompts).toEqual([[attachment.id]])
+        await expect
+          .poll(
+            async () => (await latest()).messages.find(message => message.role === 'user' && message.text === '带附件继续')?.attachments,
+          )
+          .toMatchObject([{ id: attachment.id }])
+      } finally {
+        release()
+        await rm(answer, { force: true })
+      }
+    },
+  )
+
   it('resends a turn after the thinking picked a moment before, so the retry runs on it', async () => {
     const page = await open(1440, 'dark')
     await send(page, '第七轮')
@@ -499,6 +682,7 @@ describe("choosing a Harness's own options before the first message", () => {
       await openEntry(page)
       await row(page, /不再询问/u).click()
       await page.keyboard.press('Escape')
+      const logStart = (await readFile(log, 'utf8')).length
       await writeFile(answer, 'exit-before-take')
       await input(page).fill('中断的草稿')
       await input(page).press('Meta+Enter')
@@ -532,6 +716,7 @@ describe("choosing a Harness's own options before the first message", () => {
       expect(current(after, 'mode')).toBe('read-only')
       expect(after.permission?.expectedMode).toBe('read-only')
       const modeWrites = (await readFile(log, 'utf8'))
+        .slice(logStart)
         .split('\n')
         .filter(Boolean)
         .map(line => JSON.parse(line) as { event: string; params?: { configId?: string; value?: string; sessionId?: string } })

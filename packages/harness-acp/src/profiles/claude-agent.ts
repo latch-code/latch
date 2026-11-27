@@ -271,7 +271,10 @@ const CLAUDE_UPGRADE = 'claude update'
 const CLAUDE_SOURCE = {
   npm: '@anthropic-ai/claude-code',
   brew: ['claude-code', 'claude-code@latest'],
-  native: { markers: ['/.local/share/claude/', '/claude/versions/'], command: 'claude update' },
+  native: {
+    matches: (file: string) => file.includes('/.local/share/claude/') || file.includes('/claude/versions/'),
+    command: CLAUDE_UPGRADE,
+  },
   channel: 'claude',
 } as const
 

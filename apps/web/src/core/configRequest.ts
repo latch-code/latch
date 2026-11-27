@@ -26,6 +26,7 @@ export interface ConfigRequest {
   readonly requestId: string
   readonly configId: string
   readonly value: string
+  readonly permission: boolean
   unknown: boolean
 }
 
@@ -49,9 +50,9 @@ export class ConfigRequests {
   get(sessionId: string): ConfigRequest | undefined {
     return this.requests.get(sessionId)
   }
-  begin(sessionId: string, configId: string, value: string): ConfigRequest | undefined {
+  begin(sessionId: string, configId: string, value: string, permission = false): ConfigRequest | undefined {
     if (this.requests.has(sessionId) || this.requests.size >= 256) return
-    const request = { requestId: newRequestId(), configId, value, unknown: false }
+    const request = { requestId: newRequestId(), configId, value, permission, unknown: false }
     this.requests.set(sessionId, request)
     return request
   }

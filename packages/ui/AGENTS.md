@@ -11,7 +11,7 @@
 - 深色在系统偏好（页面没有选浅色时）与 `data-theme="dark"` 下各写一份，两份相同，并重写每个含颜色的令牌（`test/tokens.test.ts#gives every colour token a dark value, identical under the system preference and under data-theme`）。换主题经 `switchTheme`，不播放过渡。
 - 层叠层固定为 `tokens, custom, base, ui, app, security`；原语在 ui 层（`test/stylesheet.test.ts`）。安全界面带 `data-secure`，`data-lock` 只取令牌锁；tokens.css 末尾以 `!important` 锁住令牌，新令牌一并加入。自定义只写 `CUSTOM_TOKENS`，须在锁内（`test/tokens.test.ts`，[文档](../../docs/CUSTOMIZATION.md)）。
 - `src/plugins.ts` 定义 `PluginPanelProps`，共享 React 与控件；`StatusPill` 是插件 API，不改名。
-- 原语的类名以 `ui-` 开头，变体与尺寸用 `data-*`，状态用 ARIA 属性；禁用用 `aria-disabled`，保持可聚焦并拦下点击。成组的单选控件只有一个 Tab 停靠点，弹层在顶层显示，对话框限制并归还焦点。
+- 原语类名以 `ui-` 开头，变体和尺寸用 `data-*`，状态用 ARIA。禁用用 `aria-disabled`，可聚焦、拦点击。单选组只留一个 Tab 停靠点。弹层置顶，对话框管理并归还焦点，跨断点保留正文与底栏。
 - 浮层只用本包，定位经 `pinLayer`，宽收 `LayerSize`（DESIGN「浮层」）。`Modal` 自身关闭不回调，浏览器关闭回调一次，内层不传外层；卸载用静态副本退场，安全界面与含密码框、iframe 的不留副本；`secure` 的 `Drawer` 不播动效。
 - 原语只呈现真实能力；短模型目录可收紧，单一档位随模型显示。
 - 图标：常用的在 `src/glyphs/`，线宽 `ICON_STROKE`，选中项 `solid`（`test/icon.test.tsx`）。

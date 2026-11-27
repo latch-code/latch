@@ -539,7 +539,9 @@ export function SessionComposer({
   const showControls = speaker === undefined && (selectedId === null || (!!summary && !summary.personal && gate.kind !== 'stopped'))
   const permissionChange = selectedId !== null ? configFeedback.get(selectedId) : undefined
   // The permission is a control of its own, right after the Harness: its glyph on the line, its modes in its popover.
-  const modeId = permission?.option?.id
+  const configRequest = selectedId === null ? undefined : shell.configRequests.current.get(selectedId)
+  const modeId = configRequest?.permission ? configRequest.configId : permission?.option?.id
+  const permissionPending = selectedId !== null && modeId !== undefined && configBusy.get(selectedId) === modeId
   const composerPermission: ComposerPermissionState | undefined =
     permission && catalog && (selectedId === null || summary)
       ? {
@@ -557,7 +559,7 @@ export function SessionComposer({
           onChoose: value => {
             if (permission.option) chooseOption(permission.option, value)
           },
-          ...(selectedId !== null && modeId !== undefined && configBusy.get(selectedId) === modeId ? { pending: true } : {}),
+          ...(permissionPending ? { pending: true } : {}),
           ...(permissionChange && modeId !== undefined && permissionChange.configId === modeId
             ? { feedback: <ConfigFeedback feedback={permissionChange} onRefresh={refreshConfig} /> }
             : {}),
@@ -571,8 +573,10 @@ export function SessionComposer({
             : {}),
         }
       : undefined
-  const permissionBlocked =
+  const helperBlocked =
     selectedId !== null && helperPermissionBlocked(current, permissionChange?.kind === 'unknown' ? permissionChange.configId : undefined)
+  const permissionBlocked =
+    helperBlocked || (modeId !== undefined && permissionChange?.kind === 'unknown' && permissionChange.configId === modeId)
   const worktreeOffer = selectedId === null ? worktreeProject(catalog, choice, submission.fork !== null) : undefined
   const branchSwitchable = canSwitchBranch(shell.snapshot, shell.access, shell.connection)
   const status = (() => {
@@ -708,6 +712,7 @@ export function SessionComposer({
         sessionId={selectedId}
         items={current.queue}
         canSend={gate.kind === 'open' && sessionBlock === undefined && !submission.pending && shell.connection === 'connected'}
+        deliveryBlocked={permissionPending ? COMPOSER_COPY.busy : permissionBlocked ? SHELL_COPY.unverified : undefined}
         canRemove={access.scopes.has('run') && shell.connection === 'connected'}
         queueControl={catalog?.features?.queueControl === true}
         steerRunId={steer ? current.summary.runId : undefined}
@@ -1092,16 +1097,12 @@ export function SessionComposer({
             ? CONNECTION_COPY.offline
             : home && base.creator && base.creatorBlocked
               ? COMPOSER_COPY.creatorUnsupported
-              : (block?.message ?? sessionBlock ?? sideBlocked)
-        }
-        readOnly={
-          gate.kind === 'read-only'
-            ? gate.text
-            : gate.kind === 'stopped'
-              ? placeholder
               : permissionBlocked
                 ? SHELL_COPY.unverified
-                : undefined
+                : (block?.message ?? sessionBlock ?? sideBlocked)
+        }
+        readOnly={
+          gate.kind === 'read-only' ? gate.text : gate.kind === 'stopped' ? placeholder : helperBlocked ? SHELL_COPY.unverified : undefined
         }
         {...(gate.kind === 'read-only' && gate.reason ? { readOnlyReason: gate.reason } : {})}
         {...(answer ? { answer } : {})}

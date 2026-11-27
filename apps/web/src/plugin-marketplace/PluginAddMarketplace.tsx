@@ -15,7 +15,7 @@ import { withConfirmation } from '../core/confirmations.ts'
 import { defineCopy } from '../core/i18n.ts'
 import { Loading, SettingsGroup, SettingsRow } from '../settings/common.tsx'
 import { isPluginPackageReview, PluginRiskFacts, PluginSourceText } from '../settings/PluginMutationReview.tsx'
-import { downloadPluginBundle } from '../settings/pluginAssets.ts'
+import { downloadPluginBundle, pendingPluginChange } from '../settings/pluginAssets.ts'
 import { PluginExternalMarketplace, usePluginExternalMarketplace } from './PluginExternalMarketplace.tsx'
 import { pluginAddInput } from './pluginAddInput.ts'
 import { PluginFallbackCover, PluginMarketIcon } from './PluginArtwork.tsx'
@@ -64,11 +64,11 @@ const COPY = defineCopy(
     external: '从 GitHub 或文件夹添加的插件',
     downloadedVersion: (version: string) => `已下载 v${version}`,
     installedVersion: (version: string) => `已安装 v${version}`,
-    draftVersion: (version: string) => `草稿 v${version}`,
+    draftVersion: (version: string) => `待确认 v${version}`,
     availableVersion: (version: string) => `可更新到 v${version}`,
     checkUpdate: '检查更新',
     same: '此来源没有更高版本。',
-    modified: '草稿有本地改动。可以先导出备份，或打开现有草稿审阅。',
+    modified: '此插件有本地修改，替换前可以先导出备份。',
     exportDraft: '导出本地草稿',
     draftChanged: '这份草稿已有变化，请重新检查更新。',
     replace: '替换本地草稿',
@@ -80,17 +80,15 @@ const COPY = defineCopy(
     active: '已启用',
     earlierActive: '较早版本仍在使用',
     disabled: '已停用',
-    unreviewed: '尚未应用',
+    unreviewed: '待安装',
     details: '包详细信息',
     preview: '版本预览',
     identity: '安装标识',
     digest: '仓库提供的包摘要',
-    savedVersion: '已保存草稿版本',
-    install: '下载为草稿',
-    stageUpdate: '下载更新草稿',
-    review: '审阅草稿',
+    savedVersion: '这台 Mac 上保存的版本',
+    install: '审阅并安装',
+    stageUpdate: '审阅更新',
     reviewLocal: '查看已有插件',
-    staged: '草稿已保存。审阅并应用后才会使用新版本。',
     unknown: '暂时不知道这次操作是否完成。可重试同一请求。',
     retrySame: '重试同一请求',
   },
@@ -126,11 +124,11 @@ const COPY = defineCopy(
     external: 'Plugins added from GitHub or a local folder',
     downloadedVersion: (version: string) => `Downloaded v${version}`,
     installedVersion: (version: string) => `Installed v${version}`,
-    draftVersion: (version: string) => `Draft v${version}`,
+    draftVersion: (version: string) => `Pending v${version}`,
     availableVersion: (version: string) => `Update to v${version} available`,
     checkUpdate: 'Check for update',
     same: 'This source has no newer release.',
-    modified: 'This draft has local edits. Export a backup or open the existing draft for review.',
+    modified: 'This plugin has local edits. Export a backup before replacing them.',
     exportDraft: 'Export local draft',
     draftChanged: 'The local draft has changed. Check for updates again.',
     replace: 'Replace local draft',
@@ -142,17 +140,15 @@ const COPY = defineCopy(
     active: 'Enabled',
     earlierActive: 'Earlier version is still active',
     disabled: 'Disabled',
-    unreviewed: 'Awaiting application',
+    unreviewed: 'Ready to install',
     details: 'Package details',
     preview: 'Version preview',
     identity: 'Plugin ID',
     digest: 'Registry package digest',
-    savedVersion: 'Saved draft version',
-    install: 'Download as draft',
-    stageUpdate: 'Download update draft',
-    review: 'Review draft',
+    savedVersion: 'Version saved on this Mac',
+    install: 'Review and install',
+    stageUpdate: 'Review update',
     reviewLocal: 'View local plugin',
-    staged: 'Draft saved. Review and apply it to start using the new version.',
     unknown: 'The outcome is unknown. You can retry the same request.',
     retrySame: 'Retry same request',
   },
@@ -263,7 +259,7 @@ export function usePluginAddMarketplace({
   onStage: () => void
   onManage: (id: string) => void
   /** Reviews and applies a draft just saved here, without leaving the marketplace. */
-  onReview: (id: string) => void
+  onReview: (id: string, revision: string) => void
 }) {
   const sourceKey = `${storageKey}:source`
   const stageKey = `${storageKey}:stage`
@@ -288,7 +284,6 @@ export function usePluginAddMarketplace({
   const [stageBusy, setStageBusy] = useState(false)
   const [stagePending, setStagePending] = useMarketReceipt(stageKey, editable && npmEnabled, validStage)
   const [stageError, setStageError] = useState('')
-  const [stagedId, setStagedId] = useState<string | null>(null)
   const [replacement, setReplacement] = useState<PluginNpmStage | null>(null)
   const [exporting, setExporting] = useState(false)
   const mounted = useRef(false)
@@ -296,12 +291,21 @@ export function usePluginAddMarketplace({
   const heading = useRef<HTMLHeadingElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const registryTrigger = useRef('configure')
+  const list = active ? (installedView ? 'installed' : 'add') : null
+  const currentList = useRef(list)
+  useLayoutEffect(() => {
+    currentList.current = list
+  }, [list])
+  const reviewSaved = (record: PluginPackageDetail) => {
+    onStage()
+    if (list && currentList.current === list) onReview(record.id, record.revision)
+  }
   const external = usePluginExternalMarketplace({
     active,
     connected,
     editable: editable && externalEnabled,
     storageKey: storageKey + ':external-stage',
-    onStage,
+    onStage: reviewSaved,
   })
   const view = configuring ? 'registry' : preview ? 'preview' : 'browse'
   const lastView = useRef(view)
@@ -318,7 +322,6 @@ export function usePluginAddMarketplace({
     setLoading(false)
     setLookupError('')
     setStageError('')
-    setStagedId(null)
     setReplacement(null)
     setConfiguring(false)
     lastView.current = 'browse'
@@ -418,7 +421,6 @@ export function usePluginAddMarketplace({
     previewRequest.current = abort
     setLastLookup(input)
     setPreview(null)
-    setStagedId(null)
     setLookupError('')
     setStageError('')
     setLoading(true)
@@ -475,9 +477,8 @@ export function usePluginAddMarketplace({
       if (mounted.current) {
         setStagePending(null)
         setPreview(null)
-        setStagedId(record.id)
         setSearchText('')
-        onStage()
+        reviewSaved(record)
       }
     } catch (cause) {
       const uncertain = signal.aborted || receiptUnsettled(cause, stagePending?.requestId === input.requestId)
@@ -542,16 +543,11 @@ export function usePluginAddMarketplace({
         if (installed?.modified) setReplacement(input)
         else void stage(input)
       }}>
-      {installed?.modified ? COPY.replace : checkingUpdate ? COPY.stageUpdate : COPY.install}
+      {installed?.modified ? COPY.replace : review.baseAppliedRevision ? COPY.stageUpdate : COPY.install}
     </Button>
   )
 
   const browsing = !preview && !configuring && !external.found && !external.preview
-  const savedId = stagedId ?? external.stagedId
-  const showSaved =
-    savedId
-    && (!installedView
-      || records.some(record => record.id === savedId && record.appliedRevision && record.appliedRevision !== record.revision))
   const askRegistry = (value: string, trigger = 'configure') => {
     registryTrigger.current = trigger
     setAddress(value)
@@ -578,7 +574,6 @@ export function usePluginAddMarketplace({
           id={controlId + '-external-update-' + record.id}
           disabled={disabled || locked}
           onClick={() => {
-            setStagedId(null)
             setLookupError('')
             setStageError('')
             external.lookup({ pluginId: record.id })
@@ -587,6 +582,18 @@ export function usePluginAddMarketplace({
         </Button>
       )
     return null
+  }
+  const recordAction = (record: PluginPackageSummary) => {
+    const change = pendingPluginChange(record)
+    return (
+      <Button
+        data-review-return={record.id}
+        aria-haspopup={change ? 'dialog' : undefined}
+        disabled={locked}
+        onClick={() => (change ? onReview(record.id, record.revision) : onManage(record.id))}>
+        {change?.review ?? COPY.reviewLocal}
+      </Button>
+    )
   }
   const canFind = needle?.kind === 'npm' ? npmEnabled && !!registry : needle?.kind === 'external' && externalEnabled
   const controls = !installedView && browsing && (
@@ -600,7 +607,6 @@ export function usePluginAddMarketplace({
           event.preventDefault()
           if (locked || !canFind || !needle) return
           if (needle.kind === 'external') {
-            setStagedId(null)
             setLookupError('')
             setStageError('')
             external.lookup({ input: needle.input })
@@ -767,11 +773,6 @@ export function usePluginAddMarketplace({
               {registryError}
             </InlineNotice>
           )}
-          {showSaved && (
-            <InlineNotice action={!installedView && <Button onClick={() => onReview(savedId)}>{COPY.review}</Button>}>
-              {COPY.staged}
-            </InlineNotice>
-          )}
           {loading && <Loading label={COPY.loading} />}
           {lookupError && (
             <InlineNotice
@@ -906,9 +907,7 @@ export function usePluginAddMarketplace({
                     }
                     trailing={
                       <div className="marketplace-row-actions">
-                        <Button disabled={stageBusy} onClick={() => onManage(record.id)}>
-                          {COPY.reviewLocal}
-                        </Button>
+                        {recordAction(record)}
                         {updateAction(record)}
                       </div>
                     }
@@ -939,9 +938,7 @@ export function usePluginAddMarketplace({
                     }
                     trailing={
                       <div className="marketplace-row-actions">
-                        <Button disabled={locked} onClick={() => onManage(record.id)}>
-                          {COPY.reviewLocal}
-                        </Button>
+                        {recordAction(record)}
                         {updateAction(record)}
                       </div>
                     }

@@ -52,6 +52,10 @@ async function verifyCreatorPlugin(page: Page, host: TestHost): Promise<void> {
   const loaded = () => host.host.registry.list().find(plugin => plugin.id === creatorPluginId)
   await review.waitFor()
   expect(loaded()).toBeUndefined()
+  await reachable(review.getByRole('button', { name: '审阅安装', exact: true }))
+  expect(await review.locator('.creator-plugin-source').count()).toBe(0)
+  await page.screenshot({ path: `${OUTPUT}/creator-ready-to-install.png`, animations: 'disabled' })
+  await review.getByText('文件与源码', { exact: true }).click()
   expect(await review.locator('.creator-plugin-source').textContent()).toContain('registerTool')
   await files.click()
   await page
@@ -59,6 +63,10 @@ async function verifyCreatorPlugin(page: Page, host: TestHost): Promise<void> {
     .or(page.getByRole('radio', { name: 'SKILL.md', exact: true }))
     .click()
   await expect.poll(() => review.locator('.creator-plugin-source').textContent()).toBe(creatorInstructions)
+  const sourceToggle = review.getByText('文件与源码', { exact: true })
+  await sourceToggle.click()
+  await sourceToggle.click()
+  expect(await review.locator('.creator-plugin-source').getAttribute('data-path')).toBe('SKILL.md')
   await review.getByRole('button', { name: '返回创作会话', exact: true }).click()
   await page.locator('.settings-page').waitFor({ state: 'hidden' })
   const settings = await openSettings(page)
@@ -69,8 +77,8 @@ async function verifyCreatorPlugin(page: Page, host: TestHost): Promise<void> {
   const before = host.presence.requests.length
   host.presence.mode = 'manual'
   try {
-    await review.getByRole('button', { name: '应用此草稿', exact: true }).click()
-    const consent = page.getByRole('dialog', { name: '审阅并应用插件', exact: true })
+    await review.getByRole('button', { name: '审阅安装', exact: true }).click()
+    const consent = page.getByRole('dialog', { name: '审阅安装', exact: true })
     await consent.getByText('工作台代码', { exact: true }).waitFor()
     await consent.getByText('可能注册 Agent 工具', { exact: true }).waitFor()
     expect(host.presence.requests).toHaveLength(before)
@@ -81,7 +89,15 @@ async function verifyCreatorPlugin(page: Page, host: TestHost): Promise<void> {
     expect(host.presence.requests.at(-1)?.preview.action).toBe('plugin.package.apply')
     expect(loaded()).toBeUndefined()
     host.presence.approveNext()
-    await expect.poll(() => loaded()?.capabilities).toContain('tool:creator_checklist_uppercase')
+    const result = page.locator('dialog.plugin-mutation-dialog[open]')
+    await result
+      .getByRole('status')
+      .filter({ hasText: '已安装 v' + creatorTemplate.manifest.version })
+      .waitFor()
+    await result.getByRole('button', { name: '完成', exact: true }).click()
+    await result.waitFor({ state: 'hidden' })
+    await review.getByText('技能已启用。可在「我的 Agent」里为支持 Latch 技能的 Agent 选用。', { exact: true }).waitFor()
+    expect(loaded()?.capabilities).toContain('tool:creator_checklist_uppercase')
     const lease = host.host.registry.acquire('demo')
     try {
       expect(lease.skills?.find(skill => skill.name === creatorTitle)?.content).toBe(creatorInstructions)
@@ -100,7 +116,6 @@ async function verifyCreatorPlugin(page: Page, host: TestHost): Promise<void> {
     } finally {
       lease.release()
     }
-    await review.getByText('技能已启用。可在「我的 Agent」里为支持 Latch 技能的 Agent 选用。', { exact: true }).waitFor()
   } finally {
     host.presence.mode = mode
   }
@@ -635,9 +650,9 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('page drafts on t
         await idle(owner, task.id)
         const detail = await owner.json<TaskDetail>(`tasks/${task.id}`)
         expect(detail.messages.find(message => message.role === 'user')?.text).toBe(request)
-        const artifact = window.locator('[data-draft-place="conversation"]').getByRole('button', { name: '审阅插件草稿' })
+        const artifact = window.locator('[data-draft-place="conversation"]').getByRole('button', { name: '查看插件' })
         await artifact.waitFor()
-        expect(await window.getByRole('button', { name: '审阅插件草稿' }).count()).toBe(1)
+        expect(await window.getByRole('button', { name: '查看插件' }).count()).toBe(1)
         const sidebar = window.getByRole('button', { name: '侧边面板', exact: true })
         if ((await sidebar.getAttribute('aria-pressed')) === 'true') await sidebar.click()
         await settleShell(window)
@@ -648,7 +663,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('page drafts on t
         await closeSettings(window.locator('.settings-page'))
         await window.getByRole('button', { name: '新建会话', exact: true }).click()
         await home.waitFor()
-        await window.locator('.ui-toast').getByText('已导入插件草稿，可以审阅后应用', { exact: true }).waitFor({ state: 'hidden' })
+        await window.locator('.ui-toast').getByText('已导入插件文件', { exact: true }).waitFor({ state: 'hidden' })
         await window.screenshot({ path: `${OUTPUT}/creator-return.png`, animations: 'disabled' })
         await expect.poll(() => home.locator('.home-headline').innerText()).toContain('开发项目')
         await home.getByRole('button', { name: '项目：开发项目', exact: true }).waitFor()
@@ -820,7 +835,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('page drafts on t
       await card.scrollIntoViewIfNeeded()
       await window.screenshot({ path: `${OUTPUT}/desktop-preview-dark-reduced-1440.png` })
       await window.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
-      await card.getByRole('button', { name: '应用', exact: true }).focus()
+      await card.getByRole('button', { name: '审阅安装', exact: true }).focus()
       await window.keyboard.press('Shift+Tab')
       await window.keyboard.press('Tab')
       await window.screenshot({ path: `${OUTPUT}/desktop-preview-focus-1440.png` })
@@ -828,17 +843,20 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('page drafts on t
 
       const requests = testHost.presence.requests.length
       testHost.presence.mode = 'manual'
-      await card.getByRole('button', { name: '应用', exact: true }).click()
-      const consent = window.getByRole('dialog', { name: '审阅并应用插件', exact: true })
+      await card.getByRole('button', { name: '审阅安装', exact: true }).click()
+      const consent = window.getByRole('dialog', { name: '审阅安装', exact: true })
       await consent.getByText('在任意项目开始会话', { exact: true }).waitFor()
       expect(testHost.presence.requests).toHaveLength(requests)
       await consent.getByRole('button', { name: '确认安装', exact: true }).click()
       await expect.poll(() => testHost.presence.requests.length).toBe(requests + 1)
-      await card.locator('.new-app-confirm .inline-confirm[data-secure]').waitFor()
+      await consent.getByRole('status').filter({ hasText: '在系统窗口中确认' }).waitFor()
       await expect.poll(() => previewFrame.getAttribute('inert')).toBe('')
       await expect(preview.getByRole('button', { name: '开始' }).click({ trial: true, timeout: 600 })).rejects.toThrow()
       testHost.presence.approveNext()
       testHost.presence.mode = 'approve'
+      const result = window.locator('dialog.plugin-mutation-dialog[open]')
+      await result.getByRole('status').filter({ hasText: '已安装 v0.1.0' }).waitFor()
+      await result.getByRole('button', { name: '完成', exact: true }).click()
       await expect.poll(() => card.getAttribute('data-phase'), SLOW).toBe('applied')
       expect((await owner.json<AppSnapshot>('snapshot')).tasks.length).toBe(sessionsBefore)
       // 打开 goes to the page, in the sidebar's 应用 group.
@@ -884,9 +902,15 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('page drafts on t
       await settings.locator('.plugin-nav-row', { hasText: TITLE }).click()
       const again = settings.locator('.new-app-card').filter({ hasText: id })
       await expect.poll(() => again.getAttribute('data-phase'), SLOW).toBe('preview')
-      await again.getByRole('button', { name: '应用新版本' }).click()
-      await consent.getByText('应用页面能力未扩大', { exact: true }).waitFor()
-      await consent.getByRole('button', { name: '确认应用', exact: true }).click()
+      await again.getByRole('button', { name: '审阅修改' }).click()
+      const editReview = window.getByRole('dialog', { name: '审阅修改', exact: true })
+      await editReview.getByText('应用页面能力未扩大', { exact: true }).waitFor()
+      const reviewWindow = await editReview.elementHandle()
+      await editReview.getByRole('button', { name: '确认修改', exact: true }).click()
+      const updated = result.getByRole('status').filter({ hasText: '本地修改已生效 · v0.1.0' })
+      await updated.waitFor()
+      expect(await updated.evaluate((notice, original) => notice.closest('dialog') === original, reviewWindow)).toBe(true)
+      await result.getByRole('button', { name: '完成', exact: true }).click()
       await expect.poll(() => again.getAttribute('data-phase'), SLOW).toBe('applied')
       await again.getByRole('button', { name: '打开' }).click()
       const applied = await frameIn(window.locator('iframe.app-frame'), '#label')

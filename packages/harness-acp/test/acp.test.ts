@@ -2367,6 +2367,91 @@ describe('ACP permission mode', () => {
     expect(log.filter(entry => entry.event === 'prompt-mode').map(entry => entry.mode)).toEqual(['default', 'default'])
   })
 
+  it('keeps the next prompt out of the old mode while changing permissions after a stop', async () => {
+    const fixture = await qwen()
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: 'count 400',
+      requestId: rid(),
+      config: [{ configId: LADDER_MODE, value: 'yolo' }],
+    })
+    await until(bridge, sessionId, detail => detail.liveText.length > 0)
+    await bridge.cancel(sessionId)
+
+    const preparing = deferred()
+    const continuePreparation = deferred()
+    const runtime = bridge as unknown as { assertWorkspace: (task: unknown) => Promise<void> }
+    const workspace = runtime.assertWorkspace.bind(runtime)
+    const prepare = vi.spyOn(runtime, 'assertWorkspace').mockImplementationOnce(async task => {
+      preparing.resolve()
+      await continuePreparation.promise
+      return workspace(task)
+    })
+    const changing = deferred()
+    const release = deferred()
+    const request = AcpWire.prototype.request
+    const wire = vi.spyOn(AcpWire.prototype, 'request').mockImplementation(async function (this: AcpWire, ...args) {
+      if (args[0] === 'session/set_config_option') {
+        changing.resolve()
+        await release.promise
+      }
+      return request.apply(this, args)
+    })
+    const writing = bridge.setConfig!(sessionId, 'mode', 'default')
+    const nextRequest = rid()
+    const next = () => bridge.prompt(sessionId, 'echo next', nextRequest)
+    try {
+      await preparing.promise
+      await expect(next()).rejects.toMatchObject({ code: 'config-check-running' })
+      continuePreparation.resolve()
+      await changing.promise
+      await expect(next()).rejects.toMatchObject({ code: 'config-check-running' })
+    } finally {
+      continuePreparation.resolve()
+      release.resolve()
+      wire.mockRestore()
+      prepare.mockRestore()
+      await writing
+    }
+    await next()
+    await settled(bridge, sessionId)
+    expect((await fixture.log()).filter(entry => entry.event === 'prompt-mode').map(entry => entry.mode)).toEqual(['yolo', 'default'])
+  })
+
+  it('rechecks an in-turn addition when permission changes during its authorization', async () => {
+    const fixture = await qwen({ FAKE_ACP_CAPS: 'steer' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'steerable', requestId: rid() })
+    await until(bridge, sessionId, detail => detail.steer === true)
+    const requestId = rid()
+    const changing = deferred()
+    const release = deferred()
+    const request = AcpWire.prototype.request
+    const wire = vi.spyOn(AcpWire.prototype, 'request').mockImplementationOnce(async function (this: AcpWire, ...args) {
+      expect(args[0]).toBe('session/set_config_option')
+      changing.resolve()
+      await release.promise
+      return request.apply(this, args)
+    })
+    let writing: Promise<void> | undefined
+    try {
+      const pending = bridge.steer!(sessionId, 'more', requestId, {
+        authorize() {
+          writing = bridge.setConfig!(sessionId, 'mode', 'plan')
+          return changing.promise
+        },
+      })
+      await expect(pending).rejects.toMatchObject({ code: 'config-check-running' })
+    } finally {
+      release.resolve()
+      wire.mockRestore()
+      await writing
+    }
+    expect(received(await fixture.log(), '_session/steering')).toHaveLength(0)
+    expect(await bridge.steer!(sessionId, 'more', requestId)).toBe('injected')
+    expect((await settled(bridge, sessionId)).messages.filter(message => message.steered)).toHaveLength(1)
+  })
+
   it('sets and reads back the mode after a resume or load that does not report it', async () => {
     for (const [config, method] of [
       ['options', 'resume'],

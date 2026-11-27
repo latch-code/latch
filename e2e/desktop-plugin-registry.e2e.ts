@@ -316,7 +316,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       ).toBe(0)
       await settings.getByRole('button', { name: '新建工具', exact: true }).waitFor()
       expect(await list.getByRole('button', { name: '新建工具', exact: true }).count()).toBe(0)
-      await draft.getByText('草稿', { exact: true }).waitFor()
+      await draft.getByText('待安装', { exact: true }).waitFor()
       expect(await draft.getByRole('switch').count()).toBe(0)
       await core.getByText('始终开启', { exact: true }).waitFor()
       expect(await core.getByRole('switch').count()).toBe(0)
@@ -506,8 +506,13 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await capture('github-preview-1440-light')
       expect((await owner.request(`plugin-packages/${githubId}`)).status).toBe(404)
       const approvals = host.presence.requests.length
-      await panel.getByRole('button', { name: '保存为草稿', exact: true }).click()
-      await panel.getByRole('button', { name: '审阅草稿', exact: true }).waitFor()
+      await panel.getByRole('button', { name: '审阅并安装', exact: true }).click()
+      const pluginContent = page.locator('dialog.plugin-market-dialog[open]')
+      const cancelReview = async () => {
+        await pluginContent.getByRole('button', { name: '取消', exact: true }).click()
+        await pluginContent.waitFor({ state: 'hidden' })
+      }
+      await pluginContent.getByRole('button', { name: '确认安装', exact: true }).waitFor()
       const githubPackage = (await owner.json<{ package: PluginPackageDetail }>(`plugin-packages/${githubId}`)).package
       expect(githubPackage).toMatchObject({
         state: 'draft',
@@ -518,6 +523,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(githubPackage.appliedRevision).toBeUndefined()
       expect(host.host.registry.list().some(plugin => plugin.id === githubId)).toBe(false)
       expect(host.presence.requests).toHaveLength(approvals)
+      await cancelReview()
+      await expect.poll(() => githubEntry.evaluate(button => button === document.activeElement)).toBe(true)
       await panel.getByRole('button', { name: '返回查找', exact: true }).click()
       const afterGithub = sourceRequests.length
 
@@ -534,7 +541,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await panel.getByRole('button', { name: '返回插件列表', exact: true }).click()
       await expect.poll(() => choose.evaluate(element => element === document.activeElement)).toBe(true)
       await choose.click()
-      const stage = panel.getByRole('button', { name: '保存为草稿', exact: true })
+      const stage = panel.getByRole('button', { name: '审阅并安装', exact: true })
       for (const [width, colorScheme] of [
         [1440, 'light'],
         [768, 'dark'],
@@ -549,8 +556,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await capture(`local-preview-${width}-${colorScheme}`)
       }
       await stage.click()
-      const review = panel.getByRole('button', { name: '审阅草稿', exact: true })
-      await review.waitFor()
+      await pluginContent.getByRole('button', { name: '确认安装', exact: true }).waitFor()
+      await cancelReview()
       await expect.poll(record).toMatchObject({ enabled: false, state: 'draft', external: { version: '1.0.0' } })
       expect((await record()).appliedRevision).toBeUndefined()
       expect(host.host.registry.list().some(plugin => plugin.id === id)).toBe(false)
@@ -561,7 +568,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const localRow = panel.locator('.marketplace-fact').filter({ has: page.getByText(title, { exact: true }) })
       const checkUpdate = localRow.getByRole('button', { name: '检查更新', exact: true })
       await checkUpdate.click()
-      const update = panel.getByRole('button', { name: '保存更新草稿', exact: true })
+      const update = panel.getByRole('button', { name: '审阅并安装', exact: true })
       await update.waitFor()
       await panel.getByRole('button', { name: '返回查找', exact: true }).click()
       await expect.poll(() => checkUpdate.evaluate(element => element === document.activeElement)).toBe(true)
@@ -592,18 +599,16 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
       await market.getByRole('tab', { name: '添加插件', exact: true }).click()
       await retry.click()
-      await review.waitFor()
+      await pluginContent.getByRole('button', { name: '确认安装', exact: true }).waitFor()
       expect(attempts).toHaveLength(2)
       expect(attempts[1]).toEqual(attempts[0])
       expect((await record()).appliedRevision).toBeUndefined()
-      await review.click()
-      // The draft is reviewed and applied in the marketplace's dialog, not in plugin settings.
-      const pluginContent = page.locator('dialog.plugin-market-dialog[open]')
+      await pluginContent.getByText('文件与源码', { exact: true }).click()
       await reachable(pluginContent.getByRole('button', { name: '审阅文件：SKILL.md', exact: true }))
       await expect.poll(() => pluginContent.locator('pre[aria-label="SKILL.md"]').textContent()).toContain('先理解用户的目标和约束')
       // The shared highlighter has tokenized the file (this one is a heading and prose, so its spans are plain).
       await pluginContent.locator('pre[aria-label="SKILL.md"] span[class^="syn-"]').first().waitFor()
-      const apply = pluginContent.getByRole('button', { name: '应用', exact: true })
+      const apply = pluginContent.getByRole('button', { name: '确认安装', exact: true })
       await expect.poll(() => apply.getAttribute('aria-disabled')).toBe(null)
       await pluginContent.getByText('这台 Mac 上的文件夹', { exact: true }).waitFor()
       await reachable(apply)
@@ -615,7 +620,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(host.presence.requests).toHaveLength(approvals)
       expect((await record()).enabled).toBe(false)
       await panel.waitFor()
-      await review.waitFor()
+      await localRow.getByRole('button', { name: '审阅安装', exact: true }).waitFor()
       await resize(1440, 'light')
       const localDraft = await record()
       await owner.confirmedJson(`plugin-packages/${id}/apply`, { body: { revision: localDraft.revision, requestId: randomUUID() } })
@@ -628,11 +633,41 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const lookup = page.waitForRequest(request => new URL(request.url()).pathname.endsWith('/plugin-packages/external/find'))
       await installedLocal.getByRole('button', { name: '检查更新', exact: true }).click()
       expect((await lookup).postDataJSON()).toEqual({ pluginId: id })
-      await installed.getByRole('button', { name: '保存更新草稿', exact: true }).click()
-      await installedLocal.getByRole('button', { name: '审阅草稿', exact: true }).waitFor()
+      await installed.getByRole('button', { name: '审阅更新', exact: true }).click()
+      await pluginContent.getByRole('button', { name: '确认更新', exact: true }).waitFor()
+      await cancelReview()
+      await installedLocal.getByRole('button', { name: '审阅更新', exact: true }).waitFor()
       expect(await record()).toMatchObject({ version: '2.1.0', appliedVersion: '2.0.0' })
       await openSettings(page)
       await openSection(settings, '插件')
+      await settings.locator('.plugin-nav-row', { hasText: title }).click()
+      const pendingUpdate = settings.locator('.creator-plugin-review')
+      for (const [width, theme] of [
+        [1440, 'light'],
+        [820, 'dark'],
+        [390, 'dark'],
+      ] as const) {
+        await resize(width, theme)
+        await reachable(pendingUpdate.getByRole('button', { name: '审阅更新', exact: true }))
+        await pendingUpdate.getByText('当前已安装 v2.0.0。确认后将更新到 v2.1.0。', { exact: true }).waitFor()
+        expect(await pendingUpdate.locator('.creator-plugin-source').isVisible()).toBe(false)
+        await capture(`settings-plugin-update-${width}-${theme}`)
+      }
+      await resize(1440, 'light')
+      const beforeSettingsUpdate = host.presence.requests.length
+      await pendingUpdate.getByRole('button', { name: '审阅更新', exact: true }).click()
+      const settingsReview = page.locator('dialog.plugin-mutation-dialog[open]')
+      const originalWindow = await settingsReview.elementHandle()
+      await settingsReview.getByRole('button', { name: '确认更新', exact: true }).click()
+      const updated = settingsReview.getByRole('status').filter({ hasText: '已更新至 v2.1.0' })
+      await updated.waitFor()
+      expect(await updated.evaluate((notice, original) => notice.closest('dialog') === original, originalWindow)).toBe(true)
+      await capture('settings-plugin-updated-1440-light')
+      await settingsReview.getByRole('button', { name: '完成', exact: true }).click()
+      await settingsReview.waitFor({ state: 'hidden' })
+      expect(await record()).toMatchObject({ appliedVersion: '2.1.0', enabled: true })
+      expect(host.presence.requests).toHaveLength(beforeSettingsUpdate)
+      await backToSection(settings)
       await settings.locator('.plugin-nav-row', { hasText: '插件市场' }).click()
       const toggleMarket = settings.getByRole('switch', { name: '启用 插件市场', exact: true })
       await toggleMarket.click()
@@ -730,7 +765,6 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await expect.poll(() => review.getAttribute('aria-disabled')).toBe(null)
       const detailCover = detail.locator('[data-preview="context"]')
       expect(await contextSample(detailCover)).toEqual(cardSample)
-      await detail.getByText('先保存草稿，应用后才会启用。', { exact: true }).waitFor()
       await reachable(review)
       await noHorizontalOverflow(page, market)
       await page.screenshot({ path: `${OUTPUT}/context-detail-1280-light.png`, animations: 'disabled', scale: 'css' })
@@ -754,11 +788,14 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.emulateMedia({ colorScheme: 'light' })
       await review.click()
       // The saved draft is reviewed in the same dialog: where its code runs, every file with colours, the Host's review.
-      const apply = detail.getByRole('button', { name: '应用', exact: true })
+      const apply = detail.getByRole('button', { name: '确认安装', exact: true })
       await expect.poll(() => apply.getAttribute('aria-disabled')).toBe(null)
       expect(await page.locator('.settings-page').count()).toBe(0)
       await detail.getByText('代码在哪里运行', { exact: true }).waitFor()
       await detail.getByText('运行权限与风险', { exact: true }).waitFor()
+      const disclosure = detail.getByText('文件与源码', { exact: true })
+      expect(await disclosure.evaluate(element => element.closest('details')?.open)).toBe(false)
+      await disclosure.click()
       const files = detail.getByRole('button', { name: /^审阅文件/u })
       const sourceView = detail.locator('.creator-plugin-source')
       await expect.poll(() => sourceView.getAttribute('data-path')).toBe('panel.mjs')
@@ -1027,13 +1064,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await dialog.getByRole('button', { name: '取消', exact: true }).click()
       await market.getByRole('tab', { name: installedTabName }).click()
       const desktop = application
-      for (const [width, theme] of [
-        [1440, 'light'],
-        [1440, 'dark'],
-        [820, 'dark'],
-        [390, 'dark'],
-        [320, 'dark'],
-      ] as const) {
+      const resizeReview = async (width: number, theme: 'light' | 'dark') => {
         await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
         await desktop.evaluate(({ BrowserWindow }, width) => {
           const window = BrowserWindow.getAllWindows()[0]!
@@ -1042,6 +1073,15 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         }, width)
         await expect.poll(() => page.evaluate(() => innerWidth)).toBe(width)
         await settleShell(page)
+      }
+      for (const [width, theme] of [
+        [1440, 'light'],
+        [1440, 'dark'],
+        [820, 'dark'],
+        [390, 'dark'],
+        [320, 'dark'],
+      ] as const) {
+        await resizeReview(width, theme)
         await noHorizontalOverflow(page, inventory)
         await reachable(retry)
         await reachable(update)
@@ -1065,7 +1105,27 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await update.click()
       await dialog.getByRole('button', { name: '审阅更新', exact: true }).click()
       await expect.poll(record).toMatchObject({ catalog: { version: remoteVersion, commit }, appliedVersion: CONTEXT_VERSION })
-      await dialog.getByRole('button', { name: '应用', exact: true }).click()
+      const confirmUpdate = dialog.getByRole('button', { name: '确认更新', exact: true })
+      await reachable(confirmUpdate)
+      const waitForMac = host.presence.requests.length
+      host.presence.mode = 'manual'
+      await confirmUpdate.click()
+      await expect.poll(() => host.presence.requests.length).toBe(waitForMac + 1)
+      const waiting = dialog.getByText('在系统窗口中确认', { exact: true })
+      for (const [width, theme] of [
+        [390, 'dark'],
+        [820, 'dark'],
+        [1440, 'light'],
+      ] as const) {
+        await resizeReview(width, theme)
+        await waiting.waitFor()
+        await noHorizontalOverflow(page, dialog)
+        await reachable(confirmUpdate, { allowDisabled: true })
+        await page.screenshot({ path: `${OUTPUT}/context-update-waiting-${width}-${theme}.png`, animations: 'disabled', scale: 'css' })
+        expect((await record()).appliedVersion).toBe(CONTEXT_VERSION)
+      }
+      expect(host.presence.requests).toHaveLength(waitForMac + 1)
+      host.presence.approveNext()
       await expect.poll(record).toMatchObject({ appliedVersion: remoteVersion, enabled: true })
       await dialog.getByRole('button', { name: '完成', exact: true }).click()
       await context.getByText(`已安装 v${remoteVersion}`, { exact: true }).waitFor()
@@ -1466,7 +1526,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await name.fill(NAME)
       await market.getByRole('button', { name: '查找', exact: true }).click()
       await market.getByText('1.0.0', { exact: true }).waitFor()
-      const download = market.getByRole('button', { name: '下载为草稿', exact: true })
+      const download = market.getByRole('button', { name: '审阅并安装', exact: true })
       await reachable(download)
       expect(requests).toEqual([LATEST, releases.get('1.0.0')!.metadata.dist.tarball])
       const fallback = market.locator('.plugin-market-preview[data-preview="fallback"]')
@@ -1480,17 +1540,15 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await noHorizontalOverflow(page, market)
       await page.screenshot({ path: `${OUTPUT}/npm-preview-1440-light.png`, animations: 'disabled', scale: 'css' })
       await download.click()
-      const review = market.getByRole('button', { name: '审阅草稿', exact: true })
-      await review.waitFor()
+      const consent = page.locator('dialog.plugin-market-dialog[open]')
+      await consent.waitFor()
       const firstDraft = await installed()
       expect(firstDraft).toMatchObject({ state: 'draft', enabled: false, npm: { name: NAME, version: '1.0.0', registry: REGISTRY } })
       expect(firstDraft.appliedRevision).toBeUndefined()
       expect(activeSkill()).toBeUndefined()
       const settings = page.locator('.settings-page')
-      const consent = page.locator('dialog.plugin-market-dialog[open]')
       const applyDraft = async (baseAppliedRevision: string | null) => {
-        if (!(await consent.isVisible())) await review.click()
-        const apply = consent.getByRole('button', { name: '应用', exact: true })
+        const apply = consent.getByRole('button', { name: baseAppliedRevision ? '确认更新' : '确认安装', exact: true })
         await consent.getByText(REGISTRY, { exact: true }).waitFor()
         await expect.poll(() => apply.getAttribute('aria-disabled')).toBe(null)
         expect((await installed()).appliedRevision ?? null).toBe(baseAppliedRevision)
@@ -1525,7 +1583,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect((await checking).postDataJSON()).toEqual({ name: NAME, pluginId: ID })
       const versions = market.getByText('1.0.0 → 2.0.0', { exact: true })
       await versions.waitFor()
-      const downloadUpdate = market.getByRole('button', { name: '下载更新草稿', exact: true })
+      const downloadUpdate = market.getByRole('button', { name: '审阅更新', exact: true })
       await reachable(downloadUpdate)
       expect(requests.slice(previousRequests)).toEqual([LATEST, releases.get('2.0.0')!.metadata.dist.tarball])
       expect((await installed()).revision).toBe(firstDraft.revision)
@@ -1591,13 +1649,13 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(await downloadedRow(TITLE).locator('.plugin-market-icon').count()).toBe(0)
       await page.screenshot({ path: `${OUTPUT}/npm-retry-1440-dark.png`, animations: 'disabled', scale: 'css' })
       await retryStage.click()
-      await review.waitFor()
+      await consent.waitFor()
       expect(stageAttempts).toHaveLength(2)
       expect(stageAttempts[0]).toMatch(/"requestId":"[^"]+"/u)
       expect(stageAttempts[1]).toBe(stageAttempts[0])
       expect(requests.length).toBe(afterStage)
       expect((await installed()).appliedRevision).toBe(firstDraft.revision)
-      await review.click()
+      await consent.getByText('文件与源码', { exact: true }).click()
       await expect.poll(() => consent.locator('.creator-plugin-source').textContent()).toContain(v2)
       expect((await installed()).appliedRevision).toBe(firstDraft.revision)
       await page.screenshot({ path: `${OUTPUT}/npm-draft-1440-dark.png`, animations: 'disabled', scale: 'css' })
@@ -1635,7 +1693,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect((await installed()).revision).toBe(edited.revision)
       await replace.click()
       await confirm.click()
-      await installedHandoff.getByRole('button', { name: '审阅草稿', exact: true }).waitFor()
+      await consent.getByRole('button', { name: '取消', exact: true }).click()
+      await consent.waitFor({ state: 'hidden' })
+      await installedHandoff.getByRole('button', { name: '审阅更新', exact: true }).waitFor()
       expect(await installed()).toMatchObject({
         state: 'update-available',
         enabled: true,
@@ -1650,9 +1710,18 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await pluginSettings.locator('.plugin-nav-row', { hasText: '插件市场' }).click()
       const toggle = pluginSettings.getByRole('switch', { name: '启用 插件市场', exact: true })
       const builtin = () => host.host.registry.list().find(plugin => plugin.id === PLUGIN_MARKETPLACE_PAGE.pluginId)
+      const toggleMarket = async () => {
+        const response = page.waitForResponse(
+          result =>
+            result.request().method() === 'POST'
+            && new URL(result.url()).pathname.endsWith('/plugins/' + encodeURIComponent(PLUGIN_MARKETPLACE_PAGE.pluginId)),
+        )
+        await toggle.click()
+        expect((await response).ok()).toBe(true)
+      }
       expect(await toggle.isChecked()).toBe(true)
       expect(builtin()?.enabled).toBe(true)
-      await toggle.click()
+      await toggleMarket()
       await expect.poll(() => toggle.isChecked()).toBe(false)
       await expect.poll(() => builtin()?.enabled).toBe(false)
       await closeSettings(pluginSettings)
@@ -1663,7 +1732,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const restoreSettings = await openSettings(page)
       await openSection(restoreSettings, '插件')
       await restoreSettings.locator('.plugin-nav-row', { hasText: '插件市场' }).click()
-      await toggle.click()
+      await toggleMarket()
       await expect.poll(() => toggle.isChecked()).toBe(true)
       await expect.poll(() => builtin()?.enabled).toBe(true)
       await closeSettings(restoreSettings)
@@ -1685,6 +1754,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await capture('npm-checklist-1440-dark')
       await fallback.screenshot({ path: `${OUTPUT}/npm-checklist-cover-1440-dark.png`, animations: 'disabled', scale: 'css' })
       await download.click()
+      await consent.getByRole('button', { name: '取消', exact: true }).click()
+      await consent.waitFor({ state: 'hidden' })
       const checklistRow = downloadedRow(CHECKLIST.title)
       await reachable(checklistRow.getByRole('button', { name: '检查更新', exact: true }))
       expect(await checklistRow.locator('.plugin-market-icon').count()).toBe(0)

@@ -450,38 +450,28 @@ export function Dialog({
       data-secure={activeSecure ? '' : undefined}
       aria-labelledby={titleId}
       {...modal}>
-      {sheet ? (
-        <div className="ui-sheet-surface">
-          <div className="ui-sheet-top" {...handle} onPointerCancel={handle.onPointerUp}>
-            <span className="ui-sheet-grabber" aria-hidden="true" />
-            <header className="ui-sheet-header">
-              <SheetClose label={content.closeLabel} onClose={onClose} />
-              <h2 id={titleId} className="ui-sheet-title">
-                {content.title}
-              </h2>
-              <div className="ui-sheet-action" />
-            </header>
-          </div>
-          <div className="ui-sheet-body ui-dialog-body">
-            {content.subtitle && <p className="ui-dialog-subtitle">{content.subtitle}</p>}
-            {content.children}
-          </div>
-          {(content.footer || content.note) && (
-            <footer className="ui-dialog-footer">
-              {content.note && <div className="ui-dialog-note">{content.note}</div>}
-              {content.footer}
-            </footer>
-          )}
-        </div>
-      ) : (
-        <DialogSurface {...content} size={size} placement={placement} titleId={titleId} onClose={onClose} />
-      )}
+      <ResponsiveDialogSurface
+        {...content}
+        size={size}
+        placement={placement}
+        titleId={titleId}
+        onClose={onClose}
+        sheetHandle={sheet ? handle : undefined}
+      />
     </dialog>
   )
 }
 
-/** The dialog's surface on its own, laid out in place: what Dialog shows, for a static sheet of the design system. */
-export function DialogSurface({
+type DialogSurfaceProps = DialogContent & { size?: DialogSize; placement?: DialogPlacement; titleId?: string; onClose?: () => void }
+
+/** The desktop surface on its own, for static views such as the component gallery. */
+export function DialogSurface(props: DialogSurfaceProps) {
+  return <ResponsiveDialogSurface {...props} />
+}
+
+// Keep the body and footer mounted across breakpoints: removing an in-flight confirmation cancels its Host ticket.
+function ResponsiveDialogSurface({
+  sheetHandle,
   title,
   subtitle,
   icon,
@@ -494,7 +484,7 @@ export function DialogSurface({
   placement = 'center',
   titleId,
   onClose,
-}: DialogContent & { size?: DialogSize; placement?: DialogPlacement; titleId?: string; onClose?: () => void }) {
+}: DialogSurfaceProps & { sheetHandle?: SheetHandle | undefined }) {
   useUiLocale()
   const heading = (
     <>
@@ -506,8 +496,8 @@ export function DialogSurface({
   )
   return (
     <div
-      className="ui-dialog-surface"
-      data-size={size}
+      className={sheetHandle ? 'ui-sheet-surface' : 'ui-dialog-surface'}
+      data-size={sheetHandle ? undefined : size}
       data-placement={placement === 'dock' ? 'dock' : undefined}
       data-bare={bare ? '' : undefined}>
       {bare ? (
@@ -525,16 +515,29 @@ export function DialogSurface({
         </div>
       ) : (
         <>
-          <header className="ui-dialog-header">
-            <div className="ui-dialog-heading">
-              <h2 id={titleId} className="ui-dialog-title">
-                {title}
-              </h2>
-              {subtitle && <p className="ui-dialog-subtitle">{subtitle}</p>}
+          {sheetHandle ? (
+            <div className="ui-sheet-top" {...sheetHandle} onPointerCancel={sheetHandle.onPointerUp}>
+              <span className="ui-sheet-grabber" aria-hidden="true" />
+              <header className="ui-sheet-header">
+                <SheetClose label={closeLabel} onClose={onClose} />
+                <h2 id={titleId} className="ui-sheet-title">
+                  {title}
+                </h2>
+                <div className="ui-sheet-action" />
+              </header>
             </div>
-            {onClose && <IconButton label={closeLabel} icon={CloseGlyph} data-layer-close="" onClick={onClose} />}
-          </header>
-          {children !== undefined && <div className="ui-dialog-body">{children}</div>}
+          ) : (
+            <header className="ui-dialog-header">
+              <div className="ui-dialog-heading">{heading}</div>
+              {onClose && <IconButton label={closeLabel} icon={CloseGlyph} data-layer-close="" onClick={onClose} />}
+            </header>
+          )}
+          {(sheetHandle || children !== undefined) && (
+            <div className={cx(!!sheetHandle && 'ui-sheet-body', 'ui-dialog-body')}>
+              {sheetHandle && subtitle && <p className="ui-dialog-subtitle">{subtitle}</p>}
+              {children}
+            </div>
+          )}
           {(footer || note) && (
             <footer className="ui-dialog-footer">
               {note && <div className="ui-dialog-note">{note}</div>}
