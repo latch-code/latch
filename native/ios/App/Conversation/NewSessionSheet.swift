@@ -207,7 +207,10 @@ struct NewSessionSheet: View {
             else if let held = model.takeDraft(for: draftKey) { prompt = held }
             #if LATCH_SCREENS
             if model.staged, ScreensStage.importing, fork == nil { importing = HistoryScope(model.snapshot, workspaceId: choice.workspaceId) }
-            if model.staged, ScreensStage.scene == "account-models" { modelPicker = true }
+            if model.staged, ScreensStage.scene == "account-models" {
+                modelQuery = "work-fast"
+                modelPicker = true
+            }
             if model.staged, ScreensStage.scene == "account-thinking" {
                 choice.ownModel = PhoneStart.ownModels(harness).first { $0.value == "work-fast" }
                 choice.ownThinking = PhoneStart.ownThinking(harness, model: choice.ownModel).first { $0.value == "high" }

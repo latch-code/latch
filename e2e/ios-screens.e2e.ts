@@ -450,24 +450,23 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
               || scene === 'steer'
               || scene === 'conversation-sending'
             ) {
-              const account = scene === 'account-models' || scene === 'account-thinking'
+              const filteredModels = scene === 'account-models'
+              const account = filteredModels || scene === 'account-thinking'
               const frame = account ? join(derived, 'account-frame.png') : shot
               await vi.waitFor(
                 async () => {
                   await simctl('io', udid, 'screenshot', frame)
                   if (scene === 'agent-consent' || account) {
-                    const words =
-                      scene === 'account-models'
-                        ? ['工作', 'Fast', '刷新模型列表']
-                        : scene === 'account-thinking'
-                          ? ['工作', 'Fast', '深入思考']
-                          : ['允许主动联系', '允许按自身权限接单']
-                    const positions = JSON.parse((await run(textReader, [frame, '--settled', ...words])).stdout) as Record<string, number[]>
+                    const words = filteredModels
+                      ? ['工作', 'Fast', '刷新模型列表']
+                      : scene === 'account-thinking'
+                        ? ['工作', 'Fast', '深入思考']
+                        : ['允许主动联系', '允许按自身权限接单']
+                    const positions = JSON.parse(
+                      (await run(textReader, [frame, '--settled', ...words, ...(filteredModels ? ['Balanced'] : [])])).stdout,
+                    ) as Record<string, number[]>
                     for (const word of words) expect(positions[word], word).toHaveLength(1)
-                    if (scene === 'account-models') {
-                      const search = JSON.parse((await run(textReader, [frame, '搜索模型'])).stdout) as { 搜索模型: number[] }
-                      expect(search.搜索模型).toHaveLength(1)
-                    }
+                    if (filteredModels) expect(positions.Balanced).toHaveLength(0)
                     return
                   }
                   if (scene === 'conversation-sending') {
