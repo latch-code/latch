@@ -200,7 +200,7 @@ export function ItemPage({ shell, itemId, outside }: { shell: ShellState; itemId
   const { snapshot } = shell
   const item = snapshot.items?.find(entry => entry.id === itemId)
   const visible = shell.board && !shell.settings
-  const thread = useItemThread(item, snapshot, visible && shell.connection === 'connected')
+  const thread = useItemThread(item, snapshot, { connected: shell.connection === 'connected', visible })
   const canWrite = shell.access.scopes.has('run')
   const root = useRef<HTMLElement>(null)
   const close = useCallback(() => {

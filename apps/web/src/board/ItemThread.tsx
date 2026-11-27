@@ -114,24 +114,28 @@ interface Pending {
 }
 
 /** The same authorized read feeds the thread and its current decision at the top of the page. */
-export function useItemThread(item: WorkItemSummary | undefined, snapshot: AppSnapshot, connected: boolean) {
+export function useItemThread(
+  item: WorkItemSummary | undefined,
+  snapshot: AppSnapshot,
+  { connected, visible }: { connected: boolean; visible: boolean },
+) {
   const itemId = item?.id
   const scope = JSON.stringify([snapshot.instanceId, snapshot.device.id, snapshot.device.dataScope, snapshot.device.scopes, itemId])
   const [state, setState] = useState<{ scope: string; answer: WorkThreadAnswer; versions: Map<string, string> } | null>(null)
   const [failure, setFailure] = useState<{ scope: string; message: string } | null>(null)
   const request = useRef<AbortController | null>(null)
-  const authorizedScope = useRef<string | null>(null)
+  const readableScope = useRef<string | null>(null)
   useLayoutEffect(() => {
-    authorizedScope.current = scope
+    readableScope.current = connected && visible ? scope : null
     return () => {
-      authorizedScope.current = null
+      readableScope.current = null
       request.current?.abort()
     }
-  }, [scope])
+  }, [connected, scope, visible])
   const snapshotRef = useRef(snapshot)
   snapshotRef.current = snapshot
   const read = useCallback(async () => {
-    if (!itemId || authorizedScope.current !== scope) return
+    if (!itemId || readableScope.current !== scope) return
     request.current?.abort()
     const controller = new AbortController()
     request.current = controller
@@ -197,9 +201,11 @@ export function useItemThread(item: WorkItemSummary | undefined, snapshot: AppSn
       setState(previous => (previous?.scope === scope && previous.versions.size ? { ...previous, versions: new Map() } : previous))
       return
     }
+    // Keep the source control mounted behind the conversation so returning can restore focus.
+    if (!visible) return
     void read()
     return () => request.current?.abort()
-  }, [read, item?.threadRevision, replies, connected, scope])
+  }, [read, item?.threadRevision, replies, connected, scope, visible])
   const decisions = useMemo(() => {
     const result = new Map<string, PostDecision>()
     if (connected && current && visiblePosts)
