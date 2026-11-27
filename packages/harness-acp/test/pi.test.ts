@@ -204,6 +204,17 @@ describe('pi over its own RPC', () => {
     expect(message.tool!.input).toContain('PI_NEW_FILE_BODY')
   })
 
+  it('lists a project command when a session warms before the first message', async () => {
+    const entries = openedWith([{ name: 'plan-note', source: 'prompt' }])
+    const { bridge, root, status } = await piFixture(entries)
+    const { sessionId } = await bridge.createTask({ prompt: '', seed: 'Earlier conversation', requestId: 'seed', cwd: root })
+    expect(await bridge.warm!(sessionId)).toBe(true)
+    const detail = await bridge.detail(sessionId)
+    expect(detail.commands).toContainEqual({ name: 'plan-note' })
+    expect(detail.messages).toEqual([])
+    expect(readReplayStatus(status)).toMatchObject({ cursor: entries.length, total: entries.length })
+  })
+
   it('publishes bounded public extension, prompt and skill commands without private gate or resource paths', async () => {
     const commands = [
       {

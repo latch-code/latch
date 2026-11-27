@@ -17,7 +17,7 @@ import {
   withLadderMode,
   worktreeProject,
 } from '../composerChoice.ts'
-import { HarnessTile } from '../components/BrandTile.tsx'
+import { harnessCommandSource } from '../composer/SlashCommands.tsx'
 import { FORK_CONTINUATION_PROMPT, forkSource } from '../forkChoice.ts'
 import { APPROVAL_COPY, CODE_ROOT_COPY, computerName } from '../core/securityCopy.ts'
 import { CONNECTION_COPY } from '../core/hostState.ts'
@@ -872,6 +872,12 @@ export function SessionComposer({
     && !permissionBlocked
   const commands = selectedId === null ? cachedCommands?.commands : current?.commands
   const skills = selectedId === null ? cachedCommands?.skills : current?.skills
+  const firstTurn = !!seedService || (!!summary?.agent && !current?.messages.some(message => message.role === 'user'))
+  const source = cachedCommands
+    ? 'previous-session'
+    : commands === undefined && (selectedId === null || firstTurn)
+      ? 'before-session'
+      : 'session'
   const actions = composerActions(shell, 'slash', sendSideQuestion)
   const templates = scopedTemplates(
     promptTemplates,
@@ -1011,20 +1017,9 @@ export function SessionComposer({
         commands={commands}
         skills={skills}
         skillsTruncated={selectedId === null ? cachedCommands?.skillsTruncated : current?.skillsTruncated}
-        commandSource={
-          commandHarness
-            ? {
-                name: harnessName(commandHarness),
-                media: <HarnessTile harness={commandHarness} size={16} />,
-                firstTurn: !!seedService || (!!summary?.agent && !current?.messages.some(message => message.role === 'user')),
-                ...(selectedId === null
-                  ? { previousSession: !!cachedCommands, awaitingSession: !!commandHarness.commandCatalogue && !cachedCommands }
-                  : {}),
-              }
-            : undefined
-        }
+        commandSource={harnessCommandSource(commandHarness, source, commands)}
+        firstTurn={firstTurn}
         actions={actions}
-        onCreateTemplate={owner ? () => openSettings('general') : undefined}
         historyScope={{ deviceId: shell.snapshot.device.id, harnessId: selectedId === null ? choice.harnessId : summary?.harnessId }}
         templates={templates}
         variant={selectedId === null ? 'new' : 'session'}

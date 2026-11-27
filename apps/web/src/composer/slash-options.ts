@@ -137,7 +137,8 @@ export function slashOptions(
         }))
       : []),
   ]
-  if (token.initial && context.session && !commands.some(command => command.name === 'compact'))
+  // The unfiltered list belongs to the Harness. Explain a missing /compact only when the user asks for it.
+  if (token.initial && context.session && query === 'compact' && !commands.some(command => command.name === 'compact'))
     options.push({
       id: 'command:compact',
       kind: 'command',

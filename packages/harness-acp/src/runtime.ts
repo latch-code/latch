@@ -65,6 +65,7 @@ import type {
   ContextCompactionEvent,
   Message,
   MessageOrigin,
+  SessionCommand,
   SessionConfigOption,
   RunEnd,
   RunLive,
@@ -217,7 +218,8 @@ import {
   compactionUpdate,
   configUpdate,
   contentBlock,
-  commandsUpdate,
+  availableCommand,
+  SESSION_COMMAND_LIMIT,
   infoUpdate,
   initializeResult,
   modeUpdate,
@@ -339,9 +341,11 @@ interface Live {
   agentVersion?: string
   /**
    * ACP session → Latch task. Updates for unbound sessions, including the replay of a session's own load, are discarded,
-   * except the replay of an earlier session being brought in (`capture`).
+   * except an in-flight bind's command report and the replay of an earlier session being brought in (`capture`).
    */
   sessions: Map<string, string>
+  /** Only during a bind. A new session's ACP ID is known only when its setup request answers. */
+  openingCommands?: { sessionId?: string; reports: Map<string, SessionCommand[]> }
   /** Reports from the process-local permission service, including sessions not yet bound by their ACP response. */
   processModes?: Map<string, string>
   /** Dedicated to exactly one text-only consultation; its successor must spawn again. */
@@ -6867,6 +6871,7 @@ export class AgentRuntime implements Bridge {
       if (signal.aborted) throw signal.reason
       throw this.publicError(error, live)
     } finally {
+      if (live) delete live.openingCommands
       if (quiet) this.leave(this.quiet, taskId)
     }
   }
@@ -7015,6 +7020,10 @@ export class AgentRuntime implements Bridge {
       this.launchThinkingChanges.get(taskId)?.authorize?.()
       this.routeChanges.get(taskId)?.authorize?.()
       const request = live.gatewayMeta && params && typeof params === 'object' ? { ...params, _meta: live.gatewayMeta } : params
+      live.openingCommands = {
+        sessionId: method === 'session/resume' || method === 'session/load' ? current : undefined,
+        reports: new Map(),
+      }
       return wire.request(method, request, setupMs, signal).catch(async (error: unknown) => {
         if (!(error instanceof RequestTimeout)) throw error
         // The turn fails once the process is gone, as after an initialize that timed out: stdin closed, then signals.
@@ -7131,6 +7140,12 @@ export class AgentRuntime implements Bridge {
     for (const note of live.heldNotes?.splice(0) ?? [])
       target.messages.push({ id: randomUUID(), role: 'system', text: clip(this.redact(note), 4000), createdAt: this.now() })
     target.acp.acpSessionId = acpSessionId
+    const commands = live.openingCommands?.reports.get(acpSessionId)
+    delete live.openingCommands
+    if (commands && !signal.aborted && !this.closed && !wire.stopping && this.lives.get(live.key) === live) {
+      target.commands = commands
+      this.noteCommandCatalogue(live, target)
+    }
     if (carried) {
       target.acp.earlierSessionIds = [...(target.acp.earlierSessionIds ?? []), carried]
       // The old route cannot open the agent's new session: from here the move stands, with this write.
@@ -8184,7 +8199,19 @@ export class AgentRuntime implements Bridge {
     const task = taskId ? this.state.tasks[taskId] : undefined
     if (!taskId || !task) {
       const child = live.children.get(envelope.data.sessionId)
+      const opening = live.openingCommands
       if (child) this.onChildUpdate(live, child, envelope.data.update)
+      else if (
+        opening
+        && envelope.data.update.sessionUpdate === 'available_commands_update'
+        && (opening.sessionId === undefined
+          ? opening.reports.size < 4 || opening.reports.has(envelope.data.sessionId)
+          : opening.sessionId === envelope.data.sessionId)
+        && !this.selection.profile?.readProjectedChild?.(envelope.data.update)
+      ) {
+        const commands = this.readCommands(live, envelope.data.update.availableCommands)
+        if (commands) opening.reports.set(envelope.data.sessionId, commands)
+      }
       return
     }
     const projected = this.selection.profile?.readProjectedChild?.(envelope.data.update)
@@ -8196,7 +8223,9 @@ export class AgentRuntime implements Bridge {
     }
     // What the agent says and its tools print may hold a Latch MCP server's secret (a server echoing its environment):
     // masked before anything is stored or sent to a device.
-    const update = maskKnownSecretsIn(this.selection.profile?.normalizeUpdate?.(envelope.data.update) ?? envelope.data.update)
+    const normalized = this.selection.profile?.normalizeUpdate?.(envelope.data.update) ?? envelope.data.update
+    // Command reports can be large. readCommands validates and redacts only their bounded public prefix.
+    const update = normalized.sessionUpdate === 'available_commands_update' ? normalized : maskKnownSecretsIn(normalized)
     // The harness's own MCP servers starting: a report about the harness, not output of the session.
     if (update.sessionUpdate === MCP_STATUS_UPDATE) {
       if (this.reportsOwnMcp()) this.noteOwnMcp(update, 'session')
@@ -8390,18 +8419,9 @@ export class AgentRuntime implements Bridge {
         break
       }
       case 'available_commands_update': {
-        if (this.closed || this.lives.get(live.key) !== live || live.wire.stopping) return
-        const parsed = commandsUpdate.safeParse(update)
-        if (!parsed.success) return
-        const modeCommands = this.selection.profile?.modeCommands ?? []
-        task.commands = parsed.data.availableCommands
-          .filter(command => !modeCommands.includes(command.name))
-          .map(command => ({
-            name: command.name,
-            ...(command.description ? { description: command.description } : {}),
-            ...(command.input?.hint ? { inputHint: command.input.hint } : {}),
-            ...(live.wire.idleCommands?.has(command.name) ? { idleOnly: true as const } : {}),
-          }))
+        const commands = this.readCommands(live, update.availableCommands)
+        if (!commands) return
+        task.commands = commands
         this.noteCommandCatalogue(live, task)
         break
       }
@@ -9338,6 +9358,27 @@ export class AgentRuntime implements Bridge {
     for (const permission of this.permissions.values())
       if (permission.taskId === task.summary.id && permission.statusAfter) return permission.statusAfter
     return 'idle'
+  }
+
+  private readCommands(live: Live, reported: unknown): SessionCommand[] | undefined {
+    if (this.closed || this.lives.get(live.key) !== live || live.wire.stopping || !Array.isArray(reported)) return undefined
+    const modeCommands = this.selection.profile?.modeCommands ?? []
+    const commands: SessionCommand[] = []
+    // Allow room for hidden commands while bounding the work an oversized ACP report can cause.
+    for (const candidate of reported.slice(0, SESSION_COMMAND_LIMIT * 2)) {
+      const parsed = availableCommand.safeParse(candidate)
+      if (!parsed.success) return undefined
+      const command = parsed.data
+      if (modeCommands.includes(command.name) || this.redact(command.name) !== command.name) continue
+      commands.push({
+        name: command.name,
+        ...(command.description ? { description: this.redact(command.description).slice(0, 1000) } : {}),
+        ...(command.input?.hint ? { inputHint: this.redact(command.input.hint).slice(0, 500) } : {}),
+        ...(live.wire.idleCommands?.has(command.name) ? { idleOnly: true as const } : {}),
+      })
+      if (commands.length === SESSION_COMMAND_LIMIT) break
+    }
+    return commands
   }
 
   private noteCommandCatalogue(live: Live, task: AcpTask): Promise<void> | undefined {

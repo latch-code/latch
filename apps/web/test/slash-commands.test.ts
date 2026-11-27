@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { slashMatches, slashOptions } from '../src/composer/SlashCommands.tsx'
+import { testHarness } from '@latch/testkit'
+import { emptyCommandList, harnessCommandSource, slashMatches, slashOptions } from '../src/composer/SlashCommands.tsx'
 import { latchActionOf } from '../src/composer/latchActions.ts'
 describe('advertised slash commands', () => {
   it('groups only declared skills, preserves native invocations and removes duplicate legacy skill commands', () => {
@@ -97,5 +98,24 @@ describe('advertised slash commands', () => {
     const template = { id: 'review', name: '检查', content: '检查 $ARGUMENTS', scope: { kind: 'all' as const } }
     expect(slashOptions('请 /rev', commands, [template]).map(option => option.kind)).toEqual(['template'])
     expect(slashOptions('/review', commands, [], [], { firstTurn: true })[0]?.description).toBe('第一条消息之后可用')
+  })
+
+  it('tells an absent report from an empty one and a report with only reserved or grouped names', () => {
+    expect(harnessCommandSource(testHarness('antigravity', { label: 'Antigravity' }), 'before-session')).toMatchObject({
+      name: 'Antigravity',
+      source: 'before-session',
+    })
+    expect(harnessCommandSource(testHarness('standard', { kind: 'builtin' }), 'before-session')?.source).toBe('unsupported')
+    expect(emptyCommandList('before-session', undefined)).toBe('发送第一条消息后，可查看 Harness 返回的命令')
+    expect(emptyCommandList('unsupported', undefined)).toBe('当前接入方式不提供 Harness 命令')
+    expect(emptyCommandList('session', undefined)).toBe('当前连接尚未提供命令列表')
+    expect(emptyCommandList('session', [])).toBe('当前会话没有可用的 Harness 命令')
+    expect(emptyCommandList('previous-session', [])).toBe('上次会话没有列出命令')
+    const reported = [{ name: 'model' }, { name: 'skill:notes' }]
+    expect(emptyCommandList('session', reported)).toBe('没有可单独列出的 Harness 命令')
+    const skills = [{ name: 'notes', invocation: '/skill:notes' }]
+    expect(slashOptions('/', reported, [], [], { session: true, skills }).map(option => option.kind)).toEqual(['skill'])
+    expect(slashOptions('/', [], [], [], { session: true })).toEqual([])
+    expect(slashOptions('/', commands, [], [], { session: true }).map(option => option.label)).toEqual(['/init', '/review'])
   })
 })

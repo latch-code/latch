@@ -758,10 +758,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           await list.getByRole('group', { name: '命令验收 Harness', exact: true }).waitFor()
           expect(await list.getByRole('group', { name: '提示模板', exact: true }).getByRole('option').count()).toBe(4)
           const native = list.getByRole('group', { name: '命令验收 Harness', exact: true })
-          expect(await native.getByRole('option').locator('.ui-suggest-label').allTextContents()).toEqual(['/init', '/compact'])
-          const compact = native.getByRole('option').filter({ hasText: '/compact' })
-          expect(await compact.getAttribute('aria-disabled')).toBe('true')
-          expect(await compact.locator('.ui-suggest-description').textContent()).toBe('这个 Harness 尚不支持')
+          expect(await native.getByRole('option').locator('.ui-suggest-label').allTextContents()).toEqual(['/init'])
           // Native commands, templates and Latch actions retain their own sources; recent insertions come first.
           const actions = list.getByRole('group', { name: 'Latch', exact: true }).getByRole('option')
           expect((await actions.locator('.ui-suggest-label').allTextContents()).toSorted()).toEqual(
@@ -794,6 +791,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           await input.press('Escape')
           await menu.waitFor({ state: 'hidden' })
           expect(await promptValue(input)).toBe('/')
+          await input.fill('/compact')
+          const compact = list.getByRole('option').filter({ hasText: '/compact' })
+          expect(await compact.getAttribute('aria-disabled')).toBe('true')
+          expect(await compact.locator('.ui-suggest-description').textContent()).toBe('这个 Harness 尚不支持')
           await input.fill('/not-a-command-9281')
           await menu.getByRole('status').waitFor()
           expect(await menu.getByRole('status').textContent()).toBe('没有「/not-a-command-9281」· Enter 原样发给 命令验收 Harness')

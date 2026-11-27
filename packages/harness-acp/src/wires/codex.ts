@@ -991,6 +991,7 @@ export class CodexWire implements AgentWire {
     // A route's turns run on a model service, which has no tier of Codex's plan.
     if (!this.route && !this.tierPicked) this.tier = tierValue(read.data.serviceTier)
     await this.readSkills(timeoutMs, signal)
+    this.update({ sessionUpdate: 'available_commands_update', availableCommands: [COMPACT] })
     this.reportMcp(timeoutMs)
     this.reportQuota(timeoutMs)
     return { sessionId: this.threadId, configOptions: this.options() }
@@ -1614,7 +1615,6 @@ export class CodexWire implements AgentWire {
     if (this.turn) throw new RpcError(RPC.internal, 'A turn is already running')
     if (this.listedFor !== this.threadId) {
       this.listedFor = this.threadId
-      this.update({ sessionUpdate: 'available_commands_update', availableCommands: [COMPACT] })
       this.reportSkills()
     }
     const command = nativeCommand(parsed.data.prompt)

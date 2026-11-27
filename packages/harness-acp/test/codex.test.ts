@@ -1104,6 +1104,22 @@ describe('Codex over its app-server', () => {
     )
   })
 
+  it('lists /compact for a warm thread before sending its first message', async () => {
+    const t = await computer()
+    const bridge = await t.open()
+    const { launchHash } = await bridge.launchPreview!({ cwd: t.main })
+    const { sessionId } = await bridge.createTask({
+      cwd: t.main,
+      expectedLaunchHash: launchHash,
+      prompt: '',
+      seed: 'Earlier conversation',
+      requestId: rid(),
+    })
+    expect(await bridge.warm!(sessionId)).toBe(true)
+    expect((await bridge.detail(sessionId)).commands).toContainEqual(expect.objectContaining({ name: 'compact', idleOnly: true }))
+    expect(sent(await t.log(), 'turn/start')).toHaveLength(0)
+  })
+
   it('runs /compact as an idle native operation and preserves a first-turn brief for the next message', async () => {
     const t = await computer()
     const bridge = await t.open()

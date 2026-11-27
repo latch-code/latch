@@ -210,7 +210,7 @@ private struct NewTopicView: View {
     private var agent: NativeJSON { model.snapshot["customAgents"].array.first { $0["id"].string == frame.owner } ?? .null }
     private var harness: NativeJSON { PhoneStart.harness(catalog, choice.harnessId) }
     private var slashContext: PhoneSlashContext {
-        var value = PhoneSlashContext(bodyOpen: model.agentAccess == .ready && model.connected && model.verifiedUntil.map { $0 > Date() } == true, canRun: model.canRun)
+        var value = PhoneSlashContext(bodyOpen: model.agentAccess == .ready && model.connected && model.verifiedUntil.map { $0 > Date() } == true, canRun: model.canRun, harness: harness)
         value.pending = sending || model.busy || !model.pending.isEmpty
         value.firstTurn = true; value.harnessId = choice.harnessId; value.projectId = choice.workspaceId
         if PhoneStart.usesServices(harness), !PhoneStart.models(catalog).isEmpty { value.actions.insert(.model) }
@@ -224,7 +224,7 @@ private struct NewTopicView: View {
             context: MentionContext(model, scope: scope, owner: frame.owner),
             enabled: focused && slashSpace >= 44 && slashContext.bodyOpen && !slashContext.pending && readyChat == nil)
     }
-    private var slashMenu: PhoneSlashMenu? { slashSpace < 44 ? nil : slash.menu(prompt, commands: [], context: slashContext, focused: focused) }
+    private var slashMenu: PhoneSlashMenu? { slashSpace < 44 ? nil : slash.menu(prompt, commands: nil, context: slashContext, focused: focused) }
     private var slashRead: SlashReadKey { SlashReadKey(model: model, enabled: focused && slashContext.bodyOpen, retry: slash.retry) }
     private var slashReason: String? { if case let .unavailable(reason) = PhoneSlash.action(prompt, context: slashContext) { reason } else { nil } }
     private var mine: [NativePendingWrite] { model.pending.filter { PhonePending.kind($0) == .topic(owner: frame.owner) } }
@@ -327,7 +327,7 @@ private struct NewTopicView: View {
             if let slashReason { Text(slashReason).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16) }
             if !canAddress { MentionSuggestions(input: mentions, maximumHeight: slashSpace).padding(.horizontal, 12) }
             if let menu = slashMenu {
-                SlashSuggestions(menu: menu, active: slash.active(menu, text: prompt), engine: frame.entry.name, mark: PhoneStart.mark(harness), reportedCommands: 0,
+                SlashSuggestions(menu: menu, active: slash.active(menu, text: prompt), engine: PhoneStart.engineName(harness), mark: PhoneStart.mark(harness),
                     loading: slash.loading, failure: slash.failure, maximumHeight: slashSpace, retry: { slash.retry += 1 },
                     choose: { slash.complete(menu, option: $0, text: $prompt, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending) }).padding(.horizontal, 12)
             }

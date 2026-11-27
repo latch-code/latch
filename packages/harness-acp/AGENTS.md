@@ -8,13 +8,14 @@
 
 - 子进程环境只来自 `agentEnvironment`：白名单加代理、CA 文件和 profile 的 `inheritEnv`，移除 `NODE_OPTIONS`、`LATCH_*`、`npm_*`、`DYLD_*`、`LD_*`（不区分大小写，`test/acp.test.ts`）；opencode 线另加口令。`inheritEnv` 不点名秘密（`test/login.test.ts`）。
 - 登录 shell 只读点名的变量；登录与版本命令只在启动脚本经 `startServer({ loginPrograms })` 打开后运行，测试 Host 碰不到真实程序；状态命令的输出不离开 `read`（`test/login.test.ts`）。
-- 会话只启动与开始时记录的 `launchHash` 一致的进程（`test/acp.test.ts#starts a session only with a launch fingerprint on record`）；指纹覆盖命令、参数、定义的环境变量、预设、profile 版本、profile 列出的项目配置、`inheritEnv` 的名字（不含值）与 `programEnv` 的路径（`test/acp.test.ts`）。
+- 启动须匹配记录的 `launchHash`，覆盖命令、参数、环境定义、预设、profile 版本及其项目配置、`inheritEnv` 名称和 `programEnv` 路径（`test/acp.test.ts`）。
 - 只有 profile 声明了 `folders` 的预设收到项目的其他文件夹（Codex 经 ACP `additionalDirectories`，只在 Agent 声明支持时；Qwen Code 经 `--include-directories`）；它们计入 `launchHash`，没有其他文件夹时指纹不变（`test/acp.test.ts`）。
 - 权限行为只写在 `src/profiles/`；改变 profile 行为时提高其 `version`，它计入 `launchHash`。Agent 自行放宽权限时停止该轮（`test/acp.test.ts`）。
 - 取消等执行结算，`runId` 只取消本轮，恢复时显示本轮 ID。Codex 中断后仍核对命令。强停只清理父进程仍在时查明的后代，归属或结算不明时保留结果未知。子 Agent 请求不宽于会话模式，一轮后仍给人答，只单独停止宣告 `cancel` 的。MCP 审批只关联同轮唯一调用。
 - 探测只做 initialize（`loginStatus`、`programVersion` 另跑，`loginRequest` 不开会话），同一命令、环境与指纹，20 秒内结束并等进程停止；不发提示词，authMethods 不算未登录证据（`test/probe.test.ts`）。
 - 终端登录只跑会话的程序；登录推送只读 `kind`、`label`（`test/auth.test.ts`）。
 - 新持久字段可选并入 `src/store.ts`。技能和扩展路径不存不发。Team 核父轮、父关系。
+- 绑定时只采用本次请求中匹配 ACP 会话的最新有效命令报告；空列表撤下旧命令。
 - 上下文仅存白名单计数。DSH 文字委托独占一轮进程，核对模式、guard 版本与本次执行，先审计再投递。
 - 提议保留首轮材料和本机 MCP 来源（MCP）。
 - 审批 `since` 沿用 RunClock 等待起点（`test/acp.test.ts`）。

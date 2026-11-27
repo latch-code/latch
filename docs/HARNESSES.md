@@ -666,7 +666,7 @@ Claude Agent 与 OpenCode 的预设原先保存的是适配器路线（`claude-a
 - **窗口历史。** 最近 32 轮保留各自那次窗口报告自带的分类与时间；后续报告缺少分类时，该次分类显示为未知。更早的轮次保留已用量和已报告的容量。
 - **压缩。** `compact_boundary` 是 Claude 确认压缩完成的事件。会话只记录手动或自动、压缩前后 token 数和耗时中 Claude 确实报告的值，省略压缩摘要和被保留的消息清单。上下文占用下降时不推断压缩。
 - **登录。** 开会话时把 `initializationResult().account` 照适配器的 `fromAccountInfo` 推送为 `_auth/status_update`（`account` 套餐、`api_key`、`external`、经网关时 `gateway`），不带邮箱与组织；变了才推送。
-- **斜杠命令。** 第一轮开始时把 `initializationResult()` 列出的命令报告给运行时。
+- **斜杠命令。** 创建或恢复会话时读取 `initializationResult().commands`。Claude 的 `system/commands_changed` 会替换本会话的目录，例如 MCP 连接后增加的提示。每轮 `system/init` 同步可用名称，保留已知说明与参数提示，从收到 `terminal_slash_commands` 时起隐藏只适用于终端的命令。
 
 **与适配器不同、尚未实现的。**
 
@@ -1194,14 +1194,15 @@ AGENTS.md「CLI 目录与配置」允许读 CLI 自己的目录，只是尽量�
 
 ## 会话命令
 
-Harness 报告的命令透传，是否报告与执行由 Harness 决定。
+命令由当前会话的 Harness 报告，也可以在会话中更新。发送 Harness 命令时，Latch 保留命令原文，ACP Harness 通过普通的 `session/prompt` 接收它。[ACP v1 会话命令规范](https://agentclientprotocol.com/protocol/v1/slash-commands)
 
 **当前会话。**
 
-- ACP `available_commands_update` 的当前列表作为 `TaskDetail.commands` 发给客户端并随会话持久化。每次更新替换之前的列表（空列表撤下命令）。
-- 上限：200 条，名称 100 字符、说明 1000 字符、输入提示 500 字符；畸形更新不接受。名称不能含空白或控制字符，允许冒号，按可见安全文本显示。
+- Harness 可以在创建或恢复会话时报告命令，也可以在运行中更新。Latch 在等待会话建立时暂存 `available_commands_update`，拿到会话标识后只采用这个会话最后一份有效报告。命令随 `TaskDetail.commands` 发给客户端并持久化，空列表撤下旧命令。恢复时重放的聊天内容仍由已有历史提供。
+- 每份 ACP 报告按顺序检查至多 400 项，取前 200 条可公开的命令。检查到畸形项时保留上一份报告。名称最多 100 字符，不能含空白或控制字符，允许冒号。说明最多 1000 字符，输入提示最多 500 字符。
 - Harness 把本机 MCP 提示报告为 `mcp:服务器:提示` 一类的命令时，列在它的普通命令组里，发送时保留名称（见 [MCP.md](MCP.md#提示)）。
 - 点按与 Tab 只把命令插入草稿；键盘 Enter 的条件见 [DESIGN.md](DESIGN.md)。
+- Codex、pi、OpenCode 与 Claude 的直连在打开或恢复会话时就提供已知命令。打开输入框里的菜单只读已有目录。公开命令取决于接入方式和项目，比如 Codex 直连提供 `/compact`，pi 还会列出本项目加载的扩展命令。
 - 带 `idleOnly` 的命令在运行中置灰；排队、把排队的消息改成它或追加时 Host 以 409 `command-queued` 拒绝。
 
 **上次会话的目录（新草稿）。**
@@ -1246,7 +1247,7 @@ Host 经 `HarnessInfo.extensionSupport` 给出当前适配器能报告的类别�
 | --- | --- |
 | Codex 直连 | 命令（`/compact`）、技能（`skills/list`）、MCP（`mcpServerStatus/list`）、钩子（`hooks/list`） |
 | pi | 命令、技能与注册过命令的扩展（`get_commands`） |
-| DeepSeek Harness | 此页没有已知的报告类别 |
+| DeepSeek Harness、Cursor SDK 直连 | 当前接入方式没有命令目录。Cursor 通过 `cursor-agent acp` 连接时可接收 ACP 命令报告 |
 | 其他 ACP Harness（含 Codex ACP） | 收到的命令（`available_commands_update`）。有些 Harness 把技能作为命令报告 |
 
 **pi 的插件一栏。** 按 `sourceInfo` 聚合扩展命令，显示包或扩展目录的最后一段，独立文件显示文件名去掉代码后缀。精确排除 Latch 的权限扩展，也略过 pi 内置扩展。不同来源同名时省略该名称并标出清单不完整。最多 200 个名称，每个最多 200 字符。完整路径和安装来源只参与线内归组。清理后的名称只进入普通会话的扩展报告。空报告表示没有扩展命令。
