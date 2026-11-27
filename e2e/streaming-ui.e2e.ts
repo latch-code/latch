@@ -87,6 +87,20 @@ interface RequestCounts {
   snapshot: number
   detail: number
 }
+
+// Start beyond the fixture Host's own events so its unrelated work cannot change a deliberately fixed projection.
+const FIXTURE_REVISION = 100_000
+
+async function pinDetailRevision(page: Page, id: string): Promise<void> {
+  await page.route(`**/link/api/tasks/${id}`, async route => {
+    const response = await route.fetch()
+    const detail = (await response.json()) as TaskDetail
+    expect(response.ok()).toBe(true)
+    expect(detail.sync).toBeDefined()
+    await route.fulfill({ response, json: { ...detail, sync: { ...detail.sync!, revision: FIXTURE_REVISION } } })
+  })
+}
+
 function countProjectionRequests(page: Page): RequestCounts {
   const counts = { snapshot: 0, detail: 0 }
   page.on('request', request => {
@@ -970,22 +984,15 @@ describe('streamed messages in the real workspace', () => {
 
       // Unrelated Host work can advance its revision between the HTTP reads on reload.
       // Freeze the protocol version for this browser and vary only the listing returned by its clock's poll.
-      const revision = 100_000
       const marker = `已核对轮询 ${kind}`
       let polling = false
-      await page.route(`**/link/api/tasks/${id}`, async route => {
-        const response = await route.fetch()
-        const detail = (await response.json()) as TaskDetail
-        expect(response.ok()).toBe(true)
-        expect(detail.sync).toBeDefined()
-        await route.fulfill({ response, json: { ...detail, sync: { ...detail.sync!, revision } } })
-      })
+      await pinDetailRevision(page, id)
       await page.route('**/link/api/snapshot', async route => {
         const response = await route.fetch()
         const listing = (await response.json()) as AppSnapshot
         expect(response.ok()).toBe(true)
         expect(listing.tasksComplete).toBe(true)
-        listing.revision = polling && kind === 'newer' ? revision + 1 : revision
+        listing.revision = polling && kind === 'newer' ? FIXTURE_REVISION + 1 : FIXTURE_REVISION
         if (polling) {
           if (kind === 'partial') delete listing.tasksComplete
           listing.hostName = marker
@@ -1028,9 +1035,14 @@ describe('streamed messages in the real workspace', () => {
     try {
       await watchAnimations(page)
       const before = { ...counts }
+      await pinDetailRevision(page, id)
       await page.route('**/link/api/snapshot', async route => {
         await listing.waiting
-        await route.continue().catch(() => {})
+        const response = await route.fetch()
+        const snapshot = (await response.json()) as AppSnapshot
+        expect(response.ok()).toBe(true)
+        expect(snapshot.tasksComplete).toBe(true)
+        await route.fulfill({ response, json: { ...snapshot, revision: FIXTURE_REVISION } })
       })
       const read = page.waitForResponse(response => new URL(response.url()).pathname === `/link/api/tasks/${id}` && response.ok())
       await page.locator(`[data-task-id="${id}"]`).filter({ visible: true }).click()
