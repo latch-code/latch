@@ -67,6 +67,7 @@ const BODY_LIST_PACE_MS = 1000
 export function useHarness() {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null)
   const [detailView, setDetailView] = useState(EMPTY_DETAIL)
+  const [confirmedDetailRead, setConfirmedDetailRead] = useState<{ sessionId: string; pass: number } | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [auth, setAuth] = useState<AuthState | null>(null)
   const [pageError, setPageError] = useState<{ cause: unknown } | null>(null)
@@ -94,6 +95,8 @@ export function useHarness() {
   const restoredDevice = useRef<string | null>(null)
   const alive = useRef(true)
   const running = useRef<Promise<boolean> | null>(null)
+  const syncPass = useRef(0)
+  const currentSyncPass = useCallback(() => syncPass.current, [])
   const pending = useRef<SyncMode | null>(null)
   /** Whether a queued synchronization re-establishes state instead of following a change; merged requests keep it. */
   const pendingResync = useRef(false)
@@ -217,6 +220,7 @@ export function useHarness() {
       const task = async () => {
         let synchronized = false
         while (pending.current && alive.current) {
+          const pass = ++syncPass.current
           const invalidationsAtStart = globalInvalidations.current
           const currentMode = pending.current
           const currentResync = pendingResync.current
@@ -282,6 +286,7 @@ export function useHarness() {
                   }
                 } else if (guard.current.accept(detailTicket, nextDetail)) {
                   publishDetail(nextDetail)
+                  setConfirmedDetailRead({ sessionId: detailTicket.sessionId, pass })
                   if (latestSnapshot.current) publishSnapshot(mergeTaskSnapshot(latestSnapshot.current, nextDetail), currentResync)
                 }
               } else publishDetail(null)
@@ -579,6 +584,8 @@ export function useHarness() {
     snapshot,
     detail: detailView.detail,
     cachedDetail: detailView.cached,
+    confirmedDetailRead,
+    currentSyncPass,
     selectedId,
     select,
     forgetSession,

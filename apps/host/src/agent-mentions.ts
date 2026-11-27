@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
+import { setImmediate } from 'node:timers/promises'
 import { z } from 'zod'
 import { escapeSecurityText, refusedBeforeAccepting, type AgentConsultationMode, type AgentMention, type TaskDetail } from '@latch/protocol'
 import { redactKnownSecrets, sha256Hex } from '@latch/core/node-kit'
@@ -38,6 +39,8 @@ const record = z.strictObject({
 type MentionRecord = z.infer<typeof record>
 const MAX_RECORDS = 2048
 const MAX_TEXT_BYTES = 8 * 1024 * 1024
+// Reserve a retirement receipt for every live row: deletion must be able to erase its content even at capacity.
+const MAX_RECENT_REQUESTS = 32_768
 const RECEIPT_MS = 7 * 24 * 60 * 60 * 1000
 const state = z.strictObject({
   records: z.array(record).max(MAX_RECORDS),
@@ -45,6 +48,7 @@ const state = z.strictObject({
   retired: z.record(z.string().regex(/^[a-f0-9]{64}$/u), z.number().int()),
 })
 type State = z.infer<typeof state>
+type UnsettledMention = { id: string; dispatchId: string; session: string | undefined }
 const missing = () => new AppError(404, 'agent-mention-missing', '这条提及已移除。')
 const pending = () => new AppError(503, 'agent-mention-unknown', '发送结果尚未确认，请重试同一条提及。')
 
@@ -73,9 +77,23 @@ function sourceLabel(name: string, fallback: string): string {
   )
 }
 
+function withRecordedOutcome(view: AgentMention, outcome: MentionRecord['outcome']): AgentMention {
+  // Another reader may have saved the exact outcome while this driver read was pending.
+  if (view.targetMessageId && outcome) {
+    view.status = outcome
+    delete view.approval
+  }
+  return view
+}
+
 /** The source can still be an empty Agent chat. Only the addressed Agent gets a turn. */
 export class AgentMentions {
   private readonly sending = new Map<string, Promise<void>>()
+  private readonly observedOutcomes = new Map<string, { session: string; outcome: NonNullable<MentionRecord['outcome']> }>()
+  private readonly unsettled = new Map<string, Map<string, UnsettledMention>>()
+  private readonly reading = new Set<{ session: string; overlapsPrompt: boolean }>()
+  private readonly prompting = new Map<string, number>()
+  private savingOutcomes?: Promise<void>
   private constructor(
     private readonly journal: AgentJournal<State>,
     private readonly deps: MentionDeps,
@@ -86,10 +104,102 @@ export class AgentMentions {
     // A prior Host may have stopped between deleting an Agent and disposing of its private exchanges.
     const live = deps.owners()
     await service.removeWhere(row => !live.has(row.targetAgentId) || !live.has(row.sourceAgentId))
+    // A crash may have interrupted a deferred outcome write. Check its target lazily before replacing the evidence.
+    for (const row of journal.read().records) {
+      if (!row.outcome && !row.refusal) service.trackOutcome(row)
+    }
     return service
   }
-  close() {
-    return this.journal.close()
+
+  async close() {
+    // A failed checkpoint leaves the driver's last outcome for the next Host to recover.
+    await this.saveOutcomes().catch(() => {})
+    await this.journal.close()
+  }
+
+  /** A later prompt replaces the driver's last outcome. Retain exact observations, batching their journal writes off the read path. */
+  private saveOutcomes(): Promise<void> {
+    if (this.savingOutcomes) return this.savingOutcomes
+    if (!this.observedOutcomes.size) return Promise.resolve()
+    this.savingOutcomes = setImmediate().then(async () => {
+      try {
+        while (this.observedOutcomes.size) {
+          const batch = new Map(this.observedOutcomes)
+          if (this.journal.hasPending()) await this.journal.recover()
+          const key = randomUUID()
+          await this.journal.change(key, key, draft => {
+            let changed = false
+            for (const row of draft.records) {
+              const outcome = batch.get(row.id)?.outcome
+              if (!row.outcome && outcome) {
+                row.outcome = outcome
+                changed = true
+              }
+            }
+            return { value: true, changed }
+          })
+          for (const id of batch.keys()) this.observedOutcomes.delete(id)
+        }
+      } finally {
+        this.savingOutcomes = undefined
+      }
+    })
+    return this.savingOutcomes
+  }
+
+  /** Preserve an acknowledged outcome before the driver can replace its last-run evidence. */
+  async withNextPrompt(owner: string, session: string, requestId: string, submit: () => Promise<void>): Promise<void> {
+    this.prompting.set(session, (this.prompting.get(session) ?? 0) + 1)
+    for (const read of this.reading) if (read.session === session) read.overlapsPrompt = true
+    try {
+      const pending = this.unsettled.get(owner)
+      if (pending) await this.checkpointBeforePrompt(owner, session, requestId, pending)
+      if ([...this.observedOutcomes.values()].some(row => row.session === session)) await this.saveOutcomes()
+      await submit()
+    } finally {
+      const left = this.prompting.get(session)! - 1
+      if (left) this.prompting.set(session, left)
+      else this.prompting.delete(session)
+    }
+  }
+
+  private trackOutcome(row: MentionRecord): void {
+    const pending = this.unsettled.get(row.targetAgentId) ?? new Map<string, UnsettledMention>()
+    pending.set(row.id, { id: row.id, dispatchId: row.dispatchId, session: row.targetSessionId ?? row.destination })
+    this.unsettled.set(row.targetAgentId, pending)
+  }
+
+  private stopTracking(owner: string, id: string): void {
+    const pending = this.unsettled.get(owner)
+    if (pending?.delete(id) && !pending.size) this.unsettled.delete(owner)
+  }
+
+  private observeOutcome(owner: string, id: string, session: string, outcome: NonNullable<MentionRecord['outcome']>): void {
+    this.observedOutcomes.set(id, { session, outcome })
+    this.stopTracking(owner, id)
+  }
+
+  private async checkpointBeforePrompt(owner: string, session: string, requestId: string, pending: Map<string, UnsettledMention>) {
+    // A delivery or its retry cannot replace its own evidence.
+    const candidates = [...pending.values()].filter(row => row.dispatchId !== requestId && (!row.session || row.session === session))
+    if (!candidates.length) return
+    const detail = await this.deps.detail(session)
+    if (detail.summary.id !== session || detail.summary.forkOf || detail.summary.automationId) return
+    const latest = detail.messages.findLast(message => message.role === 'user' && !message.steered)
+    const row = candidates.find(item => item.dispatchId === latest?.requestId)
+    const current = row && pending.get(row.id)
+    const { status, runOutcome } = detail.summary
+    if (current && (!current.session || current.session === session) && workPostTurn(detail, current.dispatchId)) {
+      if (status === 'running' || status === 'waiting-approval') {
+        if (!detail.messages.some(message => message.role === 'user' && message.requestId === requestId))
+          throw new AppError(409, 'task-running', '任务仍在运行，请等待完成或先取消')
+      } else if (runOutcome) this.observeOutcome(owner, current.id, session, runOutcome)
+    }
+    for (const old of candidates) {
+      if (old !== row && old.session === session && pending.get(old.id) === old && !this.sending.has(old.id)) {
+        this.stopTracking(owner, old.id)
+      }
+    }
   }
 
   wasDispatched(targetAgentId: string, requestId: string): boolean {
@@ -108,23 +218,50 @@ export class AgentMentions {
     const views = await Promise.all(records.map(item => this.present(caller, item, details)))
     this.deps.access(caller, false)
     this.deps.owner(sourceAgentId, false)
-    const existing = new Set(this.journal.read().records.map(item => item.id))
+    const existing = new Map(this.journal.read().records.map(item => [item.id, item]))
     const live = this.deps.owners()
-    return views.filter(item => existing.has(item.id) && live.has(item.targetAgentId))
+    return views.flatMap(view => {
+      const item = existing.get(view.id)
+      return item && live.has(item.targetAgentId) ? [withRecordedOutcome(view, item.outcome)] : []
+    })
   }
 
-  async get(caller: DeviceCaller, sourceAgentId: string, id: string): Promise<AgentMention> {
-    this.deps.access(caller, false)
+  get(caller: DeviceCaller, sourceAgentId: string, id: string): Promise<AgentMention> {
+    return this.findReceipt(caller, sourceAgentId, row => row.id === id)
+  }
+
+  byRequest(caller: DeviceCaller, sourceAgentId: string, requestId: string): Promise<AgentMention> {
+    return this.findReceipt(
+      caller,
+      sourceAgentId,
+      row => row.deviceId === caller.device.id && row.initiator === 'person' && row.requestId === requestId,
+      true,
+    )
+  }
+
+  private async findReceipt(
+    caller: DeviceCaller,
+    sourceAgentId: string,
+    matches: (row: MentionRecord) => boolean,
+    requireRun = false,
+  ): Promise<AgentMention> {
+    const authorize = () => {
+      this.deps.access(caller, false)
+      if (requireRun) this.deps.access(caller, true)
+    }
+    authorize()
     this.deps.owner(sourceAgentId, false)
     await this.journal.recover()
-    const item = this.journal.read().records.find(row => row.id === id && row.sourceAgentId === sourceAgentId)
+    authorize()
+    const item = this.journal.read().records.find(row => row.sourceAgentId === sourceAgentId && matches(row))
     if (!item) throw missing()
     const value = await this.present(caller, item, new Map())
-    this.deps.access(caller, false)
+    authorize()
     this.deps.owner(sourceAgentId, false)
     this.deps.owner(item.targetAgentId, false)
-    if (!this.journal.read().records.some(row => row.id === id)) throw missing()
-    return value
+    const current = this.journal.read().records.find(row => row.id === item.id)
+    if (!current) throw missing()
+    return withRecordedOutcome(value, current.outcome)
   }
 
   async send(
@@ -179,11 +316,16 @@ export class AgentMentions {
           if (prior) return { value: prior, changed: false }
           if ((draft.retired[sha256Hex(input.requestId)] ?? 0) > Date.now())
             throw new AppError(409, 'agent-mention-expired', '这条提及已经结束并移出了近期记录。')
-          await this.makeRoom(draft, proposed)
+          const retired = await this.makeRoom(draft, proposed)
           authorize()
           await this.deps.audit(caller, proposed)
           draft.records.push(proposed)
-          return { value: proposed }
+          return {
+            value: proposed,
+            afterPublish: () => {
+              for (const row of retired) this.stopTracking(row.targetAgentId, row.id)
+            },
+          }
         },
         authorize,
       )
@@ -219,6 +361,7 @@ export class AgentMentions {
     let outcome: Pick<MentionRecord, 'targetSessionId' | 'refusal'>
     try {
       authorize()
+      if (!item.outcome && !this.observedOutcomes.has(item.id)) this.trackOutcome(item)
       const targetSessionId = await this.deps.deliver(caller, item, authorize, res)
       outcome = { targetSessionId }
     } catch (cause) {
@@ -233,7 +376,13 @@ export class AgentMentions {
       const stored = draft.records.find(row => row.id === item.id)
       if (!stored) throw missing()
       Object.assign(stored, outcome)
-      return { value: true }
+      return {
+        value: true,
+        afterPublish: () => {
+          if (stored.refusal) this.stopTracking(stored.targetAgentId, stored.id)
+          else if (this.unsettled.get(stored.targetAgentId)?.has(stored.id)) this.trackOutcome(stored)
+        },
+      }
     })
     this.deps.changed()
     if (outcome.refusal) throw new AppError(outcome.refusal.status, outcome.refusal.code, outcome.refusal.message)
@@ -258,6 +407,7 @@ export class AgentMentions {
       status: 'unknown',
     }
     if (item.refusal) return { ...view, status: 'failed', failure: item.refusal.message }
+    const observed = item.outcome ?? this.observedOutcomes.get(id)?.outcome
     let session = item.targetSessionId ?? item.destination
     if (!session) {
       const slot = await this.deps.slot(caller, targetAgentId).catch(() => undefined)
@@ -272,46 +422,65 @@ export class AgentMentions {
       reading = this.deps.detail(session).catch(() => undefined)
       details.set(session, reading)
     }
+    const read = { session, overlapsPrompt: this.prompting.has(session) }
+    this.reading.add(read)
     const detail = await reading
+    this.reading.delete(read)
     const turn = detail && workPostTurn(detail, item.dispatchId)
     if (!turn || !detail) return view
     delete view.canRetry
     view.targetSessionId = session
+    view.targetMessageId = turn.turn.userMessageId
     const last = turn.replies.at(-1)
     if (last) {
       const excerpt = cut(redactKnownSecrets(last.text), 16_000)
       view.reply = { messageId: last.messageId, text: excerpt.text, ...(excerpt.more ? { more: true as const } : {}) }
     }
     const latest = detail.messages.findLast(message => message.role === 'user' && !message.steered)?.id === turn.turn.userMessageId
-    if (item.outcome) view.status = item.outcome
+    const recorded = observed ?? this.observedOutcomes.get(id)?.outcome
+    if (recorded) view.status = recorded
     else if (latest) {
       const { status, runOutcome } = detail.summary
       view.status = status === 'running' || status === 'waiting-approval' ? status : (runOutcome ?? 'unknown')
-      if (runOutcome && view.status === runOutcome) {
-        // A later question replaces the session's last outcome; retain only the observed outcome for this question.
-        const key = randomUUID()
-        await this.journal.change(key, key, draft => {
-          const stored = draft.records.find(row => row.id === id)
-          if (!stored || stored.outcome) return { value: true, changed: false }
-          stored.outcome = runOutcome
-          return { value: true }
-        })
-      }
+      if (runOutcome && view.status === runOutcome) this.observeOutcome(targetAgentId, id, session, runOutcome)
     } else {
       const end = turn.rows.findLast(row => row.role === 'assistant' || row.role === 'system')
       if (end?.interrupted) view.status = 'interrupted'
       else if (end?.state === 'failed' || end?.state === 'cancelled') view.status = end.state
       // A completed intermediate assistant message can precede a cancelled tool; its text alone cannot prove success.
     }
+    // A failed write leaves the observation in memory for the next read or graceful shutdown to retry.
+    if (this.observedOutcomes.has(id)) {
+      const save = this.saveOutcomes()
+      // A stale read racing the next prompt can no longer rely on the driver's last outcome for crash recovery.
+      if (read.overlapsPrompt) await save
+      else void save.catch(() => {})
+    }
+    if (view.status === 'waiting-approval' && turn.current && turn.turn.runId) {
+      const approval = detail.approvals.find(
+        item =>
+          item.sessionId === session
+          && item.toolCallId
+          && turn.rows.some(row => row.role === 'tool' && row.id === `tool:${item.toolCallId}`),
+      )
+      if (approval) view.approval = { id: approval.id, runId: turn.turn.runId }
+    }
     return view
   }
 
   /** Reclaim only a refused submission or a turn the Host can prove has ended. An unanswered delivery stays retryable. */
-  private async makeRoom(draft: State, next: MentionRecord) {
+  private async makeRoom(draft: State, next: MentionRecord): Promise<MentionRecord[]> {
     const now = Date.now()
-    for (const [key, until] of Object.entries(draft.retired)) if (until <= now) delete draft.retired[key]
+    let recent = draft.records.length
+    for (const [key, until] of Object.entries(draft.retired)) {
+      if (until <= now) delete draft.retired[key]
+      else recent++
+    }
+    if (recent >= MAX_RECENT_REQUESTS)
+      throw new AppError(429, 'agent-mention-receipts-full', '近期提及过多，请等七天内的旧回执到期后再发。')
     let bytes = Buffer.byteLength(JSON.stringify(draft.records)) + Buffer.byteLength(JSON.stringify(next))
-    if (draft.records.length < MAX_RECORDS && bytes < MAX_TEXT_BYTES) return
+    if (draft.records.length < MAX_RECORDS && bytes < MAX_TEXT_BYTES) return []
+    const retired: MentionRecord[] = []
     const remove = new Set<string>()
     const details = new Map<string, TaskDetail | undefined>()
     for (const item of draft.records) {
@@ -328,15 +497,36 @@ export class AgentMentions {
         if (latest?.id === bound.turn.userMessageId && !detail.summary.runOutcome) continue
       }
       remove.add(item.id)
+      retired.push(item)
       bytes -= Buffer.byteLength(JSON.stringify(item))
       draft.retired[sha256Hex(item.requestId)] = now + RECEIPT_MS
       if (draft.records.length - remove.size < MAX_RECORDS && bytes < MAX_TEXT_BYTES) break
     }
-    if (Object.keys(draft.retired).length > 32_768)
-      throw new AppError(429, 'agent-mention-receipts-full', '近期提及过多，请等七天内的旧回执到期后再发。')
     if (draft.records.length - remove.size >= MAX_RECORDS || bytes >= MAX_TEXT_BYTES)
       throw new AppError(409, 'agent-mention-capacity', '尚未结束的提及占满了记录，请先处理目标聊天中的进行项或确认结果未知的发送。')
     draft.records = draft.records.filter(row => !remove.has(row.id))
+    return retired
+  }
+
+  /** Save an unconfirmed first turn's session ID before deletion takes away the evidence that it was delivered. */
+  async recordFirstMention(owner: string, sessionId: string): Promise<void> {
+    await this.journal.recover()
+    const firsts = this.journal
+      .read()
+      .records.filter(row => !row.refusal && !row.destination && !row.targetSessionId && row.targetAgentId === owner)
+    if (!firsts.length) return
+    const detail = await this.deps.detail(sessionId)
+    if (detail.summary.id !== sessionId || detail.summary.automationId || detail.summary.forkOf) return
+    const requestId = detail.messages.find(row => row.role === 'user')?.requestId
+    const first = firsts.find(row => row.dispatchId === requestId)
+    if (!first) return
+    const key = randomUUID()
+    await this.journal.change(key, key, draft => {
+      const stored = draft.records.find(row => row.id === first.id)
+      if (!stored || stored.refusal || stored.targetSessionId) return { value: undefined, changed: false }
+      stored.targetSessionId = sessionId
+      return { value: undefined }
+    })
   }
 
   forget(kind: 'agent' | 'session', id: string): Promise<void> {
@@ -351,10 +541,22 @@ export class AgentMentions {
     const key = randomUUID()
     await this.journal.recover()
     await this.journal.change(key, key, draft => {
-      const kept = draft.records.filter(row => !matches(row))
+      const until = Date.now() + RECEIPT_MS
+      const removed: MentionRecord[] = []
+      const kept = draft.records.filter(row => {
+        if (!matches(row)) return true
+        draft.retired[sha256Hex(row.requestId)] = until
+        removed.push(row)
+        return false
+      })
       if (kept.length === draft.records.length) return { value: true, changed: false }
       draft.records = kept
-      return { value: true }
+      return {
+        value: true,
+        afterPublish: () => {
+          for (const row of removed) this.stopTracking(row.targetAgentId, row.id)
+        },
+      }
     })
   }
 }

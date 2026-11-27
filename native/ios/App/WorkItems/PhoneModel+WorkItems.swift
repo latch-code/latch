@@ -42,6 +42,10 @@ struct PhoneWorkDecisionContext {
     let source: PhoneWorkSource
     let stamp: PhoneWorkReadStamp
     let navigation: UUID
+
+    func decision(in model: PhoneModel) -> PhoneDecisionContext {
+        PhoneDecisionContext(sessionId: source.sessionId, runId: source.runId) { model.permitsWorkDecision(self) }
+    }
 }
 
 extension PhoneModel {
@@ -236,8 +240,7 @@ extension PhoneModel {
     }
 
     /** An exact decision can become stale while a sheet closes or a queued control waits. */
-    func permitsWorkDecision(_ context: PhoneWorkDecisionContext?) -> Bool {
-        guard let context else { return true }
+    func permitsWorkDecision(_ context: PhoneWorkDecisionContext) -> Bool {
         return connected && !detailCached && sessionId == context.source.sessionId && workStamp(context.itemId) == context.stamp
             && workPathGeneration == context.navigation && workPath.last == .source(context.source)
             && workDestinationAllowed(.source(context.source), itemId: context.itemId) && context.source.currentDecision(detail: detail, summary: currentSummary) != nil

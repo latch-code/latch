@@ -274,7 +274,7 @@ export interface ShellComputers {
   /** On this Mac's page `taskId` opens a session that waits on that computer (an item of its `waiting`). */
   open(hostId: string, taskId?: string): Promise<ComputerResult>
   /** Another computer's page: a session of its own Host that main was asked to open. */
-  subscribeSession?(callback: (sessionId: string) => void): () => void
+  subscribeSession?(callback: (sessionId: string, messageId?: string) => void): () => void
   /** 新会话 on that computer: its own window comes forward on its start screen; nothing typed goes along. */
   start?(hostId: string): Promise<ComputerResult>
   /** Another window asked this page to show its start screen. */
@@ -282,6 +282,13 @@ export interface ShellComputers {
   /** Native picker on this Mac. The rest of the target's roster never enters this page. */
   pickWorkAgent?(hostId: string): Promise<ComputerResult & { agentId?: string }>
   openWorkAgent?(hostId: string, agentId: string, owner: string): Promise<ComputerResult>
+  delegateWorkPost?(
+    itemId: string,
+    input: { requestId: string; text: string; customAgentId: string; hostId: string; agentId: string },
+  ): Promise<ComputerResult>
+  retryWorkPost?(itemId: string, postId: string): Promise<ComputerResult>
+  refreshWorkPost?(itemId: string, postId: string): Promise<ComputerResult>
+  openWorkPost?(itemId: string, postId: string): Promise<ComputerResult>
   add?(source: 'clipboard' | 'file'): Promise<ComputerResult>
   cancelAdd?(): Promise<ComputerResult>
   trustCertificate?(hostId: string): Promise<ComputerResult>

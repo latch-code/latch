@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, test } from 'vitest'
-import type { Message } from '@latch/protocol'
+import { afterEach, expect, test, vi } from 'vitest'
+import type { Approval, Message, TaskDetail, TaskSummary } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
+import { AgentJournal } from '../src/agent-journal.ts'
 import { AgentMentions } from '../src/agent-mentions.ts'
 import type { DeviceCaller } from '../src/routes/registry.ts'
 
@@ -16,27 +17,24 @@ afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close()
 })
 
-async function fixture() {
+async function fixture(emptyChats = false) {
   const directory = await mkdtemp(join(tmpdir(), 'latch-mentions-'))
   cleanup.push(() => rm(directory, { recursive: true, force: true }))
   const delivered = new Set<string>()
   const messages: Message[] = []
   const labels: Array<string | undefined> = []
+  const summary: TaskSummary = { id: 'target', harnessId: 'standard', title: '', status: 'idle', updatedAt: '', runOutcome: 'completed' }
+  const approvals: Approval[] = []
   let loseAnswer = false
   let audited = 0
+  const detail = vi.fn<() => Promise<TaskDetail>>(async () => ({ summary, cursor: 0, liveText: '', approvals, messages }))
   const open = async () => {
     const service = await AgentMentions.open(directory, {
       access() {},
       owner() {},
       owners: () => new Set([source, target]),
-      slot: async () => ({ state: 'ready', sessionId: 'target' }),
-      detail: async () => ({
-        summary: { id: 'target', harnessId: 'standard', title: '', status: 'idle', updatedAt: '', runOutcome: 'completed' },
-        cursor: 0,
-        liveText: '',
-        approvals: [],
-        messages,
-      }),
+      slot: async () => (emptyChats ? { state: 'empty' } : { state: 'ready', sessionId: 'target' }),
+      detail,
       async audit() {
         audited++
       },
@@ -65,8 +63,11 @@ async function fixture() {
     open,
     directory,
     delivered,
+    detail,
     messages,
     labels,
+    summary,
+    approvals,
     lost: () => {
       loseAnswer = true
     },
@@ -91,6 +92,184 @@ test('a lost delivery is read without re-sending and a restart reuses the exact 
   })
   expect(f.audits()).toBe(1)
   expect(f.delivered.size).toBe(1)
+})
+
+test('concurrent reads return the observed outcome before disk and keep it across a later turn and restart', async () => {
+  const f = await fixture()
+  f.summary.status = 'running'
+  delete f.summary.runOutcome
+  const service = await f.open()
+  const sent = await service.send(caller, source, body())
+  const writes = vi.spyOn(AgentJournal.prototype, 'change')
+  try {
+    f.summary.status = 'idle'
+    f.summary.runOutcome = 'completed'
+    const read = () => service.get(caller, source, sent.id)
+    expect((await Promise.all([read(), read()])).map(receipt => receipt.status)).toEqual(['completed', 'completed'])
+    expect(writes).not.toHaveBeenCalled()
+    f.messages.push({ role: 'user', id: 'later', text: 'The next question' })
+    f.summary.status = 'running'
+    delete f.summary.runOutcome
+    expect((await read()).status).toBe('completed')
+    await service.close()
+    expect(writes).toHaveBeenCalledTimes(1)
+    expect((await (await f.open()).get(caller, source, sent.id)).status).toBe('completed')
+  } finally {
+    writes.mockRestore()
+  }
+})
+
+test('a read racing a replacement prompt durably records the exact older terminal before acknowledging it', async () => {
+  const f = await fixture()
+  f.summary.status = 'running'
+  delete f.summary.runOutcome
+  const service = await f.open()
+  const receipt = await service.send(caller, source, body())
+  f.summary.status = 'idle'
+  f.summary.runOutcome = 'completed'
+  const stale = structuredClone(await f.detail())
+  let deliver!: (value: TaskDetail) => void
+  let started!: () => void
+  const reading = new Promise<void>(resolve => {
+    started = resolve
+  })
+  const held = new Promise<TaskDetail>(resolve => {
+    deliver = resolve
+  })
+  f.detail.mockImplementationOnce(() => {
+    started()
+    return held
+  })
+  const read = service.get(caller, source, receipt.id)
+  await reading
+  await service.withNextPrompt(target, 'target', 'replacement', async () => {
+    f.summary.status = 'running'
+    delete f.summary.runOutcome
+    f.messages.push({ role: 'user', id: 'replacement', text: 'Next turn' })
+  })
+  deliver(stale)
+  expect((await read).status).toBe('completed')
+  // Open from disk immediately without draining the old process's work by gracefully closing it.
+  expect((await (await f.open()).get(caller, source, receipt.id)).status).toBe('completed')
+})
+
+test('a concurrent read sees the exact outcome checkpointed while its driver read was in progress', async () => {
+  const f = await fixture()
+  f.summary.status = 'running'
+  delete f.summary.runOutcome
+  const service = await f.open()
+  const receipt = await service.send(caller, source, body())
+  let release!: () => void
+  let started!: () => void
+  const reading = new Promise<void>(resolve => {
+    started = resolve
+  })
+  const held = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const detail = f.detail.getMockImplementation()!
+  f.detail.mockImplementationOnce(async () => {
+    started()
+    await held
+    return detail()
+  })
+  const slow = service.get(caller, source, receipt.id)
+  await reading
+  f.summary.status = 'idle'
+  f.summary.runOutcome = 'completed'
+  expect((await service.get(caller, source, receipt.id)).status).toBe('completed')
+  await service.withNextPrompt(target, 'target', 'replacement', async () => {
+    f.summary.status = 'running'
+    delete f.summary.runOutcome
+    f.messages.push({ role: 'user', id: 'replacement', text: 'Next turn' })
+  })
+  release()
+  expect((await slow).status).toBe('completed')
+})
+
+test.each([false, true])(
+  'checkpoints the last target outcome before its first follow-up even if no client rereads it (restart: %s)',
+  async restart => {
+    const f = await fixture()
+    f.summary.status = 'running'
+    delete f.summary.runOutcome
+    const service = await f.open()
+    const receipt = await service.send(caller, source, body())
+    const submit = vi.fn(async () => {})
+    await expect(service.withNextPrompt(target, 'target', 'replacement', submit)).rejects.toMatchObject({ code: 'task-running' })
+    expect(submit).not.toHaveBeenCalled()
+    const [dispatchId] = f.delivered
+    await service.withNextPrompt(target, 'target', dispatchId!, submit)
+    expect(submit).toHaveBeenCalledOnce()
+    if (restart) await service.close()
+    f.summary.status = 'idle'
+    f.summary.runOutcome = 'completed'
+    const current = restart ? await f.open() : service
+    await current.withNextPrompt(target, 'target', 'replacement', async () => {
+      f.summary.status = 'running'
+      delete f.summary.runOutcome
+      f.messages.push({ role: 'user', id: 'replacement', text: 'Next turn' })
+      expect((await (await f.open()).get(caller, source, receipt.id)).status).toBe('completed')
+    })
+  },
+)
+
+test('an unknown outcome write blocks replacement and still lets shutdown release its resources', async () => {
+  const f = await fixture()
+  f.summary.status = 'running'
+  delete f.summary.runOutcome
+  const service = await f.open()
+  const receipt = await service.send(caller, source, body())
+  f.summary.status = 'idle'
+  f.summary.runOutcome = 'completed'
+  const agents = join(f.directory, 'agents')
+  const unavailable = join(f.directory, 'agents-unavailable')
+  await rename(agents, unavailable)
+  try {
+    expect((await service.get(caller, source, receipt.id)).status).toBe('completed')
+    const submit = vi.fn(async () => {})
+    await expect(service.withNextPrompt(target, 'target', 'replacement', submit)).rejects.toMatchObject({ code: 'agent-write-unknown' })
+    expect(submit).not.toHaveBeenCalled()
+    await expect(service.close()).resolves.toBeUndefined()
+  } finally {
+    await rename(unavailable, agents)
+  }
+  const reopened = await f.open()
+  await reopened.withNextPrompt(target, 'target', 'replacement', async () => {
+    f.summary.status = 'running'
+    delete f.summary.runOutcome
+    f.messages.push({ role: 'user', id: 'replacement', text: 'Next turn' })
+  })
+  await expect(reopened.get(caller, source, receipt.id)).resolves.toMatchObject({ status: 'completed' })
+})
+
+test('links a pending decision only to the delivered turn, including before it has a reply', async () => {
+  const f = await fixture()
+  f.summary.status = 'running'
+  delete f.summary.runOutcome
+  const service = await f.open()
+  const sent = await service.send(caller, source, body())
+  const question = f.messages[0]!
+  question.turnId = 'peer-run'
+  f.messages.splice(1)
+  f.summary.runId = question.turnId
+  f.summary.status = 'waiting-approval'
+  const approval = { id: 'decision', sessionId: 'target', toolName: 'edit', toolCallId: 'edit-1', reason: 'Review', requestedAt: '' }
+  f.approvals.push(approval)
+  expect((await service.get(caller, source, sent.id)).approval).toBeUndefined()
+  f.messages.push({ role: 'tool', id: 'tool:edit-1', text: 'edit' })
+  const waiting = await service.get(caller, source, sent.id)
+  expect(waiting).toMatchObject({
+    targetMessageId: question.id,
+    status: 'waiting-approval',
+    approval: { id: 'decision', runId: 'peer-run' },
+  })
+  expect(waiting.reply).toBeUndefined()
+  f.messages.push({ id: 'later', role: 'user', text: 'A new question', turnId: 'later-run' })
+  f.summary.runId = 'later-run'
+  const old = await service.get(caller, source, sent.id)
+  expect(old.targetMessageId).toBe(question.id)
+  expect(old.approval).toBeUndefined()
 })
 
 test('an autonomous consultation keeps its safe original attribution when the source is renamed before retry', async () => {
@@ -149,4 +328,67 @@ test('a full mention history preserves unknown submissions, retires a refusal an
   expect(service.wasDispatched(target, rows[0]!.dispatchId)).toBe(true)
   expect(service.wasDispatched(target, rows[100]!.dispatchId)).toBe(false)
   expect(f.audits()).toBe(1)
+})
+
+test.each([false, true])(
+  'deleting the addressed chat erases the exchange and bars replay of its lost response (first chat: %s)',
+  async empty => {
+    const f = await fixture(empty)
+    const service = await f.open()
+    const input = body()
+    f.lost()
+    await expect(service.send(caller, source, input)).rejects.toMatchObject({ code: 'agent-mention-unknown' })
+    if (empty) {
+      f.detail.mockResolvedValueOnce({ summary: { ...f.summary, id: 'unrelated' }, cursor: 0, liveText: '', approvals: [], messages: [] })
+      await service.recordFirstMention(target, 'unrelated')
+      await service.forget('session', 'unrelated')
+      await expect(service.byRequest(caller, source, input.requestId)).resolves.toMatchObject({
+        requestId: input.requestId,
+        canRetry: true,
+      })
+    }
+    await service.recordFirstMention(target, 'target')
+    await service.forget('session', 'target')
+    await service.close()
+    const reopened = await f.open()
+    expect(await reopened.list(caller, source)).toEqual([])
+    await expect(reopened.send(caller, source, input)).rejects.toMatchObject({ code: 'agent-mention-expired' })
+    expect(f.delivered.size).toBe(1)
+  },
+)
+
+test('deletion cannot lose the only delivery evidence of an unconfirmed first mention', async () => {
+  const f = await fixture(true)
+  const service = await f.open()
+  const input = body()
+  f.lost()
+  await expect(service.send(caller, source, input)).rejects.toMatchObject({ code: 'agent-mention-unknown' })
+  await service.recordFirstMention(target, 'target')
+  f.messages.length = 0
+  await service.close()
+
+  // The Driver deleted the chat just before the Host stopped, so the original first message is no longer readable.
+  const reopened = await f.open()
+  await expect(reopened.send(caller, source, input)).resolves.toMatchObject({ status: 'unknown' })
+  expect((await reopened.byRequest(caller, source, input.requestId)).canRetry).toBeUndefined()
+  expect(f.labels).toHaveLength(1)
+  await reopened.forget('session', 'target')
+  await expect(reopened.send(caller, source, input)).rejects.toMatchObject({ code: 'agent-mention-expired' })
+})
+
+test('reserves space for deleting a live exchange when the seven-day receipt budget is full', async () => {
+  const f = await fixture()
+  const input = body()
+  const now = Date.now()
+  const retired = Object.fromEntries(Array.from({ length: 32_767 }, (_, index) => [index.toString(16).padStart(64, '0'), now + 60_000]))
+  await mkdir(join(f.directory, 'agents'), { mode: 0o700 })
+  await writeFile(join(f.directory, 'agents', 'mentions.json'), JSON.stringify({ records: [], retired }), { mode: 0o600 })
+  const service = await f.open()
+  await service.send(caller, source, input)
+  await expect(service.send(caller, source, body())).rejects.toMatchObject({ code: 'agent-mention-receipts-full' })
+  await service.forget('session', 'target')
+  expect(await service.list(caller, source)).toEqual([])
+  await expect(service.send(caller, source, input)).rejects.toMatchObject({ code: 'agent-mention-expired' })
+  await expect(service.send(caller, source, body())).rejects.toMatchObject({ code: 'agent-mention-receipts-full' })
+  expect(f.delivered.size).toBe(1)
 })

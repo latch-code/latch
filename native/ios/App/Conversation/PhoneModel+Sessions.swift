@@ -1,6 +1,12 @@
 import Foundation
 import LatchNativeCore
 
+struct PhoneDecisionContext {
+    let sessionId: String
+    let runId: String?
+    let isCurrent: @MainActor () -> Bool
+}
+
 extension PhoneModel {
     var canQueueAttachments: Bool { canQueueCurrent && snapshot["catalog"]["features"]["queueAttachments"].bool }
     var canQueueCurrent: Bool { snapshot["catalog"]["features"]["queue"].bool }
@@ -10,10 +16,14 @@ extension PhoneModel {
         guard let sessionId else { return false }
         return controlsInFlight.contains(Self.cancelPath(sessionId)) || PhoneSessions.rowStatus(currentSummary) == .stopping
     }
-    private static func cancelPath(_ id: String) -> String { "/link/api/tasks/\(id)/cancel" }
+    static func cancelPath(_ id: String) -> String { "/link/api/tasks/\(id)/cancel" }
     static func approvalPath(_ id: String) -> String { "/link/api/approvals/" + id }
-    private func performControl(path: String, fields: [String: NativeJSON], work: PhoneWorkDecisionContext? = nil) async {
-        guard let workspace, transportReady, permitsWorkDecision(work) else { return }
+    private func performControl(path: String, fields: [String: NativeJSON], context: PhoneDecisionContext? = nil) async {
+        guard context?.isCurrent() != false else { return }
+        #if LATCH_SCREENS
+        if staged, ScreensStage.finishConsultationApproval(path, fields: fields, model: self) { return }
+        #endif
+        guard let workspace, transportReady else { return }
         let current = generation, previous = controlTail
         controlsInFlight.insert(path)
         let turn = Task { @MainActor in
@@ -30,7 +40,7 @@ extension PhoneModel {
                     }
                     body = saved["fields"].object
                 }
-                guard generation == current, transportReady, permitsWorkDecision(work) else { return }
+                guard generation == current, transportReady, context?.isCurrent() != false else { return }
                 _ = try await workspace.freeAction(path: path, fields: body)
                 guard generation == current else { return }
                 await refreshControlPending(); _ = await refresh()
@@ -195,12 +205,12 @@ extension PhoneModel {
             return false
         } catch { report(error); return false }
     }
-    @discardableResult func submit(_ request: NativePendingWrite, takingDraft: Bool = false) async -> Bool {
+    @discardableResult func submit(_ request: NativePendingWrite, takingDraft: Bool = false, whileCurrent: () -> Bool = { true }) async -> Bool {
         if request.teamRound != nil { return false }
         guard let workspace, transportReady, !busy else { return false }
         let current = generation, initialReading = contentGeneration
-        do { try await ensureVerified() } catch { report(error); return false }
-        guard current == generation, initialReading == contentGeneration, transportReady, !busy else { return false }
+        do { try await ensureVerified(whileCurrent: whileCurrent) } catch { report(error); return false }
+        guard current == generation, initialReading == contentGeneration, transportReady, !busy, whileCurrent() else { return false }
         // Older pending writes belong to this Host and may already have succeeded. Only their original request may settle them.
         if !pending.contains(where: { $0.requestId == request.requestId }) {
             let owner = PhonePending.topicOwner(request) ?? PhoneHistory.promptSession(request.path).flatMap { PhoneAgentChat.owner(summary(of: $0)) }
@@ -339,45 +349,46 @@ extension PhoneModel {
         if delivered, case let .session(id) = PhonePending.kind(request) { clearing.remove(id) }
         return delivered ? .delivered : .text(text, queuedTwin: twin != nil)
     }
-    @discardableResult func mutate(_ method: NativeHTTPMethod, path: String, fields: [String: NativeJSON], work: PhoneWorkDecisionContext? = nil) async -> Bool {
+    @discardableResult func mutate(_ method: NativeHTTPMethod, path: String, fields: [String: NativeJSON], context: PhoneDecisionContext? = nil) async -> Bool {
+        let whileCurrent: @MainActor () -> Bool = { context?.isCurrent() != false }
+        guard whileCurrent() else { return false }
         #if LATCH_SCREENS
+        if staged, method == .post, ScreensStage.finishConsultationApproval(path, fields: fields, model: self) { return true }
         if staged, ScreensStage.scene == "question-reminder", method == .post,
            path == "/link/api/tasks/ses_review/questions/question-work/answer" {
             return ScreensStage.answerFixtureQuestion(fields, model: self)
         }
         #endif
-        guard permitsWorkDecision(work) else { return false }
         let current = generation, reading = contentGeneration
         do {
             // Turning a request down reduces what runs, so the Host asks only that the device can see it.
             let declining = fields["decision"] == .string("reject") && connected && snapshot["device"]["status"].string == "active"
             guard declining || (path.hasPrefix("/link/api/approvals/") ? canApproveStandard || canApproveElevated || canRun : canRun) else { throw NativeFailure.forbidden }
-            try await ensureVerified()
-            guard current == generation, contentGeneration == reading, permitsWorkDecision(work) else { return false }
+            try await ensureVerified(whileCurrent: whileCurrent)
+            guard current == generation, contentGeneration == reading, whileCurrent() else { return false }
             guard pending.isEmpty else { throw NativeFailure.resultUnknown }
-            return await submit(try NativePendingWrite(method: method, path: path, fields: fields))
+            return await submit(try NativePendingWrite(method: method, path: path, fields: fields), whileCurrent: whileCurrent)
         }
         catch { report(error); return false }
     }
-    func stop(work: PhoneWorkDecisionContext? = nil) async {
-        guard workspace != nil, let id = sessionId, permitsWorkDecision(work) else { return }
+    func stop(context: PhoneDecisionContext? = nil) async {
+        guard let id = context?.sessionId ?? sessionId, context?.isCurrent() != false else { return }
         var fields: [String: NativeJSON] = ["requestId": .string(UUID().uuidString)]
         let summary = snapshot["tasks"].array.first { $0["id"].string == id } ?? detail["summary"]
-        if let run = work?.source.runId ?? summary["runId"].string { fields["runId"] = .string(run) }
-        await performControl(path: Self.cancelPath(id), fields: fields, work: work)
+        if let run = context?.runId ?? summary["runId"].string { fields["runId"] = .string(run) }
+        await performControl(path: Self.cancelPath(id), fields: fields, context: context)
     }
-    func reject(_ id: String, work: PhoneWorkDecisionContext? = nil) async {
-        guard workspace != nil else { return }
-        await performControl(path: Self.approvalPath(id), fields: ["decision": .string("reject"), "requestId": .string(UUID().uuidString)], work: work)
+    func reject(_ id: String, context: PhoneDecisionContext? = nil) async {
+        await performControl(path: Self.approvalPath(id), fields: ["decision": .string("reject"), "requestId": .string(UUID().uuidString)], context: context)
     }
-    func allow(_ id: String, option: String?, work: PhoneWorkDecisionContext? = nil) async {
+    func allow(_ id: String, option: String?, context: PhoneDecisionContext? = nil) async {
         var fields: [String: NativeJSON] = ["decision": .string("allow")]
         if let option { fields["optionId"] = .string(option) }
-        await mutate(.post, path: "/link/api/approvals/" + id, fields: fields, work: work)
+        await mutate(.post, path: Self.approvalPath(id), fields: fields, context: context)
     }
     /** One of 更多's choices: the option the Host named, kept with its requestId until it is answered. */
-    func decide(_ id: String, option: String, allows: Bool, work: PhoneWorkDecisionContext? = nil) async {
-        await mutate(.post, path: "/link/api/approvals/" + id, fields: ["decision": .string(allows ? "allow" : "reject"), "optionId": .string(option)], work: work)
+    func decide(_ id: String, option: String, allows: Bool, context: PhoneDecisionContext? = nil) async {
+        await mutate(.post, path: Self.approvalPath(id), fields: ["decision": .string(allows ? "allow" : "reject"), "optionId": .string(option)], context: context)
     }
     /** 继续等 only ever asks the Host for a longer threshold; it doubles what the request saw. */
     func keepWaiting() async {

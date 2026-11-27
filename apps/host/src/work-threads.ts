@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { AppError } from '@latch/sdk'
 import { WORK_THREAD_LIMITS, type Message, type TaskDetail, type WorkPostReply, type WorkPostTurn } from '@latch/protocol'
 import { writeFileAtomic } from '@latch/core/node-kit'
+import { remoteWorkReceipt } from './remote-work-posts.ts'
 
 export const WORK_THREADS_DIR = join('work', 'threads')
 
@@ -33,6 +34,7 @@ const postSchema = z.strictObject({
   payloadHash: z.string().regex(/^[a-f0-9]{64}$/u),
   text: postText,
   target: targetSchema.optional(),
+  remote: remoteWorkReceipt.optional(),
   /**
    * The one delivery of a post with a target. `requestId` is the session-side request, in its own namespace, so a retry
    * is answered by the session's own receipt. `unknown` from before it is sent until the Host knows.
@@ -58,6 +60,8 @@ const fileSchema = z
     posts: z.array(postSchema).max(WORK_THREAD_LIMITS.posts),
   })
   .superRefine((file, ctx) => {
+    if (file.posts.some(post => post.remote && (post.target || post.delivery)))
+      ctx.addIssue({ code: 'custom', message: 'duplicate delivery target' })
     if (new Set(file.posts.map(post => post.id)).size !== file.posts.length) ctx.addIssue({ code: 'custom', message: 'duplicate post' })
   })
 

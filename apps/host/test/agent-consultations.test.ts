@@ -52,6 +52,7 @@ test('a personal Agent chooses a peer on a human turn only while its own switch 
           yield { type: 'finish', reason: 'tool-calls' }
           return
         }
+        if (last.content === 'Stay busy for the directory') await peerPaused
         if (last.content === peerQuestion) peerContext = messages.map(message => message.content)
         if (last.content === heldQuestion) {
           await peerPaused
@@ -110,6 +111,12 @@ test('a personal Agent chooses a peer on a human turn only while its own switch 
     const source = await create('Editor')
     const target = await create('Reviewer', 'Reviews proposals ' + privateMarker)
     targetId = target.id
+    const busy = await create('Busy reviewer')
+    await user.json('tasks', {
+      method: 'POST',
+      body: { requestId: randomUUID(), customAgentId: busy.id, prompt: 'Stay busy for the directory' },
+    })
+    await expect.poll(() => offers.has('Stay busy for the directory')).toBe(true)
     const configure = (agent: CustomAgent, enabled: boolean) =>
       user.json<CustomAgent>('custom-agents/' + agent.id, {
         method: 'PATCH',
@@ -125,7 +132,9 @@ test('a personal Agent chooses a peer on a human turn only while its own switch 
     const wait = () => expect.poll(async () => (await detail()).summary.status, { timeout: 12_000 }).toBe('idle')
     await wait()
     expect(offers.get('Review this together')).toContain(LIST_AGENTS)
-    expect(results[0]).toContain(target.id)
+    const directory = JSON.parse(results[0]!) as Array<{ id: string; busy: boolean | null }>
+    expect(directory.find(row => row.id === target.id)?.busy).toBe(false)
+    expect(directory.find(row => row.id === busy.id)?.busy).toBe(true)
     expect(results[0]).toContain('Reviews proposals [redacted]')
     expect(results[0]).not.toContain(privateMarker)
     expect(results.at(-1)).toContain('Reviewed by the peer.')

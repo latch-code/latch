@@ -1,10 +1,10 @@
 import { _electron, type ElectronApplication, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { Server, createServer, type AddressInfo } from 'node:net'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { Server } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { AppSnapshot, CustomAgent, CustomAgentList, WorkspaceInfo } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
@@ -14,6 +14,7 @@ import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { layersInWindow, openEntry, openSection, openSession, openSessions } from './helpers/layout.ts'
+import { freePort, trustBootstrap } from './helpers/paired-computers.ts'
 import { promptValue } from './helpers/prompt.ts'
 
 const SHOTS = process.env.LATCH_SHOTS_DIR ?? 'test-results/multi-host-list'
@@ -37,50 +38,6 @@ const failureModel: HarnessPlugin = {
       },
     })
   },
-}
-
-async function freePort(): Promise<number> {
-  const server = createServer()
-  await new Promise<void>(done => server.listen(0, '127.0.0.1', done))
-  const { port } = server.address() as AddressInfo
-  await new Promise<void>(done => server.close(() => done()))
-  return port
-}
-
-/** As in multi-host.e2e.ts: trusts the test certificate of B's HTTPS entry, a fixture clipboard and the registry handle. */
-async function trustBootstrap(directory: string, ca: string): Promise<string> {
-  const path = join(directory, 'multi-host-list-main.cjs')
-  await writeFile(
-    path,
-    `
-'use strict'
-const remotes = require(${JSON.stringify(resolve('apps/desktop/src/remote-proxy.cjs'))})
-const ca = ${JSON.stringify(ca)}
-const lookup = (_hostname, options, callback) => {
-  const done = typeof options === 'function' ? options : callback
-  if (options && options.all) done(null, [{ address: '127.0.0.1', family: 4 }])
-  else done(null, '127.0.0.1', 4)
-}
-remotes.tlsOptions = () => ({ ca: [ca], lookup })
-const Module = require('node:module')
-const originalLoad = Module._load, electron = require('electron')
-const fixture = globalThis.multiHostFixture = { registry: undefined, clipboardText: '' }
-const facade = Object.create(electron)
-Object.defineProperties(facade, {
-  clipboard: { value: { readText: () => fixture.clipboardText, clear: () => { fixture.clipboardText = '' } } },
-})
-const computers = require(${JSON.stringify(resolve('apps/desktop/src/computers.cjs'))})
-const create = computers.createComputers
-computers.createComputers = options => (fixture.registry = create(options))
-Module._load = function(request, parent, isMain) {
-  return request === 'electron' ? facade : Reflect.apply(originalLoad, this, [request, parent, isMain])
-}
-try { require(${JSON.stringify(resolve('apps/desktop/src/main.cjs'))}) }
-finally { Module._load = originalLoad; computers.createComputers = create }
-`,
-    { mode: 0o600 },
-  )
-  return path
 }
 
 /**

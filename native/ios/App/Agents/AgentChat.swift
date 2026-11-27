@@ -122,7 +122,10 @@ struct AgentChat: View {
             model.tab.rawValue, String(mentions.revision), String(model.snapshot["catalog"]["features"]["agentMentions"].bool)]) {
             await mentions.observe(model, owner: id)
         }
-        .onChange(of: model.privateSnapshot.epoch) { _, _ in mentions.rows = []; mentions.readError = nil }
+        .navigationDestination(item: $mentions.visit) { visit in
+            AgentMentionVisitPage(consultation: mentions, visit: visit)
+        }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in mentions.visit = nil; mentions.rows = []; mentions.readError = nil }
         .safeAreaInset(edge: .top, spacing: 0) {
             if let entry, model.agentAccess == .ready, entry.destination != .local {
                 AgentWorkComputer(entry: entry)
@@ -139,7 +142,9 @@ struct AgentChat: View {
             AgentProfileSheet(id: id, openTopic: { topic in profile = false; reach(topic) }).presentationCornerRadius(28)
         }
         // The topic shown is the one this page keeps open; a topic opened elsewhere meanwhile is replaced when it shows again.
-        .task(id: [shown ?? "", model.verifiedUntil == nil ? "closed" : "open"]) { await follow() }
+        .task(id: [shown ?? "", model.verifiedUntil == nil ? "closed" : "open", mentions.visit == nil ? "source" : "visit"]) {
+            if mentions.visit == nil { await follow() }
+        }
         .onChange(of: model.questionTopic, initial: true) { _, target in
             guard let target, model.agentPath.first == id,
                   PhoneAgentChat.home(tasks, session: target, owner: id) == .agents else { return }

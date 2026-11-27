@@ -585,13 +585,14 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         do { let value = try await workspace.pendingControl(); if generation == current { controlPending = value ?? .null } }
         catch { if generation == current { report(error) } }
     }
-    func retryControl() async {
-        guard let workspace, transportReady, !busy else { return }
+    func retryControl(path expectedPath: String? = nil, run expectedRun: String? = nil, whileCurrent: () -> Bool = { true }) async {
+        guard let workspace, transportReady, !busy, whileCurrent() else { return }
         let current = generation
         busy = true; defer { if generation == current { busy = false } }
         do {
             guard let saved = try await workspace.pendingControl(), let path = saved["path"].string else { await refreshControlPending(); return }
-            guard generation == current, transportReady else { return }
+            guard generation == current, transportReady, whileCurrent(), expectedPath.map({ path == $0 }) != false,
+                  expectedRun.map({ saved["fields"]["runId"].string == $0 }) != false else { return }
             controlsInFlight.insert(path); defer { controlsInFlight.remove(path) }
             _ = try await workspace.freeAction(path: path, fields: saved["fields"].object)
             guard generation == current else { return }

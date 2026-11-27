@@ -14,6 +14,10 @@ export interface AgentMention {
   sourceSessionId?: string
   targetAgentId: string
   targetSessionId?: string
+  /** The recipient's recorded input, including before a reply exists. */
+  targetMessageId?: string
+  /** A pending approval of this exact recipient turn. Recheck it before opening. */
+  approval?: { id: string; runId: string }
   initiator: 'person' | 'agent'
   /** Pinned by the Host on agent-initiated exchanges. Older records omit it. */
   consultationMode?: AgentConsultationMode

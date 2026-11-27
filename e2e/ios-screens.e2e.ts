@@ -129,6 +129,7 @@ const SCENES = [
   'agent-new',
   'agent-mentions',
   'agent-consultation',
+  'agent-consultation-approval',
   'agent-consent',
   'agent-create',
   'agent-work-computer',

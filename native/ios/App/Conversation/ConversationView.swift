@@ -266,7 +266,7 @@ struct ConversationView: View {
                     case .question:
                         QuestionDrawer(question: record, sessionId: id, total: 1, asker: engine, work: work)
                     case .approval:
-                        ApprovalDrawer(approval: record, total: 1, work: work)
+                        ApprovalDrawer(approval: record, total: 1, context: work.decision(in: model))
                     }
                 } else if model.connected {
                     Text("这项决定已不在本轮等待").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).padding(.vertical, 8)

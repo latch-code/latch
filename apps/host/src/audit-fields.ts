@@ -381,7 +381,16 @@ export const AUDIT_FIELDS: AuditFieldTable = {
   'terminal.open': { sessionId: 'short', workspaceId: 'short', terminalId: 'short' },
   'work.item.changed': { itemId: 'short', revision: 'show', op: 'show', sessionId: 'short', titleHash: 'short' },
   'work.item.closed': { itemId: 'short', closed: 'show' },
-  'work.item.posted': { itemId: 'short', postId: 'short', target: 'show', sessionId: 'short' },
+  'work.item.posted': {
+    itemId: 'short',
+    postId: 'short',
+    target: 'show',
+    sessionId: 'short',
+    customAgentId: 'short',
+    targetAgentId: 'short',
+    hostId: 'short',
+    textHash: 'short',
+  },
   'work.item.started': { itemId: 'short', requestHash: 'short' },
   'work.proposal.decided': { proposalId: 'short', op: 'show', count: 'show', external: 'show' },
   'work.proposal.made': {

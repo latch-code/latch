@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { z } from 'zod'
 import { AppError } from '@latch/sdk'
-import { CUSTOM_AGENT_ID, GENERAL_AGENT_ID, type consultationScope } from '@latch/protocol'
+import { CUSTOM_AGENT_ID, GENERAL_AGENT_ID, type AgentMention, type TaskSummary, type consultationScope } from '@latch/protocol'
 import type { ConsultationChange } from './custom-agents.ts'
 import type { DeviceCaller } from './routes/registry.ts'
 
@@ -11,7 +11,7 @@ export const CONSULT_TOOLS = [
   {
     name: LIST_AGENTS,
     description:
-      'Find local colleagues by name and responsibility. If another colleague may hold information you need, look here for a suitable agent and ask it with consult_personal_agent. The person does not need to name or @ a colleague.',
+      'Find local colleagues by name and responsibility. Prefer a colleague with busy=false; null means availability is unknown. If another colleague may hold information you need, look here for a suitable agent and ask it with consult_personal_agent. The person does not need to name or @ a colleague.',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     title: '查看可联系的 Agent',
   },
@@ -105,6 +105,73 @@ export class ConsultationTurns {
       requestId: person.requestId,
       scope: person.externalGrant === granted.external ? person.scope : ('builtin' as const),
       receiverUnchanged: (id: string) => (this.receiverChanges.get(id) ?? 0) <= person.receiverGeneration,
+    }
+  }
+}
+
+/** A driver's status is only a wake-up. Only a fresh, authorized read of this question's receipt can answer it. */
+export class ConsultationReplies {
+  private readonly listeners = new Set<(sessionId: string) => void>()
+
+  observed({ id, status }: Pick<TaskSummary, 'id' | 'status'>): void {
+    if (status !== 'running') for (const listener of this.listeners) listener(id)
+  }
+
+  async wait(
+    initial: AgentMention,
+    { signal, authorize, read }: { signal: AbortSignal; authorize: () => void; read: () => Promise<AgentMention> },
+  ): Promise<AgentMention> {
+    let mention = initial
+    if (mention.status !== 'running' && mention.status !== 'sending') {
+      signal.throwIfAborted()
+      authorize()
+      return mention
+    }
+    const deadline = Date.now() + 45_000
+    // Subscribe before the initial reread: the target could have settled while its dispatch receipt was being returned.
+    let nextRead = 0
+    let interval = 300
+    let resume: (() => void) | undefined
+    const wake = () => resume?.()
+    const changed = (sessionId: string) => {
+      if (sessionId !== mention.targetSessionId) return
+      nextRead = 0
+      interval = 300
+      wake()
+    }
+    this.listeners.add(changed)
+    signal.addEventListener('abort', wake)
+    try {
+      for (;;) {
+        signal.throwIfAborted()
+        authorize()
+        if (Date.now() >= Math.min(nextRead, deadline)) {
+          // A silent driver still gets checked. A notification arriving during this read must survive it.
+          nextRead = Date.now() + interval
+          interval = Math.min(5_000, interval * 2)
+          mention = await read()
+          signal.throwIfAborted()
+          if ((mention.status !== 'running' && mention.status !== 'sending') || Date.now() >= deadline) {
+            authorize()
+            return mention
+          }
+        }
+        // Recheck the device and run's authority even if the target sends no events.
+        const now = Date.now()
+        const waitMs = Math.min(750, nextRead - now, deadline - now)
+        if (waitMs <= 0) continue
+        await new Promise<void>(resolve => {
+          const timer = setTimeout(resolve, waitMs)
+          resume = () => {
+            clearTimeout(timer)
+            resolve()
+          }
+        })
+        resume = undefined
+      }
+    } finally {
+      signal.removeEventListener('abort', wake)
+      this.listeners.delete(changed)
     }
   }
 }

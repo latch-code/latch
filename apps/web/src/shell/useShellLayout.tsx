@@ -185,13 +185,14 @@ function focusNextFrame(target: RefObject<PromptInput | null>) {
 
 /** Everything the signed-in shell holds beside the open session: its columns, its pages, its keys and its lists. */
 export function useShellLayout({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
-  const { selectedId, refresh, resync, connection } = harness
+  const { selectedId, refresh, resync, connection, confirmedDetailRead, currentSyncPass } = harness
   const proposalWrites = useProposalWrites(refresh, snapshot)
   const [mentionVisit, setMentionVisit] = useState<{
     source: string
     sourceSession: string | null
     targetSession: string
-    replyMessageId?: string
+    messageId?: string
+    approval?: AgentMention['approval']
     mentionId: string
     offset?: number
     phase: 'target' | 'returning'
@@ -1358,29 +1359,62 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   useEffect(() => currentShell()?.settings?.onShow?.(() => showSettings.current()), [])
   // The desktop app reads the Host itself, so its notification can be ahead of this page, even about a session the page
   // already lists: go as soon as the session is known, and keep looking for its request until the page has read again.
-  const [notified, setNotified] = useState<{ id: string; read: boolean; arrived: boolean } | null>(null)
+  const [computerTurn, setComputerTurn] = useState<{ id: string; messageId: string; afterPass: number } | null>(null)
+  const [notified, setNotified] = useState<{ id: string; read: boolean; arrived: boolean; messageId?: string } | null>(null)
   useEffect(() => {
-    const open = (id: string) => {
-      setNotified({ id, read: false, arrived: false })
+    const open = (id: string, messageId?: string) => {
+      setNotified({ id, read: false, arrived: false, ...(messageId ? { messageId } : {}) })
       void refresh().finally(() => {
-        setNotified(previous => (previous?.id === id ? { ...previous, read: true } : previous))
+        setNotified(previous => (previous?.id === id && previous.messageId === messageId ? { ...previous, read: true } : previous))
       })
     }
     const shell = currentShell()
     // Another computer's window: main asks it to open a session of its own Host (from this Mac's 等你处理 or a notification).
-    const stops = [shell?.notifications?.subscribe(open), shell?.computers?.subscribeSession?.(open)]
+    const stops = [
+      shell?.notifications?.subscribe(open),
+      shell?.computers?.subscribeSession?.((id, messageId) => open(id, shell.remote ? messageId : undefined)),
+    ]
     return () => {
       for (const stop of stops) stop?.()
     }
   }, [refresh])
   useEffect(() => {
     if (notified === null || !snapshot.tasks.some(task => task.id === notified.id)) return
+    if (notified.messageId) {
+      const { id, messageId } = notified
+      const afterPass = currentSyncPass()
+      choose(id, () => {
+        switchWorkView('chat')
+        setComputerTurn({ id, messageId, afterPass })
+      })
+      setNotified(null)
+      return
+    }
     const done = openNotified(notified.id, !notified.arrived)
     // Unchanged once it has arrived: a new object here would run this again at once, for as long as the page's read takes,
     // and each run would put this session back over a newer click.
     if (done || notified.read) setNotified(null)
     else if (!notified.arrived) setNotified({ ...notified, arrived: true })
-  }, [notified, snapshot.tasks, snapshot.approvals, openNotified])
+  }, [notified, snapshot.tasks, snapshot.approvals, openNotified, choose, currentSyncPass])
+  useEffect(() => {
+    if (!computerTurn) return
+    if (!conversationVisible || selectedId !== computerTurn.id) {
+      setComputerTurn(null)
+      return
+    }
+    if (current?.summary.id !== computerTurn.id) return
+    const frame = requestAnimationFrame(() => {
+      const row = reading.contentRef.current?.querySelector(`[data-message-id="${CSS.escape(computerTurn.messageId)}"]`)
+      if (row) reading.show(computerTurn.id, computerTurn.messageId)
+      else {
+        // An already open transcript may predate the receipt. A failed refresh leaves the jump pending for recovery.
+        if (confirmedDetailRead?.sessionId !== computerTurn.id || confirmedDetailRead.pass <= computerTurn.afterPass) return
+        setToast({ text: COPY.originalTurnUnavailable, tone: 'error' })
+      }
+      setComputerTurn(null)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [computerTurn, conversationVisible, selectedId, current, confirmedDetailRead, reading.show, reading.contentRef, setToast])
   const manageProviders = owner
     ? () => {
         openSettings('providers')
@@ -1987,31 +2021,36 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
         source: item.sourceAgentId,
         sourceSession,
         targetSession: target.id,
-        replyMessageId: item.reply?.messageId,
+        messageId: item.reply?.messageId ?? item.targetMessageId,
+        approval: item.approval,
         mentionId: item.id,
         offset,
         phase: 'target',
       })
     })
   })
+  const selectMentionApproval = useStableCallback(session.selectApproval)
   const revealedMention = useRef<typeof mentionVisit>(undefined)
   useLayoutEffect(() => {
     if (!atMentionTarget) {
       revealedMention.current = undefined
       return
     }
-    if (!mentionVisit.replyMessageId || current?.summary.id !== mentionVisit.targetSession || revealedMention.current === mentionVisit)
-      return
+    if (!mentionVisit.messageId || current?.summary.id !== mentionVisit.targetSession || revealedMention.current === mentionVisit) return
     // An empty source page can cover an already-selected target. Reveal after that transcript is back on screen.
-    const id = mentionVisit.replyMessageId
+    const id = mentionVisit.messageId
     const frame = requestAnimationFrame(() => {
+      const decision = mentionVisit.approval
+      if (decision && current.summary.runId === decision.runId && current.approvals.some(row => row.id === decision.id)) {
+        selectMentionApproval(decision.id)
+      }
       const row = reading.contentRef.current?.querySelector(`[data-message-id="${CSS.escape(id)}"]`)
       if (!row?.getClientRects().length) return
       reading.show(mentionVisit.targetSession, id)
       revealedMention.current = mentionVisit
     })
     return () => cancelAnimationFrame(frame)
-  }, [atMentionTarget, mentionVisit, current, reading.contentRef, reading.show])
+  }, [atMentionTarget, mentionVisit, current, reading.contentRef, reading.show, selectMentionApproval])
   const returnToMention = useStableCallback(() => {
     if (!atMentionTarget) return
     const restoring = () => setMentionVisit({ ...mentionVisit, phase: 'returning' })

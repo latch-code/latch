@@ -2,10 +2,17 @@ import LatchNativeCore
 import SwiftUI
 import UIKit
 
+struct AgentMentionVisit: Hashable {
+    let id = UUID()
+    let source: String
+    let destination: PhoneAgentMentionDestination
+}
+
 @MainActor final class AgentMentionSession: ObservableObject {
     @Published var rows: [PhoneAgentConsultation] = []
     @Published var readError: String?
     @Published var revision = 0
+    @Published var visit: AgentMentionVisit?
 
     func observe(_ model: PhoneModel, owner: String) async {
         guard let path = PhoneAgentMentions.path(owner), model.agentAccess == .ready,
@@ -33,8 +40,9 @@ struct AgentConsultations: View {
     @ObservedObject var consultation: AgentMentionSession
 
     var body: some View {
+        let entries = PhoneAgents.entries(model.snapshot, windowOpen: model.hasContentWindow)
         ForEach(consultation.rows) { row in
-            let entry = PhoneAgents.entry(model.snapshot, id: row.target)
+            let entry = entries.first { $0.id == row.target }
             VStack(alignment: .leading, spacing: 9) {
                 HStack(spacing: 8) {
                     AgentFace(avatar: entry?.avatar ?? .general, size: 26)
@@ -42,20 +50,108 @@ struct AgentConsultations: View {
                     Spacer()
                     Text(row.words).font(.caption).foregroundStyle(row.status == "failed" ? PhoneTheme.red : PhoneTheme.muted)
                 }
-                Text((row.autonomous ? "Agent 发起 · " : "你发起 · ") + PhoneConversation.visible(row.text)).font(.subheadline).foregroundStyle(PhoneTheme.ink2)
+                Text([row.autonomous ? "Agent 发起" : "你发起", row.mode?.words, PhoneConversation.visible(row.text)].compactMap { $0 }.joined(separator: " · ")).font(.subheadline).foregroundStyle(PhoneTheme.ink2)
                 if let reply = row.reply, !reply.isEmpty {
                     Divider()
                     Text(PhoneConversation.visible(reply)).font(.body).foregroundStyle(PhoneTheme.ink)
                 }
-                if row.more, row.targetSession != nil, PhoneAgentChat.session(model.snapshot, owner: row.target) == row.targetSession {
-                    Button("在对方聊天查看完整回复") { model.agentPath = [row.target] }.font(.caption)
-                }
                 if let failure = row.failure { Text(PhoneConversation.visible(failure)).font(.caption).foregroundStyle(PhoneTheme.red) }
+                if let label = row.chatAction(in: model.snapshot, entry: entry) {
+                    Button(label) {
+                        guard model.agentAccess == .ready, model.agentPath.first == row.source,
+                              row.chatAction(in: model.snapshot, entry: entry) == label,
+                              let destination = row.destination(in: model.snapshot, entry: entry) else { return }
+                        consultation.visit = AgentMentionVisit(source: row.source, destination: destination)
+                    }.font(.subheadline)
+                }
             }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
                 .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 14))
         }
         if let error = consultation.readError {
             HStack { Text(error); Button("重试") { consultation.revision += 1 } }.font(.caption).foregroundStyle(PhoneTheme.muted)
+        }
+    }
+}
+
+/** Keep the source conversation and its scroll position mounted while reading the addressed turn on this Host. */
+struct AgentMentionVisitPage: View {
+    @EnvironmentObject private var model: PhoneModel
+    @ObservedObject var consultation: AgentMentionSession
+    let visit: AgentMentionVisit
+    @State private var detail: PhoneAgentRead = .loading
+    @State private var observedWindow: UUID?
+    @State private var revision = 0
+    private var destination: PhoneAgentMentionDestination { visit.destination }
+    private var accessible: Bool {
+        consultation.visit == visit && model.agentPath.first == visit.source && model.tab == .agents && model.connected
+            && model.hasContentWindow && model.agentAccess == .ready && PhoneAgents.entry(model.snapshot, id: visit.source) != nil
+            && destination.available(in: model.snapshot)
+    }
+    var body: some View {
+        Group {
+            if !accessible {
+                ContentUnavailableView("原会话暂不可查看", systemImage: "bubble.left")
+            } else if destination.focus == .chat {
+                // Hosts with no message anchor can still open the original, currently readable conversation.
+                ConversationView(id: destination.session)
+                    .task { if model.sessionId != destination.session { await model.openSession(destination.session) } }
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        switch observedWindow == model.privateSnapshot.epoch ? detail : .loading {
+                        case let .ready(value):
+                            if let record = destination.record(in: value, snapshot: model.snapshot) {
+                                switch destination.focus {
+                                case let .approval(id, run, _):
+                                    let window = model.privateSnapshot.epoch, host = model.generation
+                                    let context = PhoneDecisionContext(sessionId: destination.session, runId: run) {
+                                        accessible && model.generation == host && model.privateSnapshot.accepts(window)
+                                            && destination.record(in: value, snapshot: model.snapshot) != nil
+                                    }
+                                    pendingApproval(id, context: context)
+                                    ApprovalDrawer(approval: record, total: 1, context: context)
+                                case let .message(_, _, assistant):
+                                    if assistant { MarkdownView(text: PhoneConversation.visible(record["text"].string ?? "")) }
+                                    else { UserBubble(message: record, delivery: nil) }
+                                case .chat: EmptyView()
+                                }
+                            } else { Text("这条消息或审批已不可用").foregroundStyle(PhoneTheme.muted) }
+                        case .loading: ProgressView()
+                        default:
+                            Text("暂时无法读取原回合").foregroundStyle(PhoneTheme.muted)
+                            Button("重试") { revision += 1 }
+                        }
+                    }.frame(maxWidth: 760, alignment: .leading).padding(16).frame(maxWidth: .infinity)
+                }
+                .navigationTitle(PhoneAgents.entry(model.snapshot, id: destination.target).map { PhoneConversation.visible($0.name) } ?? "原回合")
+                .navigationBarTitleDisplayMode(.inline)
+            }
+        }
+        .task(id: [model.privateSnapshot.epoch.uuidString, model.generation.uuidString, String(accessible), String(revision)]) {
+            let window = model.privateSnapshot.epoch
+            detail = .loading; observedWindow = window
+            guard accessible, destination.focus != .chat else { return }
+            let result = await model.readAgentPart("/link/api/tasks/" + destination.session)
+            guard accessible, model.privateSnapshot.accepts(window), !Task.isCancelled else { return }
+            detail = result
+        }
+    }
+
+    @ViewBuilder private func pendingApproval(_ id: String, context: PhoneDecisionContext) -> some View {
+        let path = PhoneModel.approvalPath(id), cancel = PhoneModel.cancelPath(context.sessionId)
+        let pending = model.controlPending
+        if let pendingPath = pending["path"].string, model.controlsInFlight.isEmpty,
+           pendingPath == path || (pendingPath == cancel && pending["fields"]["runId"].string == context.runId) {
+            HStack {
+                Text("上次操作结果待确认").foregroundStyle(PhoneTheme.amber)
+                Button("重试这次操作") { Task { await model.retryControl(path: pendingPath, run: pendingPath == cancel ? context.runId : nil, whileCurrent: context.isCurrent) } }
+            }.font(PhoneTheme.caption).disabled(model.busy || !model.transportReady)
+        }
+        if let request = model.writesAwaitingConfirmation.first(where: { $0.path == path }) {
+            HStack {
+                Text("上次提交结果待确认").foregroundStyle(PhoneTheme.amber)
+                Button("重试这次提交") { Task { await model.submit(request, whileCurrent: context.isCurrent) } }
+            }.font(PhoneTheme.caption).disabled(model.busy || !model.transportReady)
         }
     }
 }

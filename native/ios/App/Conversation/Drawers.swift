@@ -33,7 +33,7 @@ struct ApprovalDrawer: View {
     @EnvironmentObject private var model: PhoneModel
     let approval: NativeJSON
     let total: Int
-    var work: PhoneWorkDecisionContext? = nil
+    var context: PhoneDecisionContext? = nil
     @State private var details = false
     /** Cache only for the diff projection currently in view. */
     @State private var counted: (diffs: NativeJSON, stat: PhoneDiffStat?)?
@@ -55,6 +55,7 @@ struct ApprovalDrawer: View {
         let hasDetails = arguments != nil || !diffs.isEmpty || patchText != nil || (!fileEdit && locations.count > 1)
         let id = approval["id"].string
         let rejecting = id.map { model.controlsInFlight.contains(PhoneModel.approvalPath($0)) } ?? false
+        let stopping = context.map { model.controlsInFlight.contains(PhoneModel.cancelPath($0.sessionId)) } ?? model.stoppingCurrent
         DrawerCard {
             HStack(spacing: 6) {
                 Image(systemName: "shield").font(.system(size: 14)).foregroundStyle(gate.riskClause == nil ? PhoneTheme.amberIcon : PhoneTheme.red)
@@ -145,20 +146,20 @@ struct ApprovalDrawer: View {
                     if !gate.more.isEmpty, let id {
                         Menu {
                             ForEach(gate.more) { choice in
-                                Button(choice.label) { Task { await model.decide(id, option: choice.id, allows: choice.allows, work: work) } }
+                                Button(choice.label) { Task { await model.decide(id, option: choice.id, allows: choice.allows, context: context) } }
                             }
-                            Button("停止这一轮") { Task { await model.stop(work: work) } }
+                            Button("停止这一轮") { Task { await model.stop(context: context) } }
                         } label: {
                             Text("更多").font(.system(size: 15, weight: .medium)).foregroundStyle(PhoneTheme.ink).padding(.horizontal, 14).frame(height: 40)
                                 .overlay(Capsule().stroke(PhoneTheme.lineStrong)).contentShape(Capsule())
-                        }.disabled(rejecting || model.stoppingCurrent)
+                        }.disabled(rejecting || stopping)
                     }
                     // A stop on its way answers this request too, so a rejection could only be told it came second.
-                    button(rejecting ? "正在拒绝…" : "拒绝", prominent: false) { if let id { Task { await model.reject(id, work: work) } } }.disabled(rejecting || model.stoppingCurrent)
+                    button(rejecting ? "正在拒绝…" : "拒绝", prominent: false) { if let id { Task { await model.reject(id, context: context) } } }.disabled(rejecting || stopping)
                     if gate.canAllow {
-                        button(gate.allowLabel, prominent: !gate.hidden) { if let id { Task { await model.allow(id, option: gate.allowOption, work: work) } } }.disabled(model.stoppingCurrent)
+                        button(gate.allowLabel, prominent: !gate.hidden) { if let id { Task { await model.allow(id, option: gate.allowOption, context: context) } } }.disabled(stopping)
                     } else {
-                        button(model.stoppingCurrent ? "正在停止…" : "停止", prominent: false) { Task { await model.stop(work: work) } }.disabled(model.stoppingCurrent)
+                        button(stopping ? "正在停止…" : "停止", prominent: false) { Task { await model.stop(context: context) } }.disabled(stopping)
                     }
                 }.disabled(model.busy)
             }
@@ -263,7 +264,7 @@ struct QuestionDrawer: View {
             if let text = other[id], !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { fields["other"] = .string(text) }
             return .object(fields)
         }
-        Task { await model.mutate(.post, path: "/link/api/tasks/\(sessionId)/questions/\(id)/answer", fields: ["answers": .array(answers)], work: work) }
+        Task { await model.mutate(.post, path: "/link/api/tasks/\(sessionId)/questions/\(id)/answer", fields: ["answers": .array(answers)], context: work?.decision(in: model)) }
     }
 }
 

@@ -654,7 +654,7 @@ function createRemoteProxy(options) {
   }
 
   /** Forwards one page request with this Host's credential; renews once on renewal-required (the Host did nothing). */
-  async function forward(request, target, route) {
+  async function forward(request, target, route, signal) {
     const api = target.pathname.startsWith('/link/api/')
     // Without a credential the page could only reach an enrollment it cannot finish here: say what to do instead.
     if (!api && !credentialCookie() && request.method === 'GET' && (target.pathname === '/link/' || target.pathname === '/link')) {
@@ -679,7 +679,7 @@ function createRemoteProxy(options) {
     if (api && renewAfter !== 0 && renewDue()) await renew()
     // Static files are public: they go without a credential.
     let cookie = api ? credentialCookie() : undefined
-    const send = () => upstream(request.method, target.path, remoteRequestHeaders(request.headers, cookie), body)
+    const send = () => upstream(request.method, target.path, remoteRequestHeaders(request.headers, cookie), body, { signal })
     let result = await send()
     if (api && result.response.statusCode === 401) {
       let failure = await bufferUpstream(result)
@@ -752,8 +752,11 @@ function createRemoteProxy(options) {
     })
   }
 
-  /** The `latch:` scheme handler of this computer's partition: only `latch://h-<hostId>/link/…`. */
-  async function handle(request) {
+  /** The scheme handler of this computer's partition. Main can bound a foreground operation including its response body.
+   * @param {Request} request
+   * @param {AbortSignal} [signal]
+   */
+  async function handle(request, signal) {
     if (request.headers.get('origin') === 'null') {
       await discardRequestBody(request)
       return errorResponse(403, 'untrusted-frame', '文档预览不能访问工作台接口')
@@ -768,14 +771,14 @@ function createRemoteProxy(options) {
       // What only this Mac's own Host does with the desktop app: credentials, enrollment, links for other devices,
       // reporting sleep and stops, updates, files and folders. Another computer's page has none of them.
       if (
-        ['credentials', 'host-state', 'host-update', 'shell-files', 'folders', 'enroll', 'complete'].includes(route.kind)
+        ['credentials', 'host-state', 'host-update', 'work-receipt', 'shell-files', 'folders', 'enroll', 'complete'].includes(route.kind)
         || route.pairing
       ) {
         await discardRequestBody(request)
         return errorResponse(403, 'shell-managed', REMOTE_MANAGED)
       }
       if (route.kind === 'attachment-upload') return await forwardUpload(request, target)
-      return await forward(request, target, route)
+      return await forward(request, target, route, signal)
     } catch (error) {
       if (error instanceof ProxyError) return errorResponse(error.status, error.code, error.message)
       if (!(error instanceof RemoteError)) log(`转发到另一台电脑的请求失败：${error instanceof Error ? error.message : '未知错误'}`)
@@ -955,6 +958,7 @@ function createRemoteProxy(options) {
     home,
     origin,
     acceptCertificate,
+    deviceId: () => (revoked ? undefined : store.current()?.deviceId),
     handle,
     previewFrame,
     probe,

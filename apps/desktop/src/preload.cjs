@@ -17,8 +17,9 @@ const holdEarlySession = (_event, sessionId) => {
 }
 ipcRenderer.on('latch:notifications:open', holdEarlySession)
 let earlyRemoteSession
-const holdEarlyRemoteSession = (_event, sessionId) => {
-  if (typeof sessionId === 'string' && SESSION_ID.test(sessionId)) earlyRemoteSession = sessionId
+const holdEarlyRemoteSession = (_event, sessionId, messageId) => {
+  if (typeof sessionId === 'string' && SESSION_ID.test(sessionId))
+    earlyRemoteSession = { sessionId, messageId: typeof messageId === 'string' && SESSION_ID.test(messageId) ? messageId : undefined }
 }
 // 新会话 on this computer, asked from another window before this page subscribed: waits for the first subscriber.
 // true is the session start screen; an ID or "new" opens the Agent page on this computer.
@@ -547,14 +548,17 @@ function computersApi(full) {
      */
     api.subscribeSession = callback => {
       if (typeof callback !== 'function') return () => {}
-      const listener = (_event, sessionId) => {
-        if (typeof sessionId === 'string' && SESSION_ID.test(sessionId)) callback(sessionId)
+      const listener = (_event, sessionId, messageId) => {
+        if (typeof sessionId === 'string' && SESSION_ID.test(sessionId)) {
+          if (typeof messageId === 'string' && SESSION_ID.test(messageId)) callback(sessionId, messageId)
+          else callback(sessionId)
+        }
       }
       ipcRenderer.removeListener('latch:computers:session', holdEarlyRemoteSession)
       ipcRenderer.on('latch:computers:session', listener)
       const early = earlyRemoteSession
       earlyRemoteSession = undefined
-      if (early !== undefined) callback(early)
+      if (early !== undefined) listener(undefined, early.sessionId, early.messageId)
       return () => ipcRenderer.removeListener('latch:computers:session', listener)
     }
   if (full) {
@@ -572,6 +576,18 @@ function computersApi(full) {
       typeof hostId === 'string' && HOST_ID.test(hostId) && validWorkAgent(agentId) && validWorkAgent(owner)
         ? ipcRenderer.invoke('latch:computers:work-agent', hostId, agentId, owner).then(computerResult)
         : Promise.resolve(computerResult(undefined))
+    const workPost = (action, itemId, value) =>
+      typeof itemId === 'string' && /^itm_[A-Za-z0-9_-]{22}$/u.test(itemId)
+        ? ipcRenderer.invoke('latch:computers:work-post', action, itemId, value).then(computerResult)
+        : Promise.resolve(computerResult(undefined))
+    api.delegateWorkPost = (itemId, input) => {
+      if (!input || typeof input !== 'object') return Promise.resolve(computerResult(undefined))
+      const { requestId, text, customAgentId, hostId, agentId } = input
+      return workPost('delegate', itemId, { requestId, text, customAgentId, hostId, agentId })
+    }
+    api.retryWorkPost = (itemId, postId) => workPost('retry', itemId, postId)
+    api.refreshWorkPost = (itemId, postId) => workPost('refresh', itemId, postId)
+    api.openWorkPost = (itemId, postId) => workPost('open', itemId, postId)
     /** `clipboard`: the link another computer's 复制链接 put there; `file`: a code file chosen in the system's panel. */
     api.add = source => ipcRenderer.invoke('latch:computers:add', source === 'file' ? 'file' : 'clipboard').then(computerResult)
     api.cancelAdd = () => ipcRenderer.invoke('latch:computers:cancel-add').then(computerResult)

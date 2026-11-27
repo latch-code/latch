@@ -501,6 +501,8 @@ describe('another computer’s Host over HTTPS', () => {
       ['POST', 'pairings'],
       ['POST', 'folder-grants'],
       ['POST', 'host/state'],
+      ['POST', 'work/items/item/posts/remote'],
+      ['PATCH', 'WORK/items/item/posts/post/%72emote?dispatch=1'],
     ]) {
       const response = await proxyB.handle(new Request(`latch://h-${b.host.hostId}/link/api/${path}`, { method, body: '{}' }))
       expect(response.status, path).toBe(403)
@@ -1360,7 +1362,7 @@ describe('the computers preload', () => {
     }
   }
   async function load(href: string, isMainFrame = true, argv: string[] = []) {
-    const listeners = new Map<string, (event: unknown, value: unknown) => void>()
+    const listeners = new Map<string, (event: unknown, value: unknown, anchor?: string) => void>()
     const invoke = vi.fn(async (..._args: unknown[]): Promise<unknown> => ({ ok: true }))
     const send = vi.fn()
     let shell: Shell | undefined
@@ -1542,6 +1544,10 @@ describe('the computers preload', () => {
     const remote = await load(`latch://h-${HOST_B}/link/`)
     expect(remote.shell.computers).not.toHaveProperty('pickWorkAgent')
     expect(remote.shell.computers).not.toHaveProperty('openWorkAgent')
+    for (const action of ['delegateWorkPost', 'retryWorkPost', 'refreshWorkPost', 'openWorkPost']) {
+      expect(remote.shell.computers).not.toHaveProperty(action)
+      expect(local.shell.computers).toHaveProperty(action)
+    }
     remote.listeners.get('latch:computers:start-here')!({}, target)
     const go = vi.fn()
     ;(remote.shell.computers as Shell['computers'] & { subscribeStart(cb: typeof go): void }).subscribeStart(go)
@@ -1560,12 +1566,12 @@ describe('the computers preload', () => {
     expect(invoke).toHaveBeenLastCalledWith('latch:computers:open', HOST_A)
     // A session main asks it to open before the page subscribes waits for the first subscriber, once.
     listeners.get('latch:computers:session')!({}, 'not a session id!')
-    listeners.get('latch:computers:session')!({}, 'wait-1')
+    listeners.get('latch:computers:session')!({}, 'wait-1', 'reply-1')
     const opened = vi.fn()
     const stop = shell.computers.subscribeSession!(opened)
-    expect(opened.mock.calls).toEqual([['wait-1']])
+    expect(opened.mock.calls).toEqual([['wait-1', 'reply-1']])
     listeners.get('latch:computers:session')!({}, 'wait-2')
-    expect(opened.mock.calls).toEqual([['wait-1'], ['wait-2']])
+    expect(opened.mock.calls).toEqual([['wait-1', 'reply-1'], ['wait-2']])
     stop()
     expect(listeners.has('latch:computers:session')).toBe(false)
   })

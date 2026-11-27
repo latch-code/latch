@@ -85,6 +85,21 @@ test('mentions start only the addressed Agent, replay once, and show only the ad
   await settled(owner, sessionId)
   const list = () => owner.json<{ mentions: AgentMention[] }>(path)
   const original = (await list()).mentions[0]!
+  const lookup = path + '/by-request/' + input.requestId
+  const reference = await owner.json<Record<string, unknown>>(lookup)
+  expect(reference).toMatchObject({ id: original.id, targetSessionId: sessionId, status: 'completed' })
+  expect(reference.reply).toEqual({ messageId: original.reply!.messageId })
+  expect(reference).not.toHaveProperty('approval')
+  expect(reference).not.toHaveProperty('failure')
+  expect(await owner.json(path + '?receipt=reference', { method: 'POST', body: input })).toEqual(reference)
+  const conflict = await owner.request(path + '?receipt=reference', { method: 'POST', body: { ...input, text: 'Changed' } })
+  expect(conflict.status).toBe(409)
+  expect(await conflict.json()).toMatchObject({ error: 'agent-mention-unavailable', message: '工作电脑未返回可用回执。' })
+  const another = await host.enroll({ listener: 'unix' })
+  expect((await another.request(lookup)).status).toBe(404)
+  const reader = await host.enroll({ listener: 'unix', scopes: ['view'], dataScope: 'all' })
+  expect((await reader.request(lookup)).status).toBe(403)
+  expect((await owner.request(path + '/by-request/' + randomUUID())).status).toBe(404)
   expect(original).toMatchObject({
     id: sent.id,
     targetSessionId: sessionId,
@@ -112,7 +127,7 @@ test('mentions start only the addressed Agent, replay once, and show only the ad
   await expect(owner.json(path, { method: 'POST', body: { ...input, text: 'changed' } })).rejects.toThrow()
   const forbidden = await host.enroll({ listener: 'loopback-tcp' })
   await owner.json(`devices/${forbidden.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
-  for (const request of [forbidden.request(path), forbidden.request(path, { method: 'POST', body: input })]) {
+  for (const request of [forbidden.request(lookup), forbidden.request(path), forbidden.request(path, { method: 'POST', body: input })]) {
     expect((await request).status).toBe(403)
   }
   expect((await owner.request(path, { method: 'POST', body: { ...input, initiator: 'agent' } })).status).toBe(400)
