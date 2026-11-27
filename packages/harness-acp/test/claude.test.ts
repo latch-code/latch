@@ -1309,7 +1309,11 @@ describe('Claude’s own store, read only where the Host lets the wire', () => {
     const original = proto.initializationResult
     proto.initializationResult = async () => ({
       models: [...MODELS, { value: 'haiku', displayName: 'Haiku', resolvedModel: 'claude-haiku-5', supportsEffort: false }],
-      commands: [{ name: '/bytedcli', description: `${'命'.repeat(999)}🙂tail`, argumentHint: `${'参'.repeat(499)}🙂tail` }],
+      commands: [
+        { name: '/bytedcli', description: `${'命'.repeat(999)}🙂tail`, argumentHint: `${'参'.repeat(499)}🙂tail` },
+        // A token across the cut: cutting first would leave a prefix too short for its pattern.
+        { name: '/leaky', description: `${'x'.repeat(979)} ghp_${'A'.repeat(36)}` },
+      ],
       account: { email: 'someone@example.com', organization: 'Org', subscriptionType: 'max', apiProvider: 'firstParty' },
     })
     try {
@@ -1334,7 +1338,10 @@ describe('Claude’s own store, read only where the Host lets the wire', () => {
         description?: string
         input?: { hint?: string }
       }>
-      expect(reported).toEqual([{ name: 'bytedcli', description: `${'命'.repeat(999)}…`, input: { hint: `${'参'.repeat(499)}…` } }])
+      expect(reported).toEqual([
+        { name: 'bytedcli', description: `${'命'.repeat(999)}…`, input: { hint: `${'参'.repeat(499)}…` } },
+        { name: 'leaky', description: `${'x'.repeat(979)} [redacted]` },
+      ])
     } finally {
       proto.initializationResult = original
     }

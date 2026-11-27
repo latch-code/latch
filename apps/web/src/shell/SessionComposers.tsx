@@ -49,14 +49,7 @@ import { ConfigFeedback } from '../composer/ThinkingControl.tsx'
 import { composerOptions, configUnknownBar, ownModelName } from '../composer/modelReasoning.ts'
 import { draftPermission, draftRead, permissionView } from '../composer/permission.ts'
 import { helperPermissionBlocked } from '../agents/personWords.ts'
-import {
-  readHarnessCatalogue,
-  readOnSelect,
-  readsOnPermission,
-  readsOnSelect,
-  slashCatalogueTarget,
-  useReading,
-} from '../composer/harnessCatalogue.tsx'
+import { prefetchOnDraft, readOnSelect, readOnSlash, readsOnPermission, useReading } from '../composer/harnessCatalogue.tsx'
 import { QuestionDrawer, useQuestionDrawer } from '../composer/QuestionDrawer.tsx'
 import { QueueEditForm } from '../composer/QueueEditForm.tsx'
 import { QueueDrawer } from '../composer/QueueDrawer.tsx'
@@ -405,7 +398,7 @@ export function SessionComposer({
   const draftCommandsEnabled = selectedId === null && (!home || shell.route.start === true)
   const draftPrefetchEnabled = visible && draftCommandsEnabled && !newChoicesLocked && shell.connection === 'connected'
   useEffect(() => {
-    if (draftPrefetchEnabled && readsOnSelect(chosenHarness, access)) readOnSelect(chosenHarness, refresh)
+    if (draftPrefetchEnabled) prefetchOnDraft(chosenHarness, access, refresh)
   }, [draftPrefetchEnabled, chosenHarness, access, refresh])
   const { catalogue: cachedCommands, loading: commandsLoading } = useDraftHarnessCommands(shell, draftCommandsEnabled)
   const commandHarness = selectedId === null ? chosenHarness : harnessInfo
@@ -899,11 +892,7 @@ export function SessionComposer({
   const requestDraftCommands =
     draftCommandsEnabled && !firstTurn && !newChoicesLocked && submission.fork === null
       ? () => {
-          if (commandsLoading || commands !== undefined || !slashCatalogueTarget(chosenHarness, access)) return
-          void readHarnessCatalogue(chosenHarness, false).then(
-            () => refresh(),
-            () => {},
-          )
+          if (!commandsLoading && commands === undefined) readOnSlash(chosenHarness, access, refresh)
         }
       : undefined
   const actions = composerActions(shell, 'slash', sendSideQuestion)

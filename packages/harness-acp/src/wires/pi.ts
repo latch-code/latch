@@ -617,7 +617,7 @@ export class PiWire implements AgentWire {
       if (!isRecord(item) || !['extension', 'prompt', 'skill'].includes(String(item.source))) continue
       const parsed = availableCommand.safeParse({
         name: item.name,
-        ...(typeof item.description === 'string' ? { description: truncateUnits(item.description, 1000) } : {}),
+        ...(typeof item.description === 'string' ? { description: truncateUnits(redactKnownSecrets(item.description), 1000) } : {}),
       })
       if (!parsed.success) continue
       const name = parsed.data.name

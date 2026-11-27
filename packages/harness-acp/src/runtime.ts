@@ -158,6 +158,7 @@ import {
   type CodexModels,
 } from './codex-models.ts'
 import { hooksReport } from './wires/codex-hooks.ts'
+import { COMPACT as CODEX_COMPACT } from './wires/codex.ts'
 import { buildGatewayCatalog } from './gateway-catalog.ts'
 import { readQuotaCommand } from './login.ts'
 import { commandMoved, commandUnconfirmed, harnessRetired, redactor, resolveCommand } from './command.ts'
@@ -2683,10 +2684,7 @@ export class AgentRuntime implements Bridge {
         this.state.ownCommands = {
           definitionHash,
           reportedAt: at,
-          commands:
-            this.selection.profile?.wire === 'codex'
-              ? [{ name: 'compact', description: '把之前的对话总结成摘要，腾出上下文', idleOnly: true }]
-              : null,
+          commands: this.selection.profile?.wire === 'codex' ? [{ ...CODEX_COMPACT, idleOnly: true }] : null,
         }
         // Before any session: its MCP servers by name and its hooks, from the same read, starting none of them. What a
         // session or a 读取 reported stays.
@@ -2740,21 +2738,23 @@ export class AgentRuntime implements Bridge {
             && this.selection.profile?.wire !== 'cursor'
           ) {
             // Several ACP adapters push `available_commands_update` on the next turn of the event loop after `session/new`.
+            const signal = this.lifetime.signal
             await new Promise<void>(resolve => {
               const timer = setTimeout(done, 250)
               function done() {
                 clearTimeout(timer)
+                signal.removeEventListener('abort', done)
                 if (openingCommands) delete openingCommands.onReport
                 resolve()
               }
-              if (openingCommands!.reports.has(sessionId!) || this.lifetime.signal.aborted) {
+              if (openingCommands!.reports.has(sessionId!) || signal.aborted) {
                 done()
                 return
               }
               openingCommands!.onReport = reportedId => {
                 if (reportedId === sessionId) done()
               }
-              this.lifetime.signal.addEventListener('abort', done, { once: true })
+              signal.addEventListener('abort', done, { once: true })
             })
           }
         } finally {

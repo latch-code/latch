@@ -3,10 +3,12 @@ import type { HarnessInfo } from '@latch/protocol'
 import { api } from '../src/core/api.ts'
 import {
   panelCatalogueTarget,
+  prefetchOnDraft,
   readHarnessCatalogue,
   readModelOnSelect,
   readNeedsLogin,
   readOnSelect,
+  readOnSlash,
   readsOnPermission,
   readsOnSelect,
   slashCatalogueTarget,
@@ -107,6 +109,43 @@ describe('reading a Harness by selection', () => {
     expect(readsOnPermission(harness({ when: 'select', modes: true, last: { at: '2026-11-08T00:00:00Z', ok: true } }), access)).toBe(false)
     // Its definition changed and the Host has no read of the new one: opening 权限 reads it, as its note says.
     expect(readsOnPermission(unread, access)).toBe(true)
+  })
+})
+
+describe('a visible draft prefetching its Harness by itself', () => {
+  it('asks once per Host observation, so a refused read and the snapshot it brings back ask nothing more', async () => {
+    vi.mocked(api).mockClear().mockResolvedValue({ ran: false })
+    const unconfirmed = { ...harness({ when: 'select', modes: true }), id: 'unconfirmed-agent', commandCatalogue: { generation: 'one' } }
+    const onDone = vi.fn()
+    prefetchOnDraft(unconfirmed, access, onDone)
+    await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(1))
+    // The refresh after `ran: false` carries an equal Harness in a new object: the draft's effect sees it again.
+    prefetchOnDraft(structuredClone(unconfirmed), access, onDone)
+    prefetchOnDraft(structuredClone(unconfirmed), access, onDone)
+    expect(api).toHaveBeenCalledTimes(1)
+    // A replaced driver is a new observation.
+    prefetchOnDraft({ ...unconfirmed, commandCatalogue: { generation: 'two' } }, access, onDone)
+    await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(2))
+    expect(api).toHaveBeenCalledTimes(2)
+    vi.mocked(api).mockClear()
+  })
+
+  it('reads the slash menu’s commands once per observation, even when the read ends before the snapshot that records it', async () => {
+    vi.mocked(api).mockClear().mockResolvedValue({ ran: true })
+    const unchecked = {
+      ...harness({ when: 'select', modes: true }),
+      id: 'unchecked-agent',
+      capabilities: { permission: { enforcement: 'agent' } },
+      commandCatalogue: { generation: 'one' },
+    } as unknown as HarnessInfo
+    const onDone = vi.fn()
+    const remote = { ...access, local: false, admin: false }
+    readOnSlash(unchecked, remote, onDone)
+    await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(1))
+    readOnSlash(structuredClone(unchecked), remote, onDone)
+    expect(api).toHaveBeenCalledTimes(1)
+    expect(api).toHaveBeenCalledWith('agents/unchecked-agent/catalogue', { method: 'POST', body: { auto: false } })
+    vi.mocked(api).mockClear()
   })
 })
 
