@@ -250,16 +250,35 @@ export function buildReverseProxySnippets(domain: string, publicPort: number, li
 const PROFILE_BEGIN = '---LATCH-RELAY-PROFILE-BEGIN---'
 const PROFILE_END = '---LATCH-RELAY-PROFILE-END---'
 
+/**
+ * OpenSSH concatenates remote argv words with spaces before passing the string to the remote login shell.
+ * Quoting `sh -c '...'` as a single remote command guarantees `set -eu` governs every line of `remoteScript`.
+ */
+export function buildSshRemoteCommand(remoteScript: string): string {
+  return `sh -c '${remoteScript.replaceAll("'", "'\\''")}'`
+}
+
 function buildRemoteProbeScript(): string {
   return [
     'set -eu',
+    'run_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo -n "$@"; fi; }',
     'os_name=$(uname -s)',
     'arch_name=$(uname -m)',
     'uid_num=$(id -u)',
     'has_sudo=0; if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then has_sudo=1; fi',
     'has_systemd=0; if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then has_systemd=1; fi',
     'port443_busy=0; if command -v ss >/dev/null 2>&1 && ss -tlnH "( sport = :443 )" 2>/dev/null | grep -q .; then port443_busy=1; fi',
-    'printf \'{"os":"%s","arch":"%s","uid":%s,"sudo":%s,"systemd":%s,"port443Busy":%s}\\n\' "$os_name" "$arch_name" "$uid_num" "$has_sudo" "$has_systemd" "$port443_busy"',
+    'existing_port=0',
+    'existing_proxy=0',
+    'if [ "$uid_num" -eq 0 ] || [ "$has_sudo" -eq 1 ]; then',
+    '  if run_root test -f /srv/latch-relay/relay.json 2>/dev/null; then',
+    '    cfg_json=$(run_root cat /srv/latch-relay/relay.json 2>/dev/null || true)',
+    '    parsed_port=$(printf \'%s\\n\' "$cfg_json" | sed -n \'s/.*"port"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p\' | head -n 1)',
+    '    if [ -n "$parsed_port" ]; then existing_port="$parsed_port"; fi',
+    '    if printf \'%s\\n\' "$cfg_json" | grep -Eq \'"behindProxy"[[:space:]]*:[[:space:]]*true\'; then existing_proxy=1; fi',
+    '  fi',
+    'fi',
+    'printf \'{"os":"%s","arch":"%s","uid":%s,"sudo":%s,"systemd":%s,"port443Busy":%s,"existingPort":%s,"existingBehindProxy":%s}\\n\' "$os_name" "$arch_name" "$uid_num" "$has_sudo" "$has_systemd" "$port443_busy" "$existing_port" "$existing_proxy"',
   ].join('\n')
 }
 
@@ -281,17 +300,25 @@ function buildRemoteInstallScript(params: {
       : params.mode === 'self-ip'
         ? `--ip ${cleanIp} --port ${params.listenPort} --gateway /opt/latch-relay/current/latch-relay-tls`
         : params.mode === 'custom-tls'
-          ? `--domain ${params.target} --port ${params.listenPort} --cert /srv/latch-relay/tls/fullchain.pem --key /srv/latch-relay/tls/privkey.pem --gateway /opt/latch-relay/current/latch-relay-tls`
+          ? `--domain ${params.target} --port ${params.listenPort} --cert /etc/latch-relay/tls/fullchain.pem --key /etc/latch-relay/tls/privkey.pem --gateway /opt/latch-relay/current/latch-relay-tls`
           : `--domain ${params.target} --port ${params.listenPort} --gateway /opt/latch-relay/current/latch-relay-tls${params.acmeEmail ? ` --acme-email ${params.acmeEmail}` : ''}`
 
   const ambientCaps = params.mode !== 'behind-proxy' && params.listenPort < 1024 ? 'CAP_NET_BIND_SERVICE' : ''
   const waitSeconds = params.mode === 'acme' ? 45 : 15
   const copyCustomTls =
-    params.mode === 'custom-tls'
+    params.mode === 'custom-tls' && params.cert && params.key
       ? [
-          `run_root install -d -m 0700 -o latch-relay -g latch-relay /srv/latch-relay/tls`,
-          `run_root install -m 0600 -o latch-relay -g latch-relay ${params.cert!} /srv/latch-relay/tls/fullchain.pem`,
-          `run_root install -m 0600 -o latch-relay -g latch-relay ${params.key!} /srv/latch-relay/tls/privkey.pem`,
+          'if [ -L /etc/latch-relay ] || [ -L /etc/latch-relay/tls ]; then echo "TLS_DIR_SYMLINK" >&2; exit 15; fi',
+          'run_root install -d -m 0755 -o root -g root /etc/latch-relay',
+          'run_root install -d -m 0750 -o root -g latch-relay /etc/latch-relay/tls',
+          'if [ -L /etc/latch-relay/tls/fullchain.pem ] || [ -L /etc/latch-relay/tls/privkey.pem ]; then echo "TLS_FILE_SYMLINK" >&2; exit 15; fi',
+          'tls_cert_tmp="/etc/latch-relay/tls/.fullchain.tmp.$$"',
+          'tls_key_tmp="/etc/latch-relay/tls/.privkey.tmp.$$"',
+          'run_root rm -f "$tls_cert_tmp" "$tls_key_tmp"',
+          `run_root install -m 0640 -o root -g latch-relay ${params.cert} "$tls_cert_tmp"`,
+          `run_root install -m 0640 -o root -g latch-relay ${params.key} "$tls_key_tmp"`,
+          'run_root mv -f "$tls_cert_tmp" /etc/latch-relay/tls/fullchain.pem',
+          'run_root mv -f "$tls_key_tmp" /etc/latch-relay/tls/privkey.pem',
         ].join('\n')
       : ''
 
@@ -307,7 +334,13 @@ function buildRemoteInstallScript(params: {
     '  fi',
     '}',
     'tmp_tar=$(mktemp /tmp/latch-relay-bundle.XXXXXX.tar.gz)',
-    'cleanup() { rm -f "$tmp_tar"; if [ -n "${stage_dir:-}" ]; then run_root rm -rf "$stage_dir" 2>/dev/null || true; fi; }',
+    'unit_backup=""',
+    'prof_tmp=""',
+    'cleanup() {',
+    '  rm -f "$tmp_tar" "${unit_backup:-}"',
+    '  if [ -n "${stage_dir:-}" ]; then run_root rm -rf "$stage_dir" 2>/dev/null || true; fi',
+    '  if [ -n "${prof_tmp:-}" ]; then run_relay rm -f "$prof_tmp" 2>/dev/null || true; fi',
+    '}',
     'trap cleanup EXIT',
     'cat > "$tmp_tar"',
     `actual_sha=$(sha256sum "$tmp_tar" | awk '{print $1}')`,
@@ -316,6 +349,26 @@ function buildRemoteInstallScript(params: {
     '  run_root useradd --system --home-dir /srv/latch-relay --no-create-home --shell /usr/sbin/nologin latch-relay',
     'fi',
     'run_root install -d -m 0755 /opt/latch-relay /opt/latch-relay/releases',
+    'prev_target=""',
+    'if [ -L /opt/latch-relay/current ]; then prev_target=$(readlink -f /opt/latch-relay/current || true); fi',
+    'if [ -f /etc/systemd/system/latch-relay.service ]; then',
+    '  unit_backup=$(mktemp /tmp/latch-relay.unit.bak.XXXXXX)',
+    '  run_root cp -p /etc/systemd/system/latch-relay.service "$unit_backup"',
+    'fi',
+    'was_active=0',
+    'if systemctl is-active --quiet latch-relay.service 2>/dev/null; then was_active=1; fi',
+    'rollback_release() {',
+    '  if [ -n "$prev_target" ] && [ -d "$prev_target" ]; then',
+    '    run_root ln -sfn "$prev_target" /opt/latch-relay/current',
+    '    if [ -n "$unit_backup" ] && [ -f "$unit_backup" ]; then',
+    '      run_root install -m 0644 "$unit_backup" /etc/systemd/system/latch-relay.service',
+    '      run_root systemctl daemon-reload 2>/dev/null || true',
+    '    fi',
+    '    if [ "$was_active" -eq 1 ]; then',
+    '      run_root systemctl restart latch-relay.service 2>/dev/null || true',
+    '    fi',
+    '  fi',
+    '}',
     'stage_dir="/opt/latch-relay/releases/.stage-$$"',
     'release_dir="/opt/latch-relay/releases/' + params.expectedTarSha256.slice(0, 16) + '"',
     'run_root rm -rf "$stage_dir"',
@@ -326,14 +379,23 @@ function buildRemoteInstallScript(params: {
     'run_root chmod 0644 "$stage_dir/latch-relay.mjs" "$stage_dir/build.json"',
     'if [ ! -d "$release_dir" ]; then run_root mv "$stage_dir" "$release_dir"; else run_root rm -rf "$stage_dir"; fi',
     'stage_dir=""',
-    'run_root ln -sfn "$release_dir" /opt/latch-relay/current',
+    '"$release_dir/latch-relay-tls" version >/dev/null',
     'if [ -L /srv/latch-relay ]; then echo "DATA_DIR_SYMLINK" >&2; exit 13; fi',
     'run_root install -d -m 0700 -o latch-relay -g latch-relay /srv/latch-relay',
     copyCustomTls,
-    'if [ ! -f /srv/latch-relay/relay.json ]; then',
+    'if [ -f /srv/latch-relay/relay.json ]; then',
+    '  run_relay "$release_dir/node" --disable-sigusr1 "$release_dir/latch-relay.mjs" check --data-dir /srv/latch-relay >/dev/null',
+    '  run_root ln -sfn "$release_dir" /opt/latch-relay/current',
+    '  if ! run_relay /opt/latch-relay/current/node --disable-sigusr1 /opt/latch-relay/current/latch-relay.mjs check --data-dir /srv/latch-relay >/dev/null; then',
+    '    rollback_release',
+    '    echo "CANDIDATE_CHECK_FAILED" >&2',
+    '    exit 14',
+    '  fi',
+    'else',
+    '  run_root ln -sfn "$release_dir" /opt/latch-relay/current',
     `  run_relay /opt/latch-relay/current/node --disable-sigusr1 /opt/latch-relay/current/latch-relay.mjs init --data-dir /srv/latch-relay ${effectiveInitArgs} >/dev/null`,
+    '  run_relay /opt/latch-relay/current/node --disable-sigusr1 /opt/latch-relay/current/latch-relay.mjs check --data-dir /srv/latch-relay >/dev/null',
     'fi',
-    'run_relay /opt/latch-relay/current/node --disable-sigusr1 /opt/latch-relay/current/latch-relay.mjs check --data-dir /srv/latch-relay >/dev/null',
     'unit_tmp=$(mktemp /tmp/latch-relay.service.XXXXXX)',
     'cat > "$unit_tmp" <<\'EOF\'',
     '[Unit]',
@@ -367,7 +429,11 @@ function buildRemoteInstallScript(params: {
     'rm -f "$unit_tmp"',
     'run_root systemctl daemon-reload',
     'run_root systemctl enable latch-relay.service >/dev/null 2>&1 || true',
-    'run_root systemctl restart latch-relay.service',
+    'if ! run_root systemctl restart latch-relay.service; then',
+    '  rollback_release',
+    '  echo "SERVICE_NOT_READY" >&2',
+    '  exit 14',
+    'fi',
     'ready=0',
     `for _ in $(seq 1 ${waitSeconds}); do`,
     '  if run_relay /opt/latch-relay/current/node --disable-sigusr1 /opt/latch-relay/current/latch-relay.mjs health --data-dir /srv/latch-relay >/dev/null 2>&1; then',
@@ -375,14 +441,19 @@ function buildRemoteInstallScript(params: {
     '  fi',
     '  sleep 1',
     'done',
-    'if [ "$ready" -ne 1 ]; then echo "SERVICE_NOT_READY" >&2; exit 14; fi',
+    'if [ "$ready" -ne 1 ]; then',
+    '  rollback_release',
+    '  echo "SERVICE_NOT_READY" >&2',
+    '  exit 14',
+    'fi',
     'prof_tmp="/srv/latch-relay/.export-$$.json"',
-    'run_root rm -f "$prof_tmp"',
+    'run_relay rm -f "$prof_tmp"',
     `run_relay /opt/latch-relay/current/node --disable-sigusr1 /opt/latch-relay/current/latch-relay.mjs profile --data-dir /srv/latch-relay --url ${params.originUrl.slice(0, -1)} --output "$prof_tmp" >/dev/null`,
     `printf '%s\\n' '${PROFILE_BEGIN}'`,
-    'run_root cat "$prof_tmp"',
+    'run_relay cat "$prof_tmp"',
     `printf '%s\\n' '${PROFILE_END}'`,
-    'run_root rm -f "$prof_tmp"',
+    'run_relay rm -f "$prof_tmp"',
+    'prof_tmp=""',
   ]
     .filter(Boolean)
     .join('\n')
@@ -416,7 +487,16 @@ export async function runLinuxSetup(
   if (probe.code !== 0)
     throw new LinuxSetupError(`无法通过 SSH 登录 ${normalized.server}（退出码 ${probe.code}）。请确认 SSH 免密密钥或连接可用。`)
 
-  let hostInfo: { os: string; arch: string; uid: number; sudo: number; systemd: number; port443Busy?: number }
+  let hostInfo: {
+    os: string
+    arch: string
+    uid: number
+    sudo: number
+    systemd: number
+    port443Busy?: number
+    existingPort?: number
+    existingBehindProxy?: number
+  }
   try {
     hostInfo = JSON.parse(probe.stdout.trim().split('\n').at(-1) ?? '') as typeof hostInfo
   } catch {
@@ -435,9 +515,28 @@ export async function runLinuxSetup(
   if (hostInfo.systemd !== 1)
     throw new LinuxSetupError('远端服务器未运行 systemd；请使用仓库提供的 deploy/compose.standalone.yaml 以容器方式部署')
 
-  // In bare-IP mode without an explicit `--port`, prefer `:443` (already open in almost every cloud Security Group);
-  // automatically fall back to `:8443` if another server on the host already occupies `:443`.
-  if (normalized.mode === 'self-ip' && rawInput.port === undefined && hostInfo.port443Busy === 1) {
+  const existingPort =
+    typeof hostInfo.existingPort === 'number'
+    && Number.isInteger(hostInfo.existingPort)
+    && hostInfo.existingPort >= 1
+    && hostInfo.existingPort <= 65535
+      ? hostInfo.existingPort
+      : 0
+  if (existingPort > 0) {
+    if (hostInfo.existingBehindProxy === 1 && normalized.mode !== 'behind-proxy') {
+      normalized.mode = 'behind-proxy'
+      normalized.listenPort = rawInput.port ?? existingPort
+      normalized.publicPort = rawInput.publicPort ?? 443
+      normalized.origin = publicOrigin(normalized.target, normalized.publicPort)
+    } else if (rawInput.port === undefined) {
+      normalized.listenPort = existingPort
+      if (normalized.mode !== 'behind-proxy') {
+        normalized.publicPort = existingPort
+        normalized.origin = publicOrigin(normalized.target, existingPort)
+      }
+    }
+  } else if (!rawInput.upgrade && normalized.mode === 'self-ip' && rawInput.port === undefined && hostInfo.port443Busy === 1) {
+    // On a fresh bare-IP install without an explicit `--port`, prefer `:443` and fall back to `:8443` only when another service holds `:443`.
     normalized.listenPort = 8443
     normalized.publicPort = 8443
     normalized.origin = publicOrigin(normalized.target, 8443)
@@ -604,7 +703,9 @@ export async function runLinuxUninstall(
     'run_root rm -f /etc/systemd/system/latch-relay.service',
     'run_root systemctl daemon-reload 2>/dev/null || true',
     'run_root rm -rf /opt/latch-relay',
-    ...(input.purgeData ? ['run_root rm -rf /srv/latch-relay', 'run_root userdel latch-relay 2>/dev/null || true'] : []),
+    ...(input.purgeData
+      ? ['run_root rm -rf /srv/latch-relay /etc/latch-relay', 'if id -u latch-relay >/dev/null 2>&1; then run_root userdel latch-relay; fi']
+      : []),
   ].join('\n')
   const res = await ssh({ server, ...(input.sshPort ? { sshPort: input.sshPort } : {}) }, script)
   if (res.code !== 0) throw new LinuxSetupError(`卸载远端服务失败（SSH 退出码 ${res.code}）`)

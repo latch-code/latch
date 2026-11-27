@@ -910,7 +910,11 @@ do {
         guard await workspace.installedPathKind() == .relay,
               await workspace.installedPathId() == "relay-fallback" else { throw NativeFailure.identityMismatch }
         guard await paths.upgrade([], preferredRelay: relayFallback, workspace: workspace) == false else { throw NativeFailure.identityMismatch }
-        guard await paths.upgrade([], preferredRelay: relayPreferred, workspace: workspace) == true,
+        // Even when an unreachable direct candidate is present, `upgrade` falls back to `preferredRelay` in the same round:
+        let unreachableDirect = try NativePathCandidate(id: "unreachable-lan", kind: .direct) {
+            throw NativeFailure.unavailable
+        }
+        guard await paths.upgrade([unreachableDirect], preferredRelay: relayPreferred, workspace: workspace) == true,
               await workspace.installedPathKind() == .relay,
               await workspace.installedPathId() == "relay-preferred" else { throw NativeFailure.identityMismatch }
         guard await paths.upgrade([candidate], preferredRelay: relayFallback, workspace: workspace) == true,
@@ -1182,6 +1186,19 @@ do {
         }
         let current = try AddressBookCodec.verify(input["current"] as? String ?? "", rootSpki: root, deviceId: deviceId, nowMs: now)
         result["migrate"] = NativeBookPathChange.requiresMigration(previous: previous, current: current)
+        if let kindRaw = input["installedKind"] as? String, let kind = NativePathCandidate.Kind(rawValue: kindRaw) {
+            result["invalidates"] = NativeBookPathChange.invalidatesInstalledPath(
+                previous: previous,
+                current: current,
+                installedKind: kind,
+                installedPathId: input["installedPathId"] as? String
+            )
+        }
+    case "selfSignedVerify":
+        let der = try LinkBytes.unhex(input["certDer"] as? String ?? "")
+        let spkiHash = try LinkBytes.unhex(input["spkiHash"] as? String ?? "")
+        guard let cert = SecCertificateCreateWithData(nil, der as CFData) else { throw NativeFailure.invalidRecord }
+        result["verified"] = NativeSelfSignedTLS.verify(cert, expectedSpkiHash: spkiHash)
     case "relayAdmission":
         let book = try AddressBookCodec.verify(input["encoded"] as? String ?? "", rootSpki: LinkBytes.unhex(input["rootSpki"] as? String ?? ""),
             deviceId: input["deviceId"] as? String ?? "", nowMs: (input["timeMs"] as? NSNumber)?.uint64Value ?? 0)

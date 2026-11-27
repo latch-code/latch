@@ -124,8 +124,7 @@ export async function startRelay(
       || !options.memory
       || !options.registrationWork
       || (isPublic && process.platform !== 'linux')
-      || options.networkCounter
-      || options.memoryReader)
+      || ((isPublic || process.platform === 'linux') && (options.networkCounter || options.memoryReader)))
   )
     throw new Error('Public relay requires measured Linux quota and memory configuration')
   if (options.registrationWork) {
@@ -196,8 +195,8 @@ export async function startRelay(
   let activeLeaf = options.cert ? new X509Certificate(options.cert) : undefined
   const initialSpki = activeLeaf?.publicKey.export({ type: 'spki', format: 'der' })
   const certificateReady = () => !options.acme || (activeLeaf !== undefined && !isAcmeBootstrapCertificate(activeLeaf))
-  // Open-registration public nodes require kernel socket cgroup accounting; token-gated self-hosted nodes tolerate hosts without it.
-  const strictSocketMemory = isPublic && Boolean(options.openRegistration)
+  // All production relays (public TLS gateway and loopback behind-proxy) require full cgroup socket memory accounting to admit new connections.
+  const strictSocketMemory = isProduction || Boolean(options.memoryReader)
   const ready = () =>
     certificateReady()
     && denials.status().healthy
@@ -609,6 +608,7 @@ export async function startRelay(
         target: options.selfSignedTls.target,
         certificateFile: options.tlsFiles.certificateFile,
         keyFile: options.tlsFiles.keyFile,
+        currentLeaf: () => activeLeaf,
         reloadTls,
         ...(options.selfSignedTls.renewBeforeDays === undefined ? {} : { renewBeforeDays: options.selfSignedTls.renewBeforeDays }),
         ...(options.selfSignedTls.checkIntervalMs === undefined ? {} : { checkIntervalMs: options.selfSignedTls.checkIntervalMs }),

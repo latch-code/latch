@@ -8,7 +8,14 @@ import { join, resolve } from 'node:path'
 import { parseArgs, promisify } from 'node:util'
 import { buildLinuxRelayBundle } from './bundle-linux.ts'
 import { runLinuxAcceptance } from './accept-linux.ts'
-import { extractSshHost, LinuxSetupError, runLinuxRemoteStatus, runLinuxSetup, runLinuxUninstall } from './setup-linux-core.ts'
+import {
+  buildSshRemoteCommand,
+  extractSshHost,
+  LinuxSetupError,
+  runLinuxRemoteStatus,
+  runLinuxSetup,
+  runLinuxUninstall,
+} from './setup-linux-core.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -35,9 +42,7 @@ function runSsh(
       ...(target.sshPort ? ['-p', String(target.sshPort)] : []),
       '--',
       target.server,
-      'sh',
-      '-c',
-      remoteScript,
+      buildSshRemoteCommand(remoteScript),
     ]
     const child = spawn('ssh', args, {
       env: sshEnvironment(),

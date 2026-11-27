@@ -3002,6 +3002,95 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(await invoke({ ...input, previous: encode({ relays: relays.slice(1) }), current: encode() })).toEqual({ migrate: true })
     expect(await invoke({ ...input, previous: undefined, current: encode() })).toEqual({ migrate: true })
     await expect(invoke({ ...input, current: refreshed.slice(0, -6) + 'AAAAAA' })).rejects.toThrow('rejected')
+
+    // Path-aware invalidation: modifying/adding/removing an unused backup relay never cancels an active direct or unchanged relay transfer!
+    const relay0Hex = relays[0]!.relayId.toString('hex')
+    expect(
+      await invoke({
+        ...input,
+        installedKind: 'direct',
+        installedPathId: 'lan',
+        current: encode({ generation: 2, relays: relays.slice(1) }),
+      }),
+    ).toEqual({ migrate: true, invalidates: false })
+    expect(
+      await invoke({
+        ...input,
+        installedKind: 'direct',
+        installedPathId: 'lan',
+        current: encode({ generation: 2, discoveryKey: Buffer.alloc(32, 5) }),
+      }),
+    ).toEqual({ migrate: true, invalidates: true })
+    expect(
+      await invoke({
+        ...input,
+        installedKind: 'relay',
+        installedPathId: relay0Hex,
+        current: encode({ generation: 2, relays: [relays[0]!] }),
+      }),
+    ).toEqual({ migrate: true, invalidates: false })
+    expect(
+      await invoke({
+        ...input,
+        installedKind: 'relay',
+        installedPathId: relay0Hex,
+        current: encode({ generation: 2, discoveryKey: Buffer.alloc(32, 5) }),
+      }),
+    ).toEqual({ migrate: true, invalidates: false })
+    expect(
+      await invoke({
+        ...input,
+        installedKind: 'relay',
+        installedPathId: relay0Hex,
+        current: encode({ generation: 2, relays: [relays[1]!] }),
+      }),
+    ).toEqual({ migrate: true, invalidates: true })
+    expect(
+      await invoke({
+        ...input,
+        installedKind: 'relay',
+        installedPathId: relay0Hex,
+        current: encode({
+          generation: 2,
+          relays: relays.map((r, idx) => (idx === 0 ? { ...r, spkiHash: Buffer.alloc(32, 6) } : r)),
+        }),
+      }),
+    ).toEqual({ migrate: true, invalidates: true })
+
+    // Explicit self-signed X.509 verification on iOS rejects CA-signed leaf certificates missing their chain even when SPKI and Subject==Issuer match!
+    const derElem = (tag: number, ...parts: readonly Uint8Array[]): Buffer => {
+      const val = Buffer.concat(parts)
+      const len = val.length < 128 ? [val.length] : val.length < 256 ? [0x81, val.length] : [0x82, val.length >> 8, val.length & 255]
+      return Buffer.concat([Buffer.from([tag, ...len]), val])
+    }
+    const seq = (...parts: readonly Uint8Array[]) => derElem(0x30, ...parts)
+    const leafPair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+    const caPair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+    const leafSpki = leafPair.publicKey.export({ type: 'spki', format: 'der' })
+    const leafSpkiHash = createHash('sha256').update(leafSpki).digest('hex')
+    const algId = seq(derElem(0x06, Buffer.from('2a8648ce3d040302', 'hex')))
+    const sameDn = seq(derElem(0x31, seq(derElem(0x06, Buffer.from('550403', 'hex')), derElem(0x0c, Buffer.from('relay.latch.invalid')))))
+    const validity = seq(derElem(0x17, Buffer.from('260101000000Z')), derElem(0x17, Buffer.from('280101000000Z')))
+    const tbs = seq(
+      derElem(0xa0, derElem(0x02, Buffer.from([2]))),
+      derElem(0x02, Buffer.from([7])),
+      algId,
+      sameDn,
+      validity,
+      sameDn,
+      leafSpki,
+    )
+    const genuineDer = seq(tbs, algId, derElem(0x03, Buffer.concat([Buffer.from([0]), sign('sha256', tbs, leafPair.privateKey)])))
+    const caSignedDer = seq(tbs, algId, derElem(0x03, Buffer.concat([Buffer.from([0]), sign('sha256', tbs, caPair.privateKey)])))
+    expect(await invoke({ operation: 'selfSignedVerify', certDer: genuineDer.toString('hex'), spkiHash: leafSpkiHash })).toEqual({
+      verified: true,
+    })
+    expect(await invoke({ operation: 'selfSignedVerify', certDer: caSignedDer.toString('hex'), spkiHash: leafSpkiHash })).toEqual({
+      verified: false,
+    })
+    expect(await invoke({ operation: 'selfSignedVerify', certDer: genuineDer.toString('hex'), spkiHash: '0'.repeat(64) })).toEqual({
+      verified: false,
+    })
   })
   it('selects relay admission at each dial from one fixed verified book and refuses its expiry', async () => {
     const root = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }),

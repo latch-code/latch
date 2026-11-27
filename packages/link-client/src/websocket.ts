@@ -95,6 +95,7 @@ export class RelaySocket {
         this.close(1001)
         return
       }
+      if (policy.applicationPing && !client) return
       void (
         policy.applicationPing
           ? this.send({ type: 'ping' })
@@ -135,7 +136,7 @@ export class RelaySocket {
         this.receivedBytes.set(message, frameBytes)
         if (message.type === 'pad') this.readPaddingBytes += frameBytes
         if (message.type === 'pad' && this.outgoingMask && !this.policy.beforeReceive) continue
-        if (message.type === 'pong' && this.policy.applicationPing) continue
+        if (message.type === 'pong' && this.policy.applicationPing && this.outgoingMask) continue
         if (this.waiter) {
           const waiter = this.waiter
           this.waiter = undefined

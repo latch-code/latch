@@ -47,6 +47,74 @@ public enum RelayWire {
     }
 }
 
+/**
+ * Verifies that a single X.509 certificate is genuinely self-signed (`issuer == subject`, matching inner/outer
+ * `AlgorithmIdentifier`, cryptographic signature over `tbsCertificate` under its own public key) and matches the
+ * pinned 256-bit SPKI SHA-256 digest before `SecTrust` is allowed to treat it as a sole anchor.
+ */
+public enum NativeSelfSignedTLS {
+    private static let ecdsaSha256Alg = Data([0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02])
+    private static let ecdsaSha384Alg = Data([0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x03])
+    private static let rsaSha256Alg = Data([0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b, 0x05, 0x00])
+
+    public static func verify(_ certificate: SecCertificate, expectedSpkiHash: Data) -> Bool {
+        let der = SecCertificateCopyData(certificate) as Data
+        let bytes = [UInt8](der)
+        guard expectedSpkiHash.count == 32, !bytes.isEmpty, bytes.count <= 16_384 else { return false }
+        func element(_ start: Int, limit: Int) -> (tag: UInt8, raw: Range<Int>, body: Range<Int>, end: Int)? {
+            guard start >= 0, start + 2 <= limit, limit <= bytes.count else { return nil }
+            var at = start + 2, count = Int(bytes[start + 1])
+            if count & 0x80 != 0 {
+                let width = count & 0x7f
+                guard (1...3).contains(width), at + width <= limit, bytes[at] != 0 else { return nil }
+                count = 0
+                for byte in bytes[at..<(at + width)] { count = count * 256 + Int(byte) }
+                guard count >= 128 else { return nil }
+                at += width
+            }
+            guard count <= limit - at else { return nil }
+            let end = at + count
+            return (bytes[start], start..<end, at..<end, end)
+        }
+        guard let outer = element(0, limit: bytes.count), outer.tag == 0x30, outer.end == bytes.count,
+              let tbs = element(outer.body.lowerBound, limit: outer.body.upperBound), tbs.tag == 0x30,
+              let outerAlg = element(tbs.end, limit: outer.body.upperBound), outerAlg.tag == 0x30,
+              let sigBits = element(outerAlg.end, limit: outer.body.upperBound), sigBits.tag == 0x03,
+              sigBits.end == outer.body.upperBound,
+              sigBits.body.count >= 2, bytes[sigBits.body.lowerBound] == 0 else { return false }
+        var cursor = tbs.body.lowerBound
+        if cursor < tbs.body.upperBound, bytes[cursor] == 0xa0 {
+            guard let version = element(cursor, limit: tbs.body.upperBound) else { return false }
+            cursor = version.end
+        }
+        guard let serial = element(cursor, limit: tbs.body.upperBound), serial.tag == 0x02,
+              let innerAlg = element(serial.end, limit: tbs.body.upperBound), innerAlg.tag == 0x30,
+              let issuer = element(innerAlg.end, limit: tbs.body.upperBound), issuer.tag == 0x30, !issuer.body.isEmpty,
+              let validity = element(issuer.end, limit: tbs.body.upperBound), validity.tag == 0x30,
+              let subject = element(validity.end, limit: tbs.body.upperBound), subject.tag == 0x30, !subject.body.isEmpty,
+              let spki = element(subject.end, limit: tbs.body.upperBound), spki.tag == 0x30, spki.raw.count <= 8_192 else { return false }
+        let algData = Data(bytes[outerAlg.raw])
+        guard algData == Data(bytes[innerAlg.raw]),
+              Data(bytes[issuer.raw]) == Data(bytes[subject.raw]),
+              LinkBytes.equal(LinkBytes.hash(Data(bytes[spki.raw])), expectedSpkiHash) else { return false }
+        let secAlg: SecKeyAlgorithm
+        if algData == ecdsaSha256Alg {
+            secAlg = .ecdsaSignatureMessageX962SHA256
+        } else if algData == ecdsaSha384Alg {
+            secAlg = .ecdsaSignatureMessageX962SHA384
+        } else if algData == rsaSha256Alg {
+            secAlg = .rsaSignatureMessagePKCS1v15SHA256
+        } else {
+            return false
+        }
+        guard let publicKey = SecCertificateCopyKey(certificate),
+              SecKeyIsAlgorithmSupported(publicKey, .verify, secAlg) else { return false }
+        let tbsData = Data(bytes[tbs.raw])
+        let sigData = Data(bytes[(sigBits.body.lowerBound + 1)..<sigBits.body.upperBound])
+        return SecKeyVerifySignature(publicKey, secAlg, tbsData as CFData, sigData as CFData, nil)
+    }
+}
+
 /** Extract the exact DER SubjectPublicKeyInfo after Security.framework has parsed and validated the certificate. */
 private func certificateSPKI(_ der: Data) throws -> Data {
     let bytes = [UInt8](der)
@@ -363,12 +431,12 @@ extension NativeHTTPConnection {
             }
             var trusted = SecTrustEvaluateWithError(actual, nil)
             // Self-hosted SPKI-pinned servers without a public CA (e.g. bare IP): anchor at the sole presented
-            // certificate only when its 256-bit SPKI already matches `endpoint.spkiHash`, then re-run full SSL policy
-            // evaluation (self-signature, validity window and IP/DNS SAN). Edge nodes always require WebPKI.
+            // certificate only after explicitly verifying its self-signature and pinned 256-bit SPKI, then re-run full
+            // SSL policy evaluation (validity window and IP/DNS SAN). Edge nodes always require WebPKI.
             if !trusted, trustAnchor == nil, endpoint.edge == nil,
                let candidates = SecTrustCopyCertificateChain(actual) as? [SecCertificate],
                candidates.count == 1, let selfSigned = candidates.first,
-               (try? certificateSPKI(SecCertificateCopyData(selfSigned) as Data)).map({ LinkBytes.equal(LinkBytes.hash($0), endpoint.spkiHash) }) == true,
+               NativeSelfSignedTLS.verify(selfSigned, expectedSpkiHash: endpoint.spkiHash),
                SecTrustSetAnchorCertificates(actual, [selfSigned] as CFArray) == errSecSuccess,
                SecTrustSetAnchorCertificatesOnly(actual, true) == errSecSuccess {
                 trusted = SecTrustEvaluateWithError(actual, nil)

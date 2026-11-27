@@ -1,4 +1,4 @@
-import { isAbsolute } from 'node:path'
+import { dirname, isAbsolute } from 'node:path'
 import { isIP } from 'node:net'
 import { createSecureContext } from 'node:tls'
 import { z } from 'zod'
@@ -136,10 +136,49 @@ async function privateFile(path: string, maximum = 65_536): Promise<Buffer> {
   if (content === undefined) throw new Error('Private relay file unavailable')
   return Buffer.from(content, 'utf8')
 }
+async function readTlsFile(path: string, maximum = 65_536): Promise<Buffer> {
+  const { constants } = await import('node:fs'),
+    { lstat, open } = await import('node:fs/promises')
+  if (!isAbsolute(path)) throw new Error('TLS paths must be absolute')
+  const myUid = process.getuid?.()
+  const parent = await lstat(dirname(path))
+  if (
+    !parent.isDirectory()
+    || parent.isSymbolicLink()
+    || (parent.mode & 0o022) !== 0
+    || (myUid !== undefined && parent.uid !== myUid && parent.uid !== 0)
+  )
+    throw new Error('Invalid TLS directory permissions')
+  const validStat = (stat: import('node:fs').Stats): boolean => {
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > maximum) return false
+    if (stat.uid === 0) return (stat.mode & 0o037) === 0
+    if (myUid !== undefined && stat.uid !== myUid) return false
+    return (stat.mode & 0o077) === 0
+  }
+  const info = await lstat(path)
+  if (!validStat(info)) throw new Error('Invalid TLS file permissions')
+  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+  try {
+    const actual = await handle.stat()
+    if (actual.dev !== info.dev || actual.ino !== info.ino || !validStat(actual)) throw new Error('TLS file changed')
+    const bytes = Buffer.alloc(maximum + 1)
+    let size = 0
+    while (size < bytes.length) {
+      const read = await handle.read(bytes, size, bytes.length - size, size)
+      if (!read.bytesRead) break
+      size += read.bytesRead
+    }
+    const after = await handle.stat()
+    if (size > maximum || after.size !== size || after.mtimeMs !== actual.mtimeMs || !validStat(after)) throw new Error('TLS file changed')
+    return bytes.subarray(0, size)
+  } finally {
+    await handle.close()
+  }
+}
 export async function readRelayTls(certificateFile: string, keyFile: string): Promise<{ cert: Buffer; key: Buffer }> {
   if (![certificateFile, keyFile].every(isAbsolute)) throw new Error('TLS paths must be absolute')
-  const cert = await privateFile(certificateFile),
-    key = await privateFile(keyFile)
+  const cert = await readTlsFile(certificateFile),
+    key = await readTlsFile(keyFile)
   createSecureContext({ cert, key, minVersion: 'TLSv1.3', maxVersion: 'TLSv1.3' })
   return { cert, key }
 }

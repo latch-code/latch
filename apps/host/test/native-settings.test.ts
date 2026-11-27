@@ -299,4 +299,16 @@ it('reorders configured relays only from the local Mac admin and audits the chan
     .map(line => JSON.parse(line) as { action: string; detail: { lowering?: boolean; relayCount?: number } })
     .filter(record => record.action === 'native.config.changed')
   expect(records).toMatchObject([{ action: 'native.config.changed', detail: { lowering: false, direct: false, relayCount: 2 } }])
+
+  // When audit logging fails, reordering must refuse with 503 and preserve both the previous order and book generation!
+  const generationBefore = (await RelayProfiles.open(host.dataDir)).snapshot().generation
+  vi.spyOn(host.host.security.audit, 'append').mockRejectedValueOnce(new Error('disk full'))
+  const failedReorder = await desktop.request('native/relays/order', {
+    method: 'PUT',
+    body: { order: [first.relayId, second.relayId] },
+  })
+  expect(failedReorder.status).toBe(503)
+  const linkAfterFailure = await desktop.json<NativeLinkInfo>('native/info')
+  expect(linkAfterFailure.relays.map(item => item.relayId)).toEqual([second.relayId, first.relayId])
+  expect((await RelayProfiles.open(host.dataDir)).snapshot().generation).toBe(generationBefore)
 })

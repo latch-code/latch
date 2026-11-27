@@ -135,10 +135,17 @@ export function createTlsAlpn01Certificate(domain: string, keyAuthorization: str
   return { cert, key: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() }
 }
 
-/** PKCS#10 CSR (RFC 2986) for one DNS identifier with ECDSA P-256. */
-export function createCertificateRequest(domain: string): { csrBase64Url: string; keyPem: string; publicKey: KeyObject } {
+/** PKCS#10 CSR (RFC 2986) for one DNS identifier with ECDSA P-256, reusing an existing key when available. */
+export function createCertificateRequest(
+  domain: string,
+  existingKeyPem?: string | Buffer,
+): { csrBase64Url: string; keyPem: string; publicKey: KeyObject; reusedKey: boolean } {
   validDnsDomain(domain)
-  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+  const reused = existingKeyPem ? createPrivateKey(existingKeyPem) : undefined
+  if (reused && (reused.asymmetricKeyType !== 'ec' || reused.asymmetricKeyDetails?.namedCurve !== 'prime256v1')) {
+    throw new Error('Invalid existing ACME TLS private key')
+  }
+  const privateKey = reused ?? generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey
   const publicKey = createPublicKey(privateKey)
   const spki = publicKey.export({ type: 'spki', format: 'der' })
   const san = extension('551d11', sequence(der(0x82, Buffer.from(domain, 'ascii'))))
@@ -150,6 +157,7 @@ export function createCertificateRequest(domain: string): { csrBase64Url: string
     csrBase64Url: csrDer.toString('base64url'),
     keyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
     publicKey,
+    reusedKey: reused !== undefined,
   }
 }
 
@@ -208,6 +216,26 @@ export async function issueAcmeCertificate(input: {
   const sleep = input.deps?.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)))
   const now = input.deps?.now ?? Date.now
   validDnsDomain(input.config.domain)
+
+  const existingKeyPem = await readPrivate(input.keyFile, 16_384)
+  const existingCertPem = await readPrivate(input.certificateFile, 65_536)
+  if (existingKeyPem && existingCertPem) {
+    try {
+      const diskLeaf = new X509Certificate(existingCertPem)
+      const diskKeySpki = createPublicKey(createPrivateKey(existingKeyPem)).export({ type: 'spki', format: 'der' })
+      if (
+        !isAcmeBootstrapCertificate(diskLeaf)
+        && Boolean(diskLeaf.checkHost(input.config.domain))
+        && diskLeaf.publicKey.export({ type: 'spki', format: 'der' }).equals(diskKeySpki)
+        && Date.parse(diskLeaf.validTo) - now() >= RENEW_BEFORE_MS
+      ) {
+        await input.reloadTls()
+        return
+      }
+    } catch {
+      // Proceed with ACME order when disk certificate cannot be parsed.
+    }
+  }
 
   const accountPath = join(input.dataDir, 'acme-account.pem')
   const savedKey = await readPrivate(accountPath, 4096)
@@ -315,7 +343,7 @@ export async function issueAcmeCertificate(input: {
     }
   }
 
-  const { csrBase64Url, keyPem, publicKey } = createCertificateRequest(input.config.domain)
+  const { csrBase64Url, keyPem, publicKey, reusedKey } = createCertificateRequest(input.config.domain, existingKeyPem)
   const finalResp = await signedPost(order.finalize, { csr: csrBase64Url })
   if (!finalResp.res.ok) throw new Error('ACME order finalize failed')
   order = orderSchema.parse(JSON.parse(finalResp.text) as unknown)
@@ -340,7 +368,7 @@ export async function issueAcmeCertificate(input: {
   )
     throw new Error('Issued ACME certificate failed verification')
 
-  await writePrivate(input.keyFile, keyPem)
+  if (!reusedKey) await writePrivate(input.keyFile, keyPem)
   await writePrivate(input.certificateFile, certResp.text.endsWith('\n') ? certResp.text : `${certResp.text}\n`)
   await input.reloadTls()
 }

@@ -97,9 +97,9 @@ function probePinnedHealthAnchor(url: URL, expectedSpkiHash: string, options: Li
   })
 }
 
-async function checkHealth(url: URL, options: LinuxAcceptanceOptions, expectedSpkiHash?: string): Promise<number> {
+async function checkHealth(url: URL, options: LinuxAcceptanceOptions, expectedSpkiHash?: string): Promise<{ ok: boolean; detail: string }> {
   const host = url.hostname.replace(/^\[|\]$/gu, '')
-  const requestOnce = (ca?: string | Buffer): Promise<{ status: number; code?: string }> =>
+  const requestOnce = (ca?: string | Buffer): Promise<{ ok: boolean; status: number; detail: string; code?: string }> =>
     new Promise(resolve => {
       const req = httpsRequest(
         new URL('/healthz', url),
@@ -125,28 +125,38 @@ async function checkHealth(url: URL, options: LinuxAcceptanceOptions, expectedSp
           res.on('data', (chunk: Buffer) => {
             if (body.length < 64) body += chunk.toString('utf8')
           })
-          res.on('end', () => resolve({ status: res.statusCode === 200 && body === 'ok\n' ? 200 : (res.statusCode ?? 0) }))
+          res.on('end', () => {
+            const status = res.statusCode ?? 0
+            if (status === 200 && body === 'ok\n') {
+              resolve({ ok: true, status: 200, detail: 'HTTP 200' })
+            } else if (status === 200) {
+              resolve({ ok: false, status: 200, detail: 'HTTP 200（响应正文不是中继健康检查）' })
+            } else {
+              resolve({ ok: false, status, detail: status ? `HTTP ${status}` : '连不上' })
+            }
+          })
         },
       )
       const timer = setTimeout(() => {
         req.destroy()
-        resolve({ status: 0 })
+        resolve({ ok: false, status: 0, detail: '连不上' })
       }, 10_000)
       timer.unref()
       req.on('error', (err: NodeJS.ErrnoException) => {
         clearTimeout(timer)
-        resolve({ status: 0, code: err.code })
+        resolve({ ok: false, status: 0, detail: '连不上', code: err.code })
       })
       req.on('close', () => clearTimeout(timer))
       req.end()
     })
 
   const first = await requestOnce(options.ca)
-  if (first.status !== 0 || options.ca || !expectedSpkiHash) return first.status
-  if (first.code !== 'DEPTH_ZERO_SELF_SIGNED_CERT' && first.code !== 'SELF_SIGNED_CERT_IN_CHAIN') return 0
+  if (first.status !== 0 || options.ca || !expectedSpkiHash) return { ok: first.ok, detail: first.detail }
+  if (first.code !== 'DEPTH_ZERO_SELF_SIGNED_CERT' && first.code !== 'SELF_SIGNED_CERT_IN_CHAIN') return { ok: false, detail: '连不上' }
   const pinnedPem = await probePinnedHealthAnchor(url, expectedSpkiHash, options)
-  if (!pinnedPem) return 0
-  return (await requestOnce(pinnedPem)).status
+  if (!pinnedPem) return { ok: false, detail: '连不上' }
+  const second = await requestOnce(pinnedPem)
+  return { ok: second.ok, detail: second.detail }
 }
 
 function endpointOf(profile: AcceptedRelayProfile, options: LinuxAcceptanceOptions, overrideKey?: Uint8Array): RelayEndpoint {
@@ -183,9 +193,9 @@ export async function runLinuxAcceptance(
   }
 
   const url = new URL(profile.url)
-  const healthStatus = await checkHealth(url, options, 'spkiHash' in profile ? profile.spkiHash : undefined)
-  record('healthz', healthStatus === 200 ? 'pass' : 'fail', healthStatus ? `HTTP ${healthStatus}` : '连不上')
-  if (healthStatus !== 200) return items
+  const health = await checkHealth(url, options, 'spkiHash' in profile ? profile.spkiHash : undefined)
+  record('healthz', health.ok ? 'pass' : 'fail', health.detail)
+  if (!health.ok) return items
 
   const token = profile.registrationKey ? secretBytes(profile.registrationKey) : undefined
   let wrongKeyRejected = false

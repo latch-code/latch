@@ -8,10 +8,11 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { once } from 'node:events'
 import type { AddressInfo } from 'node:net'
-import { afterEach, describe, expect, it } from 'vitest'
-import { createTransportCertificate, nodeCrypto } from '@latch/link-client'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { connectRelayTunnel, createTransportCertificate, nodeCrypto, RelayControl } from '@latch/link-client'
+import { holder, issuePass, routeKey, UTC_DAY } from '@latch/link-wire'
 import { createAcmeBootstrapCertificate, isAcmeBootstrapCertificate } from '../src/acme.ts'
-import { createSelfSignedRelayCertificate } from '../src/self-tls.ts'
+import { createSelfSignedRelayCertificate, startSelfSignedRenewalLoop } from '../src/self-tls.ts'
 import { startRelay } from '../src/server.ts'
 import { runLinuxAcceptance } from '../scripts/accept-linux.ts'
 
@@ -254,6 +255,7 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
     const signingSeed = randomBytes(32)
     const relayKey = Buffer.from(await nodeCrypto.publicKey(signingSeed)).toString('hex')
 
+    let simulatedNow = Date.now()
     const relay = await startRelay({
       dataDir: dir,
       relayId,
@@ -266,7 +268,7 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
       tlsFiles: { certificateFile: certFile, keyFile: keyFile },
       gateway: { binary: gatewayBinary, maxHandshakes: 64, handshakesPerSecond: 100, handshakeBurst: 64, prefixFraction: 0.5 },
       acme: { domain, directoryUrl: `http://127.0.0.1:${acmePort}/directory`, email: 'ops@example.com' },
-      acmeDeps: { sleep: async () => {} },
+      acmeDeps: { sleep: async () => {}, now: () => simulatedNow },
     })
     cleanup.push(() => relay.close())
     relayPort = relay.port
@@ -275,10 +277,9 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
     expect((await stat(certFile)).mode & 0o777).toBe(0o600)
     expect((await stat(keyFile)).mode & 0o777).toBe(0o600)
     expect(isAcmeBootstrapCertificate(new X509Certificate(await readFile(certFile)))).toBe(false)
-    // Confirm the private key was rotated away from the bootstrap key without breaking reloadTls or relayKey!
-    expect(createPublicKey(createPrivateKey(await readFile(keyFile))).export({ type: 'spki', format: 'der' })).not.toEqual(
-      createPublicKey(createPrivateKey(bootstrap.key)).export({ type: 'spki', format: 'der' }),
-    )
+    // Confirm the private key was preserved from `init` so `keyFile` is never rewritten and `--legacy-spki` stays stable!
+    const bootstrapSpki = createPublicKey(createPrivateKey(bootstrap.key)).export({ type: 'spki', format: 'der' })
+    expect(createPublicKey(createPrivateKey(await readFile(keyFile))).export({ type: 'spki', format: 'der' })).toEqual(bootstrapSpki)
 
     const results = await runLinuxAcceptance(
       {
@@ -296,10 +297,11 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
       { name: 'register-and-splice', result: 'pass', detail: '登记与双向端到端字节拼接正常' },
     ])
 
-    // Legacy v1 SPKI-pinned clients (`/v1/{h,d,c}`) remain 100% compatible on the same dual-stack relay:
+    // Legacy v1 SPKI-pinned clients (`/v1/{h,d,c}`) remain 100% compatible before AND after ACME renewal:
     const activeSpkiHash = createHash('sha256')
       .update(new X509Certificate(await readFile(certFile)).publicKey.export({ type: 'spki', format: 'der' }))
       .digest('hex')
+    const firstCertSerial = new X509Certificate(await readFile(certFile)).serialNumber
     const legacyResults = await runLinuxAcceptance(
       {
         relayId: relayId.toString('hex'),
@@ -310,6 +312,63 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
       { ca: ca.caCertPem, address: '127.0.0.1' },
     )
     expect(legacyResults.every(item => item.result === 'pass')).toBe(true)
+
+    // Trigger a normal 60-day ACME renewal (`issueAcmeCertificate`) and verify `spkiHash` stays identical!
+    const { issueAcmeCertificate } = await import('../src/acme.ts')
+    authzStatus = 'pending'
+    orderStatus = 'pending'
+    issuedChain = ''
+    simulatedNow = Date.now() + 70 * 86_400_000
+    await issueAcmeCertificate({
+      dataDir: dir,
+      config: { domain, directoryUrl: `http://127.0.0.1:${acmePort}/directory`, email: 'ops@example.com' },
+      certificateFile: certFile,
+      keyFile: keyFile,
+      setAcmeTls: async (cert, key) => {
+        // Forward challenge cert to the running relay's gateway via temporary re-issue not needed if authz is valid,
+        // so mark authz valid when setAcmeTls is called.
+        if (cert && key) {
+          authzStatus = 'valid'
+          orderStatus = 'ready'
+        }
+      },
+      reloadTls: async () => {
+        await fetch(`http://127.0.0.1:${relay.adminPort}/reload`, {
+          method: 'POST',
+          headers: { 'x-latch-relay-admin': '1' },
+        })
+      },
+      deps: {
+        sleep: async () => {},
+        now: () => simulatedNow,
+        fetchImpl: async (inputUrl, init) => {
+          const u = String(inputUrl)
+          if (u.endsWith('/chall/1')) {
+            return new Response(JSON.stringify({ status: 'valid' }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json', 'Replay-Nonce': randomBytes(16).toString('base64url') },
+            })
+          }
+          return fetch(inputUrl, init)
+        },
+      },
+    })
+    const renewedCert = new X509Certificate(await readFile(certFile))
+    expect(renewedCert.serialNumber).not.toBe(firstCertSerial)
+    const renewedSpkiHash = createHash('sha256')
+      .update(renewedCert.publicKey.export({ type: 'spki', format: 'der' }))
+      .digest('hex')
+    expect(renewedSpkiHash).toBe(activeSpkiHash)
+    const afterRenewalLegacy = await runLinuxAcceptance(
+      {
+        relayId: relayId.toString('hex'),
+        url: `https://${domain}:${relayPort}/`,
+        spkiHash: activeSpkiHash,
+        registrationKey: `lrt1.${regToken.toString('base64url')}`,
+      },
+      { ca: ca.caCertPem, address: '127.0.0.1' },
+    )
+    expect(afterRenewalLegacy.every(item => item.result === 'pass')).toBe(true)
   })
 
   it('starts behind a reverse proxy with self-calibrated relay quota and survives proxy certificate rotation', async () => {
@@ -324,6 +383,7 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
     const signingSeed = randomBytes(32)
     const relayKey = Buffer.from(await nodeCrypto.publicKey(signingSeed)).toString('hex')
 
+    let includesSockets = true
     const relay = await startRelay({
       dataDir: dir,
       adminSocket: join(adminDir, 'admin.sock'),
@@ -346,6 +406,15 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
       },
       fairness: { prefixDailyShare: 0.5, overageFactor: 0.1 },
       memory: { bufferBytes: 16 * 1024 * 1024, limitBytes: 512 * 1024 * 1024 },
+      ...(process.platform === 'linux'
+        ? {}
+        : {
+            memoryReader: async () => ({
+              used: 32 * 1024 * 1024,
+              limit: 512 * 1024 * 1024,
+              includesSockets,
+            }),
+          }),
     })
     cleanup.push(() => relay.close())
 
@@ -474,5 +543,172 @@ describe('Linux relay ACME auto-TLS, reverse-proxy mode and self-relay quota', (
       { name: 'wrong-credentials', result: 'pass', detail: '错误密钥已拒，错误令牌已拒' },
       { name: 'register-and-splice', result: 'pass', detail: '登记与双向端到端字节拼接正常' },
     ])
+  })
+
+  it('keeps v2 Host control connections alive across multiple application-ping heartbeat cycles without disconnecting', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    try {
+      const certPair = createTransportCertificate(Date.now(), 3_600_000, 'relay.example.com')
+      const relayId = randomBytes(16)
+      const regToken = randomBytes(32)
+      const signingSeed = randomBytes(32)
+      const relayKey = await nodeCrypto.publicKey(signingSeed)
+
+      const relay = await startRelay({
+        relayId,
+        registrationToken: regToken,
+        edgeIdentity: { seed: signingSeed },
+        host: '127.0.0.1',
+        port: 0,
+        cert: certPair.cert,
+        key: certPair.key,
+      })
+      cleanup.push(() => relay.close())
+
+      const endpoint = {
+        url: new URL(`https://relay.example.com:${relay.port}/`),
+        relayId,
+        edge: { relayKey, shard: 0 },
+        profile: 'outer-pad-v2' as const,
+        ca: certPair.cert,
+        resolveAddress: async () => '127.0.0.1',
+      }
+      const control = await RelayControl.connect({ ...endpoint, registrationToken: regToken })
+      cleanup.push(() => control.close())
+
+      const nowSec = Math.floor(Date.now() / 1000)
+      const day = Math.floor(nowSec / UTC_DAY)
+      const seed = randomBytes(32)
+      const rKey = await routeKey(nodeCrypto, seed, relayId, day)
+      await control.register({ routeKey: rKey, day, alternate: false })
+
+      // Advance across 2.5 full heartbeat cycles (50s > 45s clientDeadAfterMs), flushing real socket I/O after each tick!
+      for (const stepMs of [21_000, 21_000, 8_000]) {
+        await vi.advanceTimersByTimeAsync(stepMs)
+        await new Promise(resolveTick => setTimeout(resolveTick, 30))
+      }
+      expect(control.isClosed()).toBe(false)
+      expect(relay.status().controls).toBe(1)
+
+      // Prove the registered control connection still accepts and splices a live tunnel after >2 heartbeats!
+      const device = await holder(nodeCrypto, seed, relayId, Buffer.from('hb'), day)
+      const pass = await issuePass(nodeCrypto, rKey, {
+        pairing: false,
+        relayId,
+        day,
+        notBefore: day * UTC_DAY,
+        notAfter: (day + 1) * UTC_DAY,
+        routePub: await nodeCrypto.publicKey(rKey),
+        holderPub: await nodeCrypto.publicKey(device.seed),
+        tag: device.tag,
+      })
+      const pendingAccept = control.accept()
+      const clientTunnel = await connectRelayTunnel({ ...endpoint, pass, holderKey: device.seed })
+      const accepted = await pendingAccept
+      accepted.finishSetup()
+      clientTunnel.destroy()
+      accepted.stream.destroy()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('pauses new admissions on token-gated relays when full socket memory accounting is lost while keeping active tunnels', async () => {
+    const certPair = createTransportCertificate(Date.now(), 3_600_000, 'relay.example.com')
+    const relayId = randomBytes(16)
+    const regToken = randomBytes(32)
+    let includesSockets = true
+
+    const relay = await startRelay({
+      relayId,
+      registrationToken: regToken,
+      host: '127.0.0.1',
+      port: 0,
+      cert: certPair.cert,
+      key: certPair.key,
+      memoryReader: async () => ({ used: 16 * 1024 * 1024, limit: 256 * 1024 * 1024, includesSockets }),
+    })
+    cleanup.push(() => relay.close())
+    expect(relay.status().ready).toBe(true)
+
+    const endpoint = {
+      url: new URL(`https://relay.example.com:${relay.port}/`),
+      relayId,
+      spki: createHash('sha256').update(certPair.spki).digest(),
+      ca: certPair.cert,
+      resolveAddress: async () => '127.0.0.1',
+    }
+    const control = await RelayControl.connect({ ...endpoint, registrationToken: regToken })
+    cleanup.push(() => control.close())
+    const day = Math.floor(Date.now() / 1000 / UTC_DAY)
+    const seed = randomBytes(32)
+    const rKey = await routeKey(nodeCrypto, seed, relayId, day)
+    await control.register({ routeKey: rKey, day, alternate: false })
+    const device = await holder(nodeCrypto, seed, relayId, Buffer.from('mem'), day)
+    const pass = await issuePass(nodeCrypto, rKey, {
+      pairing: false,
+      relayId,
+      day,
+      notBefore: day * UTC_DAY,
+      notAfter: (day + 1) * UTC_DAY,
+      routePub: await nodeCrypto.publicKey(rKey),
+      holderPub: await nodeCrypto.publicKey(device.seed),
+      tag: device.tag,
+    })
+    const pendingAccept = control.accept()
+    const clientTunnel = await connectRelayTunnel({ ...endpoint, pass, holderKey: device.seed })
+    const accepted = await pendingAccept
+    accepted.finishSetup()
+    cleanup.push(() => {
+      clientTunnel.destroy()
+      accepted.stream.destroy()
+    })
+
+    // Simulate cgroup read failure falling back to Node-only RSS (`includesSockets: false`):
+    includesSockets = false
+    await expect.poll(() => relay.status().ready, { timeout: 3_000 }).toBe(false)
+
+    // New control and client connections are rejected before registration token verification:
+    await expect(RelayControl.connect({ ...endpoint, registrationToken: regToken })).rejects.toThrow()
+    await expect(connectRelayTunnel({ ...endpoint, pass, holderKey: device.seed })).rejects.toThrow()
+
+    // Already-spliced tunnel stays alive and continues forwarding DATA payloads!
+    const payload = Buffer.from('still-alive-while-admission-paused')
+    const received = new Promise<Buffer>(resolveChunk => {
+      accepted.stream.once('data', (chunk: Buffer) => resolveChunk(chunk))
+    })
+    clientTunnel.write(payload)
+    expect(await received).toEqual(payload)
+  })
+
+  it('retries reloadTls on the next self-signed renewal tick when hot-reload fails after writing the renewed certificate', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'latch-self-retry-'))
+    cleanup.push(() => rm(dir, { recursive: true, force: true }))
+    const certFile = join(dir, 'cert.pem')
+    const keyFile = join(dir, 'key.pem')
+    const initial = createSelfSignedRelayCertificate('203.0.113.10', { lifetimeDays: 5 })
+    const { writePrivate } = await import('../src/private-store.ts')
+    await writePrivate(certFile, initial.cert)
+    await writePrivate(keyFile, initial.key)
+
+    let activeLeaf: X509Certificate | undefined = new X509Certificate(initial.cert)
+    let reloadCalls = 0
+    const loop = startSelfSignedRenewalLoop({
+      target: '203.0.113.10',
+      certificateFile: certFile,
+      keyFile: keyFile,
+      currentLeaf: () => activeLeaf,
+      renewBeforeDays: 30,
+      checkIntervalMs: 40,
+      async reloadTls() {
+        reloadCalls++
+        if (reloadCalls === 1) throw new Error('simulated transient gateway reload failure')
+        activeLeaf = new X509Certificate(await readFile(certFile))
+      },
+    })
+    cleanup.push(() => loop.stop())
+
+    await expect.poll(() => reloadCalls, { timeout: 3_000 }).toBeGreaterThanOrEqual(2)
+    expect(Math.ceil((Date.parse(activeLeaf.validTo) - Date.now()) / 86_400_000)).toBeGreaterThan(300)
   })
 })

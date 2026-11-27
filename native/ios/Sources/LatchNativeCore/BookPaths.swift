@@ -7,6 +7,33 @@ public enum NativeBookPathChange {
         return previous.hostId != current.hostId || previous.deviceId != current.deviceId
             || previous.discoveryKey != current.discoveryKey || identities(previous) != identities(current)
     }
+    /**
+     * Whether `current` invalidates the path currently installed on the workspace, requiring an immediate dial round
+     * (which cancels in-flight file transfers). Changes to unused relays or try-order leave an active direct path or an
+     * unchanged installed relay running until the workspace is quiet.
+     */
+    public static func invalidatesInstalledPath(
+        previous: NativeAddressBook?,
+        current: NativeAddressBook,
+        installedKind: NativePathCandidate.Kind?,
+        installedPathId: String?
+    ) -> Bool {
+        guard let previous, let installedKind else { return true }
+        if previous.hostId != current.hostId || previous.deviceId != current.deviceId { return true }
+        switch installedKind {
+        case .direct:
+            return previous.discoveryKey != current.discoveryKey
+        case .relay:
+            guard let installedPathId,
+                  let next = current.relays.first(where: { LinkBytes.hex($0.relayId) == installedPathId }) else {
+                return true
+            }
+            if let prev = previous.relays.first(where: { LinkBytes.hex($0.relayId) == installedPathId }) {
+                return identity(of: prev) != identity(of: next)
+            }
+            return false
+        }
+    }
     private struct RelayIdentity: Hashable {
         let id: Data
         let spki: Data
@@ -14,7 +41,11 @@ public enum NativeBookPathChange {
         let relayKey: Data?
         let shard: Int?
     }
+    private static func identity(of relay: NativeRelayAddress) -> RelayIdentity {
+        RelayIdentity(id: relay.relayId, spki: relay.spkiHash, profile: relay.profile?.rawValue,
+            relayKey: relay.edge?.relayKey, shard: relay.edge?.shard)
+    }
     private static func identities(_ book: NativeAddressBook) -> Set<RelayIdentity> {
-        Set(book.relays.map { RelayIdentity(id: $0.relayId, spki: $0.spkiHash, profile: $0.profile?.rawValue, relayKey: $0.edge?.relayKey, shard: $0.edge?.shard) })
+        Set(book.relays.map(identity(of:)))
     }
 }

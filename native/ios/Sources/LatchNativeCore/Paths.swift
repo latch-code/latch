@@ -86,27 +86,28 @@ public actor NativePathOwner {
         } catch { if generation == current { round = nil }; throw error }
     }
     /**
-     * Moves an installed relay path to a direct one (or to a newly preferred #1 relay when no direct candidate is
-     * available) in the background. It never runs beside or pre-empts a dial round, and a failure is silent: the
-     * existing relay stays installed. True when a preferred path was installed.
+     * Moves an installed relay path to a direct one or to a newly preferred #1 relay in the background. When both a
+     * direct candidate and a preferred relay exist, direct gets a 250 ms head start and an unreachable direct candidate
+     * still falls back to `preferredRelay` in the same round. Never pre-empts a dial round or busy transfer.
      */
     public func upgrade(_ candidates: [NativePathCandidate], preferredRelay: NativePathCandidate? = nil, workspace: NativeWorkspace) async -> Bool {
         guard round == nil, upgrading == nil, candidates.count <= 12 else { return false }
         guard await workspace.installedPathKind() == .relay else { return false }
         let directs = Array(candidates.filter { $0.kind == .direct && usable($0) }.prefix(2))
-        let targets: [NativePathCandidate]
-        if !directs.isEmpty {
-            targets = directs
-        } else if let relay = preferredRelay, relay.kind == .relay, usable(relay), await workspace.installedPathId() != relay.id {
-            targets = [relay]
+        let relayTarget: NativePathCandidate?
+        if let relay = preferredRelay, relay.kind == .relay, usable(relay), await workspace.installedPathId() != relay.id {
+            relayTarget = relay
         } else {
-            return false
+            relayTarget = nil
         }
+        let targets = directs + (relayTarget.map { [$0] } ?? [])
+        guard !targets.isEmpty else { return false }
         guard await workspace.quiet() else { return false }
         guard round == nil, upgrading == nil, !Task.isCancelled else { return false }
         self.workspace = workspace
         let current = generation
-        let task = Task { try await self.dial(targets, later: nil, relayDelay: .zero, upgrade: true, workspace: workspace, generation: current) }
+        let relayDelay: Duration = directs.isEmpty ? .zero : .milliseconds(250)
+        let task = Task { try await self.dial(targets, later: nil, relayDelay: relayDelay, upgrade: true, workspace: workspace, generation: current) }
         upgrading = task
         let result = await withTaskCancellationHandler {
             await task.result

@@ -104,13 +104,13 @@ sources:
    ```sh
    pnpm latch relay setup linux --server root@203.0.113.10 --domain relay.example.com
    ```
-   服务通过内置 ACME（`TLS-ALPN-01`，无需开放 80 端口）自动申请 Let's Encrypt 证书并在到期前 30 天自动续期热加载，节点以持久 Ed25519 `relayKey` 证明身份。
+   服务通过内置 ACME（`TLS-ALPN-01`，无需开放 80 端口）自动申请 Let's Encrypt 证书并在到期前 30 天复用原 TLS 私钥自动续期热加载，节点以持久 Ed25519 `relayKey` 证明身份（`--legacy-spki` 导出的旧版 v1 配置同样跨续期有效）。
 3. **有域名且复用服务器已有的 Caddy 或 Nginx 反向代理（443 已被占用时）**：
    ```sh
    pnpm latch relay setup linux --server root@203.0.113.10 --domain relay.example.com --behind-proxy
    ```
    服务只绑定服务器回环 `127.0.0.1:18443`（可用 `--port` 修改），由你现有的 Caddy 或 Nginx 在 `:443` 终止 TLS 并转发 `/v1/*` 与 `/healthz`；命令会给出对应的反向代理配置片段。反代尚未重载前可加 `--skip-accept` 先导出连接文件。
-4. **使用服务器上已有的证书文件**：
+4. **使用服务器上已有的证书文件**（证书与私钥复制到 `root` 控制的 `/etc/latch-relay/tls`，仅向 `latch-relay` 服务组授予 `0640` 只读权限）：
    ```sh
    pnpm latch relay setup linux --server root@203.0.113.10 --domain relay.example.com --port 8443 --cert /etc/ssl/relay/fullchain.pem --key /etc/ssl/relay/key.pem
    ```

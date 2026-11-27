@@ -140,6 +140,7 @@ export function startSelfSignedRenewalLoop(options: {
   target: string
   certificateFile: string
   keyFile: string
+  currentLeaf?(): X509Certificate | undefined
   reloadTls(): Promise<void>
   renewBeforeDays?: number
   checkIntervalMs?: number
@@ -147,6 +148,7 @@ export function startSelfSignedRenewalLoop(options: {
   const renewBeforeDays = options.renewBeforeDays ?? 30
   let stopped = false
   let activeTick: Promise<void> | undefined
+  let reloadPending = false
 
   const tick = async () => {
     if (stopped) return
@@ -155,12 +157,23 @@ export function startSelfSignedRenewalLoop(options: {
       if (!currentPem) return
       const current = new X509Certificate(currentPem)
       const daysRemaining = (Date.parse(current.validTo) - Date.now()) / DAY_MS
-      if (daysRemaining > renewBeforeDays) return
+      if (daysRemaining > renewBeforeDays) {
+        const active = options.currentLeaf?.()
+        if ((reloadPending || (active !== undefined && !active.raw.equals(current.raw))) && !stopped) {
+          await options.reloadTls()
+          reloadPending = false
+        }
+        return
+      }
       const existingKeyPem = await readPrivate(options.keyFile, 65_536)
       if (!existingKeyPem) return
       const renewed = createSelfSignedRelayCertificate(options.target, { existingKeyPem })
       await writePrivate(options.certificateFile, renewed.cert)
-      if (!stopped) await options.reloadTls()
+      reloadPending = true
+      if (!stopped) {
+        await options.reloadTls()
+        reloadPending = false
+      }
     } catch {
       // Next scheduled tick retries cleanly without crashing the relay worker.
     }

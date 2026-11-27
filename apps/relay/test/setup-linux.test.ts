@@ -1,9 +1,25 @@
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { createServer as createHttpsServer } from 'node:https'
+import { once } from 'node:events'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
-import { LinuxSetupError, runLinuxRemoteStatus, runLinuxSetup, runLinuxUninstall } from '../scripts/setup-linux-core.ts'
+import { createTransportCertificate } from '@latch/link-client'
+import { readRelayTls } from '../src/config.ts'
+import { runLinuxAcceptance } from '../scripts/accept-linux.ts'
+import {
+  buildSshRemoteCommand,
+  LinuxSetupError,
+  runLinuxRemoteStatus,
+  runLinuxSetup,
+  runLinuxUninstall,
+} from '../scripts/setup-linux-core.ts'
+
+const execFileAsync = promisify(execFile)
 
 const cleanup: string[] = []
 afterEach(async () => {
@@ -278,7 +294,211 @@ describe('latch relay setup linux core workflow', () => {
       uninstallScript = script
       return { code: 0, stdout: '', stderr: '' }
     })
-    expect(uninstallScript).toContain('rm -rf /srv/latch-relay')
+    expect(uninstallScript).toContain('rm -rf /srv/latch-relay /etc/latch-relay')
     expect(msg).toContain('清除 /srv/latch-relay')
+  })
+
+  it('installs custom TLS into root-owned /etc/latch-relay/tls (never inside /srv/latch-relay) and enforces TLS file permissions', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'latch-linux-custom-tls-'))
+    cleanup.push(home)
+    const fakeBundle = Buffer.from('custom-tls-bundle')
+    const bundleSha = createHash('sha256').update(fakeBundle).digest('hex')
+    let installScript = ''
+
+    await runLinuxSetup(
+      {
+        server: 'root@203.0.113.10',
+        domain: 'relay.example.com',
+        cert: '/etc/ssl/private/fullchain.pem',
+        key: '/etc/ssl/private/privkey.pem',
+        skipAccept: true,
+        home,
+      },
+      {
+        async ssh(_target, script) {
+          if (!installScript && script.includes('BUNDLE_SHA_MISMATCH')) installScript = script
+          if (!script.includes('BUNDLE_SHA_MISMATCH')) {
+            return { code: 0, stdout: '{"os":"Linux","arch":"x86_64","uid":0,"sudo":1,"systemd":1,"port443Busy":0}\n', stderr: '' }
+          }
+          return {
+            code: 0,
+            stdout: `---LATCH-RELAY-PROFILE-BEGIN---\n${JSON.stringify(SAMPLE_PROFILE)}\n---LATCH-RELAY-PROFILE-END---\n`,
+            stderr: '',
+          }
+        },
+        buildBundle: async () => ({ tarball: fakeBundle, sha256: bundleSha }),
+        readBundle: async () => ({ tarball: Buffer.alloc(0), sha256: '' }),
+        accept: async () => [],
+        progress: () => {},
+      },
+    )
+
+    expect(installScript).toContain('run_root install -d -m 0755 -o root -g root /etc/latch-relay')
+    expect(installScript).toContain('run_root install -d -m 0750 -o root -g latch-relay /etc/latch-relay/tls')
+    expect(installScript).toContain('run_root install -m 0640 -o root -g latch-relay /etc/ssl/private/fullchain.pem')
+    expect(installScript).toContain('run_root install -m 0640 -o root -g latch-relay /etc/ssl/private/privkey.pem')
+    expect(installScript).toContain('--cert /etc/latch-relay/tls/fullchain.pem --key /etc/latch-relay/tls/privkey.pem')
+    expect(installScript).not.toContain('/srv/latch-relay/tls')
+    expect(installScript).not.toContain('run_root cat "$prof_tmp"')
+    expect(installScript).not.toContain('run_root rm -f "$prof_tmp"')
+
+    // Verify `readRelayTls` accepts 0600 self-owned PEMs and rejects group-writable, world-readable or symlinked PEMs.
+    const tlsDir = join(home, 'tls')
+    await mkdir(tlsDir, { mode: 0o700 })
+    const pair = createTransportCertificate(Date.now(), 3_600_000, 'relay.example.com')
+    const certPath = join(tlsDir, 'cert.pem')
+    const keyPath = join(tlsDir, 'key.pem')
+    await writeFile(certPath, pair.cert, { mode: 0o600 })
+    await writeFile(keyPath, pair.key, { mode: 0o600 })
+    expect((await readRelayTls(certPath, keyPath)).cert.length).toBeGreaterThan(0)
+
+    await chmod(keyPath, 0o644)
+    await expect(readRelayTls(certPath, keyPath)).rejects.toThrow(/TLS file permissions/)
+    await chmod(keyPath, 0o600)
+
+    const linkKey = join(tlsDir, 'link-key.pem')
+    await symlink(keyPath, linkKey)
+    await expect(readRelayTls(certPath, linkKey)).rejects.toThrow(/TLS file permissions/)
+  })
+
+  it('preserves port 443 and CAP_NET_BIND_SERVICE on --upgrade when the relay already holds 443, and rolls back on health failure', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'latch-linux-upgrade-443-'))
+    cleanup.push(home)
+    const bareProfile = {
+      version: 1 as const,
+      profile: {
+        relayId: '1'.repeat(32),
+        url: 'https://203.0.113.10/',
+        spkiHash: '2'.repeat(64),
+        registrationKey: `lrt1.${'D'.repeat(43)}`,
+      },
+    }
+    const relaysDir = join(home, '.latch', 'relays')
+    await mkdir(relaysDir, { recursive: true, mode: 0o700 })
+    await chmod(join(home, '.latch'), 0o700)
+    await writeFile(join(relaysDir, 'ip-203-0-113-10.json'), `${JSON.stringify(bareProfile)}\n`, { mode: 0o600 })
+
+    const fakeBundle = Buffer.from('upgrade-bundle-v2')
+    const bundleSha = createHash('sha256').update(fakeBundle).digest('hex')
+    let upgradeScript = ''
+
+    const res = await runLinuxSetup(
+      { server: 'root@203.0.113.10', upgrade: true, skipAccept: true, home },
+      {
+        async ssh(_target, script) {
+          if (!script.includes('BUNDLE_SHA_MISMATCH')) {
+            // Running relay already occupies `:443` (`port443Busy: 1`) and `relay.json` has `existingPort: 443`!
+            return {
+              code: 0,
+              stdout:
+                '{"os":"Linux","arch":"x86_64","uid":0,"sudo":1,"systemd":1,"port443Busy":1,"existingPort":443,"existingBehindProxy":0}\n',
+              stderr: '',
+            }
+          }
+          upgradeScript = script
+          return {
+            code: 0,
+            stdout: `---LATCH-RELAY-PROFILE-BEGIN---\n${JSON.stringify(bareProfile)}\n---LATCH-RELAY-PROFILE-END---\n`,
+            stderr: '',
+          }
+        },
+        buildBundle: async () => ({ tarball: fakeBundle, sha256: bundleSha }),
+        readBundle: async () => ({ tarball: Buffer.alloc(0), sha256: '' }),
+        accept: async () => [],
+        progress: () => {},
+      },
+    )
+
+    expect(res.profile.url).toBe('https://203.0.113.10/')
+    expect(upgradeScript).toContain('--url https://203.0.113.10')
+    expect(upgradeScript).toContain('AmbientCapabilities=CAP_NET_BIND_SERVICE')
+    // Candidate `check` runs on `$release_dir` BEFORE switching `/opt/latch-relay/current`:
+    const candidateCheckIdx = upgradeScript.indexOf('run_relay "$release_dir/node" --disable-sigusr1 "$release_dir/latch-relay.mjs" check')
+    const switchCurrentIdx = upgradeScript.indexOf('run_root ln -sfn "$release_dir" /opt/latch-relay/current')
+    expect(candidateCheckIdx).toBeGreaterThan(0)
+    expect(switchCurrentIdx).toBeGreaterThan(candidateCheckIdx)
+    expect(upgradeScript).toContain('rollback_release')
+
+    // Execute the rollback function in a real `/bin/sh` sandbox to prove a failed restart/health restores `current` and unit!
+    const rootSim = join(home, 'sim')
+    const oldRel = join(rootSim, 'opt/releases/old')
+    const newRel = join(rootSim, 'opt/releases/new')
+    const currentLink = join(rootSim, 'opt/current')
+    const unitFile = join(rootSim, 'latch-relay.service')
+    const logFile = join(rootSim, 'systemctl.log')
+    await mkdir(oldRel, { recursive: true })
+    await mkdir(newRel, { recursive: true })
+    await symlink(oldRel, currentLink)
+    await writeFile(unitFile, 'OLD_UNIT\n')
+
+    const simScript = [
+      'set -eu',
+      `prev_target=$(readlink "${currentLink}")`,
+      `unit_backup="${join(rootSim, 'unit.bak')}"`,
+      `cp -p "${unitFile}" "$unit_backup"`,
+      'was_active=1',
+      'rollback_release() {',
+      `  ln -sfn "$prev_target" "${currentLink}"`,
+      `  cp -p "$unit_backup" "${unitFile}"`,
+      `  printf 'restarted:%s\\n' "$(readlink "${currentLink}")" >> "${logFile}"`,
+      '}',
+      `ln -sfn "${newRel}" "${currentLink}"`,
+      `printf 'NEW_UNIT\\n' > "${unitFile}"`,
+      'ready=0',
+      'if [ "$ready" -ne 1 ]; then rollback_release; exit 14; fi',
+    ].join('\n')
+
+    const rollbackRun = await execFileAsync('/bin/sh', ['-c', buildSshRemoteCommand(simScript)]).then(
+      () => ({ code: 0 }),
+      (err: { code?: number }) => ({ code: err.code ?? 1 }),
+    )
+    expect(rollbackRun.code).toBe(14)
+    expect(await readFile(unitFile, 'utf8')).toBe('OLD_UNIT\n')
+    expect(await readFile(logFile, 'utf8')).toBe(`restarted:${oldRel}\n`)
+  })
+
+  it('quotes the entire SSH script as one sh -c argument so intermediate failures abort immediately', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'latch-ssh-quote-'))
+    cleanup.push(dir)
+    const marker = join(dir, 'after-failure')
+    const multilineScript = ['set -eu', "label='it'\\''s quoted'", 'false', `touch "${marker}"`, 'true'].join('\n')
+    const remoteCmd = buildSshRemoteCommand(multilineScript)
+
+    // Simulate OpenSSH passing the single remote command string to the remote login shell (`/bin/sh -c <remoteCmd>`):
+    const outcome = await execFileAsync('/bin/sh', ['-c', remoteCmd]).then(
+      () => ({ code: 0 }),
+      (err: { code?: number }) => ({ code: err.code ?? 1 }),
+    )
+    expect(outcome.code).not.toBe(0)
+    await expect(stat(marker)).rejects.toThrow()
+  })
+
+  it('rejects HTTP 200 /healthz responses whose body is an HTML page instead of ok\\n', async () => {
+    const certPair = createTransportCertificate(Date.now(), 3_600_000, 'relay.example.com')
+    const wrongServer = createHttpsServer(
+      { cert: certPair.cert, key: certPair.key, minVersion: 'TLSv1.3', ALPNProtocols: ['http/1.1'] },
+      (_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'text/html' })
+        res.end('<!doctype html><html><body>default vhost</body></html>')
+      },
+    )
+    wrongServer.listen(0, '127.0.0.1')
+    await once(wrongServer, 'listening')
+    try {
+      const port = (wrongServer.address() as AddressInfo).port
+      const items = await runLinuxAcceptance(
+        {
+          relayId: 'a'.repeat(32),
+          url: `https://relay.example.com:${port}/`,
+          kind: 'edge',
+          relayKey: 'b'.repeat(64),
+        },
+        { ca: certPair.cert, address: '127.0.0.1' },
+      )
+      expect(items).toEqual([{ name: 'healthz', result: 'fail', detail: 'HTTP 200（响应正文不是中继健康检查）' }])
+    } finally {
+      wrongServer.closeAllConnections()
+      await new Promise<void>(r => wrongServer.close(() => r()))
+    }
   })
 })
