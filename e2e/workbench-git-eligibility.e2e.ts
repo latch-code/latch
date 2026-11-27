@@ -88,13 +88,24 @@ it('keeps an ordinary folder, refused Git metadata and a change the session did 
     await capture(page, 'ordinary-folder')
 
     // In 对话 the session's 概要 shows its project and session facts, with no 交付 section or Git warning.
-    await card.locator('.work-board-card-main').click()
-    await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
-    if ((await page.locator('.app-shell').getAttribute('data-inspector')) !== 'open') await page.keyboard.press('Alt+Shift+b')
-    await expect.poll(() => page.locator('.app-shell').getAttribute('data-inspector')).toBe('open')
+    const [overviewRead] = await Promise.all([
+      page.waitForEvent('requestfinished', request => {
+        if (new URL(request.url()).pathname !== '/link/api/workbench/delivery' || request.method() !== 'POST') return false
+        const body: unknown = request.postDataJSON()
+        const ids = body && typeof body === 'object' && 'ids' in body ? body.ids : undefined
+        return Array.isArray(ids) && ids.length === 1 && ids[0] === sessionId
+      }),
+      (async () => {
+        await card.locator('.work-board-card-main').click()
+        await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
+        if ((await page.locator('.app-shell').getAttribute('data-inspector')) !== 'open') await page.keyboard.press('Alt+Shift+b')
+        await expect.poll(() => page.locator('.app-shell').getAttribute('data-inspector')).toBe('open')
+      })(),
+    ])
+    expect((await overviewRead.response())?.ok()).toBe(true)
     const overview = page.locator('.session-overview')
     await overview.getByRole('region', { name: '项目', exact: true }).getByText('普通项目', { exact: true }).waitFor()
-    expect(await overview.getByRole('region', { name: '交付', exact: true }).count()).toBe(0)
+    await overview.getByRole('region', { name: '交付', exact: true }).waitFor({ state: 'hidden' })
     expect(await overview.getByText(/不支持 Git 交付|尚未观察到文件改动|本轮没有命令记录/u).count()).toBe(0)
     expect(await overview.getByRole('button', { name: '刷新', exact: true }).count()).toBe(0)
     expect(await overview.locator('.ui-notice[data-tone="warn"]').count()).toBe(0)
