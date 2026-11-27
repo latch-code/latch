@@ -8,10 +8,10 @@ import {
   type ConfirmationFlow,
   type ConfirmationView,
 } from '../core/confirmations.ts'
-import { BLOCKED_COPY, BLOCKED_VERBS, CONFIRMATION_COPY as COPY, CONFIRMATION_VERBS, waitText } from '../core/securityCopy.ts'
+import { BLOCKED_COPY, CONFIRMATION_COPY as COPY, CONFIRMATION_VERBS, waitText } from '../core/securityCopy.ts'
 import { useSessionLinks } from '../core/sessionLinks.ts'
 import { defineCopy } from '../core/i18n.ts'
-import { namedSession, stillBlocking } from '../core/blocking.ts'
+import { isPresenceAction, namedSession, stillBlocking } from '../core/blocking.ts'
 import { errorMessage, isUncertain } from '../core/api.ts'
 import { useCountdown } from '../hooks/useCountdown.ts'
 import { MarkTile } from './BrandTile.tsx'
@@ -102,15 +102,26 @@ function CooldownWait({ until }: { until: number }) {
   return <>{seconds > 0 ? COPY.cooldownWait(waitText(seconds)) : COPY.cooldownOver}</>
 }
 
-/** 「Codex 正在运行「…」，结束后才能配对新设备。」 with the ways out, or the plain sentence when the sessions are not named. */
-export function BlockedLine({ blocked, onDismiss }: { blocked: Blocked | undefined; onDismiss?: () => void }) {
+/**
+ * 「Codex 正在运行「…」，结束后才能配对新设备。」 with the ways out, or the plain sentence when the sessions are not named.
+ * Inside a modal the page behind cannot be reached, so `canOpen` is off there and only 停止 is offered.
+ */
+export function BlockedLine({
+  blocked,
+  onDismiss,
+  canOpen = true,
+}: {
+  blocked: Blocked | undefined
+  onDismiss?: (() => void) | undefined
+  canOpen?: boolean
+}) {
   const links = useSessionLinks()
   const [stopping, setStopping] = useState(false)
   const [error, setError] = useState<{ text: string; uncertain: boolean } | null>(null)
   const named = blocked?.tasks ?? []
   const remaining = stillBlocking(named, links?.snapshot ?? null)
   const first: BlockingTask | undefined = remaining[0]
-  const valid = blocked?.action && Object.hasOwn(BLOCKED_VERBS, blocked.action)
+  const valid = isPresenceAction(blocked?.action)
   const dismiss = onDismiss ? { onClose: onDismiss, closeLabel: COPY.close } : {}
   if (named.length > 0 && remaining.length === 0)
     return (
@@ -154,9 +165,11 @@ export function BlockedLine({ blocked, onDismiss }: { blocked: Blocked | undefin
         action={
           links && (
             <span className="confirm-blocked-actions">
-              <Button size="xs" onClick={() => links.open(first.id)}>
-                {COPY.openSession}
-              </Button>
+              {canOpen && (
+                <Button size="xs" onClick={() => links.open(first.id)}>
+                  {COPY.openSession}
+                </Button>
+              )}
               <Button
                 size="xs"
                 loading={stopping}
@@ -240,7 +253,7 @@ export function BlockedList({ blocked, onDismiss }: { blocked: Blocked | undefin
   const links = useSessionLinks()
   const named = blocked?.tasks ?? []
   const remaining = stillBlocking(named, links?.snapshot ?? null)
-  const action = blocked?.action && Object.hasOwn(BLOCKED_VERBS, blocked.action) ? blocked.action : undefined
+  const action = isPresenceAction(blocked?.action) ? blocked.action : undefined
   if (remaining.length === 0 || action === undefined) return <BlockedLine blocked={blocked} onDismiss={onDismiss} />
   return (
     <InlineNotice

@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import type { PluginPackageDetail } from '@latch/protocol'
 import { Button, InlineNotice } from '@latch/ui'
 import { api, inlineError, type ApiOptions } from '../core/api.ts'
-import { withConfirmation } from '../core/confirmations.ts'
+import { ConfirmationError, withConfirmation } from '../core/confirmations.ts'
 import { defineCopy } from '../core/i18n.ts'
 import { useMounted } from '../hooks/useMounted.ts'
 import { Loading } from '../settings/common.tsx'
@@ -15,6 +15,7 @@ import {
   PluginWriteFeedback,
   reviewedPluginChange,
   reviewedPluginMutation,
+  usePluginConfirmationHold,
   usePluginMutationReview,
   type AppliedPluginChange,
   type PluginMutationTarget,
@@ -138,9 +139,12 @@ export function usePluginInstallReview({
       if (mounted.current && !signal.aborted) {
         if (!receiptUnsettled(cause, pending?.request === request)) {
           setSent(null)
-          // The Host refused this revision as reviewed: show what it holds now.
-          setReadAgain(count => count + 1)
-          mutation.retry()
+          // A confirmation that did not pass, or could not start, says nothing about the revision: the review stays.
+          if (!(cause instanceof ConfirmationError)) {
+            // The Host refused this revision as reviewed: show what it holds now.
+            setReadAgain(count => count + 1)
+            mutation.retry()
+          }
         }
         setFailure({ id: packageId, message: inlineError(cause) })
       }
@@ -160,6 +164,8 @@ export function usePluginInstallReview({
     void send(detail.id, reviewedPluginMutation(target, mutation.review), { name: detail.name, version: detail.version, kind: change.kind })
   }
 
+  // An unknown write is never held: sending the same request again is how it gets resolved.
+  const held = usePluginConfirmationHold(active && target !== null && pending === null && mutation.review?.confirmationRequired === true)
   const feedback = (
     <PluginWriteFeedback
       busy={busy}
@@ -167,6 +173,7 @@ export function usePluginInstallReview({
       uncertain={pending !== null}
       unknownMessage={COPY.unknown}
       replacesInstalled={!!mutation.review?.baseAppliedRevision}
+      held={held}
     />
   )
   const body: ReactNode = (
@@ -186,7 +193,7 @@ export function usePluginInstallReview({
             isPluginPackageReview(detail.review, detail.revision) && <PluginRiskFacts review={detail.review} />
           ) : (
             <PluginMutationReviewBody
-              submitting={busy || pending !== null}
+              submitting={!busy && pending !== null}
               review={mutation.review}
               fallback={isPluginPackageReview(detail.review, detail.revision) ? detail.review : undefined}
               error={mutation.error}
@@ -209,7 +216,7 @@ export function usePluginInstallReview({
     pageBuild: pending === null && detail !== undefined && pageBuild,
     applied,
     /** Apply has the Host's review of the revision shown, or an unknown result to send again. */
-    ready: ready || pending !== null,
+    ready: (ready && held === undefined) || pending !== null,
     confirmLabel: change?.confirm,
     retrying: pending !== null && !busy,
     busy,

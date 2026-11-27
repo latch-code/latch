@@ -13,6 +13,7 @@ import {
 } from '../src/settings/PluginMutationReview.tsx'
 
 import { usePluginAssets } from '../src/settings/PluginAssetsSettings.tsx'
+import { provideSessionLinks } from '../src/core/sessionLinks.ts'
 
 const base = '1'.repeat(64)
 const revision = '2'.repeat(64)
@@ -167,6 +168,58 @@ describe('plugin mutation review', () => {
       act(() => action('确认').click())
       expect(onConfirm).not.toHaveBeenCalled()
     } finally {
+      await act(async () => root.unmount())
+      host.remove()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('keeps a confirmation off while a full-access session runs, except for sending an unknown write again', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ review: { ...review, installId } })),
+    )
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    const onConfirm = vi.fn()
+    const retryRequest = vi.fn()
+    const render = (retry?: () => void) =>
+      act(async () =>
+        root.render(
+          createElement(PluginMutationDialog, { target, onConfirm, onClose: vi.fn(), ...(retry ? { retryRequest: retry } : {}) }),
+        ),
+      )
+    const action = (label: string) => [...host.querySelectorAll('button')].find(button => button.textContent === label)!
+    const running = {
+      id: 'session-1',
+      title: '修复设置页',
+      harnessId: 'codex',
+      level: 'L3',
+      status: 'running',
+      updatedAt: '2026-01-01T00:00:00Z',
+    }
+    const links = (tasks: unknown[]) =>
+      act(async () => provideSessionLinks({ snapshot: { tasks } as never, open: vi.fn(), stop: vi.fn(async () => undefined) }))
+    try {
+      await links([running])
+      await render()
+      expect(action('确认更新').getAttribute('aria-disabled')).toBe('true')
+      expect(host.textContent).toContain('正在运行「修复设置页」，结束后才能应用插件。')
+      act(() => action('确认更新').click())
+      expect(onConfirm).not.toHaveBeenCalled()
+      await render(retryRequest)
+      expect(action('重试同一请求').getAttribute('aria-disabled')).not.toBe('true')
+      act(() => action('重试同一请求').click())
+      expect(retryRequest).toHaveBeenCalledTimes(1)
+      await render()
+      await links([{ ...running, status: 'completed' }])
+      expect(action('确认更新').getAttribute('aria-disabled')).not.toBe('true')
+      act(() => action('确认更新').click())
+      expect(onConfirm).toHaveBeenCalledTimes(1)
+    } finally {
+      provideSessionLinks(null)
       await act(async () => root.unmount())
       host.remove()
       vi.unstubAllGlobals()

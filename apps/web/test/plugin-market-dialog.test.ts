@@ -13,6 +13,7 @@ import {
 } from '@latch/protocol'
 import { PluginMarketplace } from '../src/plugin-marketplace/PluginMarketplace.tsx'
 import { useInstalledPluginSwitch } from '../src/plugin-marketplace/InstalledPluginSwitch.tsx'
+import { provideSessionLinks } from '../src/core/sessionLinks.ts'
 
 const catalogManifests = {
   'shift-handoff': { name: 'Shift handoff', version: '1.0.0' },
@@ -497,6 +498,93 @@ it('keeps the installation review open through Mac confirmation, refusal and a l
   expect(onManage).not.toHaveBeenCalled()
   await act(async () => buttons(dialog(), '完成')[0]!.click())
   expect(dialog().open).toBe(false)
+})
+
+it('holds a confirmation back while a full-access session runs without moving or re-reading the review', async () => {
+  const needsMac = { ...review, confirmationRequired: true }
+  const detail: PluginPackageDetail = { ...summary, bundle, review: needsMac }
+  const task = {
+    id: 'session-1',
+    title: '修复设置页',
+    harnessId: 'codex',
+    level: 'L3',
+    status: 'running',
+    updatedAt: '2026-01-01T00:00:00Z',
+  }
+  let releaseApply!: () => void
+  const calls: string[] = []
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    const path = new URL(url, 'http://host.test').pathname.replace(/^.*\/plugin-packages/u, 'plugin-packages')
+    calls.push(path)
+    if (path === 'plugin-packages') return Response.json({ packages: [summary] })
+    if (path === 'plugin-packages/catalog/preview') return Response.json({ bundle, review: needsMac } satisfies PluginCatalogPreview)
+    if (path === 'plugin-packages/catalog/stage') return Response.json({ package: summary })
+    if (path === `plugin-packages/${id}`) return Response.json({ package: detail })
+    if (path === `plugin-packages/${id}/review`) return Response.json({ review: { ...needsMac, installId } })
+    if (path === `plugin-packages/${id}/apply`) {
+      await new Promise<void>(resolve => {
+        releaseApply = resolve
+      })
+      const { id: taskId, title, harnessId } = task
+      return Response.json(
+        { error: 'presence-blocked', action: 'plugin.package.apply', blockingTasks: [{ id: taskId, title, harnessId }] },
+        { status: 409 },
+      )
+    }
+    return new Response(null, { status: 404 })
+  })
+  vi.stubGlobal('fetch', fetch)
+  const stop = vi.fn(async () => undefined)
+  const links = (tasks: unknown[]) => act(async () => provideSessionLinks({ snapshot: { tasks } as AppSnapshot, open: vi.fn(), stop }))
+  try {
+    await links([])
+    await render(admin('hold-host'))
+    await act(async () => card('交接清单').click())
+    await settle()
+    await act(async () => buttons(dialog(), '审阅并安装')[0]!.click())
+    await settle()
+    await settle()
+    const footer = dialog().querySelector('.ui-dialog-footer')!
+    const apply = () => buttons(dialog(), '确认安装')[0]!
+    const applies = () => calls.filter(path => path.endsWith('/apply')).length
+    const reads = () => calls.filter(path => path === `plugin-packages/${id}` || path.endsWith('/review')).length
+    // The snapshot lags: the Host refuses, names the session, and the review it described stays as it was.
+    expect(enabled(apply())).toBe(true)
+    const readBefore = reads()
+    await act(async () => apply().click())
+    expect(dialog().textContent).toContain('继续后需在这台 Mac 上完成确认。')
+    await act(async () => releaseApply())
+    await settle()
+    expect(footer.textContent).toContain('正在运行「修复设置页」，结束后才能应用插件。')
+    expect(buttons(footer, '停止')).toHaveLength(1)
+    expect(buttons(footer, '查看')).toHaveLength(0)
+    expect(reads()).toBe(readBefore)
+    expect(dialog().textContent).toContain('运行权限与风险')
+    // Asking again keeps the same line in place while the request is out.
+    await act(async () => apply().click())
+    expect(applies()).toBe(2)
+    expect(footer.textContent).toContain('正在运行「修复设置页」')
+    expect(dialog().textContent).toContain('继续后需在这台 Mac 上完成确认。')
+    await act(async () => releaseApply())
+    await settle()
+    expect(dialog().open).toBe(true)
+    // Once the page knows the session, the action is off before anyone asks, and comes back when it ends.
+    await links([task])
+    expect(enabled(apply())).toBe(false)
+    expect(footer.textContent).toContain('正在运行「修复设置页」，结束后才能应用插件。')
+    await act(async () => apply().click())
+    expect(applies()).toBe(2)
+    await act(async () => buttons(footer, '停止')[0]!.click())
+    expect(stop).toHaveBeenCalledWith('session-1')
+    await links([{ ...task, status: 'cancelled' }])
+    expect(enabled(apply())).toBe(true)
+    // The line stays to say so, where the action is, until the person answers it.
+    expect(footer.textContent).toContain('「修复设置页」已经结束，可以再试一次了。')
+    await act(async () => buttons(footer, '好')[0]!.click())
+    expect(footer.textContent).not.toContain('修复设置页')
+  } finally {
+    provideSessionLinks(null)
+  }
 })
 
 it('keeps the open dialog steady across update checks, draft review transitions and closing', async () => {

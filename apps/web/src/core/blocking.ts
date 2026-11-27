@@ -1,6 +1,6 @@
 import { escapeSecurityText, type ApiFailure, type AppSnapshot, type BlockingTask, type PresenceAction } from '@latch/protocol'
 import { api } from './api.ts'
-import { BLOCKED_VERBS, CONFIRMATION_COPY, type NamedSession } from './securityCopy.ts'
+import { BLOCKED_ACTION_TEXT, CONFIRMATION_COPY, type NamedSession } from './securityCopy.ts'
 
 /**
  * A confirmation the Host held back while a full-access session runs or waits for an answer (`presence-blocked`): the
@@ -13,11 +13,15 @@ export interface BlockedDetail {
 }
 
 const MAX_TASKS = 10
+
+/** The confirmations a refusal may name: the ones the copy has words for. Anything else is dropped from the details. */
+export const isPresenceAction = (value: unknown): value is PresenceAction =>
+  typeof value === 'string' && Object.hasOwn(BLOCKED_ACTION_TEXT, value)
 const isText = (value: unknown, max: number): value is string => typeof value === 'string' && value.length <= max
 
 /** The refusal's details, checked: unknown actions and malformed sessions are dropped. Older Hosts send neither. */
 export function blockedDetail(details: Readonly<Partial<ApiFailure>>): BlockedDetail {
-  const action = typeof details.action === 'string' && Object.hasOwn(BLOCKED_VERBS, details.action) ? details.action : undefined
+  const action = isPresenceAction(details.action) ? details.action : undefined
   const listed: unknown[] = Array.isArray(details.blockingTasks) ? details.blockingTasks : []
   const tasks = listed
     .filter((item): item is BlockingTask => {

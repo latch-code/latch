@@ -2,8 +2,10 @@ import { useEffect, useId, useState, type ReactNode } from 'react'
 import { OFFICIAL_PLUGIN_CATALOG_REPOSITORY } from '@latch/protocol'
 import type { AppCapabilities, PluginExternalSource, PluginPackageReview } from '@latch/protocol'
 import { Button, CheckGlyph, Dialog, Icon, InlineNotice } from '@latch/ui'
-import { ConfirmationContent } from '../components/InlineConfirm.tsx'
-import { useInlineConfirmation } from '../core/confirmations.ts'
+import { BlockedLine, ConfirmationContent } from '../components/InlineConfirm.tsx'
+import { activeFullAccess } from '../core/blocking.ts'
+import { useInlineConfirmation, type Blocked } from '../core/confirmations.ts'
+import { useSessionLinks } from '../core/sessionLinks.ts'
 import { CONFIRMATION_COPY } from '../core/securityCopy.ts'
 import { pluginChangeCopy } from './pluginAssets.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -629,27 +631,74 @@ export function reviewedPluginChange(review: PluginPackageReview) {
   return pluginChangeCopy('version' in source && !source.modified ? 'update' : 'edit')
 }
 
+/**
+ * The sessions this page's snapshot shows holding a plugin's confirmation back, while the change needs one: the Host
+ * refuses it until they end, so the dialog says so before the person asks and keeps its action off. The Host decides;
+ * a snapshot that lags leaves the action on and the Host's refusal says the same in the same place.
+ */
+export function usePluginConfirmationHold(required: boolean): Blocked | undefined {
+  const links = useSessionLinks()
+  if (!required || !links) return undefined
+  const tasks = activeFullAccess(links.snapshot)
+  return tasks.length > 0 ? { action: 'plugin.package.apply', tasks } : undefined
+}
+
 export function PluginWriteFeedback({
   busy,
   failure,
   uncertain,
   unknownMessage = COPY.uncertain,
   replacesInstalled = false,
+  held,
 }: {
   busy: boolean
   failure?: string | undefined
   uncertain: boolean
   unknownMessage?: string
   replacesInstalled?: boolean
+  /** Sessions holding the confirmation back, named before the person asks (`usePluginConfirmationHold`). */
+  held?: Blocked | undefined
 }) {
   const flow = useInlineConfirmation(useId(), busy, 3)
+  const view = flow?.view
+  // The line stays after its sessions end, saying so, until the person answers it or asks again: a footer that
+  // shrinks by itself moves the action out from under the pointer.
+  const [kept, setKept] = useState<Blocked>()
+  const sameTasks = (a: Blocked | undefined, b: Blocked | undefined) =>
+    a?.tasks.map(task => task.id).join('\n') === b?.tasks.map(task => task.id).join('\n')
+  if (held && !sameTasks(held, kept)) setKept(held)
+  if (kept && !held && view) setKept(undefined)
+  const hold = held ?? kept
+  if (hold && !view && !failure && !uncertain)
+    return (
+      <div className="plugin-write-feedback">
+        {busy && (
+          <span role="status" className="sr-only">
+            {COPY.submitting}
+          </span>
+        )}
+        <BlockedLine blocked={hold} canOpen={false} onDismiss={held || busy ? undefined : () => setKept(undefined)} />
+      </div>
+    )
   if (!busy && !flow && !failure && !uncertain)
     return replacesInstalled ? <div className="plugin-write-feedback">{COPY.replacesInstalled}</div> : null
+  // A request that did not run leaves its line until the next answer replaces it: asking again must not move the dialog.
+  const settled = view !== undefined && (view.phase === 'paused' || view.phase === 'failed')
   return (
     <div className="plugin-write-feedback">
-      {busy && <span role="status">{flow?.view.phase === 'waiting' ? CONFIRMATION_COPY.waiting : COPY.submitting}</span>}
-      {flow && (flow.view.phase === 'waiting' || flow.view.phase === 'sending' || (!busy && !failure && !uncertain)) && (
-        <ConfirmationContent view={flow.view} actions={flow.actions} />
+      {busy && (
+        <span role="status" className={settled ? 'sr-only' : undefined}>
+          {view?.phase === 'waiting' ? CONFIRMATION_COPY.waiting : COPY.submitting}
+        </span>
+      )}
+      {flow && view && (busy || view.phase === 'waiting' || view.phase === 'sending' || (!failure && !uncertain)) && (
+        <>
+          {view.phase === 'paused' && view.reason === 'blocked' ? (
+            <BlockedLine blocked={view.blocked} canOpen={false} onDismiss={busy ? undefined : flow.actions.dismiss} />
+          ) : (
+            <ConfirmationContent view={view} actions={flow.actions} />
+          )}
+        </>
       )}
       {failure && <InlineNotice tone="error">{failure}</InlineNotice>}
       {uncertain && !busy && <InlineNotice tone="warn">{unknownMessage}</InlineNotice>}
@@ -661,6 +710,8 @@ function MutationReview({ target, onConfirm, onClose, busy = false, failure, ret
   const { operation, done } = target
   const { review, error, retry } = usePluginMutationReview(done ? null : target)
   const change = operation === 'apply' && review ? reviewedPluginChange(review) : null
+  // An unknown write is never held: sending the same request again is how it gets resolved.
+  const held = usePluginConfirmationHold(!done && !retryRequest && review?.confirmationRequired === true)
   const close = () => {
     if (done || !busy) onClose()
   }
@@ -685,6 +736,7 @@ function MutationReview({ target, onConfirm, onClose, busy = false, failure, ret
               failure={failure}
               uncertain={!!retryRequest}
               replacesInstalled={!!review && review.baseAppliedRevision !== null && operation !== 'enable'}
+              held={held}
             />
             <Button size="md" disabled={busy} onClick={close}>
               {retryRequest && !busy ? COPY.close : COPY.cancel}
@@ -692,7 +744,7 @@ function MutationReview({ target, onConfirm, onClose, busy = false, failure, ret
             <Button
               variant="primary"
               size="md"
-              disabled={!retryRequest && review === null}
+              disabled={!retryRequest && (review === null || held !== undefined)}
               loading={busy}
               onClick={() => {
                 if (retryRequest) retryRequest()
@@ -706,7 +758,7 @@ function MutationReview({ target, onConfirm, onClose, busy = false, failure, ret
       {done ? (
         <PluginAppliedResult change={done} />
       ) : (
-        <PluginMutationReviewBody name={target.name} submitting={busy || !!retryRequest} review={review} error={error} onRetry={retry} />
+        <PluginMutationReviewBody name={target.name} submitting={!busy && !!retryRequest} review={review} error={error} onRetry={retry} />
       )}
     </Dialog>
   )
