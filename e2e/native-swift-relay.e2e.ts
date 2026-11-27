@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process'
 import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign, X509Certificate } from 'node:crypto'
+import { channel } from 'node:diagnostics_channel'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { Http2ServerResponse } from 'node:http2'
+import { Http2ServerResponse, type IncomingHttpHeaders, type ServerHttp2Stream } from 'node:http2'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { createSelfSignedRelayCertificate, startRelay } from '@latch/relay'
 import { createTransportCertificate, PaddedStream } from '@latch/link-client'
@@ -99,9 +100,17 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
     })
     const transferRanges: number[] = [],
       partsAnswered: number[] = [],
-      // The HTTP/2 sessions that answered an upload's start (the control connection) and its parts.
-      startSessions = new Set<unknown>(),
-      partSessions = new Set<unknown>()
+      startSessions = new Set<ServerHttp2Stream['session']>(),
+      partSessions = new Set<ServerHttp2Stream['session']>()
+    const uploadPart = /\/attachments\/uploads\/[A-Za-z0-9_-]{22}\/parts\/(\d+)$/u
+    const streamCreated = channel('http2.server.stream.created')
+    // A cancelled part can finish on the Host after Node has detached the stream from its session.
+    const rememberUploadSession = (event: unknown) => {
+      const { headers, stream } = event as { headers: IncomingHttpHeaders; stream: ServerHttp2Stream }
+      const path = headers[':path'] ?? ''
+      if (headers[':method'] === 'POST' && path === '/link/api/attachments/uploads') startSessions.add(stream.session)
+      if (headers[':method'] === 'PUT' && uploadPart.test(path)) partSessions.add(stream.session)
+    }
     const originalEnd = Http2ServerResponse.prototype.end
     const responseSpy = vi.spyOn(Http2ServerResponse.prototype, 'end').mockImplementation(function (
       this: Http2ServerResponse,
@@ -109,14 +118,11 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
     ) {
       const range = typeof this.req.headers.range === 'string' ? /^bytes=(\d+)-(\d+)$/u.exec(this.req.headers.range) : undefined
       if (range && this.req.method === 'GET') transferRanges.push(Number(range[2]) - Number(range[1]) + 1)
-      const part = /\/attachments\/uploads\/[A-Za-z0-9_-]{22}\/parts\/(\d+)$/u.exec(this.req.url ?? '')
+      const part = uploadPart.exec(this.req.url ?? '')
       // Only a real answer: a part whose stream closed under it is ended without one.
       if (part && this.req.method === 'PUT' && this.statusCode === 200 && typeof args[0] === 'string' && args[0].startsWith('{"upload"')) {
         partsAnswered.push(Number(part[1]))
-        partSessions.add(this.req.stream?.session)
       }
-      if (this.req.method === 'POST' && this.req.url === '/link/api/attachments/uploads' && this.statusCode === 201)
-        startSessions.add(this.req.stream?.session)
       if (operation === 'nativeRelayBulkLegacy' && typeof args[0] === 'string' && this.req.url?.startsWith('/link/api/snapshot')) {
         const value = JSON.parse(args[0]) as { catalog?: { features?: Record<string, unknown> } }
         if (value.catalog?.features) {
@@ -137,6 +143,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
           : undefined
     const slow = shaping && (await startShapedProxy({ host: '127.0.0.1', port: relay.port }, shaping))
     try {
+      if (operation === 'nativeRelayUpload') streamCreated.subscribe(rememberUploadSession)
       const dataDir = join(directory, 'data'),
         nativeDir = join(dataDir, 'native')
       await mkdir(nativeDir, { recursive: true, mode: 0o700 })
@@ -278,6 +285,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
         expect(partsAnswered.toSorted((a, b) => a - b)).toEqual([0, 0, 1, 1, 2, 2, 3, 3, 4, 5, 6, 7, 8])
         // No part went on the control connection, the next file's included: each went on a companion.
         expect(startSessions.size).toBeGreaterThanOrEqual(2)
+        expect(partSessions.size).toBeGreaterThan(0)
         expect([...startSessions, ...partSessions].every(session => session !== undefined)).toBe(true)
         expect([...partSessions].filter(session => startSessions.has(session))).toEqual([])
         expect(nextMs).toBeGreaterThan(0)
@@ -298,6 +306,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
           expect(relay.status()).toMatchObject({ connections: 1, controls: 1 })
       }
     } finally {
+      if (operation === 'nativeRelayUpload') streamCreated.unsubscribe(rememberUploadSession)
       responseSpy.mockRestore()
       bulkSpy.mockRestore()
       await host?.close()
