@@ -17,9 +17,15 @@ import { switchView } from './helpers/workbench.ts'
 
 type Fixture = {
   clipboardText: string
-  registry: { proxyFor(hostId: string): { probe(): Promise<{ snapshot: AppSnapshot }>; handle(request: Request): Promise<Response> } }
+  registry: {
+    proxyFor(hostId: string): {
+      probe(): Promise<{ snapshot: AppSnapshot }>
+      handle(request: Request, signal?: AbortSignal): Promise<Response>
+    }
+  }
   dropReceipt: boolean
   sends: number
+  confirmations: number
   consent?: string
   holdSessionId?: string
   readGate?: Promise<void>
@@ -129,10 +135,14 @@ it.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON_E2E')
           app.focus({ steal: true })
           window.show()
           window.focus()
+          window.webContents.focus()
         })
         await expect
           .poll(() =>
-            app!.evaluate(({ BrowserWindow }) => BrowserWindow.getFocusedWindow()?.webContents.getURL().startsWith('latch://app/')),
+            app!.evaluate(({ BrowserWindow }) => {
+              const contents = BrowserWindow.getFocusedWindow()?.webContents
+              return contents?.getURL().startsWith('latch://app/') && contents.isFocused()
+            }),
           )
           .toBe(true)
       }
@@ -155,7 +165,8 @@ it.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON_E2E')
         const deviceId = (await proxy.probe()).snapshot.device.id
         const original = proxy.handle.bind(proxy)
         fixture.sends = 0
-        proxy.handle = async request => {
+        fixture.confirmations = 0
+        proxy.handle = async (request, signal) => {
           const path = new URL(request.url).pathname
           // The destination view stays on its warm transcript until the explicit detail read is let through.
           if (path === '/link/api/events') {
@@ -167,13 +178,11 @@ it.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON_E2E')
             await fixture.readGate
           }
           if (path.includes('/mentions/by-request/') && fixture.dropReceipt) return new Response(null, { status: 503 })
-          const result = await original(request)
-          if (request.method === 'POST' && path.endsWith('/mentions')) {
-            fixture.sends++
-            if (result.ok && fixture.sends === 1) {
-              fixture.dropReceipt = true
-              return new Response(null, { status: 504 })
-            }
+          const send = request.method === 'POST' && path.endsWith('/mentions') ? ++fixture.sends : 0
+          const result = await original(request, signal)
+          if (result.ok && send === 1) {
+            fixture.dropReceipt = true
+            return new Response(null, { status: 504 })
           }
           return result
         }
@@ -181,6 +190,7 @@ it.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON_E2E')
         dialog.showMessageBox = (...args: [Electron.MessageBoxOptions] | [Electron.BaseWindow, Electron.MessageBoxOptions]) => {
           const options = args.at(-1) as Electron.MessageBoxOptions
           if (!options.detail?.includes('请核对这次发布。')) return Reflect.apply(show, dialog, args)
+          fixture.confirmations++
           fixture.consent = options.detail
           const response = options.buttons?.findIndex((_, index) => index !== options.cancelId) ?? -1
           return Promise.resolve({ response, checkboxChecked: false })
@@ -193,19 +203,25 @@ it.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON_E2E')
       await page.locator(`[data-work-item="${item.id}"] .work-board-card-main`).click()
       const thread = page.locator('.item-thread')
       const field = thread.getByRole('combobox', { name: '发言' })
-      await field.fill('@' + shortcut.name)
-      await page.getByRole('option', { name: new RegExp(shortcut.name, 'u') }).click()
-      await focusSource()
+      const chooseRecipient = async () => {
+        await field.fill('@' + shortcut.name)
+        await page.getByRole('option', { name: new RegExp(shortcut.name, 'u') }).click()
+        await thread.locator('.item-thread-input-target').getByText(`@${shortcut.name} · 执行电脑`, { exact: true }).waitFor()
+      }
+      const send = async (text: string) => {
+        await field.fill(text)
+        await focusSource()
+        await thread.getByRole('button', { name: '发送', exact: true }).click()
+      }
+      await chooseRecipient()
       const secret = `${message} sk-ant-api03-${'a'.repeat(40)}`
-      await field.fill(secret)
-      await thread.getByRole('button', { name: '发送', exact: true }).click()
+      await send(secret)
       await thread.getByText('发言像含有密钥，没有发出。', { exact: true }).waitFor()
       expect(await field.inputValue()).toBe(secret)
       expect(await field.isEditable()).toBe(true)
       expect((await owner.json<WorkThreadAnswer>(`work/items/${item.id}/posts`)).posts).toHaveLength(0)
       expect(received).toHaveLength(0)
-      await field.fill(message)
-      await thread.getByRole('button', { name: '发送', exact: true }).click()
+      await send(message)
       const row = thread.locator('[data-remote-status]').filter({ hasText: message })
       await expect
         .poll(async () => row.isVisible().then(async visible => (visible ? 'saved' : await thread.innerText())), { timeout: 12_000 })
@@ -269,12 +285,32 @@ it.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON_E2E')
       try {
         const followup = message + ' 再核对一遍。'
         await focusSource()
-        await field.fill('@' + shortcut.name)
-        await page.getByRole('option', { name: new RegExp(shortcut.name, 'u') }).click()
-        await field.fill(followup)
-        await thread.getByRole('button', { name: '发送', exact: true }).click()
+        await chooseRecipient()
+        await send(followup)
+        await expect
+          .poll(
+            async () => {
+              const { posts } = await owner.json<WorkThreadAnswer>(`work/items/${item.id}/posts`)
+              const post = posts.find(post => post.text === followup)
+              const confirmations = await app!.evaluate(() => (Reflect.get(globalThis, 'multiHostFixture') as Fixture).confirmations)
+              return { confirmations, savedForRecipient: post?.remote?.agentId === worker.id }
+            },
+            { timeout: 15_000, message: 'Confirm and save the follow-up for the paired assistant' },
+          )
+          .toMatchObject({ confirmations: 3, savedForRecipient: true })
+        await expect
+          .poll(() => ({ arrived: received.at(-1)?.includes(followup), count: received.length }), {
+            timeout: 15_000,
+            message: 'Run the paired assistant on the follow-up once',
+          })
+          .toEqual({ arrived: true, count: 2 })
         const next = thread.locator('[data-remote-status]').filter({ hasText: followup })
-        await expect.poll(() => next.getAttribute('data-remote-status'), { timeout: 15_000 }).toBe('completed')
+        await expect
+          .poll(async () => ((await next.count()) === 1 ? next.getAttribute('data-remote-status') : 'not shown'), {
+            timeout: 15_000,
+            message: 'Reflect the destination completion in the source work item',
+          })
+          .toBe('completed')
         expect(await original.isVisible()).toBe(true)
         await focusSource()
         await next.getByRole('button', { name: /查看结果/u }).click()
