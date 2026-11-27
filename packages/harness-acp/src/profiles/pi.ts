@@ -18,6 +18,7 @@ const PI_RELEASE_SOURCE: ReleaseSource = {
       }
     },
     command: 'pi update --self',
+    release: { registry: 'pi' },
   },
 }
 

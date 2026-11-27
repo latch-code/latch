@@ -83,6 +83,27 @@ describe('the update command a found program gets, by its install layout', () =>
     )
   })
 
+  it('asks where managed pi updates itself from, and npm for any other pi', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-pi-release-')))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const launcher = join(root, 'agent', 'bin', 'pi')
+    const marker = join(root, 'agent', 'install', 'managed-install.json')
+    await mkdir(join(root, 'agent', 'bin'), { recursive: true })
+    await mkdir(join(root, 'agent', 'install'))
+    await writeFile(launcher, '')
+    await writeFile(marker, '{"kind":"pi-managed-install","schemaVersion":1,"layout":"releases-v1"}')
+    const npm = { registry: 'npm', name: '@earendil-works/pi-coding-agent' }
+    const profile = HARNESS_PROFILES.get('pi')!
+    for (const gate of [profile.minimumVersion!, profile.gateway!.minimumVersion!])
+      expect(releaseLookup(join(root, 'pi'), launcher, gate.source!)).toEqual({ registry: 'pi' })
+    const source = profile.minimumVersion!.source!
+    expect(
+      releaseLookup('/usr/local/bin/pi', '/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js', source),
+    ).toEqual(npm)
+    await rm(marker)
+    expect(releaseLookup(launcher, launcher, source)).toEqual(npm)
+  })
+
   it('names nothing for any other layout', () => {
     expect(updateCommand('/Users/a/.volta/bin/claude', '/Users/a/.volta/tools/image/packages/x/bin/claude', claude)).toBeUndefined()
     expect(updateCommand('/usr/local/bin/codex', undefined, codex)).toBeUndefined()

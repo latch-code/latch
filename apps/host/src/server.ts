@@ -975,7 +975,8 @@ export interface ServerOptions {
   cliQuota?: { home: string; fetch?: FetchLike }
   /**
    * Lets the agent settings say a newer release of a preset's own program is out (`harness-updates.ts`): asked where it
-   * was installed from, the fixed origins `registry.npmjs.org` (dist-tags) or `formulae.brew.sh` (formula, cask), and Claude Code's `autoUpdatesChannel` from its settings
+   * was installed from, the fixed origins `registry.npmjs.org` (dist-tags), `formulae.brew.sh` (formula, cask) or `pi.dev`
+   * (pi's own installer), and Claude Code's `autoUpdatesChannel` from its settings
    * in this home (or `CLAUDE_CONFIG_DIR`). The start script passes the person's home; left out, as in tests, nothing is
    * asked and nothing is read. `fetch` and `claudeDir` replace the outbound fetch and Claude's directory, for tests only.
    */

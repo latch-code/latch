@@ -319,12 +319,17 @@ export function SettingsPage({
   onClose: () => void
   /** Opens a section. Without an argument, goes back to the section list. */
   onSection: (section?: SettingsSection) => void
-  onChanged: () => void
+  /** Reads the Host's state again; settles once a snapshot read after the call is in. */
+  onChanged: () => void | Promise<void>
   onOpenSession?: (id: string) => void
   /** Opens an applied plugin page (设置 › 插件's 新应用). */
   onOpenApp?: (target: { pluginId: string; appId: string }) => void
 }) {
   const phone = useViewport() === 'phone'
+  // Only 设置 › Harness waits for the snapshot: a confirmed program counts as settled once the catalog says so.
+  const changed = () => {
+    void onChanged()
+  }
   const access = given ?? deviceAccess(snapshot, currentShell())
   const audience = settingsReadAudience(snapshot, access)
   const [reads, setReads] = useState(() => new ModelSettingsReads(audience))
@@ -547,10 +552,10 @@ export function SettingsPage({
                       data-lock={panel === 'devices' ? '' : undefined}>
                       {/* The section's name heads it; a page opened inside it names itself under its way back. */}
                       {!phone && depth === 0 && current && <h1 className="settings-title">{current.label}</h1>}
-                      {panel === 'general' && <GeneralSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} />}
-                      {panel === 'appearance' && <AppearanceSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} />}
+                      {panel === 'general' && <GeneralSettings snapshot={snapshot} admin={access.admin} onChanged={changed} />}
+                      {panel === 'appearance' && <AppearanceSettings snapshot={snapshot} admin={access.admin} onChanged={changed} />}
                       {panel === 'providers' && (
-                        <ProvidersSection key={reads.audience} snapshot={snapshot} access={access} reads={reads} onChanged={onChanged} />
+                        <ProvidersSection key={reads.audience} snapshot={snapshot} access={access} reads={reads} onChanged={changed} />
                       )}
                       {panel === 'engines' && <AgentsSettings snapshot={snapshot} onChanged={onChanged} initialPage={initialAgent} />}
                       {panel === 'mcp' && <McpSettings snapshot={snapshot} />}
@@ -572,7 +577,7 @@ export function SettingsPage({
                         <WorkspacesSettings
                           snapshot={snapshot}
                           access={access}
-                          onChanged={onChanged}
+                          onChanged={changed}
                           {...(access.scopes.has('view') && onOpenSession ? { onOpenSession } : {})}
                         />
                       )}
@@ -591,12 +596,12 @@ export function SettingsPage({
                           {...(initialPluginId ? { initialPluginId } : {})}
                           snapshot={snapshot}
                           access={access}
-                          onChanged={onChanged}
+                          onChanged={changed}
                           {...(access.scopes.has('view') && onOpenSession ? { onOpenSession } : {})}
                           {...(onOpenApp ? { onOpenApp } : {})}
                         />
                       )}
-                      {panel === 'devices' && <PhoneDevicesPage snapshot={snapshot} access={access} onChanged={onChanged} />}
+                      {panel === 'devices' && <PhoneDevicesPage snapshot={snapshot} access={access} onChanged={changed} />}
                       {panel === 'relays' && (
                         <RelaySettings
                           key={`${snapshot.host.hostId}:${access.admin && access.local}`}

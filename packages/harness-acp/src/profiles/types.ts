@@ -2,6 +2,7 @@ import type { ModeGlyph, ModeTier, ModelCapabilities, ModelWire, SessionConfigOp
 import type { ModelRoute } from '@latch/sdk'
 import type { QuotaReport } from '../quota.ts'
 import type { TurnTokens } from '../protocol.ts'
+import type { ReleaseLookup } from '../update-command.ts'
 import type { WireKind } from '../wires/index.ts'
 
 /**
@@ -328,13 +329,14 @@ interface ProfileQuota {
 /**
  * Where a preset's own program is published (`update-command.ts`). The install's real path picks the source: a Homebrew
  * formula or cask named in `brew` is asked of Homebrew, a global copy of `npm` (or any other layout) of npm. `native`
- * recognises the program's own installer layout and names the command that updates it. `channel`: the Host
- * reads which npm dist-tag the program follows from its own settings (`claude`: `autoUpdatesChannel`).
+ * recognises the program's own installer layout and names the command that updates it; `release`, where that command
+ * looks for the release it installs, when that is not npm. `channel`: the Host reads which npm dist-tag the program
+ * follows from its own settings (`claude`: `autoUpdatesChannel`).
  */
 export interface ReleaseSource {
   readonly npm?: string
   readonly brew?: readonly string[]
-  readonly native?: { readonly matches: (file: string) => boolean; readonly command: string }
+  readonly native?: { readonly matches: (file: string) => boolean; readonly command: string; readonly release?: ReleaseLookup }
   readonly channel?: 'claude'
 }
 

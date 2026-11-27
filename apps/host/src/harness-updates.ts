@@ -1,8 +1,8 @@
 /**
  * Whether a newer release of a preset's own program exists, asked where it was installed from: the dist-tags of its npm
- * package at the npm registry, or its formula or cask at the Homebrew API (casks trail npm, so a Homebrew install is
- * never held against npm). Both are fixed origins, asked through the Host's outbound fetch with no identifier of this
- * computer or person. Only the
+ * package at the npm registry, its formula or cask at the Homebrew API (casks trail npm, so a Homebrew install is
+ * never held against npm), or, for pi's own installer, the release `pi update` installs from pi.dev. All are fixed
+ * origins, asked through the Host's outbound fetch with no identifier of this computer or person. Only the
  * agent settings ask, when they are read; nothing is asked on a timer, and the update command is never run.
  *
  * Claude Code follows the dist-tag its own settings name (`autoUpdatesChannel`: `latest` or `stable`); of Claude's
@@ -18,6 +18,8 @@ import type { FetchLike } from './egress.ts'
 
 const NPM_REGISTRY_ORIGIN = 'https://registry.npmjs.org'
 const HOMEBREW_API_ORIGIN = 'https://formulae.brew.sh'
+/** The release pi's installer and `pi update` take: `{ version, packageName }`. */
+export const PI_LATEST_URL = 'https://pi.dev/api/latest-version'
 const FOUND_TTL_MS = 6 * 60 * 60_000
 /** A failed lookup is not asked again for this long, so a page read on every focus does not keep asking. */
 const FAILED_TTL_MS = 10 * 60_000
@@ -25,6 +27,8 @@ const LOOKUP_MS = 5_000
 const MAX_TAGS_BYTES = 16 * 1024
 /** A formula or cask document carries its bottles and artifacts too: a few KiB today. */
 const MAX_HOMEBREW_BYTES = 64 * 1024
+/** pi.dev answers with a version and a package name: well under 1 KiB. */
+const MAX_PI_BYTES = 4 * 1024
 const MAX_SETTINGS_BYTES = 1024 * 1024
 
 /** An npm package name as the profiles name them; anything else is never put in a URL. */
@@ -73,6 +77,13 @@ export function readHomebrew(kind: 'formula' | 'cask', value: unknown): string |
       : record.version
   if (typeof raw !== 'string') return undefined
   const version = VERSION.safeParse(kind === 'cask' ? raw.split(',')[0] : raw)
+  return version.success ? version.data : undefined
+}
+
+/** pi.dev's latest release, read as pi itself reads it (`version`); undefined for any other shape. */
+export function readPiRelease(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const version = VERSION.safeParse((value as Record<string, unknown>).version)
   return version.success ? version.data : undefined
 }
 
@@ -144,8 +155,9 @@ async function boundedJson(response: Response, limit: number): Promise<unknown> 
   }
 }
 
-/** The key a lookup is kept under: one per package, formula or cask. */
-const keyOf = (lookup: ReleaseLookup) => (lookup.registry === 'npm' ? `npm:${lookup.name}` : `homebrew:${lookup.kind}:${lookup.name}`)
+/** The key a lookup is kept under: one per package, formula or cask, and one for pi.dev. */
+const keyOf = (lookup: ReleaseLookup) =>
+  lookup.registry === 'npm' ? `npm:${lookup.name}` : lookup.registry === 'pi' ? 'pi' : `homebrew:${lookup.kind}:${lookup.name}`
 
 /**
  * The tags one lookup found (`latest`, and `stable` where npm has it), or undefined when it failed or answered in
@@ -156,6 +168,11 @@ async function fetchRelease(lookup: ReleaseLookup, fetch: FetchLike): Promise<Re
     const url = distTagsUrl(lookup.name)
     return url ? fetchJson(url, fetch, MAX_TAGS_BYTES, readDistTags) : undefined
   }
+  if (lookup.registry === 'pi')
+    return fetchJson(PI_LATEST_URL, fetch, MAX_PI_BYTES, value => {
+      const latest = readPiRelease(value)
+      return latest ? { latest } : undefined
+    })
   const url = homebrewUrl(lookup.kind, lookup.name)
   if (!url) return undefined
   return fetchJson(url, fetch, MAX_HOMEBREW_BYTES, value => {

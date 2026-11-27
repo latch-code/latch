@@ -736,9 +736,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       closeSettings()
                       setRoute({ entry: 'apps', app })
                     }}
-                    onChanged={() => {
-                      void refresh()
-                    }}
+                    onChanged={refresh}
                   />
                 </Modal>
               )}

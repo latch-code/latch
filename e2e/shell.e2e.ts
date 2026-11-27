@@ -309,7 +309,11 @@ describe('the shell', () => {
       harnessUpdates: {
         home: '/nonexistent',
         claudeDir: join(root, 'claude'),
-        fetch: async () => new Response(JSON.stringify({ latest: '1.6.1' }), { status: 200 }),
+        // npm is ahead of pi.dev: a managed install follows the release its own updater installs.
+        fetch: async url =>
+          new Response(JSON.stringify(url === 'https://pi.dev/api/latest-version' ? { ok: true, version: '1.6.1' } : { latest: '1.7.0' }), {
+            status: 200,
+          }),
       },
     })
     try {
@@ -388,7 +392,7 @@ describe('the shell', () => {
         await updates.getByRole('button', { name: '在设置中打开 pi', exact: true }).click()
         const harness = handset.getByRole('region', { name: 'pi', exact: true })
         await harness.getByText('有新版本', { exact: true }).waitFor()
-        // The official updater switches the version behind the same launcher.
+        // The official updater switches the version behind the same launcher; npm's newer 1.7.0 is not its release.
         await writeFile(version, '1.6.1\n')
         await harness.getByRole('button', { name: '重新检测', exact: true }).click()
         await harness.getByText('有新版本', { exact: true }).waitFor({ state: 'detached' })

@@ -337,6 +337,9 @@ const lines = (text: string) =>
  */
 const commandMoved = (harness?: HarnessInfo): boolean => harness?.status === 'unavailable' && harness.statusReason === 'moved'
 
+/** A save waits this long at most for the catalog: queued syncs can keep one going, and the page stays busy meanwhile. */
+const CATALOG_WAIT_MS = 5_000
+
 /** What the Host found for an agent's command, in one line; ready is the default state and stays quiet. */
 function Detection({ agent, preset, harness }: { agent: AgentSettings; preset?: AgentPreset; harness?: HarnessInfo }) {
   const missing = missingText(agent)
@@ -1185,7 +1188,16 @@ function AgentPage({
       )}
       {harness?.login && <LoginGroup harness={harness} allowed={run} surface={surface} probe={agent.lastProbe} />}
       {harness && <ExtensionsLink title={COPY.extensions} harnessId={harness.id} />}
-      {probe && <AgentProbe agent={agent} disabled={busy} disabledReason={probeDisabledReason} onSaved={onSaved} />}
+      {probe && (
+        <AgentProbe
+          agent={agent}
+          disabled={busy}
+          disabledReason={probeDisabledReason}
+          onSaved={() => {
+            void onSaved()
+          }}
+        />
+      )}
       <SettingsGroup>
         <SettingsRow
           title={agent.account ? COPY.removeAccount : COPY.deleteHarness}
@@ -1603,7 +1615,8 @@ export function AgentsSettings({
   initialPage,
 }: {
   snapshot: AppSnapshot
-  onChanged: () => void
+  /** Reads the snapshot again; settles once one read after the call is in. */
+  onChanged: () => void | Promise<void>
   /** A page to open on, each time a new one is given. */
   initialPage?: AgentPageTarget | undefined
 }) {
@@ -1643,16 +1656,19 @@ export function AgentsSettings({
   const recheck = async () => {
     setChecking(true)
     await load()
-    onChanged()
+    void onChanged()
     setChecking(false)
   }
-  const refreshed = () => {
-    onChanged()
-    return load()
+  /** The definitions and the catalog, read again: whether a command still finds a moved program is in the catalog. */
+  const refreshed = async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const catalog = Promise.race([onChanged(), new Promise<void>(resolve => (timer = setTimeout(resolve, CATALOG_WAIT_MS)))])
+    await Promise.all([catalog, load()])
+    clearTimeout(timer)
   }
   const done = () => {
     setEditing(null)
-    refreshed()
+    void refreshed()
   }
   const toggle = async (agent: AgentSettings) => {
     setConfirmationTarget(null)
@@ -1660,7 +1676,7 @@ export function AgentsSettings({
     setError('')
     try {
       await api(`agents/${encodeURIComponent(agent.id)}`, { method: 'PUT', body: { enabled: !agent.enabled } })
-      onChanged()
+      void onChanged()
       await load()
     } catch (cause) {
       setError(errorMessage(cause))
@@ -1681,9 +1697,9 @@ export function AgentsSettings({
           ...(confirmation ? { confirmation } : {}),
         }),
       )
+      // The row stays pending until the catalog no longer counts the program as moved.
+      await refreshed()
       setConfirmationTarget(null)
-      onChanged()
-      await load()
     } catch (cause) {
       setError(inlineError(cause))
     } finally {
@@ -1893,12 +1909,12 @@ export function AgentsSettings({
           directories={harnessAccountDirectories(accountPreset.id)}
           onClose={unknown => {
             setAccountPreset(undefined)
-            if (unknown) refreshed()
+            if (unknown) void refreshed()
           }}
           onAdded={item => {
             setData({ ...data, agents: [...data.agents.filter(agent => agent.id !== item.id), item] })
             setAccountPreset(undefined)
-            refreshed()
+            void refreshed()
             setEditing({ kind: 'agent', id: item.id })
           }}
         />

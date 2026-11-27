@@ -5,11 +5,13 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { FetchLike } from '../src/egress.ts'
 import {
   HarnessUpdates,
+  PI_LATEST_URL,
   distTagsUrl,
   homebrewUrl,
   readClaudeChannel,
   readDistTags,
   readHomebrew,
+  readPiRelease,
   updateHint,
   type UpdateSource,
 } from '../src/harness-updates.ts'
@@ -159,6 +161,50 @@ describe('the Homebrew lookup', () => {
     const updates = new HarnessUpdates({ fetch, claudeDir: () => '/nonexistent' })
     await updates.settle([goose], 1_000)
     expect(updates.hint(goose)).toBeUndefined()
+  })
+})
+
+describe('the lookup for pi’s own installer', () => {
+  const managed: UpdateSource = { lookup: { registry: 'pi' }, current: '1.6.0', command: 'pi update --self' }
+
+  it('asks pi.dev for the release `pi update` installs, with no identifying headers', async () => {
+    const { fetch, asked } = registry({ ok: true, version: '1.6.1', packageName: '@earendil-works/pi-coding-agent' })
+    const updates = new HarnessUpdates({ fetch, claudeDir: () => '/nonexistent' })
+    await updates.settle([managed], 1_000)
+    expect(asked.map(item => item.url)).toEqual([PI_LATEST_URL])
+    expect(PI_LATEST_URL).toBe('https://pi.dev/api/latest-version')
+    expect(asked[0]!.init).toMatchObject({ method: 'GET', headers: { accept: 'application/json' }, redirect: 'manual' })
+    expect(updates.hint(managed)).toEqual({ current: '1.6.0', latest: '1.6.1', command: 'pi update --self' })
+  })
+
+  it('reads only a release-shaped version', () => {
+    expect(readPiRelease({ ok: true, version: '1.6.1' })).toBe('1.6.1')
+    expect(readPiRelease({ latest: '1.6.1' })).toBeUndefined()
+    expect(readPiRelease({ version: 'latest' })).toBeUndefined()
+    expect(readPiRelease({ version: `1.6.1-${'x'.repeat(80)}` })).toBeUndefined()
+    expect(readPiRelease(['1.6.1'])).toBeUndefined()
+  })
+
+  it('holds a managed install to pi.dev even when npm is ahead', async () => {
+    const asked: string[] = []
+    const fetch: FetchLike = async url => {
+      asked.push(url)
+      const body = url === PI_LATEST_URL ? { ok: true, version: '1.6.1' } : { latest: '1.7.0' }
+      return new Response(JSON.stringify(body), { status: 200 })
+    }
+    const npm: UpdateSource = { lookup: { registry: 'npm', name: '@earendil-works/pi-coding-agent' }, current: '1.6.1' }
+    const updates = new HarnessUpdates({ fetch, claudeDir: () => '/nonexistent' })
+    await updates.settle([{ ...managed, current: '1.6.1' }, npm], 1_000)
+    expect(asked.sort()).toEqual([PI_LATEST_URL, 'https://registry.npmjs.org/-/package/@earendil-works%2Fpi-coding-agent/dist-tags'])
+    expect(updates.hint({ ...managed, current: '1.6.1' })).toBeUndefined()
+    expect(updates.hint(npm)?.latest).toBe('1.7.0')
+  })
+
+  it('refuses an answer larger than a version is', async () => {
+    const { fetch } = registry({ version: '1.6.1', padding: 'x'.repeat(8 * 1024) })
+    const updates = new HarnessUpdates({ fetch, claudeDir: () => '/nonexistent' })
+    await updates.settle([managed], 1_000)
+    expect(updates.hint(managed)).toBeUndefined()
   })
 })
 

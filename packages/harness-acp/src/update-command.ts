@@ -4,8 +4,14 @@
  */
 import type { ReleaseSource } from './profiles/types.ts'
 
-/** Where a newer release of an install is asked: npm's dist-tags, or Homebrew's own entry for its formula or cask. */
-export type ReleaseLookup = { registry: 'npm'; name: string } | { registry: 'homebrew'; kind: 'formula' | 'cask'; name: string }
+/**
+ * Where a newer release of an install is asked: npm's dist-tags, Homebrew's own entry for its formula or cask, or the
+ * release pi's own installer updates to (`pi update` asks pi.dev, not npm).
+ */
+export type ReleaseLookup =
+  | { registry: 'npm'; name: string }
+  | { registry: 'homebrew'; kind: 'formula' | 'cask'; name: string }
+  | { registry: 'pi' }
 
 const BREW_PATH = /\/(Cellar|Caskroom)\/([^/]+)\//u
 
@@ -29,13 +35,16 @@ export function updateCommand(path: string, real: string | undefined, source: Re
 /**
  * Where to ask whether a newer release of the program at `path` (real file `real`) is out, the way it was installed: a
  * Homebrew formula or cask the profile names is asked of Homebrew, whose builds trail npm by hours; any other Homebrew
- * install, nothing. Every other layout is asked of npm when the profile names a package there, else nothing.
+ * install, nothing. An installer that updates itself from its own source is asked there, so a hint names the release
+ * its command installs. Every other layout is asked of npm when the profile names a package there, else nothing.
  */
 export function releaseLookup(path: string, real: string | undefined, source: ReleaseSource): ReleaseLookup | undefined {
-  const brew = BREW_PATH.exec((real ?? path).replaceAll('\\', '/'))
+  const file = (real ?? path).replaceAll('\\', '/')
+  const brew = BREW_PATH.exec(file)
   if (brew)
     return source.brew?.includes(brew[2]!)
       ? { registry: 'homebrew', kind: brew[1] === 'Cellar' ? 'formula' : 'cask', name: brew[2]! }
       : undefined
+  if (source.native?.release && source.native.matches(file)) return source.native.release
   return source.npm ? { registry: 'npm', name: source.npm } : undefined
 }
