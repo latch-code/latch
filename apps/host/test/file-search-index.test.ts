@@ -330,10 +330,70 @@ async function project(files: Record<string, string>) {
   const roots = [{ id: 'primary', path: f.root }]
   return {
     ...f,
+    page: (query = '', cursor?: string) =>
+      f.index.search(roots, f.guard, 'context-v1', query, 1, () => false, undefined, { device: 'reader', cursor }),
     listed: async (query = '') => (await f.search(query)).files.map(file => file.path),
     uncached: async (query = '') => (await searchFiles(roots, f.guard, query, 100, () => false)).files.map(file => file.path),
   }
 }
+
+describe('paged mention search', () => {
+  it('returns a shallow file before opening any descendant, ranks once on demand and rechecks each subsequent file', async () => {
+    const f = await project({ 'root.ts': '', 'src/a.ts': '', 'src/b.ts': '', 'src/c.ts': '', 'src/d.ts': '' })
+    const first = await f.page()
+    expect(first.files.map(item => item.path)).toEqual(['root.ts'])
+    expect(opendir).toHaveBeenCalledTimes(1)
+    expect(first.nextCursor).toBeTypeOf('string')
+    const second = await f.page('', first.nextCursor)
+    expect(second.files.map(item => item.path)).toEqual(['src/a.ts'])
+    expect(second.nextCursor).toBeTypeOf('string')
+    const opened = vi.mocked(opendir).mock.calls.length
+    await writeFile(join(f.root, 'src/b.ts'), ['-----BEGIN', 'PRIVATE KEY-----'].join(' '))
+    await rm(join(f.root, 'src/c.ts'))
+    await symlink('d.ts', join(f.root, 'src/c.ts'))
+    const last = await f.page('', second.nextCursor)
+    expect(last).toEqual({ files: [{ root: 'primary', name: 'd.ts', path: 'src/d.ts' }], truncated: false })
+    expect(opendir).toHaveBeenCalledTimes(opened)
+  })
+
+  it('finds deep exact names ahead of weak shallow matches and still finds explicitly requested ignored files', async () => {
+    const f = await project({ 'm-a-i-n.ts': '', 'a/b/main.ts': '', 'node_modules/build/artifact.ts': '' })
+    const main = await f.page('main')
+    expect(main.files.map(item => item.path)).toEqual(['a/b/main.ts'])
+    expect((await f.page('artifact')).files).toEqual([
+      { root: 'primary', name: 'artifact.ts', path: 'node_modules/build/artifact.ts', ignored: true },
+    ])
+    expect(await f.page('absent-name')).toEqual({ files: [], truncated: false })
+  })
+
+  it('uses a warm index directly on the first page of a new query', async () => {
+    controlledWatches()
+    const f = await project({ 'readme.txt': '', 'src/main.ts': '' })
+    await f.search('readme')
+    const opened = vi.mocked(opendir).mock.calls.length
+    expect((await f.page('main')).files.map(item => item.path)).toEqual(['src/main.ts'])
+    expect(opendir).toHaveBeenCalledTimes(opened)
+  })
+
+  it('expires abandoned cursors and refuses to use them for another query', async () => {
+    const f = await project({ 'a.ts': '', 'b.ts': '', 'c.ts': '' })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true })
+    const first = await f.page()
+    expect(first.nextCursor).toBeTypeOf('string')
+    await expect(f.page('b', first.nextCursor)).rejects.toMatchObject({ code: 'file-search-expired' })
+    // Date.now stays at real time: the expiry callback must actually release the saved names.
+    await vi.advanceTimersByTimeAsync(60_001)
+    await expect(f.page('', first.nextCursor)).rejects.toMatchObject({ code: 'file-search-expired' })
+    expect(vi.getTimerCount()).toBe(0)
+    const oldest = await f.page()
+    for (let index = 0; index < 16; index++) await f.page()
+    expect(vi.getTimerCount()).toBe(16)
+    await expect(f.page('', oldest.nextCursor)).rejects.toMatchObject({ code: 'file-search-expired' })
+    await f.index.close()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
 const RUST = {
   '.git/HEAD': 'ref',
   '.gitignore': 'target/\n',

@@ -61,7 +61,12 @@ const resolveSchema = z.strictObject({
   rootId: z.string().min(1).max(32).optional(),
   showSecret: z.boolean().optional(),
 })
-const searchSchema = z.strictObject({ q: z.string().max(512), limit: z.number().int().min(1).max(100).default(100) })
+const searchSchema = z.strictObject({
+  q: z.string().max(512),
+  limit: z.number().int().min(1).max(100).default(100),
+  page: z.literal(true).optional(),
+  cursor: z.uuid().optional(),
+})
 const editSchema = z.strictObject({
   requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
   baseHash: z.string().regex(/^[0-9a-f]{64}$/u),
@@ -974,6 +979,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
     if (!readsProjectFiles(caller.device.dataScope))
       throw new AppError(403, 'file-scope', '这台设备只能打开本会话提到过的文件，不能搜索文件夹')
     const input = supplied ?? searchSchema.parse(await jsonBody(req))
+    if (input.cursor && !input.page) throw new AppError(400, 'file-search-cursor', '分页搜索需要指定 page')
     options.limiter.take(caller.device.id)
     const access = await contextLease(caller, context)
     const result = await searchIndex.search(
@@ -984,6 +990,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
       input.limit,
       () => req.aborted || res.destroyed,
       access.check,
+      input.page ? { device: caller.device.id, cursor: input.cursor } : undefined,
     )
     await access.recheck()
     for (const root of access.roots)

@@ -1,15 +1,24 @@
 import { randomUUID } from 'node:crypto'
-import { chromium, type Browser, type Page, type Route } from '@playwright/test'
+import { chromium, type Browser, type Locator, type Page, type Route } from '@playwright/test'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { TaskDetail } from '@latch/protocol'
+import type { TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { closeActiveFile, closeSettings, openSection, openSession, openSettings, permissionControl } from './helpers/layout.ts'
+import {
+  closeActiveFile,
+  closeSettings,
+  noHorizontalOverflow,
+  openSection,
+  openSession,
+  openSettings,
+  permissionControl,
+} from './helpers/layout.ts'
 import { promptSelection, promptValue, setPromptSelection } from './helpers/prompt.ts'
+import { stillMotion } from './helpers/visual.ts'
 /** The new draft is the home's input on every width: already in sight, or where 新建会话 leads. */
 async function newDraft(page: Page) {
   const home = page.locator('.workbench-home')
@@ -17,6 +26,114 @@ async function newDraft(page: Page) {
   await home.getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
 }
 const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=', 'base64')
+const tomlFile = 'paged-00.toml'
+const mentionIcons = [
+  ['paged-00.TSX', 'react_ts'],
+  ['case-03.ts', 'typescript'],
+  [tomlFile, 'toml'],
+  ['paged-01.unlisted', null],
+  ['paged-02', null],
+] as const
+function fileMark(item: Locator, icon: string | null, fallback = 'file'): Locator {
+  return item.locator(icon ? `svg[data-file-icon="${icon}"]:has(use[href*="#${icon}"])` : `svg.latch-glyph-${fallback}`)
+}
+/** Compare visible shapes. The SVG viewBox and the text's line box both contain blank space. */
+async function fileMarkOffsets(item: Locator, labelSelector = '.prompt-chip-label') {
+  return item.evaluate(async (element, labelSelector) => {
+    await document.fonts.ready
+    const label = element.querySelector(labelSelector)!
+    const icon = element.querySelector('svg')!
+    const symbols = Array.from(icon.querySelectorAll('use'))
+    const drawing = symbols.length ? symbols.find(use => getComputedStyle(use).display !== 'none') : icon
+    const ink = drawing?.getBBox()
+    // An unresolved external symbol has no bounds. Give Chromium time to load the sprite before measuring.
+    if (!drawing || !ink?.width || !ink.height) return { markToName: Infinity, markToMiddle: Infinity, nameToMiddle: Infinity }
+    const text = document.createElement('canvas').getContext('2d')!
+    const { fontWeight, fontStyle, fontSize, fontFamily } = getComputedStyle(label)
+    text.font = `${fontStyle} ${fontWeight} ${fontSize} ${fontFamily}`
+    const { actualBoundingBoxAscent, actualBoundingBoxDescent } = text.measureText(label.textContent!)
+    const baseline = document.createElement('span')
+    baseline.style.display = 'inline-block'
+    label.append(baseline)
+    const textY = baseline.getBoundingClientRect().y + (actualBoundingBoxDescent - actualBoundingBoxAscent) / 2
+    const iconY = new DOMPoint(0, ink.y + ink.height / 2).matrixTransform(drawing.getScreenCTM()!).y
+    baseline.remove()
+    const { y, height } = element.getBoundingClientRect()
+    const middle = y + height / 2
+    return { markToName: iconY - textY, markToMiddle: iconY - middle, nameToMiddle: textY - middle }
+  }, labelSelector)
+}
+async function expectFileMarkAlignment(item: Locator, name: string, labelSelector?: string): Promise<void> {
+  await expect
+    .poll(async () => Math.abs((await fileMarkOffsets(item, labelSelector)).markToName), { message: `${name} mark to name` })
+    .toBeLessThan(1.5)
+  if (labelSelector) return
+  const { markToMiddle, nameToMiddle } = await fileMarkOffsets(item)
+  expect(Math.abs(markToMiddle), `${name} mark to capsule center (signed offset ${markToMiddle})`).toBeLessThan(0.75)
+  expect(Math.abs(nameToMiddle), `${name} name to capsule center (signed offset ${nameToMiddle})`).toBeLessThan(1.5)
+}
+async function fileChipBaselineOffset(chip: Locator, preceding: string): Promise<number> {
+  return chip.evaluate((element, preceding) => {
+    const label = element.querySelector('.prompt-chip-label')!
+    const body = Array.from(element.parentNode!.childNodes).find(
+      (node): node is Text => node instanceof Text && node.data.endsWith(preceding + ' '),
+    )
+    if (!body) return Infinity
+    const labelBaseline = document.createElement('span')
+    const bodyBaseline = document.createElement('span')
+    labelBaseline.style.display = bodyBaseline.style.display = 'inline-block'
+    label.append(labelBaseline)
+    body.after(bodyBaseline)
+    const offset = labelBaseline.getBoundingClientRect().y - bodyBaseline.getBoundingClientRect().y
+    labelBaseline.remove()
+    bodyBaseline.remove()
+    return Math.abs(offset)
+  }, preceding)
+}
+/** Check the rendered art so inherited text color cannot replace the sprite's fills. */
+async function markHasColor(mark: Locator, rgb: readonly [number, number, number]): Promise<boolean> {
+  const screenshot = await mark.screenshot({ animations: 'disabled' })
+  return mark.page().evaluate(
+    async ({ png, rgb }) => {
+      const bytes = Uint8Array.from(atob(png), char => char.charCodeAt(0))
+      const icon = await createImageBitmap(new Blob([bytes], { type: 'image/png' }), { colorSpaceConversion: 'none' })
+      const context = new OffscreenCanvas(icon.width, icon.height).getContext('2d')!
+      context.drawImage(icon, 0, 0)
+      const { data } = context.getImageData(0, 0, icon.width, icon.height)
+      icon.close()
+      for (let i = 0; i < data.length; i += 4) if (rgb.every((channel, offset) => Math.abs(channel - data[i + offset]!) <= 10)) return true
+      return false
+    },
+    { png: screenshot.toString('base64'), rgb },
+  )
+}
+async function expectTomlVariant(item: Locator, theme: 'light' | 'dark', sampleColor: boolean): Promise<void> {
+  const mark = fileMark(item, 'toml')
+  await expect
+    .poll(() =>
+      mark
+        .locator('use')
+        .evaluateAll(symbols =>
+          symbols
+            .filter(symbol => getComputedStyle(symbol).display !== 'none')
+            .map(symbol => symbol.getAttribute('href')?.split('#').at(-1)),
+        ),
+    )
+    .toEqual([theme === 'light' ? 'toml_light' : 'toml'])
+  if (sampleColor) expect(await markHasColor(mark, theme === 'light' ? [69, 90, 100] : [207, 216, 220])).toBe(true)
+}
+async function fileMentionClip(list: Locator, composer: Locator) {
+  const popup = (await list.locator('..').boundingBox())!
+  const form = (await composer.boundingBox())!
+  const x = Math.floor(Math.min(popup.x, form.x))
+  const y = Math.floor(popup.y)
+  return {
+    x,
+    y,
+    width: Math.ceil(Math.max(popup.x + popup.width, form.x + form.width)) - x,
+    height: Math.ceil(form.y + form.height) - y,
+  }
+}
 describe('private attachments through the composer', () => {
   let host: TestHost,
     browser: Browser,
@@ -36,7 +153,11 @@ describe('private attachments through the composer', () => {
           async *stream(input) {
             calls++
             const attachments = input.messages.flatMap(message => message.attachments ?? [])
-            yield { type: 'text', text: `已收到 ${attachments.length} 个附件。` }
+            const text =
+              input.messages.findLast(message => message.role === 'user')?.content === '分页文件引用'
+                ? mentionIcons.map(([name]) => `[${name}](${name})`).join(' · ')
+                : `已收到 ${attachments.length} 个附件。`
+            yield { type: 'text', text }
             yield { type: 'finish', reason: 'stop' }
           },
         })
@@ -387,6 +508,184 @@ describe('private attachments through the composer', () => {
       ).toBeUndefined()
     } finally {
       await context.close()
+    }
+  })
+  it('keeps the first @ files usable and appends the next page on scroll', async () => {
+    const project = join(host.root, 'file-pages')
+    await mkdir(project)
+    const names = [
+      ...mentionIcons.map(([name]) => name),
+      'paged-04.py',
+      'paged-05.go',
+      'paged-06.md',
+      ...Array.from({ length: 34 }, (_, i) => `paged-${String(i + 7).padStart(2, '0')}.txt`),
+    ]
+    await Promise.all(names.map(name => writeFile(join(project, name), 'export {}\n')))
+    const desktop = await host.enroll({ listener: 'unix' })
+    const { workspace } = (await (await desktop.addFolders({ paths: [project], name: '分页项目' })).json()) as { workspace: WorkspaceInfo }
+    const { sessionId } = await desktop.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: {
+        prompt: '分页文件引用',
+        requestId: randomUUID(),
+        mode: 'agent',
+        workspaceId: workspace.id,
+        model: { providerId: 'vision', model: 'fixture' },
+      },
+    })
+    await expect.poll(async () => (await host.host.bridge.detail(sessionId)).summary.status, { timeout: 10000 }).toBe('idle')
+    for (const width of [1440, 768, 320]) {
+      const context = await browser.newContext({
+        viewport: { width, height: 900 },
+        hasTouch: width < 1440,
+        reducedMotion: 'reduce',
+        locale: 'zh-CN',
+      })
+      await stillMotion(context)
+      const page = await context.newPage()
+      let release!: () => void
+      const held = new Promise<void>(resolve => {
+        release = resolve
+      })
+      try {
+        const deviceName = `文件翻页 ${width}`
+        await enrollBrowser(page, host, { name: deviceName })
+        const device = host.host.security.devices.list().find(item => item.name === deviceName)!
+        expect((await desktop.confirmed(`devices/${device.id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+        await page.reload()
+        await page.locator('.app-shell[data-connection="connected"]').waitFor()
+        await openSession(page, sessionId)
+        const input = page.getByRole('textbox', { name: '继续对话', exact: true })
+        const composer = page.locator('form.composer').filter({ has: input })
+        const list = page.getByRole('listbox', { name: '引用项目文件', exact: true })
+        const options = list.getByRole('option', { name: /(?:case|paged)-\d+/u })
+        const labels = options.locator('.ui-suggest-label')
+        let continuations = 0
+        await page.route(`**/link/api/tasks/${sessionId}/files/search`, async route => {
+          if (!route.request().postDataJSON().cursor) return route.continue()
+          const response = await route.fetch()
+          continuations++
+          await held
+          await route.fulfill({ response })
+        })
+        const search = page.waitForResponse(response => new URL(response.url()).pathname === `/link/api/tasks/${sessionId}/files/search`)
+        await input.fill('@')
+        const response = await search
+        const first = (await response.json()) as { files: { name: string }[]; nextCursor?: string; error?: string }
+        expect(response.status(), first.error).toBe(200)
+        expect(first.nextCursor).toBeTruthy()
+        await expect.poll(() => labels.allTextContents()).toEqual(first.files.map(file => file.name))
+        const initial = await labels.allTextContents()
+        expect(initial.length).toBeLessThan(names.length)
+        for (const [name, icon] of mentionIcons) {
+          const option = list.getByRole('option', { name, exact: true })
+          expect((await fileMark(option, icon).boundingBox())?.width).toBe(16)
+          await expectFileMarkAlignment(option, name, '.ui-suggest-label')
+        }
+        expect(await input.getAttribute('aria-activedescendant')).toBeNull()
+        await input.press('ArrowDown')
+        expect(await options.first().getAttribute('aria-selected')).toBe('true')
+        const pagesClip = await fileMentionClip(list, composer)
+        for (const theme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme: theme })
+          await noHorizontalOverflow(page, list)
+          await page.screenshot({
+            path: `test-results/attachments/file-pages-${width}-${theme}.png`,
+            clip: pagesClip,
+            animations: 'disabled',
+          })
+        }
+        expect(continuations).toBe(0)
+        await list.evaluate(element => element.scrollTo(0, element.scrollHeight))
+        await expect.poll(() => continuations).toBe(1)
+        expect(await labels.allTextContents()).toEqual(initial)
+        expect(await options.first().getAttribute('aria-selected')).toBe('true')
+        await input.press('ArrowDown')
+        expect(await options.nth(1).getAttribute('aria-selected')).toBe('true')
+        await input.press('ArrowUp')
+        release()
+        await expect.poll(() => options.count()).toBeGreaterThan(initial.length)
+        const extended = await labels.allTextContents()
+        expect(extended.slice(0, initial.length)).toEqual(initial)
+        expect(new Set(extended).size).toBe(extended.length)
+        const next = extended[initial.length]!
+        if (width === 1440) {
+          for (let i = 0; i < initial.length; i++) await input.press('ArrowDown')
+          expect(await options.nth(initial.length).getAttribute('aria-selected')).toBe('true')
+          await input.press('Enter')
+        } else await options.nth(initial.length).click()
+        expect(await promptValue(input)).toBe(`@${workspace.folders![0]!.id}:${next} `)
+        await input.fill('看看 ')
+        for (const [name, icon] of mentionIcons) {
+          const reply = page.locator('.message-assistant .message-content').getByRole('button').filter({ hasText: name })
+          expect((await fileMark(reply, icon, 'page').boundingBox())?.width).toBe(14)
+          if (name === tomlFile) {
+            await input.press('Shift+Enter')
+            await page.keyboard.insertText('再看 ')
+          }
+          await page.keyboard.insertText(`@${name}`)
+          await list.getByRole('option', { name, exact: true }).click()
+          const draft = input.locator('.prompt-chip').filter({ hasText: name })
+          expect((await fileMark(draft, icon).boundingBox())?.width).toBe(14)
+          await expectFileMarkAlignment(draft, name)
+        }
+        await page.keyboard.insertText('@')
+        const reactOption = list.getByRole('option', { name: mentionIcons[0][0], exact: true })
+        const typescriptOption = list.getByRole('option', { name: mentionIcons[1][0], exact: true })
+        const tomlOption = list.getByRole('option', { name: tomlFile, exact: true })
+        const tomlDraft = input.locator('.prompt-chip').filter({ hasText: tomlFile })
+        const reactDraft = input.locator('.prompt-chip').filter({ hasText: mentionIcons[0][0] })
+        expect(await fileChipBaselineOffset(reactDraft, '看看')).toBeLessThan(0.5)
+        expect(await fileChipBaselineOffset(tomlDraft, '再看')).toBeLessThan(0.5)
+        if (width === 320) {
+          const typescriptDraft = input.locator('.prompt-chip').filter({ hasText: mentionIcons[1][0] })
+          expect((await typescriptDraft.boundingBox())!.y).toBeGreaterThan((await reactDraft.boundingBox())!.y)
+        }
+        await reactOption.waitFor()
+        await page.mouse.move(0, 0)
+        const clip = await fileMentionClip(list, composer)
+        for (const theme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme: theme })
+          await expectTomlVariant(tomlOption, theme, width === 1440)
+          await expectTomlVariant(tomlDraft, theme, width === 1440)
+          await expectFileMarkAlignment(tomlOption, tomlFile, '.ui-suggest-label')
+          await expectFileMarkAlignment(tomlDraft, tomlFile)
+          await noHorizontalOverflow(page, input)
+          await page.screenshot({ path: `test-results/attachments/file-marks-${width}-${theme}.png`, clip, animations: 'disabled' })
+          if (width === 1440) expect(await markHasColor(fileMark(typescriptOption, 'typescript'), [2, 136, 209])).toBe(true)
+        }
+        await input.press('Escape')
+        await input.press('Backspace')
+        const messages = page.locator('.message-user')
+        const nextMessage = messages.nth(await messages.count())
+        await page.getByRole('button', { name: '发送', exact: true }).click()
+        const bubble = nextMessage.locator('.user-bubble')
+        for (const [name, icon] of mentionIcons) {
+          const sent = bubble.locator('[data-file-chip]').filter({ hasText: name })
+          expect((await fileMark(sent, icon).boundingBox())?.width).toBe(14)
+          await expectFileMarkAlignment(sent, name)
+        }
+        const reactSent = bubble.locator('[data-file-chip]').filter({ hasText: mentionIcons[0][0] })
+        const tomlSent = bubble.locator('[data-file-chip]').filter({ hasText: tomlFile })
+        expect(await fileChipBaselineOffset(reactSent, '看看')).toBeLessThan(0.5)
+        expect(await fileChipBaselineOffset(tomlSent, '再看')).toBeLessThan(0.5)
+        if (width === 320) {
+          const typescriptSent = bubble.locator('[data-file-chip]').filter({ hasText: mentionIcons[1][0] })
+          expect((await typescriptSent.boundingBox())!.y).toBeGreaterThan((await reactSent.boundingBox())!.y)
+        }
+        for (const theme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme: theme })
+          await expectTomlVariant(tomlSent, theme, width === 1440)
+          await expectFileMarkAlignment(tomlSent, tomlFile)
+          await noHorizontalOverflow(page, bubble)
+          await bubble.screenshot({ path: `test-results/attachments/file-marks-sent-${width}-${theme}.png`, animations: 'disabled' })
+        }
+        await expect.poll(async () => (await host.host.bridge.detail(sessionId)).summary.status).toBe('idle')
+      } finally {
+        release()
+        await page.unrouteAll({ behavior: 'wait' })
+        await context.close()
+      }
     }
   })
   it('shows the conversation drop surface, accepts a dropped image once and refuses folders', async () => {

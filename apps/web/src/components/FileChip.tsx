@@ -43,10 +43,11 @@ const CHIP_COPY = defineCopy(
   },
 )
 import { currentShell, revealLabel, shellFiles, type FileActionResult, type FileInspection, type ShellFiles } from '../core/shell.ts'
-import { absoluteReference, referenceIcon, referenceName, splitPath } from '../fileReference.ts'
+import { absoluteReference, referenceName, splitPath } from '../fileReference.ts'
 import { editorLabel, openInEditor, useEditors } from './OpenInEditor.tsx'
 import { ReplyFileIcon } from './ReplyFileIcon.tsx'
 import { KnownFilesContext, ReplySettled, useKnownFolder } from './FileReferences.tsx'
+import { FileTypeIcon } from './FileTypeIcon.tsx'
 
 /** The session whose replies are shown and its folder: the desktop app asks about a file of that session. */
 export interface FileSessionInfo {
@@ -215,6 +216,7 @@ interface ChipMenuProps extends ChipProps {
 
 /** The chip and its menu, 「文件：deck.pptx」: the header names the file, the foot says why something is not offered or where it is. */
 function ChipMenu({ name, checking = false, sections, note, copied, onOpen, triggerRef, ...props }: ChipMenuProps) {
+  const promptGlyph = copied ? CheckGlyph : props.folderLink || props.path.trim().endsWith('/') ? FolderGlyph : undefined
   return (
     <Menu
       label={props.folderLink ? CHIP_COPY.folder : CHIP_COPY.file}
@@ -283,7 +285,11 @@ function ChipMenu({ name, checking = false, sections, note, copied, onOpen, trig
                 icon={
                   <Swap value={copied} className={props.prompt ? 'file-chip-icon prompt-chip-icon' : 'file-chip-icon'}>
                     {props.prompt ? (
-                      <Icon icon={copied ? CheckGlyph : props.folderLink ? FolderGlyph : referenceIcon(props.path)} size={14} />
+                      promptGlyph ? (
+                        <Icon icon={promptGlyph} size={14} />
+                      ) : (
+                        <FileTypeIcon path={props.path} mention />
+                      )
                     ) : (
                       <ReplyFileIcon path={props.path} folder={props.folderLink} copied={copied} />
                     )}
