@@ -305,35 +305,34 @@ describe('media in replies', () => {
       await home.getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
       const { png } = await media(page)
       await mkdir(join(host.workspaceRoot, 'out'), { recursive: true })
-      await writeFile(join(host.workspaceRoot, 'out', 'shot-a.png'), png)
-      await writeFile(join(host.workspaceRoot, 'out', 'shot-b.png'), png)
+      for (const name of ['a', 'b', 'c', 'd', 'e', 'f']) await writeFile(join(host.workspaceRoot, 'out', `shot-${name}.png`), png)
       reply = [
         '- 更新 [shot-a.png](out/shot-a.png)、[shot-b.png](out/shot-b.png)：展示最新左上角切换器与多目录分支计数。',
         '- 无法展示的路径：[missing-a.png](/nonexistent/a.png)、[missing-b.png](/nonexistent/b.png)：保留行内文件标签与冒号。',
+        '- **更新 [shot-c.png](out/shot-c.png)、[shot-d.png](out/shot-d.png)**：加粗包裹的两张图。',
+        '- 前缀、**[shot-e.png](out/shot-e.png) 文字**',
+        '- **文字 _[shot-f.png](out/shot-f.png)_**：嵌套包裹的图。',
+        '- **[missing-c.png](/nonexistent/c.png)**：包裹的路径标记。',
       ].join('\n')
       await home.getByRole('textbox', { name: '新会话消息', exact: true }).fill('看多张截图')
       await home.getByRole('button', { name: '发送', exact: true }).click()
       const answer = page.locator('.message-assistant').last()
-      await expect.poll(() => answer.locator('img.inline-media-image').count(), SLOW).toBe(2)
+      await expect.poll(() => answer.locator('img.inline-media-image').count(), SLOW).toBe(6)
       const items = answer.locator('li')
+      const displays = (item: number) =>
+        items
+          .nth(item)
+          .locator('.media-sep')
+          .evaluateAll(nodes => nodes.map(node => getComputedStyle(node).display))
       // Resolved block images hide the stranded 、 and leading ： between/after them.
-      await expect
-        .poll(() =>
-          items
-            .nth(0)
-            .locator('.media-sep')
-            .evaluateAll(nodes => nodes.map(node => getComputedStyle(node).display)),
-        )
-        .toEqual(['none', 'none'])
+      await expect.poll(() => displays(0)).toEqual(['none', 'none'])
       // Unresolved links stay inline chips, so their 、 and ： stay visible.
-      await expect
-        .poll(() =>
-          items
-            .nth(1)
-            .locator('.media-sep')
-            .evaluateAll(nodes => nodes.map(node => getComputedStyle(node).display)),
-        )
-        .toEqual(['inline', 'inline'])
+      await expect.poll(() => displays(1)).toEqual(['inline', 'inline'])
+      // Inside emphasis the same holds when the image is the wrapper's first or last child, nested one level too.
+      await expect.poll(() => displays(2)).toEqual(['none', 'none'])
+      await expect.poll(() => displays(3)).toEqual(['none'])
+      await expect.poll(() => displays(4)).toEqual(['none'])
+      await expect.poll(() => displays(5)).toEqual(['inline'])
       await page.screenshot({ path: `${OUT}/separators-1440-light.png`, animations: 'disabled' })
     } finally {
       reply = REPLY
