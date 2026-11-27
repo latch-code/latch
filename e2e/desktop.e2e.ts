@@ -1,5 +1,6 @@
 import { _electron, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
+import { once } from 'node:events'
 import { cp, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { createServer as createHttpServer, type Server } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
@@ -20,6 +21,7 @@ import { closeSettings, layersInWindow, openSection, openSettings, reachable, se
 
 const MARK_TOOL = 'mark_release'
 const R2_PROMPT = '标记发布版本'
+const EXIT_CHECK_PROMPT = '保持任务运行直到取消'
 const SECRET_MARKERS = ['ldc1.', 'PRIVATE KEY']
 // The suite reads the Chinese copy. macOS takes -AppleLanguages from the arguments before its own settings, so the
 // shell and its page start in Chinese whatever language the machine running the suite uses.
@@ -60,7 +62,7 @@ interface ExternalLinks {
 }
 
 /** A local model that asks for one unlisted tool; the Host classifies unlisted tools as high risk. */
-function markPlugin(marks: { ran: number }): HarnessPlugin {
+function markPlugin(marks: { ran: number; exitCheckStarted: boolean }): HarnessPlugin {
   return {
     id: 'e2e-desktop',
     name: '桌面端测试工具',
@@ -81,8 +83,14 @@ function markPlugin(marks: { ran: number }): HarnessPlugin {
         id: 'e2e-desktop',
         name: '桌面端测试模型',
         model: 'e2e',
-        async *stream({ messages, tools }) {
+        async *stream({ messages, tools, signal }) {
           const lastUser = messages.findLastIndex(message => message.role === 'user')
+          if (messages[lastUser]?.content === EXIT_CHECK_PROMPT) {
+            marks.exitCheckStarted = true
+            signal.throwIfAborted()
+            await once(signal, 'abort')
+            signal.throwIfAborted()
+          }
           if (messages.slice(lastUser + 1).some(message => message.role === 'tool')) {
             yield { type: 'text', text: '已完成标记。' }
           } else if (tools.some(tool => tool.name === MARK_TOOL)) {
@@ -521,7 +529,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
   // About a minute on a developer Mac and slower on a CI runner, so it gets five minutes instead of the suite's two.
   it('enrolls over host.sock, keeps credentials in main, confines the renderer and leaves the Host running', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-'))
-    const marks = { ran: 0 }
+    const marks = { ran: 0, exitCheckStarted: false }
     // Moved forward later to make the Host ask for credential renewal; the shell keeps its own clock.
     let hostClockOffset = 0
     const testHost = await startTestHost({
@@ -1694,15 +1702,14 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(application.windows()).toHaveLength(1)
       expect(counter.connections()).toBe(0)
 
-      // The demo's long task takes 30 s, which the steps above may outlast, so a second one runs through the end.
+      // Keep a task running until the test cancels it. Closing the window and app can outlast a timed task.
       const { sessionId: lateTask } = await host.bridge.createTask({
-        prompt: '运行可取消长任务',
+        prompt: EXIT_CHECK_PROMPT,
         requestId: randomUUID(),
-        mode: 'agent',
+        mode: 'chat',
+        model: { providerId: 'e2e-desktop', model: 'e2e' },
       })
-      await waitFor(async () =>
-        (await host.bridge.detail(lateTask)).messages.some(message => message.role === 'tool' && message.state === 'running'),
-      )
+      await waitFor(() => marks.exitCheckStarted)
 
       // Closing the last window leaves the app running, as Mac apps do: main still keeps the Mac awake for the running
       // session through its next checks of the Host, and the Dock icon (`activate`) opens the window again.
