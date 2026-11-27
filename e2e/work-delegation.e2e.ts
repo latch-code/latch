@@ -21,6 +21,10 @@ type Fixture = {
   dropReceipt: boolean
   sends: number
   consent?: string
+  holdSessionId?: string
+  readGate?: Promise<void>
+  releaseRead?: () => void
+  waitingForRead?: boolean
 }
 
 it.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON_E2E') !== '1')(
@@ -31,6 +35,7 @@ it.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON_E2E')
     const port = await freePort()
     const received: string[] = []
     const answer = '目标电脑核对完毕，结果只保存在这里。'
+    const followupAnswer = '目标电脑核对了第二条记录。'
     const provider: HarnessPlugin = {
       id: 'remote-fixture',
       name: 'Remote fixture',
@@ -43,7 +48,7 @@ it.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON_E2E')
           model: 'remote-only',
           async *stream({ messages }) {
             received.push(JSON.stringify(messages))
-            yield { type: 'text', text: answer }
+            yield { type: 'text', text: received.length === 1 ? answer : followupAnswer }
             yield { type: 'finish', reason: 'stop' }
           },
         })
@@ -152,11 +157,20 @@ it.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON_E2E')
         fixture.sends = 0
         proxy.handle = async request => {
           const path = new URL(request.url).pathname
+          // The destination view stays on its warm transcript until the explicit detail read is let through.
+          if (path === '/link/api/events') {
+            const stream = new ReadableStream({ start: controller => controller.enqueue(new TextEncoder().encode(': paused\n\n')) })
+            return new Response(stream, { headers: { 'content-type': 'text/event-stream' } })
+          }
+          if (path === `/link/api/tasks/${fixture.holdSessionId}` && fixture.readGate) {
+            fixture.waitingForRead = true
+            await fixture.readGate
+          }
           if (path.includes('/mentions/by-request/') && fixture.dropReceipt) return new Response(null, { status: 503 })
           const result = await original(request)
           if (request.method === 'POST' && path.endsWith('/mentions')) {
             fixture.sends++
-            if (result.ok) {
+            if (result.ok && fixture.sends === 1) {
               fixture.dropReceipt = true
               return new Response(null, { status: 504 })
             }
@@ -182,6 +196,14 @@ it.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON_E2E')
       await field.fill('@' + shortcut.name)
       await page.getByRole('option', { name: new RegExp(shortcut.name, 'u') }).click()
       await focusSource()
+      const secret = `${message} sk-ant-api03-${'a'.repeat(40)}`
+      await field.fill(secret)
+      await thread.getByRole('button', { name: '发送', exact: true }).click()
+      await thread.getByText('发言像含有密钥，没有发出。', { exact: true }).waitFor()
+      expect(await field.inputValue()).toBe(secret)
+      expect(await field.isEditable()).toBe(true)
+      expect((await owner.json<WorkThreadAnswer>(`work/items/${item.id}/posts`)).posts).toHaveLength(0)
+      expect(received).toHaveLength(0)
       await field.fill(message)
       await thread.getByRole('button', { name: '发送', exact: true }).click()
       const row = thread.locator('[data-remote-status]').filter({ hasText: message })
@@ -229,20 +251,54 @@ it.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON_E2E')
         }
       }
       await focusSource()
+      const opened = app.waitForEvent('window')
       await row.getByRole('button', { name: /查看结果/u }).click()
-      const remoteOrigin = `latch://h-${target.host.hostId}/`
-      await expect
-        .poll(async () => (app!.windows().some(w => w.url().startsWith(remoteOrigin)) ? 'opened' : await row.innerText()), {
-          timeout: 12_000,
-        })
-        .toBe('opened')
-      const resultPage = app.windows().find(w => w.url().startsWith(remoteOrigin))!
-      await resultPage
-        .locator(`[data-message-id="${posts[0]!.remote!.messageId}"]`)
-        .getByText(answer, { exact: true })
-        .first()
-        .waitFor({ timeout: 15_000 })
+      const resultPage = await opened
+      const original = resultPage.locator(`[data-message-id="${posts[0]!.remote!.messageId}"]`).getByText(answer, { exact: true }).first()
+      await original.waitFor({ timeout: 15_000 })
+      await resultPage.locator('.app-shell[data-connection="connected"]').waitFor()
       expect(await row.isVisible()).toBe(true)
+
+      await app.evaluate((_, sessionId) => {
+        const fixture = Reflect.get(globalThis, 'multiHostFixture') as Fixture
+        fixture.holdSessionId = sessionId
+        fixture.readGate = new Promise<void>(resolve => {
+          fixture.releaseRead = resolve
+        })
+      }, posts[0]!.remote!.sessionId)
+      try {
+        const followup = message + ' 再核对一遍。'
+        await focusSource()
+        await field.fill('@' + shortcut.name)
+        await page.getByRole('option', { name: new RegExp(shortcut.name, 'u') }).click()
+        await field.fill(followup)
+        await thread.getByRole('button', { name: '发送', exact: true }).click()
+        const next = thread.locator('[data-remote-status]').filter({ hasText: followup })
+        await expect.poll(() => next.getAttribute('data-remote-status'), { timeout: 15_000 }).toBe('completed')
+        expect(await original.isVisible()).toBe(true)
+        await focusSource()
+        await next.getByRole('button', { name: /查看结果/u }).click()
+        const remoteOrigin = `latch://h-${target.host.hostId}/`
+        await expect
+          .poll(() =>
+            app!.evaluate(
+              ({ BrowserWindow }, origin) => BrowserWindow.getFocusedWindow()?.webContents.getURL().startsWith(origin),
+              remoteOrigin,
+            ),
+          )
+          .toBe(true)
+        await expect.poll(() => app!.evaluate(() => (Reflect.get(globalThis, 'multiHostFixture') as Fixture).waitingForRead)).toBe(true)
+        await settleShell(resultPage)
+        expect(await resultPage.getByText(followupAnswer, { exact: true }).count()).toBe(0)
+        expect(await resultPage.getByText('原回合已不可用', { exact: true }).count()).toBe(0)
+      } finally {
+        await app.evaluate(() => {
+          const fixture = Reflect.get(globalThis, 'multiHostFixture') as Fixture
+          fixture.readGate = undefined
+          fixture.releaseRead?.()
+        })
+      }
+      await resultPage.getByText(followupAnswer, { exact: true }).first().waitFor({ timeout: 15_000 })
     } finally {
       try {
         if (app) {

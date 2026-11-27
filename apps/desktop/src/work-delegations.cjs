@@ -137,11 +137,14 @@ function createWorkDelegationHandler({ senderOf, gestureOf, localRequest, proxyF
       if (initial) {
         const { requestId, customAgentId } = input
         const reserved = await localRequest('POST', posts + '/remote', { requestId, text, customAgentId, hostId, agentId })
+        const code = reserved.json?.error
         if (reserved.status === 400 || reserved.status === 422) {
           // Trusted source validation rejected these words before creating a new post. Keep the draft editable.
-          const code = reserved.json?.error
-          if (['agent-mention-secret', 'agent-mention-reference', 'post-invalid'].includes(code)) return fail(code, copy.invalid)
+          if (['agent-mention-secret', 'agent-mention-reference', 'post-secret', 'post-invalid'].includes(code))
+            return fail(code, copy.invalid)
         }
+        if (reserved.status === 409 && code === 'thread-full') return fail(code, '')
+        if (reserved.status >= 500) return fail('delivery-unknown', copy.unknown)
         if (reserved.status < 200 || reserved.status >= 300 || !matches(POST, reserved.json?.post?.id)) return changed()
         receipt = reserved.json
         path = posts + '/' + receipt.post.id + '/remote'

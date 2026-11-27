@@ -182,7 +182,7 @@ function focusNextFrame(target: RefObject<PromptInput | null>) {
 
 /** Everything the signed-in shell holds beside the open session: its columns, its pages, its keys and its lists. */
 export function useShellLayout({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
-  const { selectedId, refresh, resync, connection } = harness
+  const { selectedId, refresh, resync, connection, confirmedDetailRead, currentSyncPass } = harness
   const proposalWrites = useProposalWrites(refresh, snapshot)
   const [mentionVisit, setMentionVisit] = useState<{
     source: string
@@ -1316,7 +1316,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   useEffect(() => currentShell()?.settings?.onShow?.(() => showSettings.current()), [])
   // The desktop app reads the Host itself, so its notification can be ahead of this page, even about a session the page
   // already lists: go as soon as the session is known, and keep looking for its request until the page has read again.
-  const [computerTurn, setComputerTurn] = useState<{ id: string; messageId: string } | null>(null)
+  const [computerTurn, setComputerTurn] = useState<{ id: string; messageId: string; afterPass: number } | null>(null)
   const [notified, setNotified] = useState<{ id: string; read: boolean; arrived: boolean; messageId?: string } | null>(null)
   useEffect(() => {
     const open = (id: string, messageId?: string) => {
@@ -1339,9 +1339,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     if (notified === null || !snapshot.tasks.some(task => task.id === notified.id)) return
     if (notified.messageId) {
       const { id, messageId } = notified
+      const afterPass = currentSyncPass()
       choose(id, () => {
         switchWorkView('chat')
-        setComputerTurn({ id, messageId })
+        setComputerTurn({ id, messageId, afterPass })
       })
       setNotified(null)
       return
@@ -1351,7 +1352,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     // and each run would put this session back over a newer click.
     if (done || notified.read) setNotified(null)
     else if (!notified.arrived) setNotified({ ...notified, arrived: true })
-  }, [notified, snapshot.tasks, snapshot.approvals, openNotified, choose])
+  }, [notified, snapshot.tasks, snapshot.approvals, openNotified, choose, currentSyncPass])
   useEffect(() => {
     if (!computerTurn) return
     if (!conversationVisible || selectedId !== computerTurn.id) {
@@ -1362,11 +1363,15 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     const frame = requestAnimationFrame(() => {
       const row = reading.contentRef.current?.querySelector(`[data-message-id="${CSS.escape(computerTurn.messageId)}"]`)
       if (row) reading.show(computerTurn.id, computerTurn.messageId)
-      else setToast({ text: COPY.originalTurnUnavailable, tone: 'error' })
+      else {
+        // An already open transcript may predate the receipt. A failed refresh leaves the jump pending for recovery.
+        if (confirmedDetailRead?.sessionId !== computerTurn.id || confirmedDetailRead.pass <= computerTurn.afterPass) return
+        setToast({ text: COPY.originalTurnUnavailable, tone: 'error' })
+      }
       setComputerTurn(null)
     })
     return () => cancelAnimationFrame(frame)
-  }, [computerTurn, conversationVisible, selectedId, current, reading.show, reading.contentRef, setToast])
+  }, [computerTurn, conversationVisible, selectedId, current, confirmedDetailRead, reading.show, reading.contentRef, setToast])
   const manageProviders = owner
     ? () => {
         openSettings('providers')

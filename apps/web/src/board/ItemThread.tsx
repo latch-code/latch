@@ -322,8 +322,11 @@ export function ItemThread({
         })
         if (!result.ok) {
           if (result.error === 'cancelled') next = request.state === 'unknown' ? request : null
-          else if (['agent-mention-secret', 'agent-mention-reference', 'post-invalid'].includes(result.error)) {
-            // The source rejected this text before reserving a post.
+          else if (
+            request.state !== 'unknown'
+            && ['agent-mention-secret', 'agent-mention-reference', 'post-secret', 'post-invalid', 'thread-full'].includes(result.error)
+          ) {
+            // This attempt was refused before reserving a post. A refusal does not settle an earlier unknown attempt.
             next = null
             setRefused(describeFailure(0, result.error))
           } else {

@@ -126,8 +126,19 @@ describe('foreground work delegation on a pinned computer', () => {
   })
   it('keeps a refused draft editable and rechecks the recipient after the native prompt', async () => {
     const x = setup()
-    x.localRequest.mockResolvedValueOnce({ status: 422, json: { error: 'agent-mention-secret', message: 'private text' } })
-    expect(await x.call('delegate')).toMatchObject({ ok: false, error: 'agent-mention-secret' })
+    const refusals = [
+      [400, 'post-secret'],
+      [422, 'agent-mention-secret'],
+      [409, 'thread-full'],
+    ] as const
+    for (const [status, error] of refusals) {
+      x.localRequest.mockResolvedValueOnce({ status, json: { error, message: 'private text' } })
+      const result = await x.call('delegate')
+      expect(result).toMatchObject({ ok: false, error })
+      expect(JSON.stringify(result)).not.toContain('private text')
+    }
+    x.localRequest.mockResolvedValueOnce({ status: 503, json: { error: 'post-write-unknown' } })
+    expect(await x.call('delegate')).toMatchObject({ ok: false, error: 'delivery-unknown' })
     expect(x.handle).not.toHaveBeenCalled()
     x.confirm.mockImplementationOnce(async () => {
       x.snapshot.customAgents = []
