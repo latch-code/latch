@@ -26,8 +26,10 @@
 // the osPid it lists instead of the command's own. `hold` takes words after it: `sub` runs the command on a subagent's
 // thread, `early` reports it started before asking (as for an MCP call), `orphan` runs `sleep` behind a shell that
 // exits at once, so the group outlives its leader (the item ends only once the group is gone), `self` interrupts the
-// turn by itself with no turn/interrupt; FAKE_CODEX_INTERRUPT_STATUS=failed ends an interrupted turn failed. Anything
-// else is echoed as `echo: <text>`, as the fake ACP agent does. Text added with turn/steer is replied to in the same turn.
+// turn by itself with no turn/interrupt; FAKE_CODEX_INTERRUPT_STATUS=failed ends an interrupted turn failed.
+// FAKE_CODEX_TERM_MS keeps it running that long after SIGTERM, as a program that shuts down cleanly does, still
+// reporting a command that ends meanwhile. Anything else is echoed as `echo: <text>`, as the fake ACP agent does. Text
+// added with turn/steer is replied to in the same turn.
 //
 // Its own MCP servers: FAKE_CODEX_MCP is a JSON array of `McpServerStatus` (default none), which mcpServerStatus/list
 // pages (by `limit`) together with the thread's `config.mcp_servers`, as Codex lists both. With no thread it lists only
@@ -1606,3 +1608,8 @@ process.stdin.on('end', () => {
   log('exit')
   process.exit(0)
 })
+if (env.FAKE_CODEX_TERM_MS)
+  process.on('SIGTERM', () => {
+    log('sigterm')
+    setTimeout(() => process.exit(143), Number(env.FAKE_CODEX_TERM_MS))
+  })
