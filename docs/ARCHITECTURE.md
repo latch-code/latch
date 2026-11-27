@@ -285,6 +285,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 - **编辑文件。** `PUT /tasks/:id/files/:handle` 带 `baseHash`：在改动记录的锁里重读，哈希不同 409 `file-changed`，一个字节也不写；锁里、写审计 `file.edit` 之后与改名之前各按设备此刻的权限再核对，改名前再核对文件夹、文件身份与哈希。受保护的路径和已选项目中的 Latch 程序代码只给有 `approve:elevated` 的设备（`file-edit-elevated`），混用换行的文件不编辑；有一轮在运行时 409 `file-turn-running`；拒绝不重放；任何客户端都不提供覆盖。
 - **预览。** 预览框不是操作系统的沙箱。可能含密钥的文件只显示文本，不调用高亮、公式或图表；没有 `actions.preview` 的文件在读取之前拒绝。媒体地址只收同源的 Host 文件句柄、附件句柄或页面自己建的 blob（`trustedMediaUrl`），Markdown 里新的链接不放宽 `work` 的范围，远端图片不请求。
 - **运行期间的文件变化**只观察文件元数据，不运行 Git、shell 或项目代码；它可能含其他程序的写入，不证明由 Agent 生成，也没有撤销。扫描只看冻结的根里的普通文件，条目、层数、时间、结果的路径数与字节、同时观察的数量都有上限；秘密文件、Host 私有数据与生成目录不进记录。`fileChanges` 只给已授权的会话详情与 SSE；旧运行晚到的结算只更新原消息；Host 重启时残留的观察记为部分。这些变化不给 `work` 设备目录浏览，也不授予对已删除、秘密、私有或移出项目的路径的访问。
+- Standard 与 ACP 读回会话消息的 `outputs` 时，保留可选的 `fresh`（本轮新文件）、`gitIgnored`（被 Git 忽略）与 `sha256`（文件内容摘要）。
 
 ### 个人 Agent 主动协作
 
@@ -1159,7 +1160,7 @@ Latch 不再提供个人助手、助手群聊与它们的定时任务，数据�
 | 跟随移动或改名的文件夹，运行中会话的文件夹变化 | 未实现；Latch 不是 App Sandbox 构建，Electron 只为 Mac App Store 构建创建安全范围书签 |
 | 按设备或文件夹的项目授权、只读文件夹、按文件夹的 Standard 风险级别 | 未实现；设备权限对所有项目生效 |
 | 官方中继 | 不提供；中继是运营者自己的 Linux 服务器或 Cloudflare 账户。见 [RELAY.md](RELAY.md) |
-| 安装版里引导部署中继 | 未实现；Linux 部署命令 `pnpm relay` 在服务器的源码目录运行，Workers 部署命令 `pnpm latch relay setup cloudflare` 在 Mac 的源码目录运行（安装包不带 Workers 部署包），安装版可添加两种中继文件 |
+| 安装版里引导部署中继 | 未实现；`pnpm latch relay setup linux` 与 `pnpm latch relay setup cloudflare` 在 Mac 的源码目录运行（Linux 服务器本身无需拉取源码或安装开发环境；安装版 DMG 尚未附带两类部署包），安装版可直接添加导出的中继配置文件 |
 | edge 中继的花费上限 | Latch 内未实现逐人预算。运营者可在 Cloudflare 分别设置账户级 Workers 与 Durable Objects 支出限额或账单提醒。见 [RELAY](RELAY.md#几个人共用一个-workers-中继) |
 | 向公众开放登记的 edge 中继 | 未实现；需要另行实现用户预算与接合数限制 |
 | edge 中继在 WebSocket 内对节点密钥的再一层加密 | 未实现；现在节点身份靠签名挑战，不绑定 TLS 会话，能为域名终止 TLS 的一方可实时转发并看到路由元数据（[RELAY.md](RELAY.md#中继协议的身份)） |

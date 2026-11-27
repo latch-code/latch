@@ -184,6 +184,15 @@ function parseArgs(argv: string[]): { positional: string[]; flags: Map<string, s
     '--expect-key',
     '--region',
     '--location',
+    '--server',
+    '--ssh-port',
+    '--domain',
+    '--ip',
+    '--public-port',
+    '--cert',
+    '--key',
+    '--acme-email',
+    '--bundle',
   ])
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]!

@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { RELAY_FILE_BYTES, type NativeLinkInfo, type NativeRelayFile } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import type { LookupFunction } from '../src/egress.ts'
+import { RelayProfiles } from '../src/relay/profiles.ts'
 import { listRelayFiles, loadRelayFile } from '../src/relay/relay-files.ts'
 import { startTestHost } from './helpers/host.ts'
 
@@ -265,4 +266,49 @@ it('excludes symlinks, shared files, oversized files, non-files and management f
   const owner = process.getuid?.()
   if (owner !== undefined) expect(await loadRelayFile(explicit, owner + 1)).toEqual({ failure: 'unreadable' })
   expect('profile' in (await loadRelayFile(join(relays, 'link.json')))).toBe(true)
+})
+
+it('reorders configured relays only from the local Mac admin and audits the change', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'latch-relay-order-'))
+  cleanup.push(() => rm(dataDir, { recursive: true, force: true }))
+  const first = { relayId: '1'.repeat(32), url: 'https://first.relay.example/', spkiHash: 'a'.repeat(64) }
+  const second = { relayId: '2'.repeat(32), url: 'https://second.relay.example/', spkiHash: 'b'.repeat(64) }
+  const seeded = await RelayProfiles.open(dataDir)
+  await seeded.replace([first, second])
+
+  const lookup = vi.fn<LookupFunction>((_hostname, _options, callback) => callback(new Error('fixture refuses network'), []))
+  const host = await startTestHost({ dataDir, egressLookup: lookup })
+  cleanup.push(() => host.close())
+  const desktop = await host.enroll({ listener: 'unix' })
+  const remote = await host.enroll({ listener: 'loopback-tcp' })
+
+  expect((await remote.request('native/relays/order', { method: 'PUT', body: { order: [second.relayId, first.relayId] } })).status).toBe(
+    403,
+  )
+  expect((await desktop.request('native/relays/order', { method: 'PUT', body: { order: [first.relayId] } })).status).toBe(409)
+
+  const reordered = await desktop.json<NativeLinkInfo>('native/relays/order', {
+    method: 'PUT',
+    body: { order: [second.relayId, first.relayId] },
+  })
+  expect(reordered.relays.map(item => item.relayId)).toEqual([second.relayId, first.relayId])
+
+  const records = (await readFile(join(host.dataDir, 'audit', 'audit.jsonl'), 'utf8'))
+    .trim()
+    .split('\n')
+    .map(line => JSON.parse(line) as { action: string; detail: { lowering?: boolean; relayCount?: number } })
+    .filter(record => record.action === 'native.config.changed')
+  expect(records).toMatchObject([{ action: 'native.config.changed', detail: { lowering: false, direct: false, relayCount: 2 } }])
+
+  // When audit logging fails, reordering must refuse with 503 and preserve both the previous order and book generation!
+  const generationBefore = (await RelayProfiles.open(host.dataDir)).snapshot().generation
+  vi.spyOn(host.host.security.audit, 'append').mockRejectedValueOnce(new Error('disk full'))
+  const failedReorder = await desktop.request('native/relays/order', {
+    method: 'PUT',
+    body: { order: [first.relayId, second.relayId] },
+  })
+  expect(failedReorder.status).toBe(503)
+  const linkAfterFailure = await desktop.json<NativeLinkInfo>('native/info')
+  expect(linkAfterFailure.relays.map(item => item.relayId)).toEqual([second.relayId, first.relayId])
+  expect((await RelayProfiles.open(host.dataDir)).snapshot().generation).toBe(generationBefore)
 })

@@ -1,11 +1,7 @@
 import { createHash } from 'node:crypto'
-import { relayGoEnvironment } from '../scripts/go-environment.ts'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { mkdtemp, rm, chmod, lstat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { connect as connectTls, createServer as createTlsServer } from 'node:tls'
 import { connect as connectNet } from 'node:net'
 import { once } from 'node:events'
@@ -15,23 +11,11 @@ import { routeKey, UTC_DAY } from '@latch/link-wire'
 import { startRelay } from '../src/server.ts'
 import { checkGateway } from '../src/gateway.ts'
 import { decodeProxyHeader, listenPrivateBackend } from '../src/proxy.ts'
-const run = promisify(execFile)
+import { buildTestGateway } from './build-gateway.ts'
 let directory: string, binary: string
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), 'latch-gateway-test-'))
-  binary = join(directory, 'gateway')
-  await run(
-    process.env.LATCH_RELAY_GO ?? 'go',
-    [
-      'build',
-      '-trimpath',
-      '-o',
-      binary,
-      fileURLToPath(new URL('../gateway/main.go', import.meta.url)),
-      fileURLToPath(new URL('../gateway/supervisor.go', import.meta.url)),
-    ],
-    { env: relayGoEnvironment(), timeout: 60_000 },
-  )
+  binary = await buildTestGateway(directory)
 }, 65_000)
 afterAll(async () => {
   if (directory) await rm(directory, { recursive: true, force: true })

@@ -14,31 +14,69 @@ it('builds one Workers command from the name and location, and none from a name 
   ])
 })
 
-it('turns the server form into commands only when every answer is plain enough for a shell', () => {
-  const form = {
+it('turns the Linux server form into one Mac setup command across bare-IP, auto-TLS, reverse-proxy and custom-TLS modes', () => {
+  // Zero-domain bare IP: leaving `domain` blank uses the server IP directly!
+  expect(
+    relaySetupCommands('self', {
+      latch: 'pnpm latch',
+      server: 'root@203.0.113.10',
+      domain: '',
+    }).deploy,
+  ).toEqual(['pnpm latch relay setup linux --server root@203.0.113.10'])
+  expect(relaySetupCommands('self', { server: 'root@[2001:db8::1]' }).deploy).toEqual([
+    "latch relay setup linux --server 'root@[2001:db8::1]'",
+  ])
+
+  // SSH alias + explicit public IP in `domain` passes `--ip`:
+  expect(
+    relaySetupCommands('self', {
+      latch: 'pnpm latch',
+      server: 'my-vps',
+      domain: '203.0.113.10',
+    }).deploy,
+  ).toEqual(['pnpm latch relay setup linux --server my-vps --ip 203.0.113.10'])
+
+  expect(
+    relaySetupCommands('self', {
+      latch: 'pnpm latch',
+      server: 'me@relay.example.com',
+      domain: 'relay.example.com',
+    }),
+  ).toEqual({
+    login: [],
+    deploy: ['pnpm latch relay setup linux --server me@relay.example.com --domain relay.example.com'],
+    fetch: [],
+  })
+
+  expect(
+    relaySetupCommands('self', {
+      server: 'me@relay.example.com',
+      domain: 'relay.example.com',
+      tlsMode: 'proxy',
+    }).deploy,
+  ).toEqual(['latch relay setup linux --server me@relay.example.com --domain relay.example.com --behind-proxy'])
+
+  const customForm = {
+    tlsMode: 'custom' as const,
     server: 'me@relay.example.com',
     domain: 'relay.example.com',
     port: '8443',
     cert: '/etc/ssl/chain.pem',
     key: '/etc/ssl/key.pem',
   }
-  const commands = relaySetupCommands('self', form)
-  expect(commands.login).toEqual(['ssh me@relay.example.com'])
-  expect(commands.deploy[1]).toBe(
-    'pnpm relay init --data-dir /srv/latch-relay --domain relay.example.com --port 8443 --cert /etc/ssl/chain.pem --key /etc/ssl/key.pem',
-  )
-  expect(commands.deploy[2]).toContain('--url https://relay.example.com:8443 --output /srv/latch-relay/latch-connection.json')
-  expect(commands.fetch).toEqual([
-    '(umask 077 && mkdir -p ~/.latch/relays) && scp me@relay.example.com:/srv/latch-relay/latch-connection.json ~/.latch/relays/relay-example-com.json',
+  expect(relaySetupCommands('self', customForm).deploy).toEqual([
+    'latch relay setup linux --server me@relay.example.com --domain relay.example.com --cert /etc/ssl/chain.pem --key /etc/ssl/key.pem',
   ])
+
   for (const bad of [
     { domain: 'Relay.example.com' },
     { domain: 'a_b.example.com' },
     { port: '0' },
     { cert: 'chain.pem' },
     { key: '/etc/ssl/$(id)' },
+    { server: '-oProxyCommand=id' },
+    { server: 'me@host; id' },
   ])
-    expect(relaySetupCommands('self', { ...form, ...bad }).deploy).toEqual([])
-  expect(relaySetupCommands('self', { ...form, server: 'me@host; id' })).toMatchObject({ login: [], fetch: [] })
+    expect(relaySetupCommands('self', { ...customForm, ...bad }).deploy).toEqual([])
   expect(relayOrigin('relay.example.com', '443')).toBe('https://relay.example.com')
 })

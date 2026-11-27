@@ -626,7 +626,12 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         try await restore(lease)
         timeline.record(.verification)
         startEvents()
-        scheduleBookRefresh(hint: snapshot["host"]["native"]["discoveryEpoch"].string, directoryHint: snapshot["host"]["native"]["directoryEpoch"].string, force: true)
+        scheduleBookRefresh(
+            hint: snapshot["host"]["native"]["discoveryEpoch"].string,
+            directoryHint: snapshot["host"]["native"]["directoryEpoch"].string,
+            relayHint: snapshot["host"]["native"]["relayEpoch"].string,
+            force: true
+        )
         scheduleProximity(workspace)
     }
     private func bindBodyLease(_ lease: BodyLease, current: UUID) throws {
@@ -911,6 +916,13 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                         timeline.recordOnce(.firstEvent)
                         if event.type == "heartbeat" || openedAt.duration(to: .now) >= .seconds(15) { eventRetryAttempt = 0 }
                         if event.type == "host-state" { hostNotice = PhoneHostNotice.parse(event.data) }
+                        if event.type == "refresh", let payload = try? NativeJSON.decode(event.data) {
+                            scheduleBookRefresh(
+                                hint: payload["discoveryEpoch"].string,
+                                directoryHint: payload["directoryEpoch"].string,
+                                relayHint: payload["relayEpoch"].string
+                            )
+                        }
                         pendingEvent = (event, stream, selected)
                         scheduleEventRefresh(workspace: workspace, generation: current, stream: streamId)
                     }
@@ -1008,7 +1020,13 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                     switch result {
                     case let .update(update): queueBody(update, context: context)
                     case let .notice(notice):
-                        if try NativeJSON.decode(notice.event.data)["resumeRequired"].bool { try await context.workspace.forgetCursor(sessionId: context.session) }
+                        let payload = try NativeJSON.decode(notice.event.data)
+                        if payload["resumeRequired"].bool { try await context.workspace.forgetCursor(sessionId: context.session) }
+                        scheduleBookRefresh(
+                            hint: payload["discoveryEpoch"].string,
+                            directoryHint: payload["directoryEpoch"].string,
+                            relayHint: payload["relayEpoch"].string
+                        )
                         queueBodyNotice(notice, context: context)
                     case let .hostState(value): hostNotice = PhoneHostNotice.parse(value.data)
                     case .ignore: break
@@ -1200,9 +1218,9 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         let previous = bookRefresher; bookRefresher = nil
         Task { await previous?.close() }
     }
-    private func scheduleBookRefresh(hint: String?, directoryHint: String? = nil, force: Bool = false) {
+    private func scheduleBookRefresh(hint: String?, directoryHint: String? = nil, relayHint: String? = nil, force: Bool = false) {
         guard let bookRefresher else { return }
-        Task { await bookRefresher.observe(hint, directoryHint: directoryHint, force: force) }
+        Task { await bookRefresher.observe(hint, directoryHint: directoryHint, relayHint: relayHint, force: force) }
     }
     private func receiveBook(_ device: PreparedNativeDevice, host: RegisteredHost, store: PhoneStore, current: UUID) async {
         guard generation == current else { return }
@@ -1219,8 +1237,27 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             deviceId: device.deviceId, nowMs: now, priorGeneration: device.bookGeneration, priorHash: device.bookHash)
         var saved = host; saved.device = device; saved.prepared = false
         selectedHost = saved; hosts = savedHosts; draft = pendingDraft
-        guard let newBook, NativeBookPathChange.requiresMigration(previous: oldBook, current: newBook), let workspace else { return }
+        guard let newBook, let workspace else { return }
         guard storageAvailable, !hold.holding else { return }
+        let installedKind = await workspace.installedPathKind()
+        let installedPathId = await workspace.installedPathId()
+        if !NativeBookPathChange.invalidatesInstalledPath(
+            previous: oldBook,
+            current: newBook,
+            installedKind: installedKind,
+            installedPathId: installedPathId
+        ) {
+            if oldKey != newBook.discoveryKey {
+                discovery.stop()
+                try? startDiscovery(saved)
+            }
+            if installedKind == .relay {
+                // A new book may put the installed relay first again while the previous choice is still dialing.
+                cancelUpgrade()
+                tryUpgrade()
+            }
+            return
+        }
         do {
             if oldKey != newBook.discoveryKey { discovery.stop(); try startDiscovery(saved) }
             try await dialRound(saved, workspace: workspace, current: current, changedBook: true)
@@ -1282,26 +1319,42 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         upgradeTask = nil
     }
     /**
-     * On a relay, a direct path that browsing found moves the connection in the background. It waits for the path to be
-     * quiet and tries a few times, seconds apart; a failure leaves the relay.
+     * An upgrade waits for the installed path to become quiet. Only dial attempts count against its retry budget.
      */
     private func tryUpgrade(after delay: Duration = .zero) {
-        guard upgradeTask == nil, transportReady, !hold.holding, storageAvailable, let workspace, let host = selectedHost else { return }
+        guard upgradeTask == nil, transportReady, !hold.holding, storageAvailable, let workspace,
+              let transport = installedTransport, let host = selectedHost else { return }
         let current = generation, id = UUID()
         upgradeTask = (id, Task { [weak self] in
             defer { if self?.upgradeTask?.id == id { self?.upgradeTask = nil } }
             if delay > .zero { do { try await Task.sleep(for: delay) } catch { return } }
             for _ in 0..<5 {
-                guard let self, self.generation == current, self.transportReady, !self.hold.holding, self.storageAvailable,
-                      self.workspace === workspace, await workspace.installedPathKind() == .relay else { return }
+                guard let self, !Task.isCancelled, self.generation == current, self.transportReady, !self.hold.holding, self.storageAvailable,
+                      self.workspace === workspace, self.installedTransport === transport, await workspace.installedPathKind() == .relay else { return }
                 let latest = self.hosts.first { $0.id == host.id } ?? host
                 let directs = (try? await self.directCandidates(latest, browser: self.discovery)) ?? []
-                if !directs.isEmpty, await self.paths.upgrade(directs, workspace: workspace) {
+                let installedId = await workspace.installedPathId()
+                let preferredRelay: NativePathCandidate? = await {
+                    guard let book = latest.device.currentAddressBook(),
+                          let first = NativeRelayOrder.available(book).first,
+                          installedId != LinkBytes.hex(first.relayId),
+                          (try? NativeRelayAdmission.current(
+                              endpoint: first,
+                              bookExpiresAt: book.expiresAt,
+                              nowMs: UInt64(max(0, Date().timeIntervalSince1970 * 1000))
+                          )) != nil else { return nil }
+                    return try? await workspace.relayCandidate(relayId: first.relayId)
+                }()
+                guard !directs.isEmpty || preferredRelay != nil else { return }
+                do { try await workspace.waitUntilQuiet(on: transport) } catch { return }
+                if await self.paths.upgrade(directs, preferredRelay: preferredRelay, workspace: workspace) {
                     guard self.generation == current, self.workspace === workspace else { return }
-                    self.winners.record(.direct, gateway: self.currentGateway())
+                    let kind = await workspace.installedPathKind() ?? .direct
+                    self.winners.record(kind, gateway: self.currentGateway())
                     await self.bookRefresher?.connectionChanged()
                     guard self.generation == current else { return }
-                    _ = await self.refresh(); self.scheduleProximity(workspace)
+                    _ = await self.refresh()
+                    if kind == .direct { self.scheduleProximity(workspace) }
                     return
                 }
                 do { try await Task.sleep(for: .seconds(3)) } catch { return }
@@ -1562,7 +1615,11 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         if live, let computer = selectedHost?.id {
             QuotaWidgetWriter.note(snapshot["catalog"], computer: computer, hostNow: hostNow(), hostOffset: hostClockOffset)
         }
-        scheduleBookRefresh(hint: value["host"]["native"]["discoveryEpoch"].string, directoryHint: value["host"]["native"]["directoryEpoch"].string)
+        scheduleBookRefresh(
+            hint: value["host"]["native"]["discoveryEpoch"].string,
+            directoryHint: value["host"]["native"]["directoryEpoch"].string,
+            relayHint: value["host"]["native"]["relayEpoch"].string
+        )
         return true
     }
 

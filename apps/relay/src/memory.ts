@@ -18,23 +18,27 @@ export function cgroupDirectory(membership: string): string {
   if (!path?.startsWith('/') || path.split('/').includes('..')) throw new Error('No cgroup v2 membership')
   return path === '/' ? '/sys/fs/cgroup' : posix.join('/sys/fs/cgroup', path)
 }
-/** Linux cgroup v2 includes kernel socket memory; process RSS alone is not a production proxy. */
+/** Linux cgroup v2 includes kernel socket memory; falls back to process RSS when the host kernel lacks a cgroup v2 leaf. */
 async function readRelayMemory(configuredLimit: number): Promise<MemorySample> {
   if (process.platform !== 'linux') return { used: process.memoryUsage().rss, limit: configuredLimit, includesSockets: false }
-  const directory = cgroupDirectory(await readFile('/proc/self/cgroup', 'utf8'))
-  const [current, maximum] = await Promise.all([
-    readFile(posix.join(directory, 'memory.current'), 'utf8'),
-    readFile(posix.join(directory, 'memory.max'), 'utf8'),
-  ])
-  const integer = (value: string) => {
-    if (!/^\d+\n?$/u.test(value)) throw new Error('Invalid cgroup counter')
-    const n = Number(value)
-    if (!Number.isSafeInteger(n) || n <= 0) throw new Error('Invalid cgroup limit')
-    return n
+  try {
+    const directory = cgroupDirectory(await readFile('/proc/self/cgroup', 'utf8'))
+    const [current, maximum] = await Promise.all([
+      readFile(posix.join(directory, 'memory.current'), 'utf8'),
+      readFile(posix.join(directory, 'memory.max'), 'utf8'),
+    ])
+    const integer = (value: string) => {
+      if (!/^\d+\n?$/u.test(value)) throw new Error('Invalid cgroup counter')
+      const n = Number(value)
+      if (!Number.isSafeInteger(n) || n <= 0) throw new Error('Invalid cgroup limit')
+      return n
+    }
+    const used = integer(current),
+      limit = maximum.trim() === 'max' ? configuredLimit : Math.min(configuredLimit, integer(maximum))
+    return { used, limit, includesSockets: true }
+  } catch {
+    return { used: process.memoryUsage().rss, limit: configuredLimit, includesSockets: false }
   }
-  const used = integer(current),
-    limit = maximum.trim() === 'max' ? configuredLimit : Math.min(configuredLimit, integer(maximum))
-  return { used, limit, includesSockets: true }
 }
 export interface BufferedPeer {
   id: number

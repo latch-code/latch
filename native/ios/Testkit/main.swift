@@ -285,7 +285,7 @@ do {
     case "nativeRelayLifecycle", "nativeRelayFailover", "nativeRelayTransferNormal", "nativeRelayTransferAfterCancel", "nativeRelayBulkNormal", "nativeRelayBulkLegacy", "nativeRelayBulkReauthenticate", "nativeRelayBulkAfterCancel", "nativeRelayBulkCancel", "nativeRelayBulkEarlyCancel", "nativeDirectTransfer", "nativeRelayThroughput", "nativeRelayUploadThroughput", "nativeRelayUpload", "nativeRelayControlLatency":
         stage = "relay-pairing"
         let invitation = try PairingInvitation.parse(input["payload"] as? String ?? "", privateOnly: false), keys = try FixtureKeys()
-        let anchor = try LinkBytes.unhex(input["trustAnchor"] as? String ?? "")
+        let anchor: Data? = try (input["trustAnchor"] as? String).flatMap { $0.isEmpty ? nil : try LinkBytes.unhex($0) }
         let direct = input["operation"] as? String == "nativeDirectTransfer"
         let pairing = try NativePairing(invitation: invitation, keys: keys)
         // Pairing happens on the LAN listener only; the relay is what the paired phone dials afterwards.
@@ -884,12 +884,42 @@ do {
         guard await bookCalls.value == 5 else { throw NativeFailure.invalidRecord }
         let directoryEpoch = try await workspace.directoryEpoch()
         guard snapshot["host"]["native"]["directoryEpoch"].string == directoryEpoch else { throw NativeFailure.identityMismatch }
+        let relayEpoch = try await workspace.relayEpoch()
+        guard snapshot["host"]["native"]["relayEpoch"].string == relayEpoch else { throw NativeFailure.identityMismatch }
         let directoryHint = String(repeating: "f", count: 64)
         await bookOwner.observe(discoveryEpoch, directoryHint: directoryHint)
         for _ in 0..<100 { if await bookCalls.value == 6 { break }; try await Task.sleep(for: .milliseconds(10)) }
         for _ in 0..<20 { await bookOwner.observe(discoveryEpoch, directoryHint: directoryHint) }
         try await Task.sleep(for: .milliseconds(100))
         guard await bookCalls.value == 6, try await workspace.directoryEpoch() == directoryEpoch else { throw NativeFailure.identityMismatch }
+        let relayHint = String(repeating: "e", count: 64)
+        await bookOwner.observe(discoveryEpoch, directoryHint: directoryEpoch, relayHint: relayHint)
+        for _ in 0..<100 { if await bookCalls.value == 7 { break }; try await Task.sleep(for: .milliseconds(10)) }
+        for _ in 0..<20 { await bookOwner.observe(discoveryEpoch, directoryHint: directoryEpoch, relayHint: relayHint) }
+        try await Task.sleep(for: .milliseconds(100))
+        guard await bookCalls.value == 7, try await workspace.relayEpoch() == relayEpoch else { throw NativeFailure.identityMismatch }
+        let relayFallback = try NativePathCandidate(id: "relay-fallback", kind: .relay) {
+            return try await NativeHTTPConnection.open(host: "127.0.0.1", port: port, rootSpki: device.rootSpki,
+                knockKey: device.knockKey, identity: keys.identity())
+        }
+        let relayPreferred = try NativePathCandidate(id: "relay-preferred", kind: .relay) {
+            return try await NativeHTTPConnection.open(host: "127.0.0.1", port: port, rootSpki: device.rootSpki,
+                knockKey: device.knockKey, identity: keys.identity())
+        }
+        _ = try await paths.migrate([relayFallback], workspace: workspace)
+        guard await workspace.installedPathKind() == .relay,
+              await workspace.installedPathId() == "relay-fallback" else { throw NativeFailure.identityMismatch }
+        guard await paths.upgrade([], preferredRelay: relayFallback, workspace: workspace) == false else { throw NativeFailure.identityMismatch }
+        // Even when an unreachable direct candidate is present, `upgrade` falls back to `preferredRelay` in the same round:
+        let unreachableDirect = try NativePathCandidate(id: "unreachable-lan", kind: .direct) {
+            throw NativeFailure.unavailable
+        }
+        guard await paths.upgrade([unreachableDirect], preferredRelay: relayPreferred, workspace: workspace) == true,
+              await workspace.installedPathKind() == .relay,
+              await workspace.installedPathId() == "relay-preferred" else { throw NativeFailure.identityMismatch }
+        guard await paths.upgrade([candidate], preferredRelay: relayFallback, workspace: workspace) == true,
+              await workspace.installedPathKind() == .direct,
+              await workspace.installedPathId() == "fixture" else { throw NativeFailure.identityMismatch }
         await bookOwner.close()
         let delayedGate = FixtureBookGate(), staleUpdates = FixtureCounter()
         let delayed = NativeBookRefresher(workspace: workspace, persist: { _ in try await delayedGate.wait() },
@@ -1156,6 +1186,19 @@ do {
         }
         let current = try AddressBookCodec.verify(input["current"] as? String ?? "", rootSpki: root, deviceId: deviceId, nowMs: now)
         result["migrate"] = NativeBookPathChange.requiresMigration(previous: previous, current: current)
+        if let kindRaw = input["installedKind"] as? String, let kind = NativePathCandidate.Kind(rawValue: kindRaw) {
+            result["invalidates"] = NativeBookPathChange.invalidatesInstalledPath(
+                previous: previous,
+                current: current,
+                installedKind: kind,
+                installedPathId: input["installedPathId"] as? String
+            )
+        }
+    case "selfSignedVerify":
+        let der = try LinkBytes.unhex(input["certDer"] as? String ?? "")
+        let spkiHash = try LinkBytes.unhex(input["spkiHash"] as? String ?? "")
+        guard let cert = SecCertificateCreateWithData(nil, der as CFData) else { throw NativeFailure.invalidRecord }
+        result["verified"] = NativeSelfSignedTLS.verify(cert, expectedSpkiHash: spkiHash)
     case "relayAdmission":
         let book = try AddressBookCodec.verify(input["encoded"] as? String ?? "", rootSpki: LinkBytes.unhex(input["rootSpki"] as? String ?? ""),
             deviceId: input["deviceId"] as? String ?? "", nowMs: (input["timeMs"] as? NSNumber)?.uint64Value ?? 0)

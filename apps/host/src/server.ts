@@ -220,7 +220,7 @@ import type { NativeOpening } from './native.ts'
 import type { OfficialRelay } from './relay/official.ts'
 import type { NativeNetworkBackend } from './native-network-backend.ts'
 import { NativeReplay } from './native-replay.ts'
-import { RelayProfiles, secretBytes } from './relay/profiles.ts'
+import { bookRelays, RelayProfiles, secretBytes } from './relay/profiles.ts'
 import { HostAddressBooks } from './relay/address-book.ts'
 import { HostRelayDirectory } from './relay/directory.ts'
 import { createEgressFetch, createEgressInspector, type EgressReason, type FetchLike, type LookupFunction } from './egress.ts'
@@ -1923,6 +1923,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         ),
       )
     const discoveryEpoch = () => sha256Hex(discoveryEpochInput(secretBytes(relayProfiles.snapshot().discoveryKey)))
+    const relayEpoch = () =>
+      sha256Hex(
+        `latch-relay-epoch-v1:${bookRelays(relayProfiles.snapshot())
+          .map(profile => `${profile.relayId}:${profile.kind === 'edge' ? profile.relayKey! : profile.spkiHash}`)
+          .join(',')}`,
+      )
     await relayProfiles.rotateDiscovery(revokedDiscoveryHash())
     let discoveryRotation: Promise<void> | undefined
     function synchronizeNativeDiscovery(): Promise<void> {
@@ -5396,6 +5402,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(nativePush ? { attentionPush: true as const, attentionPreview: true as const } : {}),
           discoveryEpoch: discoveryEpoch(),
           directoryEpoch: relayDirectory.epoch(),
+          relayEpoch: relayEpoch(),
         },
       }
     }
@@ -9796,6 +9803,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             revision: globalRevision,
             discoveryEpoch: discoveryEpoch(),
             directoryEpoch: relayDirectory.epoch(),
+            relayEpoch: relayEpoch(),
           })
           privateHints.add(event)
           for (const res of streams.keys()) send(res, event)
@@ -9807,6 +9815,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             revision: globalRevision,
             discoveryEpoch: discoveryEpoch(),
             directoryEpoch: relayDirectory.epoch(),
+            relayEpoch: relayEpoch(),
           })
           for (const res of streams.keys()) send(res, event)
         }
@@ -9868,6 +9877,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             revision: globalRevision,
             discoveryEpoch: discoveryEpoch(),
             directoryEpoch: relayDirectory.epoch(),
+            relayEpoch: relayEpoch(),
           })
           for (const res of streams.keys()) send(res, event)
         }
@@ -13942,7 +13952,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const stream = streams.get(res)
           if (stream && streamAllowed(stream)) write(res, stream, 'heartbeat', `id: ${nativeReplay.cursor()}\n: resumed\n\n`)
         } else
-          send(res, { type: 'refresh', instanceId, revision, discoveryEpoch: discoveryEpoch(), directoryEpoch: relayDirectory.epoch() })
+          send(res, {
+            type: 'refresh',
+            instanceId,
+            revision,
+            discoveryEpoch: discoveryEpoch(),
+            directoryEpoch: relayDirectory.epoch(),
+            relayEpoch: relayEpoch(),
+          })
         req.on('close', () => {
           forgetStream(res)
           traffic.close(meter)

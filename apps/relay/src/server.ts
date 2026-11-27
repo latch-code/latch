@@ -8,7 +8,7 @@ import { RegistrationWorkPool, REGISTRATION_WORK_MEMORY, type RegistrationWorkPo
 import { z } from 'zod'
 import { readRelayTls } from './config.ts'
 import { DenialStore } from './denials.ts'
-import { constants, randomBytes, timingSafeEqual, X509Certificate } from 'node:crypto'
+import { constants, createHash, randomBytes, timingSafeEqual, X509Certificate } from 'node:crypto'
 import { createServer as createHttpsServer } from 'node:https'
 import { createServer as createHttpServer, type RequestListener } from 'node:http'
 import type { TLSSocket } from 'node:tls'
@@ -17,9 +17,15 @@ import { listenPrivateBackend } from './proxy.ts'
 import { isIP } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { once } from 'node:events'
+import { EDGE_RELAY } from '@latch/link-wire'
 import { acceptKey, RelaySocket } from '@latch/link-client/websocket'
 import { nodeCrypto } from '@latch/link-client/crypto'
 import { RelayCore, type RelayCoreOptions } from './core.ts'
+import { isAcmeBootstrapCertificate, startAcmeLoop, type AcmeConfig, type AcmeDeps } from './acme.ts'
+import { startSelfSignedRenewalLoop } from './self-tls.ts'
+
+const PING_MIN_MS = 15_000
+const PROXY_HEADERS = new Set(['x-forwarded-for', 'x-forwarded-proto', 'x-forwarded-host', 'x-real-ip', 'forwarded'])
 
 export function addressPrefix(input: string): string {
   let address = input.toLowerCase()
@@ -36,19 +42,45 @@ export function addressPrefix(input: string): string {
     .join(':')}::/48`
 }
 
+/** Rightmost valid IP added by the local reverse proxy on loopback; folded immediately into a /24 or /48 prefix. */
+function forwardedSource(rawHeaders: readonly string[], fallback: string | undefined): string | undefined {
+  let lastForwarded: string | undefined, lastRealIp: string | undefined
+  for (let index = 0; index + 1 < rawHeaders.length; index += 2) {
+    const name = rawHeaders[index]!.toLowerCase(),
+      value = rawHeaders[index + 1]!
+    if (name === 'x-forwarded-for') lastForwarded = value
+    else if (name === 'x-real-ip') lastRealIp = value
+  }
+  if (lastForwarded) {
+    const parts = lastForwarded
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean)
+    for (let index = parts.length - 1; index >= 0; index--) {
+      if (isIP(parts[index]!) !== 0) return parts[index]!
+    }
+  }
+  if (lastRealIp && isIP(lastRealIp.trim()) !== 0) return lastRealIp.trim()
+  return fallback && isIP(fallback) !== 0 ? fallback : undefined
+}
+
 export interface StartRelayOptions extends Omit<RelayCoreOptions, 'crypto' | 'now' | 'registrationWork'> {
   registrationWork?: RegistrationWorkPolicy
   dataDir?: string
   maxStateBytes?: number
   gateway?: GatewayOptions
+  behindProxy?: boolean
+  acme?: AcmeConfig
+  acmeDeps?: AcmeDeps
+  selfSignedTls?: { target: string; renewBeforeDays?: number; checkIntervalMs?: number }
   tlsFiles?: { certificateFile: string; keyFile: string }
   quota?: QuotaConfig
   fairness?: { prefixDailyShare: number; overageFactor: number }
   memory?: { bufferBytes: number; limitBytes: number }
   networkCounter?(): Promise<NetworkCounter>
   memoryReader?(): Promise<MemorySample>
-  cert: string | Buffer
-  key: string | Buffer
+  cert?: string | Buffer
+  key?: string | Buffer
   host: string
   port: number
   adminSocket?: string
@@ -58,7 +90,7 @@ export interface StartRelayOptions extends Omit<RelayCoreOptions, 'crypto' | 'no
 type RelayStatus = ReturnType<RelayCore['status']> & {
   ready: boolean
   runtime: { node: string; protocol: 2 }
-  certificate: { daysRemaining: number; renewalWarning: boolean }
+  certificate?: { daysRemaining: number; renewalWarning: boolean }
   denials: ReturnType<DenialStore['status']>
   memory: ReturnType<MemoryGuard['status']>
   quota?: QuotaSnapshot
@@ -76,17 +108,22 @@ type RelayStatus = ReturnType<RelayCore['status']> & {
 export async function startRelay(
   options: StartRelayOptions,
 ): Promise<{ port: number; adminPort: number; status(): RelayStatus; drain(): void; close(): Promise<void> }> {
-  if (!options.gateway && !['127.0.0.1', '::1'].includes(options.host)) throw new Error('Public relay requires the ticket-free gateway')
-  const isPublic = !['127.0.0.1', '::1'].includes(options.host)
+  const isLoopback = ['127.0.0.1', '::1'].includes(options.host)
+  const isPublic = !isLoopback
+  const isProduction = isPublic || Boolean(options.behindProxy)
+  if (!options.gateway && isPublic) throw new Error('Public relay requires the ticket-free gateway')
+  if (options.behindProxy && (!isLoopback || options.gateway || !options.edgeIdentity))
+    throw new Error('Behind-proxy relay requires loopback host and an Ed25519 relay identity')
+  if (!options.behindProxy && (!options.cert || !options.key)) throw new Error('TLS certificate and key required')
   if (
-    isPublic
+    isProduction
     && (!options.dataDir
       || !options.quota
       || !options.fairness
       || !options.adminSocket
       || !options.memory
       || !options.registrationWork
-      || process.platform !== 'linux'
+      || (isPublic && process.platform !== 'linux')
       || options.networkCounter
       || options.memoryReader)
   )
@@ -110,11 +147,31 @@ export async function startRelay(
     maxRoutes: options.maxRoutes ?? 512,
     maxBytes: options.maxStateBytes ?? 16 * 1024 * 1024,
   })
+  const peers = new Set<RelaySocket>()
+  const closedTraffic = { receivedBytes: 0, writtenBytes: 0, paddingReceivedBytes: 0, paddingWrittenBytes: 0, coverBatches: 0 }
+  const addTraffic = (sum: typeof closedTraffic, peer: RelaySocket) => {
+    const metrics = peer.metrics()
+    sum.receivedBytes += metrics.readWireBytes
+    sum.writtenBytes += metrics.writtenBytes
+    sum.paddingReceivedBytes += metrics.readPaddingBytes
+    sum.paddingWrittenBytes += metrics.paddingWrittenBytes
+    sum.coverBatches += metrics.coverBatches
+    return sum
+  }
+  const processBoot = createHash('sha256').update(randomBytes(32)).digest('hex')
+  const relayTrafficCounter = async (): Promise<NetworkCounter> => {
+    const sum = [...peers].reduce(addTraffic, { ...closedTraffic })
+    return { boot: processBoot, rx: sum.receivedBytes, tx: sum.writtenBytes }
+  }
   const quota = options.quota
     ? await QuotaMeter.open({
         dataDir: options.dataDir ?? temporary!,
         config: options.quota,
-        ...(options.networkCounter ? { counter: options.networkCounter } : {}),
+        ...(options.networkCounter
+          ? { counter: options.networkCounter }
+          : options.quota.source === 'relay'
+            ? { counter: relayTrafficCounter }
+            : {}),
       })
     : undefined
   const memory = new MemoryGuard({
@@ -135,11 +192,19 @@ export async function startRelay(
     : undefined
   quota?.start()
   scheduler?.start()
+
+  let activeLeaf = options.cert ? new X509Certificate(options.cert) : undefined
+  const initialSpki = activeLeaf?.publicKey.export({ type: 'spki', format: 'der' })
+  const certificateReady = () => !options.acme || (activeLeaf !== undefined && !isAcmeBootstrapCertificate(activeLeaf))
+  // All production relays (public TLS gateway and loopback behind-proxy) require full cgroup socket memory accounting to admit new connections.
+  const strictSocketMemory = isProduction || Boolean(options.memoryReader)
   const ready = () =>
-    denials.status().healthy
+    certificateReady()
+    && denials.status().healthy
     && memory.status().healthy
     && memory.status().used < memory.status().limit * 0.8
-    && (!isPublic || memory.status().includesSockets)
+    && (!strictSocketMemory || memory.status().includesSockets)
+
   const core = new RelayCore({
     ...options,
     registrationWork: registrationWork ? { ...options.registrationWork!, verify: request => registrationWork.verify(request) } : undefined,
@@ -170,21 +235,12 @@ export async function startRelay(
     crypto: nodeCrypto,
     now: Date.now,
   })
-  const peers = new Set<RelaySocket>()
-  const closedTraffic = { receivedBytes: 0, writtenBytes: 0, paddingReceivedBytes: 0, paddingWrittenBytes: 0, coverBatches: 0 }
-  const addTraffic = (sum: typeof closedTraffic, peer: RelaySocket) => {
-    const metrics = peer.metrics()
-    sum.receivedBytes += metrics.readWireBytes
-    sum.writtenBytes += metrics.writtenBytes
-    sum.paddingReceivedBytes += metrics.readPaddingBytes
-    sum.paddingWrittenBytes += metrics.paddingWrittenBytes
-    sum.coverBatches += metrics.coverBatches
-    return sum
-  }
   const raw = new Set<import('node:stream').Duplex>()
   let gateway: Awaited<ReturnType<typeof startGateway>> | undefined
   let backend: Awaited<ReturnType<typeof listenPrivateBackend>> | undefined
   let backendDirectory: string | undefined
+  let acmeLoop: ReturnType<typeof startAcmeLoop> | undefined
+  let selfSignedLoop: ReturnType<typeof startSelfSignedRenewalLoop> | undefined
   const sources = new WeakMap<import('node:net').Socket, string>()
   const respond: RequestListener = (req, res) => {
     res.setHeader('Cache-Control', 'no-store')
@@ -198,21 +254,22 @@ export async function startRelay(
       res.end()
     }
   }
-  const server = options.gateway
-    ? createHttpServer({ maxHeaderSize: 4096 }, respond)
-    : createHttpsServer(
-        {
-          cert: options.cert,
-          key: options.key,
-          minVersion: 'TLSv1.3',
-          maxVersion: 'TLSv1.3',
-          ALPNProtocols: ['http/1.1'],
-          secureOptions: constants.SSL_OP_NO_TICKET,
-          sessionIdContext: randomBytes(16).toString('hex'),
-          maxHeaderSize: 4096,
-        },
-        respond,
-      )
+  const server =
+    options.gateway || options.behindProxy
+      ? createHttpServer({ maxHeaderSize: options.behindProxy ? 8192 : 4096 }, respond)
+      : createHttpsServer(
+          {
+            cert: options.cert!,
+            key: options.key!,
+            minVersion: 'TLSv1.3',
+            maxVersion: 'TLSv1.3',
+            ALPNProtocols: ['http/1.1'],
+            secureOptions: constants.SSL_OP_NO_TICKET,
+            sessionIdContext: randomBytes(16).toString('hex'),
+            maxHeaderSize: 4096,
+          },
+          respond,
+        )
   server.headersTimeout = 5000
   server.requestTimeout = 5000
   server.maxRequestsPerSocket = 1
@@ -229,21 +286,37 @@ export async function startRelay(
   let sequence = 0
   server.on('upgrade', (request, rawSocket, head) => {
     const socket = rawSocket as import('node:net').Socket
-    const source = sources.get(socket) ?? (!options.gateway ? socket.remoteAddress : undefined)
+    const source = options.gateway
+      ? sources.get(socket)
+      : options.behindProxy
+        ? forwardedSource(request.rawHeaders, socket.remoteAddress)
+        : socket.remoteAddress
     const headers = request.headers,
-      key = headers['sec-websocket-key']
-    const names = request.rawHeaders.filter((_, index) => index % 2 === 0).map(value => value.toLowerCase())
+      key = headers['sec-websocket-key'],
+      urlPath = request.url ?? ''
+    const isEdgePath = Boolean(options.edgeIdentity) && ['/v1/h/0', '/v1/d/0', '/v1/c/0'].includes(urlPath)
+    const isLegacyPath = !options.behindProxy && ['/v1/h', '/v1/d', '/v1/c'].includes(urlPath)
+    const names = request.rawHeaders
+      .filter((_, index) => index % 2 === 0)
+      .map(value => value.toLowerCase())
+      .filter(name => !options.behindProxy || !PROXY_HEADERS.has(name))
+    const connectionTokens = String(headers.connection ?? '')
+      .toLowerCase()
+      .split(',')
+      .map(token => token.trim())
     const valid =
       request.method === 'GET'
-      && ['/v1/h', '/v1/d', '/v1/c'].includes(request.url ?? '')
+      && (isEdgePath || isLegacyPath)
       && request.httpVersion === '1.1'
       && typeof key === 'string'
       && /^[A-Za-z0-9+/]{22}==$/u.test(key)
       && Buffer.from(key, 'base64').length === 16
       && headers['sec-websocket-version'] === '13'
-      && ['latch-relay.1', 'latch-relay.2'].includes(String(headers['sec-websocket-protocol']))
+      && (isEdgePath
+        ? headers['sec-websocket-protocol'] === 'latch-relay.2'
+        : ['latch-relay.1', 'latch-relay.2'].includes(String(headers['sec-websocket-protocol'])))
       && headers.upgrade?.toLowerCase() === 'websocket'
-      && headers.connection?.toLowerCase() === 'upgrade'
+      && connectionTokens.includes('upgrade')
       && !headers.origin
       && !headers['content-length']
       && !headers['transfer-encoding']
@@ -253,8 +326,9 @@ export async function startRelay(
       socket.destroy()
       return
     }
+    const roleChar = urlPath.slice(4, 5)
     const id = ++sequence,
-      role = request.url === '/v1/h' ? 'host' : request.url === '/v1/d' ? 'data' : 'client',
+      role = roleChar === 'h' ? 'host' : roleChar === 'd' ? 'data' : 'client',
       version = headers['sec-websocket-protocol'] === 'latch-relay.2' ? 2 : 1
     let upgraded: RelaySocket | undefined
     socket.once('close', () => {
@@ -265,6 +339,7 @@ export async function startRelay(
         {
           id,
           prefix: addressPrefix(source),
+          edge: isEdgePath,
           ...(version === 2 ? { profile: 'outer-pad-v2' as const } : {}),
           send: message => upgraded?.send(message) ?? Promise.reject(new Error('Relay upgrade incomplete')),
           close: code => {
@@ -293,8 +368,9 @@ export async function startRelay(
       sendHighWaterMark: () => memory.highWaterMark(),
       receiveHighWaterMark: () => memory.highWaterMark(),
       sendTimeoutMs: 60_000,
-      pingIntervalMs: 25_000,
-      deadAfterMs: 75_000,
+      pingIntervalMs: isEdgePath ? EDGE_RELAY.pingIntervalMs : 25_000,
+      deadAfterMs: isEdgePath ? EDGE_RELAY.nodeDeadAfterMs : 75_000,
+      applicationPing: isEdgePath,
       version,
       outerPadding: version === 2 && role !== 'host',
       ...(version === 2 && role !== 'host'
@@ -314,24 +390,36 @@ export async function startRelay(
       `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acceptKey(key)}\r\nSec-WebSocket-Protocol: latch-relay.${version}\r\n\r\n`,
     )
     void (async () => {
+      let lastPing = 0
       try {
-        for (;;) await core.receive(id, await peer.receive(0))
+        for (;;) {
+          const message = await peer.receive(0)
+          if (isEdgePath && message.type === 'ping') {
+            const now = Date.now()
+            if (now - lastPing < PING_MIN_MS) {
+              peer.close(4400)
+              return
+            }
+            lastPing = now
+            await peer.send({ type: 'pong' })
+            continue
+          }
+          await core.receive(id, message)
+        }
       } catch {
         core.disconnect(id)
         peer.close()
       }
     })()
   })
-  let activeLeaf = new X509Certificate(options.cert)
-  const spki = activeLeaf.publicKey.export({ type: 'spki', format: 'der' })
+  const allowKeyRotation = Boolean(options.edgeIdentity)
   const reloadTls = async () => {
     if (!options.tlsFiles) throw new Error('TLS files unavailable')
     const { cert, key } = await readRelayTls(options.tlsFiles.certificateFile, options.tlsFiles.keyFile),
       next = new X509Certificate(cert)
     const nextSpki = next.publicKey.export({ type: 'spki', format: 'der' })
     if (
-      spki.length !== nextSpki.length
-      || !timingSafeEqual(spki, nextSpki)
+      (!allowKeyRotation && (!initialSpki || initialSpki.length !== nextSpki.length || !timingSafeEqual(initialSpki, nextSpki)))
       || Date.parse(next.validTo) <= Date.now()
       || Date.parse(next.validFrom) > Date.now()
     )
@@ -340,13 +428,17 @@ export async function startRelay(
     else if ('setSecureContext' in server && typeof server.setSecureContext === 'function') server.setSecureContext({ cert, key })
     activeLeaf = next
   }
-  const status = () => ({
+  const status = (): RelayStatus => ({
     ...core.status(),
     runtime: { node: process.versions.node, protocol: 2 as const },
-    certificate: {
-      daysRemaining: Math.ceil((Date.parse(activeLeaf.validTo) - Date.now()) / 86400000),
-      renewalWarning: Date.parse(activeLeaf.validTo) - Date.now() < 10 * 86400000,
-    },
+    ...(activeLeaf
+      ? {
+          certificate: {
+            daysRemaining: isAcmeBootstrapCertificate(activeLeaf) ? 0 : Math.ceil((Date.parse(activeLeaf.validTo) - Date.now()) / 86400000),
+            renewalWarning: isAcmeBootstrapCertificate(activeLeaf) || Date.parse(activeLeaf.validTo) - Date.now() < 10 * 86400000,
+          },
+        }
+      : {}),
     ready: !core.status().draining && ready() && (!quota || quota.snapshot().admission) && (!gateway || gateway.healthy()),
     denials: denials.status(),
     memory: memory.status(),
@@ -490,16 +582,43 @@ export async function startRelay(
         backend: path,
         host: options.host,
         port: options.port,
-        cert: options.cert,
-        key: options.key,
+        cert: options.cert!,
+        key: options.key!,
+        allowKeyRotation,
         maxConnections: options.maxConnections ?? 1024,
       })
+      if (options.acme && options.dataDir && options.tlsFiles) {
+        const activeGateway = gateway
+        acmeLoop = startAcmeLoop({
+          dataDir: options.dataDir,
+          config: options.acme,
+          certificateFile: options.tlsFiles.certificateFile,
+          keyFile: options.tlsFiles.keyFile,
+          currentLeaf: () => activeLeaf,
+          setAcmeTls: (cert, key) => activeGateway.setAcmeTls(cert, key),
+          reloadTls,
+          deps: options.acmeDeps,
+        })
+      }
     } else {
       server.listen(options.port, options.host)
       await once(server, 'listening')
     }
+    if (options.selfSignedTls && options.tlsFiles) {
+      selfSignedLoop = startSelfSignedRenewalLoop({
+        target: options.selfSignedTls.target,
+        certificateFile: options.tlsFiles.certificateFile,
+        keyFile: options.tlsFiles.keyFile,
+        currentLeaf: () => activeLeaf,
+        reloadTls,
+        ...(options.selfSignedTls.renewBeforeDays === undefined ? {} : { renewBeforeDays: options.selfSignedTls.renewBeforeDays }),
+        ...(options.selfSignedTls.checkIntervalMs === undefined ? {} : { checkIntervalMs: options.selfSignedTls.checkIntervalMs }),
+      })
+    }
   } catch (error) {
     clearInterval(timer)
+    await acmeLoop?.stop()
+    await selfSignedLoop?.stop()
     admin.close()
     server.close()
     await gateway?.close()
@@ -522,6 +641,8 @@ export async function startRelay(
     },
     async close() {
       clearInterval(timer)
+      await acmeLoop?.stop()
+      await selfSignedLoop?.stop()
       core.drain()
       for (const peer of peers) peer.close(4300)
       for (const socket of raw) socket.destroy()

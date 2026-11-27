@@ -298,6 +298,22 @@ export class NativeSettings {
       return result
     })
   }
+  /** Changes the try order of already-configured relays; recorded in audit first or not applied at all. */
+  reorderRelays(order: readonly string[], actor: AuditActor, authorize: () => void) {
+    return this.serial(async () => {
+      const result = await this.options.profiles.reorderRelays(order, authorize, detail =>
+        this.options.audit.append({ action: 'native.config.changed', actor, detail: { ...detail, lowering: false, direct: false } }).then(
+          () => true,
+          () => {
+            throw new AppError(503, 'audit-unavailable', '审计记录写入失败，没有调整中继顺序。')
+          },
+        ),
+      )
+      this.options.changed?.()
+      this.options.controller.reconcile()
+      return result
+    })
+  }
   /** 测试: dial the node now; the four steps of the progress line. */
   async testRelay(relayId: string, actor: AuditActor, authorize: () => void): Promise<NativeRelayTest> {
     authorize()

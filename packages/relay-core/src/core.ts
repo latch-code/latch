@@ -35,6 +35,8 @@ export interface RelayPeer {
   id: number
   prefix: string
   profile?: RelayTransportProfile
+  /** Overrides `edgeIdentity` per socket when a single Linux node serves both `/v1/{h,d,c}/0` and legacy `/v1/{h,d,c}`. */
+  edge?: boolean
   send(message: RelayMessage): Promise<void>
   close(code: number): void
   markSpliced?(): void
@@ -221,7 +223,7 @@ export class RelayCore {
         await partner.peer.send(message)
         return
       }
-      const edge = this.options.edgeIdentity !== undefined
+      const edge = this.options.edgeIdentity !== undefined && connection.peer.edge !== false
       if (connection.role === 'host') {
         await this.host(connection, message)
         return
@@ -286,11 +288,12 @@ export class RelayCore {
   }
   private async host(connection: Connection, message: RelayMessage, acceptedWork?: WorkChallenge): Promise<void> {
     const { crypto } = this.options
-    if (this.options.edgeIdentity && connection.phase === 'new' && message.type === 'edge-hello') {
+    const edge = this.options.edgeIdentity !== undefined && connection.peer.edge !== false
+    if (edge && connection.phase === 'new' && message.type === 'edge-hello') {
       await this.edgeChallenge(connection, message.clientNonce)
       return
     }
-    if (!this.options.edgeIdentity && connection.phase === 'new' && message.type === 'hello') {
+    if (!edge && connection.phase === 'new' && message.type === 'hello') {
       connection.phase = 'challenge'
       connection.challenge = crypto.random(32)
       await connection.peer.send({
@@ -665,7 +668,7 @@ export class RelayCore {
       return
     }
     const valid = equal(await attachMac(this.options.crypto, route.token, message.routeId, message.connection, message.nonce), message.mac)
-    const expected = this.options.edgeIdentity ? 'challenge' : 'new'
+    const expected = this.options.edgeIdentity !== undefined && connection.peer.edge !== false ? 'challenge' : 'new'
     if (this.connections.get(connection.peer.id) !== connection || connection.phase !== expected) return
     if (!valid || this.routes.get(key) !== route || this.pending.get(requestKey) !== pending) {
       this.close(connection.peer.id, 4100)

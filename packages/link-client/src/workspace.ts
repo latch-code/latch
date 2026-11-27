@@ -24,6 +24,7 @@ export interface NativeCheckpoint {
   revision: number
   value: unknown
   discoveryEpoch?: string
+  relayEpoch?: string
 }
 export interface NativeEvent {
   type: 'refresh' | 'tasks-invalidated' | 'task-state' | 'host-state'
@@ -247,6 +248,10 @@ export class NativeWorkspace {
                   .string()
                   .regex(/^[a-f0-9]{64}$/u)
                   .optional(),
+                relayEpoch: z
+                  .string()
+                  .regex(/^[a-f0-9]{64}$/u)
+                  .optional(),
               })
               .optional(),
           })
@@ -259,6 +264,7 @@ export class NativeWorkspace {
       revision: value.revision,
       value: response.body,
       ...(value.host?.native?.discoveryEpoch ? { discoveryEpoch: value.host.native.discoveryEpoch } : {}),
+      ...(value.host?.native?.relayEpoch ? { relayEpoch: value.host.native.relayEpoch } : {}),
     }
     if (this.checkpointValue?.instanceId === checkpoint.instanceId && this.checkpointValue.revision > checkpoint.revision)
       throw new Error('Obsolete native Host checkpoint')

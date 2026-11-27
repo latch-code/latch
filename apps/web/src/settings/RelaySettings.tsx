@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState, type DragEvent, type ReactNode } from 'react'
-import { Cloud, FileUp, Radio, Server } from 'lucide-react'
+import { useEffect, useId, useRef, useState, type DragEvent, type PointerEvent, type ReactNode } from 'react'
+import { ArrowDown, ArrowUp, Cloud, FileUp, GripVertical, Radio, Server } from 'lucide-react'
 import {
   parseRelayFile,
   RELAY_FILE_BYTES,
@@ -37,7 +37,7 @@ import { TerminalFillButton } from '../components/TerminalFillButton.tsx'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { IconTile, SettingsGroup, SettingsRow } from './common.tsx'
 import { canOpenSystemSettings, LocalNetworkNote, LocalNetworkOpen } from './LocalNetworkHint.tsx'
-import { RELAYS_DIR, relaySetupCommands, validRelayName } from './relayCommands.ts'
+import { RELAYS_DIR, relaySetupCommands, serverRelayStem, validRelayName, type ServerTlsMode } from './relayCommands.ts'
 import { localLatchCommand } from '../core/commands.ts'
 import { currentLocale, defineCopy, formatNumber, useLocale } from '../core/i18n.ts'
 import { readHiddenRelayIds, setRelayHidden } from './relayVisibility.ts'
@@ -79,6 +79,10 @@ const COPY = defineCopy(
     test: '测试',
     enable: '启用',
     disable: '停用',
+    moveUp: '上移',
+    moveDown: '下移',
+    orderHintManage: '始终先尝试直接连接；转发服务按从上到下的顺序优先连接，可拖动调整。',
+    orderHint: '始终先尝试直接连接；多个转发服务按从上到下的顺序优先连接。',
     remove: '移除',
     removeRelay: '从这台 Mac 移除',
     relayFileReadFailed: '无法读取这台 Mac 上的转发服务文件。',
@@ -112,6 +116,11 @@ const COPY = defineCopy(
       me: '中东',
     },
     configure: '配置',
+    tlsMode: '证书方式',
+    tlsAuto: '自动证书',
+    tlsProxy: '反向代理',
+    tlsCustom: '自有证书',
+    localListenPort: '内部监听端口',
     port: '端口',
     certificate: '证书链',
     privateKey: '私钥',
@@ -124,6 +133,7 @@ const COPY = defineCopy(
     server: '服务器',
     deployFromServer: '在服务器上的 Latch 源码目录运行',
     domain: '服务器地址',
+    domainOptionalPlaceholder: '留空直接用服务器 IP',
     existingFile: '已有配置文件',
     back: '返回',
     done: '完成',
@@ -144,6 +154,7 @@ const COPY = defineCopy(
     relayAddresses: (address: string, count: number, key: string) =>
       `${address}${count > 1 ? ` 等 ${formatNumber(count)} 个地址` : ''} · 密钥 ${key}`,
     relayActions: (name: string) => `${name} 的操作`,
+    reorderRelay: (address: string) => `调整 ${address} 的顺序`,
     edgeRelayUnavailable: 'Cloudflare Workers 转发服务尚未实现。',
   },
   {
@@ -182,6 +193,10 @@ const COPY = defineCopy(
     test: 'Test',
     enable: 'Turn on',
     disable: 'Turn off',
+    moveUp: 'Move up',
+    moveDown: 'Move down',
+    orderHintManage: 'Direct connection is always tried first; relays follow from top to bottom. Drag to reorder.',
+    orderHint: 'Direct connection is always tried first; multiple relays follow from top to bottom.',
     remove: 'Remove',
     removeRelay: 'Remove from this Mac',
     relayFileReadFailed: 'Couldn’t read relay files on this Mac.',
@@ -215,6 +230,11 @@ const COPY = defineCopy(
       me: 'Middle East',
     },
     configure: 'Configure',
+    tlsMode: 'TLS mode',
+    tlsAuto: 'Auto TLS',
+    tlsProxy: 'Reverse proxy',
+    tlsCustom: 'Custom TLS',
+    localListenPort: 'Internal listen port',
     port: 'Port',
     certificate: 'Certificate chain',
     privateKey: 'Private key',
@@ -227,6 +247,7 @@ const COPY = defineCopy(
     server: 'Server',
     deployFromServer: 'Run from the Latch source folder on the server',
     domain: 'Domain',
+    domainOptionalPlaceholder: 'Blank uses server IP',
     existingFile: 'Use a relay file',
     back: 'Back',
     done: 'Done',
@@ -247,6 +268,7 @@ const COPY = defineCopy(
     relayAddresses: (address: string, count: number, key: string) =>
       `${address}${count > 1 ? ` and ${formatNumber(count - 1)} more` : ''} · Key ${key}`,
     relayActions: (name: string) => `Actions for ${name}`,
+    reorderRelay: (address: string) => `Reorder ${address}`,
     edgeRelayUnavailable: 'Cloudflare Workers relays aren’t supported yet.',
   },
 )
@@ -278,6 +300,15 @@ const KIND: Record<'self' | 'edge', { label: string; icon: IconComponent }> = {
     },
     icon: Server,
   },
+}
+const visualKind = (kind: 'self' | 'edge' | undefined, url?: string): 'self' | 'edge' => {
+  if (kind !== 'edge') return 'self'
+  if (!url) return 'edge'
+  try {
+    return new URL(url).hostname.endsWith('.workers.dev') ? 'edge' : 'self'
+  } catch {
+    return 'edge'
+  }
 }
 const regionName = (region: string) => (region === 'apac-ne' ? COPY.tokyo : region === 'apac-se' ? COPY.singapore : region)
 const hostOf = (url: string) => {
@@ -397,8 +428,19 @@ export function RelaySettings({ access, hostId }: { access: DeviceAccess; hostId
   const [filesError, setFilesError] = useState(false)
   const [candidate, setCandidate] = useState<RelayCandidate | null>(null)
   const [progress, setProgress] = useState<RelayProgress | null>(null)
+  const addActions = useRef<{ retry: (requestId: string) => void } | null>(null)
   const [hidden, setHidden] = useState(() => readHiddenRelayIds(hostId))
   const [tests, setTests] = useState<Record<string, { test: NativeRelayTest | null; busy: boolean }>>({})
+  const [drag, setDrag] = useState<{ id: string; fromIndex: number; targetIndex: number; dy: number } | null>(null)
+  const pointerDrag = useRef<{
+    pointerId: number
+    id: string
+    fromIndex: number
+    startY: number
+    rects: DOMRect[]
+    moved: boolean
+    targetIndex: number
+  } | null>(null)
   const infoRead = useRef(0)
   const refresh = useRef<{ info: () => void; files: (force?: boolean) => void } | null>(null)
   const writing = useRef(false)
@@ -526,9 +568,20 @@ export function RelaySettings({ access, hostId }: { access: DeviceAccess; hostId
     : []
   const configuring = busy || progress?.busy === true
   const canReviewFile = !filesError && !configuring && !progress?.uncertain && !info.pendingRelay
+  const canReorder = manage && info.relays.length > 1
+  const reorder = (from: number, to: number) => {
+    if (!canReorder || configuring || from === to || to < 0 || to >= info.relays.length) return
+    const reordered = [...info.relays]
+    const [moved] = reordered.splice(from, 1)
+    reordered.splice(to, 0, moved!)
+    const order = reordered.map(item => item.relayId)
+    infoRead.current++
+    setInfo({ ...info, relays: reordered })
+    void run(() => api('native/relays/order', { method: 'PUT', body: { order } }))
+  }
   return (
     <>
-      <SettingsGroup>
+      <SettingsGroup caption={info.relays.length > 0 ? (canReorder ? COPY.orderHintManage : COPY.orderHint) : undefined}>
         <SettingsRow
           leading={<IconTile icon={Radio} />}
           title={COPY.direct}
@@ -581,92 +634,223 @@ export function RelaySettings({ access, hostId }: { access: DeviceAccess; hostId
             }
           />
         )}
-        {info.relays.map(relay => {
+        {info.relays.map((relay, index) => {
           const state = relayState(relay)
-          const kind = KIND[relay.kind ?? 'self']
+          const kind = KIND[visualKind(relay.kind, relay.url)]
           const shown = tests[relay.relayId]
           const relayBusy = configuring || (shown?.busy ?? false)
+          const draggingThis = drag?.id === relay.relayId
+          const dropPosition =
+            drag && drag.targetIndex !== drag.fromIndex && drag.targetIndex === index
+              ? drag.fromIndex > index
+                ? 'before'
+                : 'after'
+              : undefined
+          const finishPointerDrag = (event: PointerEvent<HTMLButtonElement>, commit: boolean) => {
+            const active = pointerDrag.current
+            if (!active || active.pointerId !== event.pointerId) return
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+              try {
+                event.currentTarget.releasePointerCapture(event.pointerId)
+              } catch {
+                // Pointer capture may already be released by the browser.
+              }
+            }
+            pointerDrag.current = null
+            setDrag(null)
+            if (commit && active.moved && active.targetIndex !== active.fromIndex) {
+              reorder(active.fromIndex, active.targetIndex)
+            }
+          }
           return (
-            <div key={relay.relayId} className="relay-row" data-testid="relay-own">
-              <SettingsRow
-                leading={<IconTile icon={kind.icon} />}
-                title={kind.label}
-                record
-                dim={relay.status === 'disabled'}
-                description={
-                  <Tooltip content={COPY.relayAddresses(relay.url, relay.addresses ?? 1, relay.keyHash ?? '')}>
-                    <span>{hostOf(relay.url)}</span>
-                  </Tooltip>
-                }
-                trailing={
-                  <span className="relay-row-end">
-                    <Tooltip content={state.detail}>
-                      <span>
-                        <StatusWord tone={state.tone}>{state.word}</StatusWord>
-                      </span>
+            <div
+              key={relay.relayId}
+              className="relay-row"
+              data-testid="relay-own"
+              data-dragging={draggingThis ? '' : undefined}
+              data-drop-position={dropPosition}
+              style={draggingThis ? { transform: `translateY(${drag.dy}px)` } : undefined}>
+              <div className="relay-row-main">
+                {canReorder && (
+                  <IconButton
+                    size="xs"
+                    className="relay-row-grip"
+                    icon={GripVertical}
+                    label={COPY.reorderRelay(hostOf(relay.url))}
+                    disabled={configuring}
+                    onPointerDown={event => {
+                      if (configuring || event.button !== 0) return
+                      const card = event.currentTarget.closest('.settings-card')
+                      if (!card) return
+                      event.preventDefault()
+                      try {
+                        event.currentTarget.setPointerCapture(event.pointerId)
+                      } catch {
+                        // Synthetic pointer events without active pointer state still deliver move/up on target.
+                      }
+                      const rects = Array.from(card.querySelectorAll<HTMLElement>('[data-testid="relay-own"]')).map(el =>
+                        el.getBoundingClientRect(),
+                      )
+                      pointerDrag.current = {
+                        pointerId: event.pointerId,
+                        id: relay.relayId,
+                        fromIndex: index,
+                        startY: event.clientY,
+                        rects,
+                        moved: false,
+                        targetIndex: index,
+                      }
+                    }}
+                    onPointerMove={event => {
+                      const active = pointerDrag.current
+                      if (!active || active.pointerId !== event.pointerId) return
+                      const rawDy = event.clientY - active.startY
+                      if (!active.moved && Math.abs(rawDy) < 4) return
+                      active.moved = true
+                      const ownRect = active.rects[active.fromIndex]!
+                      const minDy = active.rects[0]!.top - ownRect.top
+                      const maxDy = active.rects.at(-1)!.bottom - ownRect.bottom
+                      const dy = Math.min(maxDy, Math.max(minDy, rawDy))
+                      let targetIndex = active.fromIndex
+                      for (let i = 0; i < active.rects.length; i++) {
+                        const rect = active.rects[i]!
+                        if (i < active.fromIndex && event.clientY <= rect.top + rect.height * 0.75) {
+                          targetIndex = i
+                          break
+                        }
+                        if (i > active.fromIndex && event.clientY >= rect.top + rect.height * 0.25) {
+                          targetIndex = i
+                        }
+                      }
+                      active.targetIndex = targetIndex
+                      setDrag({ id: active.id, fromIndex: active.fromIndex, targetIndex, dy })
+                    }}
+                    onPointerUp={event => finishPointerDrag(event, true)}
+                    onPointerCancel={event => finishPointerDrag(event, false)}
+                    onKeyDown={event => {
+                      if (event.key === 'Escape' && pointerDrag.current) {
+                        event.preventDefault()
+                        pointerDrag.current = null
+                        setDrag(null)
+                        return
+                      }
+                      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+                      event.preventDefault()
+                      reorder(index, index + (event.key === 'ArrowUp' ? -1 : 1))
+                    }}
+                  />
+                )}
+                <SettingsRow
+                  leading={<IconTile icon={kind.icon} />}
+                  title={kind.label}
+                  record
+                  dim={relay.status === 'disabled'}
+                  description={
+                    <Tooltip content={COPY.relayAddresses(relay.url, relay.addresses ?? 1, relay.keyHash ?? '')}>
+                      <span>{hostOf(relay.url)}</span>
                     </Tooltip>
-                    {manage ? (
-                      <ActionMenu
-                        label={COPY.relayActions(kind.label)}
-                        placement="bottom-end"
-                        trigger={relayMenuTrigger}
-                        sections={[
-                          {
-                            id: 'relay',
-                            items: [
-                              ...(relay.status !== 'invalid' && (relay.kind !== 'edge' || info.edgeRelayAvailable)
-                                ? [
-                                    {
-                                      id: 'test',
-                                      label: COPY.test,
-                                      disabled: relayBusy,
-                                      onSelect: () => void test(relay.relayId),
-                                    },
-                                  ]
-                                : []),
-                              ...(relay.status !== 'invalid'
-                              && (relay.kind !== 'edge' || info.edgeRelayAvailable || relay.status !== 'disabled')
-                                ? [
-                                    {
-                                      id: 'toggle',
-                                      label: relay.status === 'disabled' ? COPY.enable : COPY.disable,
-                                      disabled: relayBusy,
-                                      onSelect: () =>
-                                        void run(() =>
-                                          api(`native/relays/${relay.relayId}`, {
-                                            method: 'PATCH',
-                                            body: { disabled: relay.status !== 'disabled' },
-                                          }),
-                                        ),
-                                    },
-                                  ]
-                                : []),
-                              {
-                                id: 'remove',
-                                label: COPY.removeRelay,
-                                danger: true,
-                                disabled: relayBusy,
-                                onSelect: () =>
-                                  void run(
-                                    () => api(`native/relays/${relay.relayId}`, { method: 'DELETE' }),
-                                    () => {
-                                      hideRelay(relay.relayId, true)
-                                      setTests(current => {
-                                        const next = { ...current }
-                                        delete next[relay.relayId]
-                                        return next
-                                      })
-                                    },
-                                  ),
-                              },
-                            ],
-                          },
-                        ]}
-                      />
-                    ) : null}
-                  </span>
-                }
-              />
+                  }
+                  trailing={
+                    <span className="relay-row-end">
+                      <Tooltip content={state.detail}>
+                        <span>
+                          <StatusWord tone={state.tone}>{state.word}</StatusWord>
+                        </span>
+                      </Tooltip>
+                      {manage ? (
+                        <ActionMenu
+                          label={COPY.relayActions(kind.label)}
+                          placement="bottom-end"
+                          trigger={relayMenuTrigger}
+                          sections={[
+                            ...(relay.status !== 'invalid' && canReorder
+                              ? [
+                                  {
+                                    id: 'order',
+                                    items: [
+                                      ...(index > 0
+                                        ? [
+                                            {
+                                              id: 'up',
+                                              label: COPY.moveUp,
+                                              icon: ArrowUp,
+                                              disabled: relayBusy,
+                                              onSelect: () => reorder(index, index - 1),
+                                            },
+                                          ]
+                                        : []),
+                                      ...(index < info.relays.length - 1
+                                        ? [
+                                            {
+                                              id: 'down',
+                                              label: COPY.moveDown,
+                                              icon: ArrowDown,
+                                              disabled: relayBusy,
+                                              onSelect: () => reorder(index, index + 1),
+                                            },
+                                          ]
+                                        : []),
+                                    ],
+                                  },
+                                ]
+                              : []),
+                            {
+                              id: 'relay',
+                              items: [
+                                ...(relay.status !== 'invalid' && (relay.kind !== 'edge' || info.edgeRelayAvailable)
+                                  ? [
+                                      {
+                                        id: 'test',
+                                        label: COPY.test,
+                                        disabled: relayBusy,
+                                        onSelect: () => void test(relay.relayId),
+                                      },
+                                    ]
+                                  : []),
+                                ...(relay.status !== 'invalid'
+                                && (relay.kind !== 'edge' || info.edgeRelayAvailable || relay.status !== 'disabled')
+                                  ? [
+                                      {
+                                        id: 'toggle',
+                                        label: relay.status === 'disabled' ? COPY.enable : COPY.disable,
+                                        disabled: relayBusy,
+                                        onSelect: () =>
+                                          void run(() =>
+                                            api(`native/relays/${relay.relayId}`, {
+                                              method: 'PATCH',
+                                              body: { disabled: relay.status !== 'disabled' },
+                                            }),
+                                          ),
+                                      },
+                                    ]
+                                  : []),
+                                {
+                                  id: 'remove',
+                                  label: COPY.removeRelay,
+                                  danger: true,
+                                  disabled: relayBusy,
+                                  onSelect: () =>
+                                    void run(
+                                      () => api(`native/relays/${relay.relayId}`, { method: 'DELETE' }),
+                                      () => {
+                                        hideRelay(relay.relayId, true)
+                                        setTests(current => {
+                                          const next = { ...current }
+                                          delete next[relay.relayId]
+                                          return next
+                                        })
+                                      },
+                                    ),
+                                },
+                              ],
+                            },
+                          ]}
+                        />
+                      ) : null}
+                    </span>
+                  }
+                />
+              </div>
               {shown && (
                 <div className="relay-row-test">
                   <RelaySteps test={shown.test ? { ...shown.test, bookIssuedAt: relay.bookIssuedAt } : null} busy={shown.busy} />
@@ -681,13 +865,13 @@ export function RelaySettings({ access, hostId }: { access: DeviceAccess; hostId
             <div key={found.relayId} className="relay-row" data-testid="relay-local-file">
               <SettingsRow
                 className="relay-local-row"
-                leading={<IconTile icon={KIND[found.kind].icon} />}
+                leading={<IconTile icon={KIND[visualKind(found.kind, found.urls[0])].icon} />}
                 title={found.name}
                 record
                 description={
                   <Tooltip content={COPY.relayAddresses(found.urls[0] ?? '', found.urls.length, found.keyHash)}>
                     <span>
-                      {KIND[found.kind].label} · {hostOf(found.urls[0] ?? '')}
+                      {KIND[visualKind(found.kind, found.urls[0])].label} · {hostOf(found.urls[0] ?? '')}
                     </span>
                   </Tooltip>
                 }
@@ -721,35 +905,50 @@ export function RelaySettings({ access, hostId }: { access: DeviceAccess; hostId
             </div>
           ))}
         {info.pendingRelay && manage && (
-          <SettingsRow
-            title={COPY.unknown}
-            description={hostOf(info.pendingRelay.url)}
-            trailing={
-              <span className="relay-row-end">
-                <Button
-                  disabled={configuring}
-                  onClick={() => {
-                    const { requestId } = info.pendingRelay!
-                    void run(
-                      () => api(`native/relay-requests/${requestId}`, { method: 'DELETE' }),
-                      () => {
-                        if (progress?.requestId === requestId) {
-                          setCandidate(null)
-                          setProgress(null)
-                        }
-                      },
-                    )
-                  }}>
-                  {COPY.giveUp}
-                </Button>
-                {info.pendingRelay.canRetry && (
-                  <Button onClick={() => setAdding(true)} disabled={busy}>
-                    {COPY.retry}
+          <div className="relay-row" data-testid="relay-pending-row">
+            <SettingsRow
+              className="relay-local-row"
+              leading={<IconTile icon={KIND[visualKind('edge', info.pendingRelay.url)].icon} />}
+              title={KIND[visualKind('edge', info.pendingRelay.url)].label}
+              record
+              description={hostOf(info.pendingRelay.url)}
+              trailing={
+                <span className="relay-row-end">
+                  <StatusWord tone="warn">{COPY.unknown}</StatusWord>
+                  <Button
+                    size="sm"
+                    disabled={configuring}
+                    onClick={() => {
+                      const { requestId } = info.pendingRelay!
+                      void run(
+                        () => api(`native/relay-requests/${requestId}`, { method: 'DELETE' }),
+                        () => {
+                          if (progress?.requestId === requestId) {
+                            setCandidate(null)
+                            setProgress(null)
+                          }
+                        },
+                      )
+                    }}>
+                    {COPY.giveUp}
                   </Button>
-                )}
-              </span>
-            }
-          />
+                  {info.pendingRelay.canRetry && (
+                    <Button
+                      size="sm"
+                      disabled={configuring}
+                      onClick={() => {
+                        setCandidate(null)
+                        setProgress(null)
+                        setAdding(true)
+                        addActions.current?.retry(info.pendingRelay!.requestId)
+                      }}>
+                      {COPY.retry}
+                    </Button>
+                  )}
+                </span>
+              }
+            />
+          </div>
         )}
         {info.directory && (
           <SettingsRow
@@ -789,7 +988,8 @@ export function RelaySettings({ access, hostId }: { access: DeviceAccess; hostId
           open={adding}
           sourceCheckout={info.sourceCheckout === true}
           edgeAvailable={info.edgeRelayAvailable === true}
-          pending={info.pendingRelay?.canRetry ? info.pendingRelay.requestId : undefined}
+          pendingRelay={info.pendingRelay}
+          actionsRef={addActions}
           files={availableFiles}
           filesError={filesError}
           candidate={candidate}
@@ -844,7 +1044,8 @@ function AddRelay({
   open,
   sourceCheckout,
   edgeAvailable,
-  pending,
+  pendingRelay,
+  actionsRef,
   files,
   filesError,
   candidate,
@@ -860,8 +1061,9 @@ function AddRelay({
   /** The Host runs from a source checkout, where the guided commands exist. */
   sourceCheckout: boolean
   edgeAvailable: boolean
-  /** A request whose result is unknown: 重试 continues it with the same request ID and no file. */
-  pending: string | undefined
+  /** A request whose result is unknown: 重试 continues it with the same request ID and no file; 放弃 cancels it. */
+  pendingRelay: NativeLinkInfo['pendingRelay']
+  actionsRef: { current: { retry: (requestId: string) => void } | null }
   files: NativeRelayFile[]
   filesError: boolean
   candidate: RelayCandidate | null
@@ -873,29 +1075,53 @@ function AddRelay({
   onClose: () => void
   onInfo: (info: NativeLinkInfo) => void
 }) {
+  const pending = pendingRelay?.canRetry ? pendingRelay.requestId : undefined
   const fileInput = useRef<HTMLInputElement>(null)
   const [way, setWay] = useState<Way | null>(null)
   const [name, setName] = useState('relay')
   const [location, setLocation] = useState<RelayLocation | 'auto'>('auto')
+  const [tlsMode, setTlsMode] = useState<ServerTlsMode>('acme')
   const [server, setServer] = useState('')
   const [domain, setDomain] = useState('')
-  const [port, setPort] = useState('8443')
+  const [port, setPort] = useState('443')
   const [cert, setCert] = useState('')
   const [key, setKey] = useState('')
   const [rejected, setRejected] = useState<'file' | 'edge' | null>(null)
+  const [abandoning, setAbandoning] = useState(false)
   const reading = useRef(0)
   const connecting = useRef(false)
+  const lastPendingUrl = useRef<string | undefined>(undefined)
+  if (pendingRelay?.url) lastPendingUrl.current = pendingRelay.url
   // The dialog replaces its children at the phone breakpoint, but the confirmation must stay with the request.
   const confirmationId = useId()
   const confirmation = useInlineConfirmation(confirmationId, open && progress?.busy === true, 2)
   const awaitingConfirmation = confirmation?.view.phase === 'waiting'
   const reset = () => {
     reading.current++
+    lastPendingUrl.current = undefined
     confirmation?.actions.dismiss()
     setWay(null)
     setCandidate(null)
     setRejected(null)
     setProgress(null)
+  }
+  const abandon = async (requestId: string) => {
+    if (connecting.current || abandoning) return
+    setAbandoning(true)
+    confirmation?.actions.dismiss()
+    try {
+      const next = await api<NativeLinkInfo>(`native/relay-requests/${requestId}`, { method: 'DELETE' })
+      onInfo(next)
+      reset()
+    } catch (cause) {
+      setProgress(
+        progress
+          ? { ...progress, busy: false, uncertain: false, message: inlineError(cause) }
+          : { requestId, test: null, busy: false, message: inlineError(cause) },
+      )
+    } finally {
+      setAbandoning(false)
+    }
   }
   const read = async (chosen: File | undefined) => {
     const attempt = ++reading.current
@@ -985,6 +1211,13 @@ function AddRelay({
       connecting.current = false
     }
   }
+  actionsRef.current = {
+    retry: requestId => {
+      setWay(null)
+      setRejected(null)
+      void connect({ requestId })
+    },
+  }
   const drop = (event: DragEvent) => {
     event.preventDefault()
     void read(event.dataTransfer.files[0])
@@ -1016,12 +1249,20 @@ function AddRelay({
       </>
     )
   ) : null
-  const listedFiles = files.filter(found => way === 'file' || (found.kind === way && (way !== 'edge' || found.name === name)))
+  const expectedServerStem = serverRelayStem(domain || server)
+  const listedFiles = files.filter(found => {
+    if (way === 'file') return true
+    if (way === 'edge') return found.kind === 'edge' && found.name === name
+    return (
+      visualKind(found.kind, found.urls[0]) === 'self'
+      && ((!domain && !server) || found.name === expectedServerStem || found.kind === 'self')
+    )
+  })
   const fileStep = (
     <>
       {listedFiles.map(found => (
         <div key={found.relayId} className="relay-found" data-testid="relay-found">
-          <Icon icon={KIND[found.kind].icon} size={16} />
+          <Icon icon={KIND[visualKind(found.kind, found.urls[0])].icon} size={16} />
           <b>{found.name}</b>
           <Tooltip content={found.urls.join(' · ')}>
             <span>{hostOf(found.urls[0] ?? '')}</span>
@@ -1030,7 +1271,7 @@ function AddRelay({
           <Button
             size="sm"
             variant="primary"
-            disabled={filesError || Boolean(pending)}
+            disabled={filesError || Boolean(pendingRelay)}
             onClick={() => {
               reading.current++
               setRejected(null)
@@ -1068,7 +1309,7 @@ function AddRelay({
   )
   const commands =
     way === 'self' && sourceCheckout
-      ? relaySetupCommands('self', { server, domain, port, cert, key })
+      ? relaySetupCommands('self', { latch: localLatchCommand(), tlsMode, server, domain, port, cert, key })
       : way === 'edge' && edgeAvailable
         ? relaySetupCommands('edge', { latch: localLatchCommand(), name, location: location === 'auto' ? undefined : location })
         : undefined
@@ -1111,58 +1352,63 @@ function AddRelay({
       </ol>
     ) : way === 'self' && commands ? (
       <ol className="relay-steps-list">
-        <Step index={1} title={COPY.logIn}>
-          <TextField
-            label={COPY.server}
-            placeholder="user@server"
-            value={server}
-            onChange={event => setServer(event.currentTarget.value.trim())}
+        <Step index={1} title={COPY.deploy}>
+          <SegmentedControl
+            label={COPY.tlsMode}
+            value={tlsMode}
+            options={[
+              { value: 'acme', label: COPY.tlsAuto },
+              { value: 'proxy', label: COPY.tlsProxy },
+              { value: 'custom', label: COPY.tlsCustom },
+            ]}
+            onValueChange={next => {
+              setTlsMode(next)
+              setPort(next === 'proxy' ? '18443' : next === 'custom' ? '8443' : '443')
+            }}
           />
-          {commands.login.map(command => (
-            <Command key={command} command={command} />
-          ))}
-        </Step>
-        <Step index={2} title={COPY.configure}>
           <span className="relay-fields">
             <TextField
+              label={COPY.server}
+              placeholder="root@203.0.113.10"
+              value={server}
+              onChange={event => setServer(event.currentTarget.value.trim())}
+            />
+            <TextField
               label={COPY.domain}
-              placeholder="relay.example.com"
+              placeholder={tlsMode === 'acme' ? COPY.domainOptionalPlaceholder : 'relay.example.com'}
               value={domain}
               onChange={event => setDomain(event.currentTarget.value.trim().toLowerCase())}
             />
-            <TextField
-              label={COPY.port}
-              inputMode="numeric"
-              value={port}
-              onChange={event => setPort(event.currentTarget.value.replace(/[^0-9]/gu, '').slice(0, 5))}
-            />
-            <TextField
-              label={COPY.certificate}
-              placeholder="/etc/ssl/relay/fullchain.pem"
-              value={cert}
-              onChange={event => setCert(event.currentTarget.value.trim())}
-            />
-            <TextField
-              label={COPY.privateKey}
-              placeholder="/etc/ssl/relay/key.pem"
-              value={key}
-              onChange={event => setKey(event.currentTarget.value.trim())}
-            />
+            {(tlsMode === 'proxy' || tlsMode === 'custom') && (
+              <TextField
+                label={tlsMode === 'proxy' ? COPY.localListenPort : COPY.port}
+                inputMode="numeric"
+                value={port}
+                onChange={event => setPort(event.currentTarget.value.replace(/[^0-9]/gu, '').slice(0, 5))}
+              />
+            )}
+            {tlsMode === 'custom' && (
+              <>
+                <TextField
+                  label={COPY.certificate}
+                  placeholder="/etc/ssl/relay/fullchain.pem"
+                  value={cert}
+                  onChange={event => setCert(event.currentTarget.value.trim())}
+                />
+                <TextField
+                  label={COPY.privateKey}
+                  placeholder="/etc/ssl/relay/key.pem"
+                  value={key}
+                  onChange={event => setKey(event.currentTarget.value.trim())}
+                />
+              </>
+            )}
           </span>
-          {commands.deploy.length > 0 && (
-            <Tooltip content={COPY.deployFromServer}>
-              <span className="relay-commands">
-                {commands.deploy.map(command => (
-                  <Command key={command} command={command} copyOnly />
-                ))}
-              </span>
-            </Tooltip>
-          )}
-        </Step>
-        <Step index={3} title={COPY.connect}>
-          {commands.fetch.map(command => (
+          {commands.deploy.map(command => (
             <Command key={command} command={command} />
           ))}
+        </Step>
+        <Step index={2} title={COPY.connect}>
           {fileStep}
         </Step>
       </ol>
@@ -1182,8 +1428,8 @@ function AddRelay({
         onClose()
       }}
       footer={
-        (way !== null || candidate) && !progress?.completed ? (
-          <Button onClick={reset} disabled={progress?.busy || progress?.uncertain}>
+        (way !== null || candidate || progress) && !progress?.completed ? (
+          <Button onClick={reset} disabled={progress?.busy || progress?.uncertain || abandoning}>
             {COPY.back}
           </Button>
         ) : progress?.completed ? (
@@ -1197,12 +1443,24 @@ function AddRelay({
           </Button>
         ) : undefined
       }>
-      {pending && way === null && !candidate && !progress && (
-        <div className="relay-check">
-          <b>{COPY.previousUnknown}</b>
-          <Button variant="primary" onClick={() => void connect({ requestId: pending })}>
-            {COPY.retry}
-          </Button>
+      {pendingRelay && way === null && !candidate && !progress && (
+        <div className="relay-pending-card" data-testid="relay-pending-card">
+          <SettingsRow
+            leading={<IconTile icon={KIND[visualKind('edge', pendingRelay.url)].icon} />}
+            title={COPY.previousUnknown}
+            description={hostOf(pendingRelay.url)}
+            record
+          />
+          <div className="relay-check-actions">
+            {pendingRelay.canRetry && (
+              <Button variant="primary" disabled={abandoning} onClick={() => void connect({ requestId: pendingRelay.requestId })}>
+                {COPY.retry}
+              </Button>
+            )}
+            <Button disabled={abandoning} onClick={() => void abandon(pendingRelay.requestId)}>
+              {COPY.giveUp}
+            </Button>
+          </div>
         </div>
       )}
       {way === null && !candidate && !progress && (
@@ -1243,8 +1501,8 @@ function AddRelay({
       {candidate && (
         <div className="relay-check" data-testid="relay-candidate">
           <SettingsRow
-            leading={<IconTile icon={KIND[candidate.kind].icon} />}
-            title={candidate.file?.name ?? KIND[candidate.kind].label}
+            leading={<IconTile icon={KIND[visualKind(candidate.kind, candidate.urls[0])].icon} />}
+            title={candidate.file?.name ?? KIND[visualKind(candidate.kind, candidate.urls[0])].label}
             record
           />
           <dl className="relay-facts">
@@ -1267,9 +1525,14 @@ function AddRelay({
             <>
               {progressDetails}
               {!progress.busy && !progress.completed && (
-                <Button variant="primary" onClick={() => void connect(candidate)}>
-                  {COPY.retry}
-                </Button>
+                <div className="relay-check-actions">
+                  <Button variant="primary" disabled={abandoning} onClick={() => void connect(candidate)}>
+                    {COPY.retry}
+                  </Button>
+                  <Button disabled={abandoning} onClick={() => void abandon(candidate.requestId)}>
+                    {COPY.giveUp}
+                  </Button>
+                </div>
               )}
             </>
           ) : (
@@ -1280,12 +1543,25 @@ function AddRelay({
         </div>
       )}
       {!candidate && progress && (
-        <div className="relay-check">
+        <div className="relay-check" data-testid="relay-pending-progress">
+          {(pendingRelay?.url ?? lastPendingUrl.current) && (
+            <SettingsRow
+              leading={<IconTile icon={KIND[visualKind('edge', pendingRelay?.url ?? lastPendingUrl.current)].icon} />}
+              title={KIND[visualKind('edge', pendingRelay?.url ?? lastPendingUrl.current)].label}
+              description={hostOf((pendingRelay?.url ?? lastPendingUrl.current)!)}
+              record
+            />
+          )}
           {progressDetails}
           {!progress.busy && !progress.completed && (
-            <Button variant="primary" onClick={() => void connect({ requestId: progress.requestId })}>
-              {COPY.retry}
-            </Button>
+            <div className="relay-check-actions">
+              <Button variant="primary" disabled={abandoning} onClick={() => void connect({ requestId: progress.requestId })}>
+                {COPY.retry}
+              </Button>
+              <Button disabled={abandoning} onClick={() => void abandon(progress.requestId)}>
+                {COPY.giveUp}
+              </Button>
+            </div>
           )}
         </div>
       )}

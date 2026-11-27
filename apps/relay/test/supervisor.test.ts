@@ -1,4 +1,3 @@
-import { relayGoEnvironment } from '../scripts/go-environment.ts'
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mkdtemp, rm, writeFile, readFile, stat } from 'node:fs/promises'
@@ -8,25 +7,14 @@ import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { requestPrivateAdmin } from '../src/admin.ts'
 import { createTransportCertificate } from '@latch/link-client'
+import { buildTestGateway } from './build-gateway.ts'
 const run = promisify(execFile),
   roots: string[] = [],
   children: ChildProcessWithoutNullStreams[] = []
 let directory: string, binary: string
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), 'latch-relay-supervisor-test-'))
-  binary = join(directory, 'gateway')
-  await run(
-    process.env.LATCH_RELAY_GO ?? 'go',
-    [
-      'build',
-      '-trimpath',
-      '-o',
-      binary,
-      fileURLToPath(new URL('../gateway/main.go', import.meta.url)),
-      fileURLToPath(new URL('../gateway/supervisor.go', import.meta.url)),
-    ],
-    { env: relayGoEnvironment(), timeout: 60000 },
-  )
+  binary = await buildTestGateway(directory)
 }, 65000)
 afterEach(async () => {
   for (const child of children.splice(0)) {

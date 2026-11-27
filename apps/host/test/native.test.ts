@@ -43,6 +43,7 @@ import { startTestHost, type TestHost } from './helpers/host.ts'
 import { NATIVE_BULK, startNativeHost, type NativeOpening } from '../src/native.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
 import { NativeReplay } from '../src/native-replay.ts'
+import { RelayProfiles } from '../src/relay/profiles.ts'
 import { FileDirectoryReader } from '../src/files/directory.ts'
 import { buildFilesHelper } from '../scripts/build-files.ts'
 import { GitDelivery } from '../src/git-delivery.ts'
@@ -1135,7 +1136,17 @@ describe('native Host entry with existing authorization', () => {
   })
 
   it('notifies another verified phone after a durable discovery rotation without changing epochs when books are issued', async () => {
-    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    const dataDir = await mkdtemp(join(tmpdir(), 'latch-native-epochs-'))
+    cleanup.push(() => rm(dataDir, { recursive: true, force: true }))
+    const firstRelay = { relayId: '1'.repeat(32), url: 'https://first.relay.example/', spkiHash: 'a'.repeat(64) }
+    const secondRelay = { relayId: '2'.repeat(32), url: 'https://second.relay.example/', spkiHash: 'b'.repeat(64) }
+    const seeded = await RelayProfiles.open(dataDir)
+    await seeded.replace([firstRelay, secondRelay])
+    const host = await startTestHost({
+      dataDir,
+      native: { host: '127.0.0.1', port: 0 },
+      egressLookup: (_hostname, _options, callback) => callback(new Error('fixture refuses network'), []),
+    })
     cleanup.push(() => host.close())
     const a = await pair(host),
       b = await pair(host)
@@ -1182,6 +1193,24 @@ describe('native Host entry with existing authorization', () => {
     expect(createHash('sha256').update(discoveryEpochInput(refreshed.discoveryKey)).digest('hex')).toBe(after)
     expect(refreshed.generation).toBeGreaterThan(second.generation)
     expect((await b.client.request('GET', '/link/api/snapshot')).status).toBe(200)
+
+    // Reordering configured relays advances relayEpoch on both snapshot and SSE refresh without rotating discoveryEpoch.
+    const relayBefore = body<{ host: { native: { relayEpoch: string } } }>(await b.client.request('GET', '/link/api/snapshot')).host.native
+      .relayEpoch
+    expect(relayBefore).toMatch(/^[a-f0-9]{64}$/u)
+    const desktop = await host.enroll({ listener: 'unix' })
+    const orderRes = await desktop.request('native/relays/order', {
+      method: 'PUT',
+      body: { order: [secondRelay.relayId, firstRelay.relayId] },
+    })
+    expect(orderRes.status).toBe(200)
+    await vi.waitFor(() => {
+      const relayHints = [...frames.matchAll(/"relayEpoch":"([a-f0-9]{64})"/gu)].map(match => match[1])
+      expect(relayHints.some(value => value !== relayBefore)).toBe(true)
+    })
+    await workspace.refresh()
+    expect(workspace.checkpoint()?.relayEpoch).not.toBe(relayBefore)
+    expect(workspace.checkpoint()?.discoveryEpoch).toBe(after)
   })
 
   it('requires the same native connection verification window for proximity and keeps unknown networks remote', async () => {

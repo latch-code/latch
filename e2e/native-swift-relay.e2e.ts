@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process'
-import { createHash, randomBytes, randomUUID, X509Certificate } from 'node:crypto'
+import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign, X509Certificate } from 'node:crypto'
+import { channel } from 'node:diagnostics_channel'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { Http2ServerResponse } from 'node:http2'
+import { Http2ServerResponse, type IncomingHttpHeaders, type ServerHttp2Stream } from 'node:http2'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
-import { startRelay } from '@latch/relay'
+import { createSelfSignedRelayCertificate, startRelay } from '@latch/relay'
 import { createTransportCertificate, PaddedStream } from '@latch/link-client'
 import { buildSwiftFixture, swiftFixturePath } from '@latch/testkit'
 import { startTestHost } from './helpers/host.ts'
@@ -99,9 +100,17 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
     })
     const transferRanges: number[] = [],
       partsAnswered: number[] = [],
-      // The HTTP/2 sessions that answered an upload's start (the control connection) and its parts.
-      startSessions = new Set<unknown>(),
-      partSessions = new Set<unknown>()
+      startSessions = new Set<ServerHttp2Stream['session']>(),
+      partSessions = new Set<ServerHttp2Stream['session']>()
+    const uploadPart = /\/attachments\/uploads\/[A-Za-z0-9_-]{22}\/parts\/(\d+)$/u
+    const streamCreated = channel('http2.server.stream.created')
+    // A cancelled part can finish on the Host after Node has detached the stream from its session.
+    const rememberUploadSession = (event: unknown) => {
+      const { headers, stream } = event as { headers: IncomingHttpHeaders; stream: ServerHttp2Stream }
+      const path = headers[':path'] ?? ''
+      if (headers[':method'] === 'POST' && path === '/link/api/attachments/uploads') startSessions.add(stream.session)
+      if (headers[':method'] === 'PUT' && uploadPart.test(path)) partSessions.add(stream.session)
+    }
     const originalEnd = Http2ServerResponse.prototype.end
     const responseSpy = vi.spyOn(Http2ServerResponse.prototype, 'end').mockImplementation(function (
       this: Http2ServerResponse,
@@ -109,14 +118,11 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
     ) {
       const range = typeof this.req.headers.range === 'string' ? /^bytes=(\d+)-(\d+)$/u.exec(this.req.headers.range) : undefined
       if (range && this.req.method === 'GET') transferRanges.push(Number(range[2]) - Number(range[1]) + 1)
-      const part = /\/attachments\/uploads\/[A-Za-z0-9_-]{22}\/parts\/(\d+)$/u.exec(this.req.url ?? '')
+      const part = uploadPart.exec(this.req.url ?? '')
       // Only a real answer: a part whose stream closed under it is ended without one.
       if (part && this.req.method === 'PUT' && this.statusCode === 200 && typeof args[0] === 'string' && args[0].startsWith('{"upload"')) {
         partsAnswered.push(Number(part[1]))
-        partSessions.add(this.req.stream?.session)
       }
-      if (this.req.method === 'POST' && this.req.url === '/link/api/attachments/uploads' && this.statusCode === 201)
-        startSessions.add(this.req.stream?.session)
       if (operation === 'nativeRelayBulkLegacy' && typeof args[0] === 'string' && this.req.url?.startsWith('/link/api/snapshot')) {
         const value = JSON.parse(args[0]) as { catalog?: { features?: Record<string, unknown> } }
         if (value.catalog?.features) {
@@ -137,6 +143,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
           : undefined
     const slow = shaping && (await startShapedProxy({ host: '127.0.0.1', port: relay.port }, shaping))
     try {
+      if (operation === 'nativeRelayUpload') streamCreated.subscribe(rememberUploadSession)
       const dataDir = join(directory, 'data'),
         nativeDir = join(dataDir, 'native')
       await mkdir(nativeDir, { recursive: true, mode: 0o700 })
@@ -278,6 +285,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
         expect(partsAnswered.toSorted((a, b) => a - b)).toEqual([0, 0, 1, 1, 2, 2, 3, 3, 4, 5, 6, 7, 8])
         // No part went on the control connection, the next file's included: each went on a companion.
         expect(startSessions.size).toBeGreaterThanOrEqual(2)
+        expect(partSessions.size).toBeGreaterThan(0)
         expect([...startSessions, ...partSessions].every(session => session !== undefined)).toBe(true)
         expect([...partSessions].filter(session => startSessions.has(session))).toEqual([])
         expect(nextMs).toBeGreaterThan(0)
@@ -298,10 +306,275 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
           expect(relay.status()).toMatchObject({ connections: 1, controls: 1 })
       }
     } finally {
+      if (operation === 'nativeRelayUpload') streamCreated.unsubscribe(rememberUploadSession)
       responseSpy.mockRestore()
       bulkSpy.mockRestore()
       await host?.close()
       await slow?.close()
+      await relay.close()
+      await rm(directory, { recursive: true, force: true })
+      const leaked = [...descriptors.values()]
+      await Promise.all(leaked.map(item => item.close()))
+      descriptors.clear()
+      expect(leaked.map(item => item.origin)).toEqual([])
+    }
+  })
+
+  it('connects from the real Swift native client and Node Host over a zero-domain bare-IP self-signed SPKI-pinned relay without custom CA anchors', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'latch-swift-bare-ip-'))
+    const tls = createSelfSignedRelayCertificate('127.0.0.1')
+    const relayId = randomBytes(16),
+      token = randomBytes(32)
+    const relay = await startRelay({
+      host: '127.0.0.1',
+      port: 0,
+      cert: tls.cert,
+      key: tls.key,
+      relayId,
+      registrationToken: token,
+      maxConnections: 32,
+      gateway: {
+        binary: resolve('dist/relay/latch-relay-tls'),
+        maxHandshakes: 16,
+        handshakesPerSecond: 100,
+        handshakeBurst: 16,
+        prefixFraction: 1,
+      },
+      registrationWork: { softRoutesPerPrefix: 1, minBits: 0, maxBits: 0, maxConcurrent: 2 },
+    })
+    let host: Awaited<ReturnType<typeof startTestHost>> | undefined
+    try {
+      const dataDir = join(directory, 'data'),
+        nativeDir = join(dataDir, 'native')
+      await mkdir(nativeDir, { recursive: true, mode: 0o700 })
+      await writeFile(
+        join(nativeDir, 'relays.json'),
+        JSON.stringify({
+          version: 1,
+          generation: 0,
+          discoveryKey: `lnd1.${randomBytes(32).toString('base64url')}`,
+          profiles: [
+            {
+              relayId: relayId.toString('hex'),
+              url: `https://127.0.0.1:${relay.port}/`,
+              spkiHash: tls.spkiHash,
+              registrationKey: `lrt1.${token.toString('base64url')}`,
+              seeds: [`lrs1.${randomBytes(32).toString('base64url')}`, `lrs1.${randomBytes(32).toString('base64url')}`],
+              activeSlot: 0,
+              rotationDay: 0,
+              rotations: 0,
+            },
+          ],
+        }),
+        { mode: 0o600 },
+      )
+      // Neither `nativeRelayCa` on the Node Host nor `trustAnchor` on the Swift client is passed!
+      host = await startTestHost({
+        dataDir,
+        workspaceRoot: join(directory, 'workspace'),
+        native: { host: '127.0.0.1', port: 0 },
+      })
+      const desktop = await host.enroll({ listener: 'unix' })
+      expect(
+        (await desktop.confirmed('policy', { method: 'PATCH', body: { hostEgressAllow: { add: [`127.0.0.1:${relay.port}`] } } })).status,
+      ).toBe(200)
+      await vi.waitFor(() => expect(relay.status().routes).toBe(3), { timeout: 5_000 })
+
+      const invited = await desktop.request('native/pairings', { method: 'POST', body: {} })
+      expect(invited.status).toBe(201)
+      const { invitation } = (await invited.json()) as { invitation: { payload: string } }
+      const requestId = randomUUID()
+      await writeFile(join(host.workspaceRoot, 'notes.txt'), 'Swift relay file fixture')
+
+      const response = await new Promise<unknown>((resolvePromise, reject) => {
+        const child = spawn(binary, [], { stdio: ['pipe', 'pipe', 'pipe'], env: {} })
+        let output = '',
+          diagnostic = ''
+        const timer = setTimeout(() => {
+          child.kill('SIGKILL')
+          reject(new Error('Swift bare-IP relay fixture timeout'))
+        }, 25_000)
+        child.stdout.on('data', (data: Buffer) => {
+          output += data.toString()
+        })
+        child.stderr.on('data', (data: Buffer) => {
+          diagnostic = (diagnostic + data.toString()).slice(0, 4096)
+        })
+        child.once('error', error => {
+          clearTimeout(timer)
+          reject(error)
+        })
+        child.once('close', code => {
+          clearTimeout(timer)
+          if (code !== 0) {
+            reject(new Error(diagnostic || `Swift bare-IP relay fixture exited ${code}`))
+            return
+          }
+          resolvePromise(JSON.parse(output) as unknown)
+        })
+        child.stdin.end(JSON.stringify({ operation: 'nativeRelayLifecycle', requestId, payload: invitation.payload }))
+      })
+      expect(response).toMatchObject({
+        paired: true,
+        mutualTLS: true,
+        verified: true,
+        created: true,
+        files: true,
+        events: true,
+        replayedAfterReconnect: true,
+        rootRevocationClosedLease: true,
+      })
+    } finally {
+      await host?.close()
+      await relay.close()
+      await rm(directory, { recursive: true, force: true })
+      const leaked = [...descriptors.values()]
+      await Promise.all(leaked.map(item => item.close()))
+      descriptors.clear()
+      expect(leaked.map(item => item.origin)).toEqual([])
+    }
+  })
+
+  it('rejects a CA-signed leaf certificate missing its issuer chain on Swift even when its SPKI matches spkiHash', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'latch-swift-chainless-leaf-'))
+    const der = (tag: number, ...parts: readonly Uint8Array[]): Buffer => {
+      const value = Buffer.concat(parts)
+      const len =
+        value.length < 128 ? [value.length] : value.length < 256 ? [0x81, value.length] : [0x82, value.length >> 8, value.length & 255]
+      return Buffer.concat([Buffer.from([tag, ...len]), value])
+    }
+    const seq = (...parts: readonly Uint8Array[]) => der(0x30, ...parts)
+    const caKeys = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+    const leafKeys = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+    const caSpki = caKeys.publicKey.export({ type: 'spki', format: 'der' })
+    const leafSpki = leafKeys.publicKey.export({ type: 'spki', format: 'der' })
+    const leafSpkiHash = createHash('sha256').update(leafSpki).digest('hex')
+    const alg = seq(der(0x06, Buffer.from('2a8648ce3d040302', 'hex')))
+    const caDn = seq(der(0x31, seq(der(0x06, Buffer.from('550403', 'hex')), der(0x0c, Buffer.from('Untrusted Relay CA')))))
+    const leafDn = seq(der(0x31, seq(der(0x06, Buffer.from('550403', 'hex')), der(0x0c, Buffer.from('127.0.0.1')))))
+    const now = Date.now()
+    const utc = (d: Date) => der(0x17, Buffer.from(`${d.toISOString().replace(/[-:T]/gu, '').slice(2, 14)}Z`))
+    const validity = seq(utc(new Date(now - 60_000)), utc(new Date(now + 86_400_000)))
+    const caExts = der(
+      0xa3,
+      seq(
+        seq(der(0x06, Buffer.from('551d13', 'hex')), der(0x01, Buffer.from([0xff])), der(0x04, seq(der(0x01, Buffer.from([0xff]))))),
+        seq(der(0x06, Buffer.from('551d0f', 'hex')), der(0x01, Buffer.from([0xff])), der(0x04, der(0x03, Buffer.from([1, 0x86])))),
+      ),
+    )
+    const caTbs = seq(der(0xa0, der(0x02, Buffer.from([2]))), der(0x02, Buffer.from([1])), alg, caDn, validity, caDn, caSpki, caExts)
+    const caDer = seq(caTbs, alg, der(0x03, Buffer.concat([Buffer.from([0]), sign('sha256', caTbs, caKeys.privateKey)])))
+    const caPem = `-----BEGIN CERTIFICATE-----\n${caDer
+      .toString('base64')
+      .match(/.{1,64}/gu)!
+      .join('\n')}\n-----END CERTIFICATE-----\n`
+
+    // Leaf has IP SAN 127.0.0.1 (7f 00 00 01) and is signed by `caKeys`, served WITHOUT `caPem` in the server chain!
+    const leafExts = der(
+      0xa3,
+      seq(
+        seq(der(0x06, Buffer.from('551d13', 'hex')), der(0x01, Buffer.from([0xff])), der(0x04, seq())),
+        seq(der(0x06, Buffer.from('551d11', 'hex')), der(0x04, seq(der(0x87, Buffer.from([127, 0, 0, 1]))))),
+      ),
+    )
+    const leafTbs = seq(
+      der(0xa0, der(0x02, Buffer.from([2]))),
+      der(0x02, Buffer.from([2])),
+      alg,
+      caDn,
+      validity,
+      leafDn,
+      leafSpki,
+      leafExts,
+    )
+    const leafDer = seq(leafTbs, alg, der(0x03, Buffer.concat([Buffer.from([0]), sign('sha256', leafTbs, caKeys.privateKey)])))
+    const leafOnlyPem = `-----BEGIN CERTIFICATE-----\n${leafDer
+      .toString('base64')
+      .match(/.{1,64}/gu)!
+      .join('\n')}\n-----END CERTIFICATE-----\n`
+    const leafKeyPem = leafKeys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString()
+
+    const relayId = randomBytes(16),
+      token = randomBytes(32)
+    const relay = await startRelay({
+      host: '127.0.0.1',
+      port: 0,
+      cert: leafOnlyPem,
+      key: leafKeyPem,
+      relayId,
+      registrationToken: token,
+      maxConnections: 32,
+      gateway: {
+        binary: resolve('dist/relay/latch-relay-tls'),
+        maxHandshakes: 16,
+        handshakesPerSecond: 100,
+        handshakeBurst: 16,
+        prefixFraction: 1,
+      },
+      registrationWork: { softRoutesPerPrefix: 1, minBits: 0, maxBits: 0, maxConcurrent: 2 },
+    })
+    let host: Awaited<ReturnType<typeof startTestHost>> | undefined
+    try {
+      const dataDir = join(directory, 'data'),
+        nativeDir = join(dataDir, 'native')
+      await mkdir(nativeDir, { recursive: true, mode: 0o700 })
+      await writeFile(
+        join(nativeDir, 'relays.json'),
+        JSON.stringify({
+          version: 1,
+          generation: 0,
+          discoveryKey: `lnd1.${randomBytes(32).toString('base64url')}`,
+          profiles: [
+            {
+              relayId: relayId.toString('hex'),
+              url: `https://127.0.0.1:${relay.port}/`,
+              spkiHash: leafSpkiHash,
+              registrationKey: `lrt1.${token.toString('base64url')}`,
+              seeds: [`lrs1.${randomBytes(32).toString('base64url')}`, `lrs1.${randomBytes(32).toString('base64url')}`],
+              activeSlot: 0,
+              rotationDay: 0,
+              rotations: 0,
+            },
+          ],
+        }),
+        { mode: 0o600 },
+      )
+      // Give the Host `caPem` so routes ARE registered on the relay; Swift gets NO `trustAnchor`, testing the self-signed exception!
+      host = await startTestHost({
+        dataDir,
+        workspaceRoot: join(directory, 'workspace'),
+        nativeRelayCa: caPem,
+        native: { host: '127.0.0.1', port: 0 },
+      })
+      const desktop = await host.enroll({ listener: 'unix' })
+      expect(
+        (await desktop.confirmed('policy', { method: 'PATCH', body: { hostEgressAllow: { add: [`127.0.0.1:${relay.port}`] } } })).status,
+      ).toBe(200)
+      await vi.waitFor(() => expect(relay.status().routes).toBe(3), { timeout: 5_000 })
+
+      const invited = await desktop.request('native/pairings', { method: 'POST', body: {} })
+      expect(invited.status).toBe(201)
+      const { invitation } = (await invited.json()) as { invitation: { payload: string } }
+
+      const exitCode = await new Promise<number>((resolvePromise, reject) => {
+        const child = spawn(binary, [], { stdio: ['pipe', 'pipe', 'pipe'], env: {} })
+        const timer = setTimeout(() => {
+          child.kill('SIGKILL')
+          reject(new Error('Swift chainless leaf fixture timeout'))
+        }, 40_000)
+        child.once('error', error => {
+          clearTimeout(timer)
+          reject(error)
+        })
+        child.once('close', code => {
+          clearTimeout(timer)
+          resolvePromise(code ?? 1)
+        })
+        child.stdin.end(JSON.stringify({ operation: 'nativeRelayLifecycle', requestId: randomUUID(), payload: invitation.payload }))
+      })
+      expect(exitCode).not.toBe(0)
+    } finally {
+      await host?.close()
       await relay.close()
       await rm(directory, { recursive: true, force: true })
       const leaked = [...descriptors.values()]

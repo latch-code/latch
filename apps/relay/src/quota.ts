@@ -9,7 +9,9 @@ export interface QuotaConfig {
   resetDay: number
   timezone: string
   count: 'in+out' | 'out'
-  iface: string
+  /** `'relay'` meters bytes forwarded by this relay process (calibrated at 0 on creation); `'iface'` meters a Linux NIC. */
+  source?: 'iface' | 'relay'
+  iface?: string
   burstBytes: number
   stopRatio: 0.85 | 0.9
 }
@@ -88,7 +90,12 @@ export class QuotaMeter {
   private constructor(input: { dataDir: string; config: QuotaConfig; counter?: () => Promise<NetworkCounter>; now?: () => number }) {
     this.config = input.config
     this.path = join(input.dataDir, 'quota.json')
-    this.counter = input.counter ?? (() => readLinuxNetworkCounter(input.config.iface))
+    this.counter =
+      input.counter
+      ?? (() => {
+        if (!input.config.iface) throw new Error('Network counter callback required for relay-level quota')
+        return readLinuxNetworkCounter(input.config.iface)
+      })
     this.now = input.now ?? Date.now
     this.calendar = quotaCalendar(this.config.timezone, this.config.resetDay)
   }
@@ -99,7 +106,9 @@ export class QuotaMeter {
     now?: () => number
   }): Promise<QuotaMeter> {
     const meter = new QuotaMeter(input),
-      config = input.config
+      config = input.config,
+      source = config.source ?? 'iface',
+      ledgerIface = source === 'relay' ? 'relay' : (config.iface ?? '')
     if (
       !Number.isSafeInteger(config.monthlyBytes)
       || config.monthlyBytes <= 0
@@ -109,8 +118,8 @@ export class QuotaMeter {
       || !Number.isSafeInteger(config.burstBytes)
       || config.burstBytes <= 0
       || !['in+out', 'out'].includes(config.count)
-      || !/^[a-zA-Z0-9_.:-]{1,15}$/u.test(config.iface)
-      || ['lo', '.', '..'].includes(config.iface)
+      || (source === 'iface' && (!/^[a-zA-Z0-9_.:-]{1,15}$/u.test(ledgerIface) || ['lo', '.', '..', 'relay'].includes(ledgerIface)))
+      || (source === 'relay' && config.iface !== undefined)
       || ![0.85, 0.9].includes(config.stopRatio)
     )
       throw new Error('Invalid quota configuration')
@@ -126,14 +135,14 @@ export class QuotaMeter {
     meter.period = at
     if (saved !== undefined) {
       meter.state = schema.parse(JSON.parse(saved) as unknown)
-      if (meter.state.iface !== config.iface || meter.state.count !== config.count)
+      if (meter.state.iface !== ledgerIface || meter.state.count !== config.count)
         throw new Error('Quota counter configuration changed; calibrate explicitly')
       await meter.sample()
     } else {
       meter.state = {
         version: 1,
-        calibrated: false,
-        iface: config.iface,
+        calibrated: source === 'relay',
+        iface: ledgerIface,
         count: config.count,
         boot: raw.boot,
         rx: raw.rx,

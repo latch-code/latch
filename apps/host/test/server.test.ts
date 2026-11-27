@@ -578,6 +578,7 @@ describe('enrollment and credentials', () => {
         enabled: false,
         discoveryEpoch: expect.stringMatching(/^[a-f0-9]{64}$/u),
         directoryEpoch: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        relayEpoch: expect.stringMatching(/^[a-f0-9]{64}$/u),
       },
       hostId: t.host.hostId,
       devMode: true,

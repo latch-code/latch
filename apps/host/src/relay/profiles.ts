@@ -618,6 +618,31 @@ export class RelayProfiles {
       return { audited }
     }, authorize)
   }
+  /** Reorders the person's own relays without adding or removing any observer; signs a new address book generation. */
+  reorderRelays(
+    order: readonly string[],
+    authorize: () => void,
+    record: (detail: { before: string; after: string; relayCount: number }) => Promise<boolean>,
+  ): Promise<{ audited: boolean }> {
+    return this.change(async draft => {
+      authorize()
+      const own = draft.profiles.filter(profile => !profile.builtIn)
+      const byId = new Map(own.map(profile => [profile.relayId, profile]))
+      if (order.length !== own.length || new Set(order).size !== own.length || order.some(id => !byId.has(id)))
+        throw new AppError(409, 'native-config-changed', '手机连接配置已变化，请刷新后重试。')
+      if (order.every((id, index) => own[index]?.relayId === id)) return { audited: true }
+      const before = this.hashConfiguration(draft)
+      const builtIn = draft.profiles.filter(profile => profile.builtIn)
+      draft.profiles = [...builtIn, ...order.map(id => byId.get(id)!)]
+      this.advanceConfiguration(draft)
+      const audited = await record({
+        before,
+        after: this.hashConfiguration(draft),
+        relayCount: own.length,
+      })
+      return { audited }
+    }, authorize)
+  }
   /** The node proved its key and registered a route: a CLI-added relay may now enter address books. */
   markVerified(profile: RelayProfile, authorize: () => void): Promise<void> {
     const fingerprint = profileFingerprint(profile)

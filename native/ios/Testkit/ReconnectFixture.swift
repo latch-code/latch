@@ -516,9 +516,14 @@ func livenessRules() throws -> [String: Any] {
         let held = Task { try await workspace.read("/link/api/custom-agents/general", body: true) }
         try await Task.sleep(for: .milliseconds(150))
         let duringRead = await paths.upgrade([try NativePathCandidate(id: "lan-busy", kind: .direct) { try await paired.open() }], workspace: workspace)
+        guard let replaced = installs.epoch, !(await workspace.quiet()) else { throw fixtureFailure("upgrade-busy-path") }
+        let abandoned = Task { try await workspace.waitUntilQuiet(on: replaced) }
+        abandoned.cancel()
+        do { try await abandoned.value; throw fixtureFailure("cancelled-idle-wait") } catch is CancellationError {}
+        try await workspace.waitUntilQuiet(on: replaced)
+        let readSettled = await workspace.quiet()
         let heldRead = (try? await held.value) != nil
         let relayOnly = await paths.upgrade([try NativePathCandidate(id: "relay-not-direct", kind: .relay) { try await paired.open() }], workspace: workspace)
-        guard let replaced = installs.epoch else { throw fixtureFailure("upgrade-incumbent-epoch") }
         let replacedWatcher = Task { await workspace.transportEnded(on: replaced) }
         let oldOpenWhileDialing = ReconnectBox()
         let upgraded = await paths.upgrade([try NativePathCandidate(id: "lan-upgrade", kind: .direct) {
@@ -533,12 +538,14 @@ func livenessRules() throws -> [String: Any] {
         if let old = await relayBox.connection {
             for _ in 0..<50 { if await old.isClosed() { oldClosed = true; break }; try await Task.sleep(for: .milliseconds(20)) }
         }
+        do { try await workspace.waitUntilQuiet(on: replaced); throw fixtureFailure("retired-idle-wait") } catch is CancellationError {}
         let pending = try await workspace.pendingWrites()
         let dialedWhileOldOpen = await oldOpenWhileDialing.starts.count == 1
         let again = await paths.upgrade([try NativePathCandidate(id: "lan-again", kind: .direct) { try await paired.open() }], workspace: workspace)
         result["upgrade"] = [
             "relayOnlyRefused": !relayOnly,
             "readNotInterrupted": !duringRead && heldRead,
+            "waitedForReadToSettle": readSettled,
             "installedDirect": upgraded && kind == .direct,
             "builtBeforeTeardown": dialedWhileOldOpen && oldClosed,
             "sameWindow": current.map { $0.sameWindow(as: lease) && $0.verifiedUntil == until } ?? false,

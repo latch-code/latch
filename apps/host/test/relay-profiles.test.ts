@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import * as files from '@latch/core/node-kit'
-import { RelayProfiles } from '../src/relay/profiles.ts'
+import { bookRelays, RelayProfiles } from '../src/relay/profiles.ts'
 
 const folders: string[] = []
 afterEach(async () => {
@@ -231,4 +231,68 @@ it('keeps compiled-in relays as built-in profiles with lasting seeds, apart from
   await profiles.syncOfficial([])
   expect(profiles.snapshot().profiles).toEqual([])
   expect((await RelayProfiles.open(directory)).snapshot().profiles).toEqual([])
+})
+it('reorders configured relays, preserves built-ins and seeds, and rejects mismatched sets', async () => {
+  const { directory, profiles } = await fixture()
+  const tokyo = { relayId: 'a'.repeat(32), kind: 'self' as const, url: 'https://tokyo.relay.example/', spkiHash: 'b'.repeat(64) }
+  const first = input()
+  const second = input()
+  await profiles.syncOfficial([tokyo])
+  await profiles.replace([first, second])
+  const before = profiles.snapshot()
+  const audited: Array<{ before: string; after: string; relayCount: number }> = []
+
+  // Same order is a no-op: no generation bump or audit write.
+  await profiles.reorderRelays(
+    [first.relayId, second.relayId],
+    () => {},
+    async detail => (audited.push(detail), true),
+  )
+  expect(profiles.snapshot().generation).toBe(before.generation)
+  expect(audited).toHaveLength(0)
+
+  // Stale or duplicate sets fail with 409 native-config-changed.
+  await expect(
+    profiles.reorderRelays(
+      [first.relayId],
+      () => {},
+      async () => true,
+    ),
+  ).rejects.toMatchObject({
+    code: 'native-config-changed',
+  })
+  await expect(
+    profiles.reorderRelays(
+      [first.relayId, first.relayId],
+      () => {},
+      async () => true,
+    ),
+  ).rejects.toMatchObject({
+    code: 'native-config-changed',
+  })
+  await expect(
+    profiles.reorderRelays(
+      [tokyo.relayId, second.relayId],
+      () => {},
+      async () => true,
+    ),
+  ).rejects.toMatchObject({
+    code: 'native-config-changed',
+  })
+
+  // Swapping own relays bumps generation, leaves built-in and seeds untouched, and updates bookRelays order.
+  await profiles.reorderRelays(
+    [second.relayId, first.relayId],
+    () => {},
+    async detail => (audited.push(detail), true),
+  )
+  expect(audited).toHaveLength(1)
+  expect(audited[0]?.relayCount).toBe(2)
+  const after = (await RelayProfiles.open(directory)).snapshot()
+  expect(after.generation).toBe(before.generation + 1)
+  expect(after.profiles.map(item => item.relayId)).toEqual([tokyo.relayId, second.relayId, first.relayId])
+  expect(after.profiles.find(item => item.relayId === second.relayId)?.seeds).toEqual(
+    before.profiles.find(item => item.relayId === second.relayId)?.seeds,
+  )
+  expect(bookRelays({ ...after, officialOff: true }).map(item => item.relayId)).toEqual([second.relayId, first.relayId])
 })

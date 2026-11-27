@@ -8,7 +8,7 @@ public actor NativeBookRefresher {
     private let failed: @Sendable (NativeFailure) async -> Void
     private var flight: Task<Void, Never>?
     private var generation = UUID()
-    private struct Hint: Equatable { let discovery: String?; let directory: String? }
+    private struct Hint: Equatable { let discovery: String?; let directory: String?; let relay: String? }
     private var pending: Hint?
     private var attempted: Hint?
     private var forced = false
@@ -19,12 +19,18 @@ public actor NativeBookRefresher {
         failed: @escaping @Sendable (NativeFailure) async -> Void = { _ in }) {
         self.workspace = workspace; self.persist = persist; self.updated = updated; self.failed = failed
     }
-    public func observe(_ hint: String?, directoryHint: String? = nil, force: Bool = false) {
+    public func observe(_ hint: String?, directoryHint: String? = nil, relayHint: String? = nil, force: Bool = false) {
         guard !closed else { return }
         let discovery = hint.flatMap { LinkBytes.matches($0, "[a-f0-9]{64}") ? $0 : nil }
         let directory = directoryHint.flatMap { LinkBytes.matches($0, "[a-f0-9]{64}") ? $0 : nil }
-        if discovery != nil || directory != nil { pending = Hint(discovery: discovery, directory: directory) }
-        else if !force { return }
+        let relay = relayHint.flatMap { LinkBytes.matches($0, "[a-f0-9]{64}") ? $0 : nil }
+        if discovery != nil || directory != nil || relay != nil {
+            pending = Hint(
+                discovery: discovery ?? pending?.discovery,
+                directory: directory ?? pending?.directory,
+                relay: relay ?? pending?.relay
+            )
+        } else if !force { return }
         forced = forced || force
         guard flight == nil else { return }
         let current = generation
@@ -44,7 +50,12 @@ public actor NativeBookRefresher {
             guard let lease = await workspace.lease(), lease.valid else { return }
             let verifiedEpoch = try? await workspace.discoveryEpoch()
             let directoryEpoch = try? await workspace.directoryEpoch()
-            let differs = hint.map { value in (value.discovery != nil && value.discovery != verifiedEpoch) || (value.directory != nil && value.directory != directoryEpoch) } ?? false
+            let relayEpoch = try? await workspace.relayEpoch()
+            let differs = hint.map { value in
+                (value.discovery != nil && value.discovery != verifiedEpoch)
+                    || (value.directory != nil && value.directory != directoryEpoch)
+                    || (value.relay != nil && value.relay != relayEpoch)
+            } ?? false
             guard force || (differs && hint != attempted) else { return }
             if let hint { attempted = hint }
             do {

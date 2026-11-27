@@ -45,6 +45,7 @@ type config struct {
 	Backend             string  `json:"backend"`
 	Certificate         string  `json:"certificate"`
 	Key                 string  `json:"key"`
+	AllowKeyRotation    bool    `json:"allowKeyRotation,omitempty"`
 	MaxConnections      int     `json:"maxConnections"`
 	MaxHandshakes       int     `json:"maxHandshakes"`
 	HandshakesPerSecond float64 `json:"handshakesPerSecond"`
@@ -286,6 +287,9 @@ func (g *gateway) serve(raw net.Conn, groups []netip.Prefix, cfg *tls.Config) {
 	if err != nil || secure.ConnectionState().DidResume {
 		return
 	}
+	if secure.ConnectionState().NegotiatedProtocol == "acme-tls/1" {
+		return
+	}
 	_ = raw.SetDeadline(time.Time{})
 	if !privateBackend(g.cfg.Backend) {
 		return
@@ -359,12 +363,47 @@ func main() {
 		os.Exit(1)
 	}
 	activeCertificate := &certificate
+	var acmeCertificate *tls.Certificate
 	var certificateMu sync.RWMutex
-	cfg := &tls.Config{GetCertificate: func(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
-		certificateMu.RLock()
-		defer certificateMu.RUnlock()
-		return activeCertificate, nil
-	}, MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, SessionTicketsDisabled: true, NextProtos: []string{"http/1.1"}}
+	cfg := &tls.Config{
+		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			certificateMu.RLock()
+			acme := acmeCertificate
+			active := activeCertificate
+			certificateMu.RUnlock()
+			if acme != nil {
+				offersAcme := false
+				offersHttp := false
+				for _, proto := range hello.SupportedProtos {
+					if proto == "acme-tls/1" {
+						offersAcme = true
+					} else if proto == "http/1.1" {
+						offersHttp = true
+					}
+				}
+				if offersAcme && !offersHttp {
+					return &tls.Config{
+						Certificates:           []tls.Certificate{*acme},
+						MinVersion:             tls.VersionTLS12,
+						MaxVersion:             tls.VersionTLS13,
+						SessionTicketsDisabled: true,
+						NextProtos:             []string{"acme-tls/1"},
+					}, nil
+				}
+			}
+			return &tls.Config{
+				Certificates:           []tls.Certificate{*active},
+				MinVersion:             tls.VersionTLS13,
+				MaxVersion:             tls.VersionTLS13,
+				SessionTicketsDisabled: true,
+				NextProtos:             []string{"http/1.1"},
+			}, nil
+		},
+		MinVersion:             tls.VersionTLS13,
+		MaxVersion:             tls.VersionTLS13,
+		SessionTicketsDisabled: true,
+		NextProtos:             []string{"http/1.1"},
+	}
 	listener, err := net.Listen("tcp", net.JoinHostPort(c.Host, strconv.Itoa(c.Port)))
 	if err != nil {
 		os.Exit(1)
@@ -416,16 +455,33 @@ func main() {
 					Certificate string `json:"certificate"`
 					Key         string `json:"key"`
 				}
-				if decodeStrict(command, &request) != nil || request.Command != "reload-tls" || request.Generation == 0 {
+				if decodeStrict(command, &request) != nil || (request.Command != "reload-tls" && request.Command != "acme-tls") || request.Generation == 0 {
 					g.stop(true)
 					return
+				}
+				if request.Command == "acme-tls" {
+					accepted := false
+					if request.Certificate == "" && request.Key == "" {
+						certificateMu.Lock()
+						acmeCertificate = nil
+						certificateMu.Unlock()
+						accepted = true
+					} else if challenge, err := tls.X509KeyPair([]byte(request.Certificate), []byte(request.Key)); err == nil {
+						certificateMu.Lock()
+						acmeCertificate = &challenge
+						certificateMu.Unlock()
+						accepted = true
+					}
+					g.emit(map[string]any{"event": "acme-tls-updated", "generation": request.Generation, "accepted": accepted})
+					continue
 				}
 				next, err := tls.X509KeyPair([]byte(request.Certificate), []byte(request.Key))
 				accepted := false
 				if err == nil {
-					if nextLeaf, e := x509.ParseCertificate(next.Certificate[0]); e == nil && bytes.Equal(leaf.RawSubjectPublicKeyInfo, nextLeaf.RawSubjectPublicKeyInfo) && time.Now().Before(nextLeaf.NotAfter) && !time.Now().Before(nextLeaf.NotBefore) {
+					if nextLeaf, e := x509.ParseCertificate(next.Certificate[0]); e == nil && (c.AllowKeyRotation || bytes.Equal(leaf.RawSubjectPublicKeyInfo, nextLeaf.RawSubjectPublicKeyInfo)) && time.Now().Before(nextLeaf.NotAfter) && !time.Now().Before(nextLeaf.NotBefore) {
 						certificateMu.Lock()
 						activeCertificate = &next
+						leaf = nextLeaf
 						certificateMu.Unlock()
 						accepted = true
 					}

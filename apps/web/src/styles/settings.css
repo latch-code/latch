@@ -2627,6 +2627,53 @@
   }
 }
 /* 设置 › 中继: a relay's row with its state and ⋯, the progress line, 添加中继 and its steps. */
+.relay-row {
+  position: relative;
+}
+.settings-card > :is(.settings-row, .relay-row) + .relay-row,
+.settings-card > .relay-row + .settings-row {
+  border-top: 1px solid var(--line);
+}
+.relay-row-main {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.relay-row-main > .settings-row {
+  flex: 1;
+  min-width: 0;
+}
+.relay-row-grip {
+  flex-shrink: 0;
+  margin-inline-start: calc(-1 * var(--sp-8));
+  margin-inline-end: var(--sp-4);
+  touch-action: none;
+  cursor: grab;
+}
+.relay-row-grip:active {
+  cursor: grabbing;
+}
+.relay-row[data-dragging] {
+  z-index: 2;
+  border-radius: var(--r-8);
+  background: var(--sunken);
+  box-shadow: var(--sh-pop);
+  transition: none;
+}
+.relay-row[data-drop-position='before']::after,
+.relay-row[data-drop-position='after']::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  border-top: 2px solid var(--accent);
+  pointer-events: none;
+}
+.relay-row[data-drop-position='before']::after {
+  top: -1px;
+}
+.relay-row[data-drop-position='after']::after {
+  bottom: -1px;
+}
 .relay-row-end {
   display: inline-flex;
   align-items: center;
@@ -2654,6 +2701,29 @@
 }
 .relay-add {
   margin-block-start: var(--sp-12);
+}
+.relay-add-dialog .ui-dialog-body {
+  display: grid;
+  align-content: start;
+  gap: var(--sp-16);
+}
+.relay-pending-card {
+  display: grid;
+  gap: var(--sp-12);
+  padding: var(--sp-12);
+  border: 1px solid var(--line);
+  border-radius: var(--r-8);
+  background: var(--sunken);
+}
+.relay-pending-card > .settings-row {
+  min-height: 0;
+  padding: 0;
+}
+.relay-check-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
 }
 .relay-ways {
   display: grid;
@@ -2694,6 +2764,7 @@
 }
 .relay-step-body {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   flex: 1;
   min-width: 0;
   gap: var(--sp-8);

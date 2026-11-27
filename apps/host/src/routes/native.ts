@@ -658,6 +658,26 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       json(res, nativeSettings.info(caller.device.id))
       return true
     }
+    if (path === '/link/api/native/relays/order' && method === 'PUT') {
+      requireLocal(caller)
+      requireScope(caller, 'admin')
+      if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
+      const { order } = z
+        .strictObject({
+          order: z
+            .array(z.string().regex(/^[a-f0-9]{32}$/u))
+            .min(1)
+            .max(4),
+        })
+        .parse(await jsonBody(req, KIB))
+      const authorize = () => recheck(caller, 'admin')
+      await nativeSettings.settleRelayWrite()
+      await nativeSettings.reorderRelays(order, actorOf(caller), authorize)
+      refresh()
+      authorize()
+      json(res, nativeSettings.info(caller.device.id))
+      return true
+    }
     const relayAction = /^\/link\/api\/native\/relays\/([a-f0-9]{32})(\/test)?$/u.exec(path)
     if (relayAction && ((relayAction[2] && method === 'POST') || (!relayAction[2] && method === 'PATCH'))) {
       if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
