@@ -4,10 +4,13 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { FileImage, FileSpreadsheet, Presentation } from 'lucide-react'
 import { FileGlyph, FolderGlyph, PageGlyph } from '@latch/ui'
 import { MessageContent } from '../src/MessageContent.tsx'
+import materialSprite from '../src/assets/file-types/material.svg?no-inline'
 import { FileSession } from '../src/components/FileChip.tsx'
+import { FileTypeIcon } from '../src/components/FileTypeIcon.tsx'
 import { FILE_COPY, fileNote, fileRefusalText } from '../src/core/securityCopy.ts'
 import { shellFiles } from '../src/core/shell.ts'
 import { absoluteReference, linkTarget, namesPath, referenceIcon, referenceName, referenceText, splitPath } from '../src/fileReference.ts'
+import { nonIconHrefs } from './file-icon-markup.ts'
 
 function render(text: string, sessionId?: string) {
   const content = createElement(MessageContent, { text })
@@ -95,17 +98,68 @@ describe('link targets in replies', () => {
 
 describe('path chips', () => {
   it.each([
-    ['src/main.GO#L7', 'latch-glyph-file-go'],
-    ['view.tsx:42:3', 'latch-glyph-file-ts'],
-    ['bundle.mjs', 'latch-glyph-file-js'],
-    ['run.py', 'latch-glyph-file-py'],
-    ['README.markdown', 'latch-glyph-file-md'],
-    ['config.json', 'lucide-braces'],
+    ['src.v2/view.TSX', 'data-file-icon="react_ts"'],
+    ['src.v2/view.ts', 'data-file-icon="typescript"'],
+    ['src/view.TEST.TSX', 'data-file-icon="test-jsx"'],
+    ['build.ts/Makefile', 'data-file-icon="makefile"'],
+    ['src/tsconfig.json', 'data-file-icon="tsconfig"'],
+    ['src/.gitignore', 'data-file-icon="git"'],
+    ['src/.eslintrc.js', 'data-file-icon="eslint"'],
+    ['packages/app/.config/babel-plugin-macrosrc.json', 'data-file-icon="babel"'],
+    ['packages/app/.config/other/babel-plugin-macrosrc.json', 'data-file-icon="json"'],
+    ['packages/app/.config/babel-plugin-macrosrc.json#L12', 'latch-glyph-file ui-icon'],
+    ['nested/.GITHUB/FuNdInG.YmL', 'data-file-icon="github-sponsors"'],
+    ['CLAUDE.md', 'data-file-icon="claude"'],
+    ['src/.unlisted', 'latch-glyph-file ui-icon'],
+    ['src/__proto__', 'latch-glyph-file ui-icon'],
+    ['build.ts#L12', 'latch-glyph-file ui-icon'],
+  ])('uses the literal file name for a mention of %s', (path, marker) => {
+    const html = renderToStaticMarkup(createElement(FileTypeIcon, { path, mention: true, size: 16 }))
+    expect(html).toContain(marker)
+  })
+
+  it.each([
+    ['view.ts', 'typescript'],
+    ['view.tsx', 'react_ts'],
+  ])('uses the bundled Material graphic for %s', (path, id) => {
+    const html = renderToStaticMarkup(createElement(FileTypeIcon, { path }))
+    const icons = Array.from(html.matchAll(/<use href="([^"]+)"/gu), match => match[1])
+    expect(icons).toEqual([`${materialSprite}#${id}`])
+  })
+
+  it('uses the same bundled sprite for light and dark variants', () => {
+    const html = renderToStaticMarkup(createElement(FileTypeIcon, { path: 'config.toml' }))
+    expect(html).toContain(`<use href="${materialSprite}#toml_light" width="16" height="16" data-theme-art="light"`)
+    expect(html).toContain(`<use href="${materialSprite}#toml" width="16" height="16" data-theme-art="dark"`)
+  })
+
+  it('never uses the path in an SVG resource URL', () => {
+    const path = '//attacker.example/remote.ts'
+    const html = renderToStaticMarkup(createElement(FileTypeIcon, { path, mention: true }))
+    const icons = Array.from(html.matchAll(/<use href="([^"]+)"/gu), match => match[1])
+    expect(icons).toEqual([`${materialSprite}#typescript`])
+    expect(nonIconHrefs(html)).toEqual([])
+  })
+
+  it.each([
+    ['src/main.GO#L7', 'data-file-icon="go"'],
+    ['view.tsx:42:3', 'data-file-icon="react_ts"'],
+    ['src/view.ts#L32', 'data-file-icon="typescript"'],
+    ['packages/app/.config/babel-plugin-macrosrc.json:42:3', 'data-file-icon="babel"'],
+    ['packages/app/other/babel-plugin-macrosrc.json#L42', 'data-file-icon="json"'],
+    ['bundle.mjs', 'data-file-icon="javascript"'],
+    ['run.py', 'data-file-icon="python"'],
+    ['README.markdown', 'data-file-icon="markdown"'],
+    ['article.mdx', 'data-file-icon="mdx"'],
+    ['config.json', 'data-file-icon="json"'],
+    ['Dockerfile', 'data-file-icon="docker"'],
+    ['Page.swift', 'data-file-icon="swift"'],
+    ['data.xlsx', 'data-file-icon="table"'],
     ['src/kept.go/', 'latch-glyph-folder'],
     ['notes.unknown', 'latch-glyph-page'],
-  ])('marks the actual type of %s while keeping the authored label and accessible path', (path, glyph) => {
+  ])('marks the actual type of %s while keeping the authored label and accessible path', (path, marker) => {
     const html = render(`[入口](${path})`, 'task-1')
-    const icon = html.match(/<svg\b[^>]*>/gu)?.find(tag => tag.includes(glyph))
+    const icon = html.match(/<svg\b[^>]*>/gu)?.find(tag => tag.includes(marker))
     expect(icon).toContain('aria-hidden="true"')
     expect(html).toContain(`aria-label="${path}"`)
     expect(html).toContain('>入口</span>')
@@ -113,13 +167,13 @@ describe('path chips', () => {
 
   it('render a file name with a line number as a chip, never as text or a link', () => {
     const html = render('见 [main.py:42](main.py:42) 与 [report.md:12](report.md:12)，参考 [example.com](www.example.com)', 'task-1')
-    expect(html).not.toContain('href=')
+    expect(nonIconHrefs(html)).toEqual([])
     expect(html.match(/data-file-chip=""/g)).toHaveLength(2)
     expect(html).toContain('main.py:42</span>')
     expect(html).toContain('<span>example.com</span>')
   })
 
-  it('render every file reference without an href, as a menu that copies its path and says where to open it', () => {
+  it('renders file references as menus that copy the path and say where to open it', () => {
     const html = render(
       [
         '- [report.md](report.md)：复盘文档',
@@ -132,7 +186,7 @@ describe('path chips', () => {
       ].join('\n'),
       'task-1',
     )
-    expect(html).not.toMatch(/href="(?!https?:|mailto:)/u)
+    expect(nonIconHrefs(html)).toEqual([])
     expect(html.match(/data-file-chip=""/g)).toHaveLength(6)
     // The label is the link's text; a path or file name is set in the mono face, words are not.
     expect(html).toContain('<span class="file-chip-text" data-mono="">report.md</span>')
@@ -165,7 +219,7 @@ describe('path chips', () => {
     expect(html).toContain('aria-label="out/deck.pptx"')
     expect(html).toContain(FILE_COPY.checking)
     expect(html).not.toContain(FILE_COPY.elsewhere())
-    expect(html).not.toContain('href=')
+    expect(nonIconHrefs(html)).toEqual([])
     // An older shell without file actions says a restart brings them, with the info glyph rather than the lock.
     desktopShell({ inspect: action, reveal: action })
     expect(shellFiles()).toBeNull()

@@ -3,7 +3,7 @@ import { BookOpen, MessageSquare, Quote, Users } from 'lucide-react'
 import { CodeGlyph, Icon } from '@latch/ui'
 import { escapeSecurityText } from '@latch/protocol'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
-import { referenceIcon } from '../fileReference.ts'
+import { FileTypeIcon } from '../components/FileTypeIcon.tsx'
 import { defineCopy } from '../core/i18n.ts'
 import type { PromptChip } from './prompt-tokens.ts'
 
@@ -34,7 +34,7 @@ export function chipSpokenText(chip: PromptChip, token: string): string {
 
 /** The 14px glyph before the label: the file's type, a book, a code glyph, or the member's Harness mark. */
 export function chipIcon(chip: PromptChip): ReactNode {
-  if (chip.kind === 'file') return <Icon icon={referenceIcon(chip.path)} size={14} />
+  if (chip.kind === 'file') return <FileTypeIcon path={chip.path} mention />
   if (chip.kind === 'quote') return <Icon icon={Quote} size={14} />
   if (chip.kind === 'conversation') return <Icon icon={MessageSquare} size={14} />
   if (chip.kind === 'skill') return <Icon icon={BookOpen} size={14} />

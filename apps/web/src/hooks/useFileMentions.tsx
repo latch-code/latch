@@ -1,8 +1,9 @@
 import { mentionMarker } from '../fileMentions.ts'
-import { useEffect, useId, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react'
 import type { FileMention } from '@latch/protocol'
-import { FileGlyph, Hint, Icon, Kbd, Spinner, Suggest, Tooltip } from '@latch/ui'
-import { api, errorMessage } from '../core/api.ts'
+import { Hint, Kbd, Spinner, Suggest, Tooltip } from '@latch/ui'
+import { MAX_LISTED_FILES, useMentionFileSearch } from './useMentionFileSearch.ts'
+import { FileTypeIcon } from '../components/FileTypeIcon.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { defineCopy } from '../core/i18n.ts'
 import type { PromptInput } from '../composer/PromptEditor.tsx'
@@ -20,7 +21,10 @@ const COPY = defineCopy(
     files: '文件',
     mentionMembers: '提到成员或文件',
     ignored: '已忽略',
-    more: '还有更多文件，继续输入缩小范围',
+    more: '已达搜索上限，继续输入可缩小范围',
+    shownFiles: (count: number) => `已显示前 ${count} 个文件，继续输入可缩小范围`,
+    continueSearch: '继续查找文件',
+    retrySearch: '重新查找文件',
     complete: ' 补全',
     choose: ' 选择',
   },
@@ -36,7 +40,10 @@ const COPY = defineCopy(
     files: 'Files',
     mentionMembers: 'Mention members or files',
     ignored: 'Ignored',
-    more: 'More files are available. Type to narrow down.',
+    more: 'Search limit reached. Type to narrow down.',
+    shownFiles: (count: number) => `Showing the first ${count} files. Type to narrow down.`,
+    continueSearch: 'Find more files',
+    retrySearch: 'Retry file search',
     complete: ' to complete',
     choose: ' to choose',
   },
@@ -52,8 +59,6 @@ export interface FileMentionChoice {
   refs: FileMention[]
   onRefs(refs: FileMention[]): void
 }
-
-type MentionFile = FileMention & { name: string; ignored?: boolean }
 
 /**
  * Members of the team the open session leads, listed above the files after `@`: choosing one puts its `token` in the
@@ -126,11 +131,14 @@ export function mentionKey(input: {
   loading: boolean
   query: string
   active: number
+  hasNextPage?: boolean
 }): { do: 'close' | 'wait' | 'pass' } | { do: 'move' | 'choose'; index: number } {
   const { key, shift, count, loading, query, active } = input
   if (key === 'Escape') return { do: 'close' }
   if (key === 'ArrowDown' || key === 'ArrowUp') {
     if (!count || loading) return { do: 'pass' }
+    if (input.hasNextPage && key === 'ArrowDown' && active === count - 1) return { do: 'choose', index: active }
+    if (input.hasNextPage && key === 'ArrowUp' && active <= 0 && count > 1) return { do: 'move', index: count - 2 }
     const step = key === 'ArrowDown' ? 1 : -1
     return { do: 'move', index: active < 0 ? (step > 0 ? 0 : count - 1) : (active + step + count) % count }
   }
@@ -154,10 +162,8 @@ export function useFileMentions(
   members?: MentionMembers,
 ) {
   const id = useId()
-  const [files, setFiles] = useState<MentionFile[]>([]),
-    [truncated, setTruncated] = useState(false),
-    [loading, setLoading] = useState(false),
-    [error, setError] = useState(''),
+  const moreRow = useRef<HTMLSpanElement>(null)
+  const [selectionError, setSelectionError] = useState(''),
     [selected, setSelected] = useState<{ query: string; index: number }>(),
     [dismissed, setDismissed] = useState<string>()
   // The toolbar opens only people. Typing @ still searches both people and project files.
@@ -181,62 +187,40 @@ export function useFileMentions(
   useEffect(() => {
     setDismissed(previous => (previous === draft ? previous : undefined))
   }, [draft])
+  const { files, loading, error, truncated, nextCursor, emptyPages, readMore } = useMentionFileSearch(
+    filesOpen && choice && scope
+      ? choice.sessionId
+        ? { kind: 'session', sessionId: choice.sessionId }
+        : { kind: 'workspace', workspaceId: scope, harnessId: choice.harnessId }
+      : undefined,
+    query,
+  )
   useEffect(() => {
     setSelected(undefined)
-    setError('')
-    if (!filesOpen || !scope || !choice) {
-      setFiles([])
-      setTruncated(false)
-      setLoading(false)
-      return
-    }
-    const controller = new AbortController()
-    setLoading(true)
-    const timer = setTimeout(() => {
-      const path = choice.sessionId
-        ? `tasks/${encodeURIComponent(choice.sessionId)}/files/search`
-        : `workspaces/${encodeURIComponent(scope)}/files/search`
-      void api<{ files: MentionFile[]; truncated?: boolean }>(path, {
-        method: 'POST',
-        body: { q: query, limit: 30, ...(choice.sessionId ? {} : { harnessId: choice.harnessId }) },
-        signal: controller.signal,
-      })
-        .then(result => {
-          if (controller.signal.aborted) return
-          setTruncated(result.truncated === true)
-          setFiles(
-            result.files
-              .slice(0, 30)
-              .filter(
-                file =>
-                  typeof file.name === 'string'
-                  && file.name.length <= 200
-                  && typeof file.root === 'string'
-                  && typeof file.path === 'string'
-                  && file.path.length <= 4096,
-              ),
-          )
-        })
-        .catch(cause => {
-          if (controller.signal.aborted) return
-          setFiles([])
-          setTruncated(false)
-          setError(errorMessage(cause))
-        })
-        .finally(() => {
-          if (!controller.signal.aborted) setLoading(false)
-        })
-    }, 160)
-    return () => {
-      clearTimeout(timer)
-      controller.abort()
-    }
+    setSelectionError('')
   }, [filesOpen, scope, choice?.sessionId, choice?.harnessId, query])
-  // A member found is ready at once: the files still on their way do not hold Enter back from it.
-  const listedFiles = filesOpen && scope && !error && !loading ? files : []
-  const count = choosable.length + listedFiles.length
-  const waiting = loading && filesOpen && !!scope && !choosable.length
-  const active = open ? mentionActive({ count, loading: waiting, query, ...(selected ? { selected } : {}) }) : -1
+  useEffect(() => {
+    const row = moreRow.current
+    if (!row || !nextCursor || loading || error || selectionError || emptyPages >= 2) return
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries.some(entry => entry.isIntersecting)) readMore(nextCursor)
+      },
+      { root: row.closest('[role="listbox"]'), rootMargin: '0px 0px 64px' },
+    )
+    observer.observe(row)
+    return () => observer.disconnect()
+  }, [nextCursor, loading, error, selectionError, emptyPages, readMore])
+  const listedFiles = filesOpen && scope && !selectionError ? files : []
+  const fileAction = !!(filesOpen && scope && !selectionError && (nextCursor || error))
+  const candidateCount = choosable.length + listedFiles.length
+  const count = candidateCount + Number(fileAction)
+  // Previously loaded files and members stay selectable while the next page is on its way.
+  const waiting = loading && !candidateCount
+  const active =
+    open && (candidateCount || selected?.query === query)
+      ? mentionActive({ count, loading: waiting, query, ...(selected ? { selected } : {}) })
+      : -1
   const openPeople = () => {
     const field = textarea.current
     if (!field || !members?.owner) return
@@ -295,6 +279,7 @@ export function useFileMentions(
   }
   const chooseEntry = (index: number) => {
     if (index < choosable.length) chooseMember(choosable[index]!)
+    else if (fileAction && index === candidateCount) readMore(nextCursor)
     else {
       const file = listedFiles[index - choosable.length]
       if (file) choose(file)
@@ -303,7 +288,7 @@ export function useFileMentions(
   const choose = (file: FileMention) => {
     if (!choice || !token) return
     if (choice.refs.length >= 32) {
-      setError(COPY.limit)
+      setSelectionError(COPY.limit)
       return
     }
     const marker = `${mentionMarker(file)} `
@@ -318,7 +303,15 @@ export function useFileMentions(
     if ((!open && !hiddenOpen) || event.isComposing || event.keyCode === 229 || event.metaKey || event.ctrlKey || event.altKey) return false
     // A device that cannot list files only has the note to close.
     const action = open
-      ? mentionKey({ key: event.key, shift: event.shiftKey, count, loading: waiting, query, active })
+      ? mentionKey({
+          key: event.key,
+          shift: event.shiftKey,
+          count,
+          loading: waiting,
+          query,
+          active,
+          hasNextPage: fileAction && !!nextCursor,
+        })
       : event.key === 'Escape'
         ? ({ do: 'close' } as const)
         : ({ do: 'pass' } as const)
@@ -340,17 +333,20 @@ export function useFileMentions(
   const severalRoots = new Set(files.map(file => file.root)).size > 1
   const optionId = (index: number) => `${id}-${index}`
   const shown = open || hiddenOpen
+  const limitMessage = files.length >= MAX_LISTED_FILES ? COPY.shownFiles(files.length) : COPY.more
   const fileStatus = hiddenOpen ? (
     <Hint label={COPY.noAccess}>{COPY.grantAccess}</Hint>
   ) : !scope ? (
     COPY.chooseProject
-  ) : error ? (
-    <span data-tone="error">{error}</span>
+  ) : selectionError || error ? (
+    <span data-tone="error">{selectionError || error}</span>
   ) : loading ? (
     <span className="mention-finding">
       <Spinner size={12} />
       {people.length ? COPY.findingBeside : COPY.finding}
     </span>
+  ) : truncated ? (
+    limitMessage
   ) : (
     COPY.noMatches
   )
@@ -398,21 +394,36 @@ export function useFileMentions(
           id: 'files',
           ...(people.length ? { label: COPY.files } : {}),
           // Beside the members, a search under way or one that failed is said under 文件; no match shows no files.
-          ...(people.length && filesOpen && scope && (error || loading) ? { empty: fileStatus } : {}),
+          ...(people.length && filesOpen && scope && !fileAction && (selectionError || loading) ? { empty: fileStatus } : {}),
           items: listedFiles.map((file, fileIndex) => {
             const index = choosable.length + fileIndex
             const folder = file.path.slice(0, Math.max(0, file.path.length - file.name.length - 1))
             const source = [file.ignored ? COPY.ignored : '', severalRoots ? file.root : ''].filter(Boolean).join(' · ')
             return {
               id: optionId(index),
-              media: <Icon icon={FileGlyph} size={16} />,
+              media: <FileTypeIcon path={file.path} size={16} mention />,
               label: <VisibleText text={file.name} />,
               description: folder ? <VisibleText text={folder} /> : '',
               ...(source ? { source: <VisibleText text={source} /> } : {}),
             }
           }),
         },
-        ...(listedFiles.length && truncated ? [{ id: 'more', items: [], empty: <span role="status">{COPY.more}</span> }] : []),
+        ...(fileAction
+          ? [
+              {
+                id: 'more',
+                items: [
+                  {
+                    id: optionId(candidateCount),
+                    label: <span ref={moreRow}>{loading ? COPY.finding : error ? COPY.retrySearch : COPY.continueSearch}</span>,
+                    ...(error ? { description: <span data-tone="error">{error}</span> } : {}),
+                  },
+                ],
+              },
+            ]
+          : listedFiles.length && truncated
+            ? [{ id: 'more', items: [], empty: <span role="status">{limitMessage}</span> }]
+            : []),
       ]}
       empty={memberSearch && !filesOpen ? members?.empty : fileStatus}
       footer={

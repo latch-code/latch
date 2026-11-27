@@ -31,6 +31,23 @@
   display: inline-flex;
   color: inherit;
 }
+[data-file-icon] > [data-theme-art='dark'] {
+  display: none;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) [data-file-icon] > [data-theme-art='light'] {
+    display: none;
+  }
+  :root:not([data-theme='light']) [data-file-icon] > [data-theme-art='dark'] {
+    display: inline;
+  }
+}
+:root[data-theme='dark'] [data-file-icon] > [data-theme-art='light'] {
+  display: none;
+}
+:root[data-theme='dark'] [data-file-icon] > [data-theme-art='dark'] {
+  display: inline;
+}
 .file-chip-prefix {
   flex: none;
   color: inherit;

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { MessageContent, plainTextNote, renderMarkdown } from '../src/MessageContent.tsx'
 import { ErrorBoundary } from '../src/components/ErrorBoundary.tsx'
 import { exceedsMarkdownNesting, MAX_LINE_CONTAINERS, MAX_OPEN_DELIMITERS, MAX_TREE_DEPTH } from '../src/markdownNesting.ts'
+import { nonIconHrefs } from './file-icon-markup.ts'
 
 function render(text: string, streaming = false) {
   return renderToStaticMarkup(createElement(MessageContent, { text, streaming }))
@@ -137,7 +138,7 @@ describe('message markdown', () => {
     )
     expect(html).toContain('href="https://example.com/a?q=1" target="_blank" rel="noopener noreferrer"')
     expect(html).toContain('<a href="mailto:team@example.com">mail</a>')
-    expect(html.match(/href=/g)).toHaveLength(2)
+    expect(nonIconHrefs(html)).toEqual(['https://example.com/a?q=1', 'mailto:team@example.com'])
     expect(html.match(/data-file-chip=""/g)).toHaveLength(2)
     expect(html).toContain('aria-label="/link/help"')
     expect(html).toContain('aria-label="./report.md"')

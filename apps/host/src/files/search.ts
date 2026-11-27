@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { watch, type FSWatcher } from 'node:fs'
 import { lstat, opendir, realpath, stat } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -44,6 +45,12 @@ const MAX_SKIPPED_DIRECTORIES = 2000
 const MAX_IGNORED_FILES = 5000
 const SKIPPED_WALK_ENTRIES = 30_000
 const SKIPPED_WALK_MS = 1000
+// A cold mention samples shallow names before starting the full bounded search.
+const PREVIEW_MS = 80
+const PREVIEW_ENTRIES = 256
+const PAGE_CANDIDATES = 1024
+const PAGE_CURSORS = 16
+const PAGE_TTL_MS = 60_000
 const MIN_NEEDLE_FOR_SKIPPED = 2
 const ENOUGH_TO_SKIP_SECOND_WALK = 8
 interface IgnoredNames {
@@ -69,6 +76,8 @@ interface Snapshot {
   skippedNames?(cancelled: () => boolean, check: Check): Promise<IgnoredNames>
 }
 interface Entry {
+  identity: string
+  rootId: string
   guard: ProtectedPaths
   promise: Promise<Snapshot>
   watchers: FSWatcher[]
@@ -171,6 +180,11 @@ export class FileSearchIndex {
   private readonly watcherClosures = new Set<Promise<void>>()
   private activeWatchers = 0
   private closed = false
+  private readonly pages = new Map<
+    string,
+    { owner: string; guard: ProtectedPaths; until: number; timer: NodeJS.Timeout; continuation: PageContinuation }
+  >()
+
   async search(
     roots: readonly FileRoot[],
     guard: ProtectedPaths,
@@ -179,23 +193,37 @@ export class FileSearchIndex {
     limit: number,
     cancelled: () => boolean,
     check: Check = () => {},
-  ) {
+    page?: { device: string; cursor?: string },
+  ): Promise<SearchResult> {
     const current = () => {
       if (this.closed) throw unavailable()
       check()
     }
     current()
     const operation = (async () => {
-      // The shared loop clock's heartbeat runs for the ranking too, not only the walk (loop-turn.ts).
       const end = beginLoopWork()
+      const indexed = (stopped = cancelled) =>
+        indexedCandidates(roots, query, limit, stopped, current, (root, key) => this.load(root, guard, identity, key, stopped, current))
       try {
-        return await runSearch(roots, guard, query, limit, cancelled, current, (root, key) =>
-          this.load(root, guard, JSON.stringify([identity, key]), cancelled, current),
-        )
-      } catch (cause) {
-        if (!(cause instanceof IndexChanged)) throw cause
-        current()
-        return await searchFiles(roots, guard, query, limit, cancelled, current)
+        if (page) {
+          const owner = JSON.stringify([page.device, identity, query, limit])
+          const ready = new Set(
+            [...this.entries.values()]
+              .filter(entry => entry.guard === guard && entry.identity === identity && entry.timer)
+              .map(entry => entry.rootId),
+          )
+          const cold = roots.some(root => !ready.has(root.id))
+          return await this.page(owner, page.cursor, guard, cancelled, current, (stopped, saved) =>
+            searchPage(roots, guard, query, limit, stopped, current, cold, saved, () => indexed(stopped)),
+          )
+        }
+        try {
+          return await settleSearch(await indexed(), query, guard, limit, cancelled, current)
+        } catch (cause) {
+          if (!(cause instanceof IndexChanged)) throw cause
+          current()
+          return await searchFolders(roots, guard, query, limit, cancelled, current)
+        }
       } finally {
         end()
       }
@@ -205,6 +233,46 @@ export class FileSearchIndex {
       return await operation
     } finally {
       this.operations.delete(operation)
+    }
+  }
+  private async page(
+    owner: string,
+    cursor: string | undefined,
+    guard: ProtectedPaths,
+    cancelled: () => boolean,
+    check: Check,
+    run: (stopped: () => boolean, saved?: PageContinuation) => Promise<SearchPage>,
+  ): Promise<SearchResult> {
+    const saved = cursor ? this.pages.get(cursor) : undefined
+    if (cursor && (!saved || saved.owner !== owner || saved.guard !== guard || saved.until <= Date.now()))
+      throw new AppError(409, 'file-search-expired', '文件搜索已过期，请重新搜索')
+    if (tooManyHung()) throw busyWithHung()
+    let timedOut = false
+    const stopped = () => timedOut || cancelled()
+    const work = run(stopped, saved?.continuation)
+    let timer: NodeJS.Timeout | undefined
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        timedOut = true
+        trackHung(work)
+        reject(new AppError(503, 'file-search-timeout', '文件搜索没有及时结束，请稍后再试'))
+      }, SCAN_HARD_MS * 2).unref()
+    })
+    try {
+      const { continuation, ...result } = await Promise.race([work, timeout])
+      check()
+      if (!continuation || stopped()) return result
+      if (this.pages.size >= PAGE_CURSORS) {
+        const [oldest, entry] = this.pages.entries().next().value!
+        clearTimeout(entry.timer)
+        this.pages.delete(oldest)
+      }
+      const nextCursor = randomUUID()
+      const expiry = setTimeout(() => this.pages.delete(nextCursor), PAGE_TTL_MS).unref()
+      this.pages.set(nextCursor, { owner, guard, until: Date.now() + PAGE_TTL_MS, timer: expiry, continuation })
+      return { ...result, nextCursor }
+    } finally {
+      clearTimeout(timer)
     }
   }
   /**
@@ -217,8 +285,8 @@ export class FileSearchIndex {
     check()
     if (this.closed) throw unavailable()
     if (!info?.isDirectory()) return undefined
-    const key = JSON.stringify([identity, JSON.stringify([root.id, root.path, String(info.dev), String(info.ino)])])
-    const operation = this.load(root, guard, key, cancelled, check).then(
+    const key = JSON.stringify([root.id, root.path, String(info.dev), String(info.ino)])
+    const operation = this.load(root, guard, identity, key, cancelled, check).then(
       snapshot => (snapshot.current && !snapshot.current() ? undefined : snapshot),
       (cause: unknown) => {
         if (cause instanceof IndexChanged) return undefined
@@ -238,6 +306,8 @@ export class FileSearchIndex {
    */
   async close(): Promise<void> {
     this.closed = true
+    for (const page of this.pages.values()) clearTimeout(page.timer)
+    this.pages.clear()
     for (const [key, entry] of this.entries) this.invalidate(key, entry)
     let timer: NodeJS.Timeout | undefined
     const waited = new Promise<void>(resolve => {
@@ -268,7 +338,15 @@ export class FileSearchIndex {
     }
     step()
   }
-  private load(root: FileRoot, guard: ProtectedPaths, key: string, cancelled: () => boolean, check: Check): Promise<Snapshot> {
+  private load(
+    root: FileRoot,
+    guard: ProtectedPaths,
+    identity: string,
+    rootKey: string,
+    cancelled: () => boolean,
+    check: Check,
+  ): Promise<Snapshot> {
+    const key = JSON.stringify([identity, rootKey])
     const previous = this.entries.get(key)
     if (previous && previous.guard === guard) {
       this.entries.delete(key)
@@ -283,6 +361,8 @@ export class FileSearchIndex {
       this.invalidate(oldKey, old)
     }
     const entry: Entry = {
+      identity,
+      rootId: root.id,
       guard,
       promise: Promise.resolve({
         paths: [],
@@ -415,6 +495,7 @@ async function walkFolders(
   start: Array<QueuedDirectory | undefined>,
   honourIgnores: boolean,
   accept: (relative: string) => boolean = () => true,
+  shallow = false,
 ): Promise<Omit<Snapshot, 'current' | 'skippedNames'>> {
   const paths: string[] = [],
     ignored: string[] = [],
@@ -456,6 +537,10 @@ async function walkFolders(
   const inRepository = honourIgnores && (await checked(repositoryAt(root)))
   while (at < queue.length && !cancelled()) {
     check()
+    if (shallow && performance.now() >= budget.deadline) {
+      truncated = true
+      break
+    }
     const entry = queue[at]!
     queue[at++] = undefined
     const path = join(root.path, entry.relative)
@@ -521,7 +606,13 @@ async function walkFolders(
         bytes += size
       }
     }
-    if (budget.visited > budget.maxVisited || performance.now() > budget.deadline || paths.length >= 20_000 || bytes >= MAX_PATH_BYTES) {
+    if (
+      (shallow && paths.length && at < queue.length)
+      || budget.visited > budget.maxVisited
+      || performance.now() > budget.deadline
+      || paths.length >= 20_000
+      || bytes >= MAX_PATH_BYTES
+    ) {
       truncated = true
       break
     }
@@ -549,45 +640,120 @@ async function walkSkipped(
   return { paths, truncated }
 }
 
-/** Ranks the whole bounded set before the limit, and classifies only what could be shown. */
-async function settle(
-  candidates: Candidate[],
-  needle: string,
+interface Candidates {
+  candidates: Candidate[]
+  truncated: boolean
+  unchecked?: Unchecked
+  stale?: Check
+}
+
+interface RankedPage {
+  ranked: Candidate[]
+  offset: number
+  partial: boolean
+  unchecked?: Unchecked
+}
+type PageContinuation = { preview: FileSearchHit[] } | RankedPage
+interface SearchResult {
+  files: FileSearchHit[]
+  truncated: boolean
+  unchecked?: Unchecked
+  nextCursor?: string
+}
+interface SearchPage extends SearchResult {
+  continuation?: PageContinuation
+}
+
+/** Names alone are retained between pages. Classification and authorization always belong to the current request. */
+async function classify(
+  ranked: readonly Candidate[],
+  offset: number,
   guard: ProtectedPaths,
   limit: number,
   cancelled: () => boolean,
   check: Check,
-  stale: () => void = () => {},
+  stale?: Check,
+  keepRankedPath = false,
 ) {
   const files: FileSearchHit[] = []
-  let truncated = false
   const deadline = performance.now() + 2000
-  const ranked = await topRanked(candidates, byRank(needle), Math.max(limit * 4, 64))
-  for (const [index, item] of ranked.entries()) {
+  while (offset < ranked.length && files.length < limit) {
     check()
-    stale()
-    if (cancelled() || performance.now() > deadline) {
-      truncated = true
-      break
-    }
+    stale?.()
+    if (cancelled() || performance.now() > deadline) break
+    const item = ranked[offset++]!
     const resolved = await resolveRecorded(item.root.id, item.path, { roots: [item.root], protectedPaths: guard, home: '' })
     check()
-    stale()
-    if (resolved.status !== 'ok' || resolved.file.secret) continue
+    stale?.()
+    if (resolved.status !== 'ok' || resolved.file.secret || (keepRankedPath && resolved.file.relativePath !== item.path)) continue
     files.push({
       name: resolved.file.name,
       path: resolved.file.relativePath,
       root: item.root.id,
       ...(item.ignored ? { ignored: true as const } : {}),
     })
-    if (files.length >= limit) {
-      truncated = index < candidates.length - 1
-      break
+  }
+  return { files, offset }
+}
+
+async function settleSearch(
+  found: Candidates,
+  query: string,
+  guard: ProtectedPaths,
+  limit: number,
+  cancelled: () => boolean,
+  check: Check,
+) {
+  const ranked = await topRanked(found.candidates, byRank(normalizedNeedle(query)), Math.max(limit * 4, 64))
+  const { files, offset } = await classify(ranked, 0, guard, limit, cancelled, check, found.stale)
+  return { files, truncated: found.truncated || offset < found.candidates.length, ...(found.unchecked && { unchecked: found.unchecked }) }
+}
+
+async function searchPage(
+  roots: readonly FileRoot[],
+  guard: ProtectedPaths,
+  query: string,
+  limit: number,
+  cancelled: () => boolean,
+  check: Check,
+  cold: boolean,
+  saved: PageContinuation | undefined,
+  indexed: () => Promise<Candidates>,
+): Promise<SearchPage> {
+  const needle = normalizedNeedle(query)
+  const fromRanked = async (state: RankedPage, stale?: Check) => {
+    const { files, offset } = await classify(state.ranked, state.offset, guard, limit, cancelled, check, stale, true)
+    const more = offset < state.ranked.length
+    return {
+      files,
+      truncated: more || state.partial,
+      ...(state.unchecked && { unchecked: state.unchecked }),
+      ...(more && { continuation: { ...state, offset } }),
     }
   }
-  // Fewer kept than asked for, and candidates past the ranked head were never tried.
-  if (files.length < limit && candidates.length > ranked.length) truncated = true
-  return { files, truncated }
+  if (saved && 'ranked' in saved) return fromRanked(saved)
+  const shown = new Set(saved?.preview.map(item => JSON.stringify([item.root, item.path])))
+  const rank = async (found: Candidates) => {
+    const head = await topRanked(found.candidates, byRank(needle), PAGE_CANDIDATES + shown.size)
+    const unseen = shown.size ? head.filter(item => !shown.has(JSON.stringify([item.root.id, item.path]))) : head
+    const partial = found.truncated || head.length < found.candidates.length || unseen.length > PAGE_CANDIDATES
+    return fromRanked({ ranked: unseen.slice(0, PAGE_CANDIDATES), offset: 0, partial, unchecked: found.unchecked }, found.stale)
+  }
+  if (cold && !saved) {
+    const sample = await freshCandidates(roots, guard, query, limit, cancelled, check, true)
+    if (!sample.truncated || cancelled()) return rank(sample)
+    // While deeper folders remain unknown, avoid putting incidental path or fuzzy matches ahead of exact names.
+    sample.candidates = sample.candidates.filter(item => item.tier === 0)
+    const first = await rank(sample)
+    if (first.files.length) return { files: first.files, truncated: true, continuation: { preview: first.files } }
+  }
+  try {
+    return await rank(await indexed())
+  } catch (cause) {
+    if (!(cause instanceof IndexChanged)) throw cause
+    check()
+    return rank(await freshCandidates(roots, guard, query, limit, cancelled, check))
+  }
 }
 
 /**
@@ -609,9 +775,8 @@ async function topRanked(candidates: readonly Candidate[], compare: (a: Candidat
   return head
 }
 
-async function runSearch(
+async function indexedCandidates(
   roots: readonly FileRoot[],
-  guard: ProtectedPaths,
   query: string,
   limit: number,
   cancelled: () => boolean,
@@ -665,8 +830,7 @@ async function runSearch(
       }
     }
   stale()
-  const settled = await settle(candidates, needle, guard, limit, cancelled, check, stale)
-  return { files: settled.files, truncated: truncated || settled.truncated, ...uncheckedOf(loaded.map(item => item.snapshot.undecided)) }
+  return { candidates, truncated, stale, ...uncheckedOf(loaded.map(item => item.snapshot.undecided)) }
 }
 
 /** What the answer says of entries whose ignore check was cut short, when there were any. */
@@ -697,6 +861,18 @@ async function searchFolders(
   cancelled: () => boolean,
   check: () => void = () => {},
 ) {
+  return settleSearch(await freshCandidates(roots, guard, query, limit, cancelled, check), query, guard, limit, cancelled, check)
+}
+
+async function freshCandidates(
+  roots: readonly FileRoot[],
+  guard: ProtectedPaths,
+  query: string,
+  limit: number,
+  cancelled: () => boolean,
+  check: Check,
+  preview = false,
+) {
   const checked = async <T>(operation: Promise<T>): Promise<T> => {
     const result = await operation
     check()
@@ -705,7 +881,7 @@ async function searchFolders(
   check()
   const needle = normalizedNeedle(query),
     accept = (relative: string) => matchTier(relative, needle) !== NO_MATCH,
-    budget = freshBudget(2000, 50_000),
+    budget = preview ? freshBudget(PREVIEW_MS, PREVIEW_ENTRIES) : freshBudget(2000, 50_000),
     candidates: Candidate[] = [],
     walked: Array<{ root: FileRoot; rootIndex: number; ignored: readonly string[]; skipped: readonly string[]; partial: boolean }> = [],
     undecided: Unchecked[] = []
@@ -714,7 +890,7 @@ async function searchFolders(
     const path = await checked(realpath(source.path).catch(() => undefined))
     if (!path) continue
     const root = { id: source.id, path }
-    const result = await walk(root, guard, cancelled, check, () => {}, budget, [{ relative: '', depth: 0 }], true, accept)
+    const result = await walk(root, guard, cancelled, check, () => {}, budget, [{ relative: '', depth: 0 }], true, accept, preview)
     truncated ||= result.truncated
     undecided.push(result.undecided)
     walked.push({ root, rootIndex, ignored: result.ignored, skipped: result.skipped, partial: result.partial })
@@ -723,18 +899,25 @@ async function searchFolders(
       candidates.push(candidate(root, rootIndex, relative, needle, false)!)
     }
     if (cancelled()) break
+    if (preview && (result.truncated || candidates.length) && rootIndex < roots.length - 1) {
+      truncated = true
+      break
+    }
   }
   if (wantsSkipped(candidates, limit, needle)) {
-    const later = freshBudget(SKIPPED_WALK_MS, SKIPPED_WALK_ENTRIES)
-    for (const { root, rootIndex, ignored, skipped, partial } of walked) {
-      const names = await walkSkipped(root, skipped, guard, cancelled, check, later, accept)
-      truncated ||= names.truncated || partial
-      for (const [index, relative] of [...ignored, ...names.paths].entries()) {
-        if ((index & 1023) === 0) await turnIfDue()
-        candidates.push(candidate(root, rootIndex, relative, needle, true)!)
+    if (preview) {
+      truncated ||= walked.some(root => root.partial || root.ignored.length || root.skipped.length)
+    } else {
+      const later = freshBudget(SKIPPED_WALK_MS, SKIPPED_WALK_ENTRIES)
+      for (const { root, rootIndex, ignored, skipped, partial } of walked) {
+        const names = await walkSkipped(root, skipped, guard, cancelled, check, later, accept)
+        truncated ||= names.truncated || partial
+        for (const [index, relative] of [...ignored, ...names.paths].entries()) {
+          if ((index & 1023) === 0) await turnIfDue()
+          candidates.push(candidate(root, rootIndex, relative, needle, true)!)
+        }
       }
     }
   }
-  const settled = await settle(candidates, needle, guard, limit, cancelled, check)
-  return { files: settled.files, truncated: truncated || settled.truncated || cancelled(), ...uncheckedOf(undecided) }
+  return { candidates, truncated: truncated || cancelled(), ...uncheckedOf(undecided) }
 }

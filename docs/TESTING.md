@@ -170,6 +170,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | Git 受限运行器、工作树与交付 | `changes-git.test.ts`、`worktrees.test.ts`、`git-delivery.test.ts`、`git-hunks.test.ts`、`git-pr.test.ts`、`git-routes.test.ts`、`git-sync.test.ts`（获取、拉取、中止）、`git-clone.test.ts`（克隆，经假 `ssh`）、`branch-switch.test.ts` 与 `branch-routes.test.ts`（切换分支；`e2e/branch-switch.e2e.ts`）、`native.test.ts`（PR 自动续办的原生验证窗口与会话引用限制） |
 | 待办投递、来源与证据 | `work-threads.test.ts`（原请求、同轮提问与私有范围）、`native.test.ts`（正文窗口、PR 评论响应字节预算）、`apps/web/test/workbench-evidence.test.ts`（SHA）、`e2e/task-flow.e2e.ts`（浏览器、假 ACP 与假 GitHub CLI） |
 | 会话文件与预览 | `files.test.ts`、`file-content.test.ts`、`file-outside.test.ts`、`file-tree.test.ts` |
+| 输入框 `@` 文件搜索 | `apps/host/test/file-search-index.test.ts` 检查冷启动首批读取的目录数和续页复核，`apps/web/test/mention-file-search.test.ts` 检查旧请求、续页重试和游标失效，`e2e/attachments.e2e.ts` 检查滚动、键盘和触屏选取，并核对后缀图标从候选、草稿到发送后的显示 |
 | 输入框（块、原子删除、撤销、输入法、粘贴与拖入） | `apps/web/test/prompt-editor.test.ts`、`prompt-tokens.test.ts`、`e2e/prompt-marks.e2e.ts`（Chromium 与 WebKit）；`e2e/teams.e2e.ts` 核对同排块的上下边缘、Harness 图标中心和块内外数字基线，以及已选成员和文件在块尾输入、整删重选时的候选和网络请求 |
 | 团队（开始、停止、交回与页面） | `apps/host/test/teams.test.ts`、`apps/web/test/teams.test.ts`、`e2e/teams.e2e.ts`；概要的独立团队与嵌套子 Agent 由同一用例检查。Codex 委派入口、显式与自主派出的同名成员、重载后结果和审批定位另跑 `e2e/codex-team.e2e.ts` |
 | 插件页面框 | `app-frame.test.ts`、`app-pages.test.ts`（Host 与 `apps/web/test/` 各一份）、`apps/desktop/test/desktop-frames.test.ts`、`e2e/app-pages.e2e.ts` |

@@ -9,6 +9,11 @@ Sources, licences and the trademark statement are in brands/SOURCES.txt; the ico
 brands/LICENSE-lobe-icons.txt, each project's copyright lines in brands/NOTICE-brands.txt and the Apache License 2.0
 in brands/LICENSE-Apache-2.0.txt.
 
+File type icons
+
+Material Icon Theme provides file associations and SVG icons under MIT. Its icon sources
+and their license terms, including Apache 2.0, are in file-types/ beside this file.
+
 Document previews
 
 The preview dependency tree is made of unmodified packages. Browser bundles omit

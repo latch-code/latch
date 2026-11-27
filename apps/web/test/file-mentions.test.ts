@@ -44,6 +44,10 @@ describe('the @ file list, by the slash menu’s keys', () => {
     expect(key('ArrowDown', { active: -1, query: '' })).toEqual({ do: 'move', index: 0 })
     expect(key('ArrowUp', { active: -1, query: '' })).toEqual({ do: 'move', index: 2 })
   })
+  it('keeps scrolling down at a page boundary and wraps up to the last loaded file', () => {
+    expect(key('ArrowDown', { active: 2, hasNextPage: true })).toEqual({ do: 'choose', index: 2 })
+    expect(key('ArrowUp', { active: -1, hasNextPage: true })).toEqual({ do: 'move', index: 1 })
+  })
   it('leaves Enter, Tab and Shift+Enter to the input when no row is chosen, and holds Enter while typed results load', () => {
     expect(key('Enter', { active: -1, query: '' })).toEqual({ do: 'pass' })
     expect(key('Tab', { active: -1, query: '' })).toEqual({ do: 'pass' })

@@ -286,9 +286,9 @@
 }
 /*
  * A token the Harness will read as one (a file chosen with @, a skill, a command, a member) is a chip, in the input and
- * in a sent message alike: the glyph, then the name, both centred on the chip, with room
- * of its own on both sides so it never touches the text or the next chip. Each kind has its own ink: a file is link
- * blue (it opens), a skill violet, a member and a command the text's own ink on a neutral wash, a member's colour
+ * in a sent message alike: the glyph, then the name, with room of its own on both sides so it never touches
+ * the text or the next chip. Each kind has its own ink: a file is link blue (it opens), a skill violet, a member
+ * and a command the text's own ink on a neutral wash, a member's colour
  * coming from its Harness's mark. Never the primary fill; a long name ends in an ellipsis and the whole of it is in the
  * hover.
  */
@@ -369,10 +369,10 @@
   width: 14px;
   height: 14px;
 }
-/* Use the surrounding type's baseline. The chip sits 2px inside the line on each side. */
+/* Keep labels on the surrounding text baseline and center their visible letters within the chips. */
 .prompt-chip-label {
   align-self: baseline;
-  margin-block: calc(-1 * var(--sp-2));
+  margin-block: calc(-1 * var(--sp-2) - 1px) calc(-1 * var(--sp-2) + 1px);
   min-width: 0;
   max-width: 28ch;
   overflow: hidden;
