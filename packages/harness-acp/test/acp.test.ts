@@ -7845,7 +7845,11 @@ describe('sessions on a model service through the gateway', () => {
       prompt: 'echo after revocation',
       requestId: rid(),
     })
-    await vi.waitFor(async () => expect(received(await fixture.log(), 'initialize')).toHaveLength(1), { interval: 5 })
+    // Starting the process can take seconds on a loaded machine; the short interval still sees initialize before its delayed answer.
+    await vi.waitFor(async () => expect(received(await fixture.log(), 'initialize')).toHaveLength(1), {
+      timeout: 8_000,
+      interval: 5,
+    })
     allowed = false
     expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
     const log = await fixture.log()
