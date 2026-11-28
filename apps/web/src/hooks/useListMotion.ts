@@ -12,17 +12,23 @@ const reducedMotion = () => !motionAllowed()
  * the rows it pushes slide down, both over --m-enter. Each `[data-flip-id]` element is measured against its scope (the nearest
  * `[data-flip-scope]` above it, else the list), so a row that moves with its group does not slide twice. Measures again
  * whenever `signature` (the rendered order) changes. A change of `context` (a new filter or search) and the first render
- * only measure: the list is redrawn, not moved. Rows never move while reduced motion is on.
+ * only measure: the list is redrawn, not moved. Reduced motion and an active layout transition both skip list motion.
  */
-export function useListMotion(root: RefObject<HTMLElement | null>, context: string, signature: string): () => void {
+export function useListMotion(
+  root: RefObject<HTMLElement | null>,
+  context: string,
+  signature: string,
+  layoutMoving?: (container: HTMLElement) => boolean,
+): () => void {
   const positions = useRef<{ context: string; signature: string; tops: Map<string, number> } | null>(null)
   useLayoutEffect(() => {
     const last = positions.current
     if (last?.context === context && last.signature === signature) return
-    const previous = last?.context === context && !reducedMotion() ? last.tops : null
-    positions.current = { context, signature, tops: measureRows(root.current, previous) }
-  }, [root, context, signature])
-  // Rows that folded away left the others where they already are: measure again without moving anything.
+    const container = root.current
+    const previous = last?.context === context && container && !reducedMotion() && !layoutMoving?.(container) ? last.tops : null
+    positions.current = { context, signature, tops: measureRows(container, previous) }
+  }, [root, context, signature, layoutMoving])
+  // After content folds away, refresh the positions without moving anything.
   return useCallback(() => {
     const last = positions.current
     if (last) positions.current = { ...last, tops: measureRows(root.current, null) }
