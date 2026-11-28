@@ -233,6 +233,7 @@ describe('resizable sidebar', () => {
     await owner.json(`tasks/${pinned}`, { method: 'PATCH', body: { pinned: true } })
 
     await page.setViewportSize({ width: 390, height: 844 })
+    await page.locator('.app-shell[data-viewport="phone"]').waitFor()
     await backToPhoneSessions(page)
     const phone = page.locator('.phone-list')
     await phone.getByRole('searchbox', { name: '搜索会话', exact: true }).fill('搜索目标')
@@ -246,6 +247,69 @@ describe('resizable sidebar', () => {
     await sidebar.locator(`[data-task-id="${other}"]`).click()
     await page.keyboard.press('Alt+1')
     await expect.poll(() => first.getAttribute('aria-current')).toBe('page')
+  })
+
+  it('keeps the next project below the folding project throughout the animation', async () => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.route('**/link/api/snapshot*', async route => {
+      const response = await route.fetch()
+      const snapshot = (await response.json()) as AppSnapshot
+      const workspaces = [
+        { id: 'first', name: '项目一', path: '/fixture/first' },
+        { id: 'next', name: '项目二', path: '/fixture/next' },
+      ]
+      const now = Date.now()
+      const tasks = Array.from({ length: 12 }, (_, index) => ({
+        id: `folding-${index}`,
+        title: `项目会话 ${index}`,
+        status: 'idle',
+        mode: 'agent',
+        harnessId: 'standard',
+        workspaceId: index < 10 ? 'first' : 'next',
+        updatedAt: new Date(now - index * 1000).toISOString(),
+      }))
+      await route.fulfill({ response, json: { ...snapshot, tasks, catalog: { ...snapshot.catalog, workspaces } } })
+    })
+    await page.goto(new URL('/link/', page.url()).href)
+    const first = page.locator('.session-group[data-shelf="project:first"]')
+    const next = page.locator('.session-group[data-shelf="project:next"]')
+    await next.getByRole('button', { name: '项目二', exact: true }).waitFor()
+    const toggle = first.getByRole('button', { name: '项目一', exact: true })
+
+    // Closing again after reopening caught the move back toward a position from before the last transition.
+    for (const open of [false, true, false]) {
+      const animationFrames = await toggle.evaluate(async button => {
+        if (!(button instanceof HTMLButtonElement)) throw new Error('Expected a project fold button')
+        const group = button.closest('.session-group')!
+        const following = group.nextElementSibling!
+        const body = group.querySelector('.ui-collapse')!
+        const frame = () => {
+          const box = group.getBoundingClientRect()
+          return { gap: following.getBoundingClientRect().top - box.bottom, height: body.getBoundingClientRect().height }
+        }
+        const samples = [frame()]
+        const end = performance.now() + 450
+        button.click()
+        while (performance.now() < end) {
+          await new Promise(requestAnimationFrame)
+          samples.push(frame())
+        }
+        return samples
+      })
+      const initial = animationFrames[0]
+      const final = animationFrames.at(-1)!
+      expect(await toggle.getAttribute('aria-expanded')).toBe(String(open))
+      expect(initial.gap).toBeGreaterThanOrEqual(0)
+      expect(open ? final.height : initial.height).toBeGreaterThan(250)
+      expect(open ? initial.height : final.height).toBe(0)
+      expect(animationFrames.some(({ height }) => height > 0 && height < Math.max(initial.height, final.height) - 1)).toBe(true)
+      expect
+        .soft(
+          animationFrames.filter(({ gap }) => Math.abs(gap - initial.gap) > 1).map(({ gap }) => Math.round(gap)),
+          open ? 'project opening changed the gap' : 'project closing changed the gap',
+        )
+        .toEqual([])
+    }
   })
 })
 

@@ -588,6 +588,10 @@ export function Sidebar({
   )
 }
 
+const SHELF_BODY = '.session-group > .ui-collapse'
+const shelfLayoutMoving = (list: HTMLElement) =>
+  list.querySelector(`${SHELF_BODY}:is([data-state='closing'], [data-state='open']:not([data-settled]))`) !== null
+
 /** Code's list: its shelves, without the sessions delegated to an Agent where the Host has 我的 Agent. */
 const CodeList = memo(function CodeList({
   snapshot,
@@ -673,7 +677,8 @@ const CodeList = memo(function CodeList({
       .map(other => `|${other.computer.hostId}:${other.live ? other.items.map(item => item.taskId).join(',') : other.items.length}`)
       .join('')
     + elsewhere.map(other => `|${other.hostId}:${folded.has(`computer:${other.hostId}`) ? '' : other.count}`).join('')
-  const remeasure = useListMotion(list, context, signature)
+  // Collapse already moves the shelves in layout. Refresh the list's positions once the height transition ends.
+  const remeasure = useListMotion(list, context, signature, shelfLayoutMoving)
   // 「项目」 heads the projects (and 无项目), after 等你处理 and 置顶; its + adds one.
   const headAt = groups.findIndex(group => group.id !== 'waiting' && group.id !== 'pinned')
   const projectsHead = !archived && (
@@ -685,7 +690,20 @@ const CodeList = memo(function CodeList({
     </div>
   )
   return (
-    <nav ref={list} className="session-list" aria-label={COPY.navigation} data-session-filter={filter}>
+    <nav
+      ref={list}
+      className="session-list"
+      aria-label={COPY.navigation}
+      data-session-filter={filter}
+      onTransitionEnd={event => {
+        if (
+          event.propertyName === 'grid-template-rows'
+          && event.elapsedTime > 0
+          && event.target instanceof Element
+          && event.target.matches(SHELF_BODY)
+        )
+          remeasure()
+      }}>
       {archived && (
         <button
           type="button"
